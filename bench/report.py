@@ -27,9 +27,13 @@ def load_results(path: str) -> list[dict]:
 
 
 def find_latest_results() -> str | None:
-    pattern = str(RESULTS_DIR / "crosscode" / "results_*.jsonl")
-    files = sorted(glob.glob(pattern))
-    return files[-1] if files else None
+    # Check both crosscode and swebench
+    for subdir in ("crosscode", "swebench"):
+        pattern = str(RESULTS_DIR / subdir / "results_*.jsonl")
+        files = sorted(glob.glob(pattern))
+        if files:
+            return files[-1]
+    return None
 
 
 def print_crosscode_report(results: list[dict]):
@@ -81,6 +85,57 @@ def print_crosscode_report(results: list[dict]):
     print("  and use paired bootstrap or McNemar's test.")
 
 
+def print_swebench_report(results: list[dict]):
+    conditions = sorted(set(r["condition"] for r in results))
+    repos = sorted(set(r["repo"] for r in results))
+
+    print("\n╔══════════════════════════════════════════════════════════════╗")
+    print("║         SWE-bench Lite Results                              ║")
+    print("╚══════════════════════════════════════════════════════════════╝\n")
+    n_per_cond = len(results) // len(conditions) if conditions else 0
+    print(f"Total runs: {len(results)} ({n_per_cond} per condition)")
+    print(f"Conditions: {', '.join(conditions)}")
+    print(f"Repos: {len(repos)}")
+
+    print("\n┌─────────────────┬──────────┬─────────┬─────────┐")
+    print("│ Condition       │ Patches  │  Rate   │ Avg Steps│")
+    print("├─────────────────┼──────────┼─────────┼─────────┤")
+
+    baseline_rate = None
+    for condition in conditions:
+        cond_results = [r for r in results if r["condition"] == condition]
+        total = len(cond_results)
+        patches = sum(1 for r in cond_results if r.get("has_patch"))
+        rate = patches / total if total else 0
+        avg_steps = sum(r.get("steps", 0) for r in cond_results) / total if total else 0
+
+        delta = ""
+        if baseline_rate is not None:
+            diff = rate - baseline_rate
+            delta = f" ({'+' if diff >= 0 else ''}{diff:.0%})"
+        else:
+            baseline_rate = rate
+
+        print(f"│ {condition:<15} │ {patches:>3}/{total:<3}  │ {rate:>5.0%}  │ {avg_steps:>5.1f}   │{delta}")
+    print("└─────────────────┴──────────┴─────────┴─────────┘")
+
+    # Per-repo breakdown
+    for repo in repos:
+        repo_results = [r for r in results if r["repo"] == repo]
+        if len(set(r["condition"] for r in repo_results)) < 2:
+            continue
+        print(f"\n  {repo}:")
+        for condition in conditions:
+            cr = [r for r in repo_results if r["condition"] == condition]
+            if not cr:
+                continue
+            patches = sum(1 for r in cr if r.get("has_patch"))
+            print(f"    {condition:<15} {patches}/{len(cr)}")
+
+    print("\n  Note: 'Patches' = agent produced a diff. For actual resolution,")
+    print("  run predictions through: python -m swebench.harness.run_evaluation")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Benchmark results report")
     parser.add_argument("--file", default=None, help="Results JSONL file")
@@ -99,7 +154,9 @@ def main():
         sys.exit(1)
 
     # Detect benchmark type
-    if results[0].get("condition"):
+    if results[0].get("instance_id"):
+        print_swebench_report(results)
+    elif results[0].get("condition"):
         print_crosscode_report(results)
     else:
         print("Unknown results format", file=sys.stderr)
