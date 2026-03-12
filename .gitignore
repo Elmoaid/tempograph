@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.pyo
+.tempograph/
+*.egg-info/
+dist/
+build/
+.DS_Store
+.env
+.venv/

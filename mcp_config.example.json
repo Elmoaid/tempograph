@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "tempograph": {
+      "command": "tempograph-server",
+      "args": [],
+      "cwd": "/path/to/your/project"
+    }
+  }
+}

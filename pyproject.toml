@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tempograph"
+version = "0.3.0"
+description = "Semantic code graph — track how your codebase evolves over time"
+requires-python = ">=3.11"
+dependencies = [
+    "tree-sitter>=0.21",
+    "tree-sitter-python>=0.21",
+    "tree-sitter-typescript>=0.21",
+    "tree-sitter-javascript>=0.21",
+    "tree-sitter-rust>=0.21",
+    "tree-sitter-go>=0.21",
+    "tiktoken>=0.7",
+    "mcp[cli]>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+tempograph = "tempograph.__main__:main"
+tempograph-server = "tempograph.server:run_server"
+
+[tool.hatch.build.targets.wheel]
+packages = ["tempograph"]
