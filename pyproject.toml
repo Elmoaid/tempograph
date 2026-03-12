@@ -20,6 +20,10 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+bench = [
+    "anthropic>=0.40",
+    "datasets>=3.0",
+]
 
 [project.scripts]
 tempograph = "tempograph.__main__:main"
