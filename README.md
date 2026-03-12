@@ -1,24 +1,26 @@
 # tempograph
 
-Your codebase is a living thing. Every commit reshapes it — new functions appear, old ones decay, dependencies tangle and untangle. Most tools show you code as it is right now. Tempograph shows you how it got here and where it's headed.
+Tempograph tracks the structure of a codebase across revisions.
 
-Tempograph parses source files with [tree-sitter](https://tree-sitter.github.io/), extracts every symbol and relationship, and builds a semantic graph — a structural snapshot of your entire codebase at a point in time. Each snapshot captures what exists, what connects to what, and what's drifting toward trouble. Run it again after changes and only the delta is recomputed.
+It parses source files with tree-sitter, extracts symbols and relationships, and builds a semantic graph for each run. Each graph is stored as a content-hashed snapshot of the repository. Run it again after a change and only the affected files are re-parsed.
+
+That gives you a stable way to do three things: understand what is in the codebase now, see what changed structurally between commits, and spot places where coupling or complexity is starting to accumulate.
 
 ## How It Works
 
 ```
 commit a1b2c3 ──→ snapshot ──→ 847 symbols, 2,031 edges
 commit d4e5f6 ──→ snapshot ──→ 851 symbols, 2,044 edges  (+4 symbols, +13 edges)
-commit g7h8i9 ──→ snapshot ──→ 849 symbols, 2,067 edges  (-2 symbols, +23 edges ← coupling growing)
+commit g7h8i9 ──→ snapshot ──→ 849 symbols, 2,067 edges  (‑2 symbols, +23 edges ← coupling growing)
 ```
 
-Each snapshot is a content-hashed graph stored in `.tempograph/cache.json`. Only files that actually changed are re-parsed — a 10,000-file repo re-indexes in seconds, not minutes. The cache is keyed by file content, not timestamps, so switching branches and coming back doesn't trigger a full rebuild.
+Each snapshot is stored in `.tempograph/cache.json`. Only files whose contents changed are re-parsed, so a 10,000-file repository can be re-indexed in seconds rather than minutes. Because the cache is keyed by file content instead of timestamps, switching branches and switching back does not force a full rebuild.
 
 ## Supported Languages
 
 Python · TypeScript · TSX · JavaScript · JSX · Rust · Go
 
-Tree-sitter grammars handle the parsing. Each language has dedicated handlers for extracting functions, classes, components, hooks, imports, type aliases, traits, interfaces, and their relationships. The parser (`parser.py`) has ~47 extraction methods across all supported languages.
+Parsing is handled by tree-sitter. Each language has dedicated extraction handlers for functions, classes, components, hooks, imports, type aliases, traits, interfaces, and their relationships. The parser (`parser.py`) includes 35 extraction methods across the supported languages.
 
 ## Install
 
@@ -26,7 +28,13 @@ Tree-sitter grammars handle the parsing. Each language has dedicated handlers fo
 pip install -e .
 ```
 
-Requires Python 3.11+. Dependencies: `tree-sitter`, language grammars, `tiktoken` (token counting), `mcp[cli]` (MCP server).
+Requires Python 3.11+.
+
+Dependencies:
+- tree-sitter
+- language grammars (tree-sitter-python, tree-sitter-typescript, etc.)
+- tiktoken (token counting)
+- mcp[cli] (MCP server)
 
 ## CLI
 
@@ -35,23 +43,22 @@ tempograph <path> --mode <mode> [options]
 ```
 
 Global options:
-- `--query` / `-q` — Search query (for `focus` and `lookup` modes)
-- `--file` / `-f` — File path (for `blast` mode), or comma-separated paths (for `diff` mode)
-- `--max-tokens` — Token budget for output (default: 4000, affects `focus` and `diff`)
-- `--json` — Dump the raw graph as JSON instead of rendering
-- `--tokens` — Print token count to stderr after output
+- `--query` / `-q` — search query (for `focus` and `lookup`)
+- `--file` / `-f` — file path (for `blast`), or comma-separated paths (for `diff`)
+- `--max-tokens` — token budget for output (default: 4000; affects `focus` and `diff`)
+- `--json` — dump the raw graph as JSON instead of rendering
+- `--tokens` — print token count to stderr after output
 
-Every mode first builds the graph (or loads from cache), then renders. Build time prints to stderr; output prints to stdout.
+Every mode works from the same graph. Tempograph either builds the graph or loads it from cache, then renders the requested view. Build timing is written to stderr. Rendered output is written to stdout.
 
 ---
 
 ### `overview`
 
-**What it does:** Orients you in a codebase you've never seen. Shows size, languages, entry points, key files ranked by size + complexity, and module structure.
+First-pass orientation in an unfamiliar repository. Reports size, languages, likely entry points, the heaviest files, and top-level structure.
 
-**Input:** Just a repo path. No extra args.
+**Input:** Repository path only.
 
-**Output:**
 ```
 repo: my-project
 249 files, 3830 symbols, 42,891 lines | TypeScript(187), Rust(31), CSS(12)
@@ -68,7 +75,7 @@ key files (by size + complexity):
 structure: src/(187), src-tauri/(31), public/(3)
 ```
 
-**Under the hood:** Scans all `FileInfo` objects, computes a score per file (`line_count + complexity * 3`), finds entry points by looking for `main` functions and common entry patterns. No graph traversal needed — pure stats.
+Internally: scans all `FileInfo` objects, scores files with `line_count + complexity * 3`, identifies likely entry points from main functions and common entry patterns, and summarizes the repository without graph traversal.
 
 ```bash
 tempograph ./my-project --mode overview
@@ -78,11 +85,10 @@ tempograph ./my-project --mode overview
 
 ### `map`
 
-**What it does:** File tree with top symbols per file. Like `tree` but it shows you what's *inside* each file — the top 8 symbols sorted by importance (components > classes > exported functions > internal functions).
+Directory tree plus the most important symbols in each file. Like `tree`, but with a view into what each file actually contains.
 
-**Input:** Repo path only.
+**Input:** Repository path only.
 
-**Output:**
 ```
 [src/components/]
   Canvas.tsx (17631 lines, 142 sym)
@@ -97,7 +103,7 @@ tempograph ./my-project --mode overview
     func loadSettings (L91-145)
 ```
 
-**Under the hood:** Groups files by directory, then for each file retrieves its symbols from the graph and sorts them by a priority key: components/hooks first, then classes/structs, then exported functions, then everything else. Shows line ranges and signatures where available.
+Internally: groups files by directory, retrieves symbols for each file, and ranks them by importance — components and hooks first, then classes and structs, then exported functions, then everything else. Line ranges and signatures are shown when available.
 
 ```bash
 tempograph ./my-project --mode map
@@ -107,11 +113,10 @@ tempograph ./my-project --mode map
 
 ### `symbols`
 
-**What it does:** Complete symbol index. Every function, class, component, hook, variable, type — with signatures, docstrings, line locations, and caller/callee relationships.
+Full symbol inventory. Functions, classes, components, hooks, variables, and types, with signatures, docstrings, locations, and caller/callee context.
 
-**Input:** Repo path only.
+**Input:** Repository path only.
 
-**Output:**
 ```
 ── src/lib/db.ts ──
   function initDatabase | L12-89 | initDatabase(): Promise<void> | ← main, App | → loadSettings, migrateSchema
@@ -119,7 +124,7 @@ tempograph ./my-project --mode map
   function saveSetting | L147-162 | saveSetting(key: string, value: string) | ← SettingsPanel, handleCommand
 ```
 
-**Under the hood:** Iterates every symbol in the graph, groups by file, and for each symbol queries `callers_of()` and `callees_of()` to show the call graph inline. Signatures are truncated at 120 chars, docstrings at 80.
+Internally: iterates every symbol in the graph, groups them by file, and uses `callers_of()` and `callees_of()` to render relationship context inline. Signatures are truncated at 120 characters, docstrings at 80.
 
 ```bash
 tempograph ./my-project --mode symbols
@@ -129,11 +134,10 @@ tempograph ./my-project --mode symbols
 
 ### `focus`
 
-**What it does:** Given a search query, finds matching symbols and then does a **breadth-first traversal** of the call graph to build a connected subgraph of everything relevant to that topic. This is the mode you use when you're about to work on something and need context.
+Build a connected subgraph around a topic, symbol, or concept. This is the mode to use before you start modifying code.
 
 **Input:** `--query "authentication"` (or any search term — function names, module names, concepts).
 
-**Output:**
 ```
 Focus: authentication
 
@@ -152,12 +156,12 @@ Related files:
   src/auth/types.ts (45 lines)
 ```
 
-**Under the hood:**
-1. Fuzzy-searches the symbol index for your query (top 10 seed matches)
-2. BFS expansion: for each seed, follows callers (who calls this?), callees (what does this call?), and children (what's inside?) up to depth 2
-3. Caps at 40 symbols to keep output manageable
-4. Token-budgets the output (default 4000 tokens) — truncates when the budget is hit
-5. Appends related files that appeared in edges but weren't shown (with `[grep-only]` warnings for files >500 lines)
+Internally:
+1. Fuzzy-searches the symbol index for the query and selects the top seed matches.
+2. Expands breadth-first through callers, callees, and child symbols up to depth 2.
+3. Caps the result at 40 symbols to keep output readable.
+4. Applies a token budget (default: 4000) and truncates when necessary.
+5. Appends related files that appear in edges but were not rendered directly, with `[grep-only]` warnings for files over 500 lines.
 
 ```bash
 tempograph ./my-project --mode focus --query "payment processing"
@@ -167,21 +171,19 @@ tempograph ./my-project --mode focus --query "payment processing"
 
 ### `lookup`
 
-**What it does:** Answers natural-language questions about the codebase by pattern-matching the question type and querying the graph accordingly. Not AI — it's structured query dispatch.
+Answer common natural-language questions about the codebase through structured graph queries. This is query dispatch, not an LLM feature.
 
 **Input:** `--query "where is handleLogin defined?"` or `--query "what calls saveDocument?"` or `--query "who imports db.ts?"`
 
-**Recognized question patterns:**
 | Pattern | What it does |
 |---------|-------------|
-| "where is X" / "find X" / "locate X" | Exact + fuzzy symbol search, shows locations and callers |
-| "what calls X" / "who uses X" | Lists all callers of a symbol with file:line locations |
-| "what does X call" / "dependencies of X" | Lists all callees of a symbol |
-| "who imports X" | Lists all files that import a given file |
-| "what renders X" | Lists components that render a given component (JSX/TSX) |
+| `where is X` / `find X` / `locate X` | Exact + fuzzy symbol search, then shows locations and callers |
+| `what calls X` / `who uses X` | Lists all callers of a symbol with file:line locations |
+| `what does X call` / `dependencies of X` | Lists all callees of a symbol |
+| `who imports X` | Lists all files that import a given file |
+| `what renders X` | Lists components that render a given component (JSX/TSX) |
 | *(anything else)* | Falls back to fuzzy symbol search |
 
-**Output (example: "what calls saveDocument"):**
 ```
 'saveDocument' is called by:
   src/components/Scratchpad.tsx:1204 — handleCommand
@@ -197,11 +199,10 @@ tempograph ./my-project --mode lookup --query "what calls saveDocument"
 
 ### `blast`
 
-**What it does:** Shows the blast radius of a file — everything that would be affected if you modify it. Three layers: direct importers, externally-called symbols (which specific functions are used by other files), and component render relationships.
+Show the blast radius of changing a file. Reports direct importers, cross-file symbol usage, and component render relationships where relevant.
 
 **Input:** `--file src/lib/db.ts` (path relative to repo root).
 
-**Output:**
 ```
 Blast radius for src/lib/db.ts:
 
@@ -223,9 +224,10 @@ Component render relationships:
   (none — this is a utility file)
 ```
 
-If no external dependencies are found, it tells you: `"No external dependencies found — safe to modify in isolation."`
+If no external dependencies are found, Tempograph says so directly:
+`No external dependencies found — safe to modify in isolation.`
 
-**Under the hood:** For each symbol in the target file, queries `callers_of()` and filters to only external callers (different file). Also checks `importers_of()` for the file itself, and `renderers_of()` for component relationships.
+Internally: checks `importers_of()` for the file itself, then walks every symbol in the target file and filters `callers_of()` down to external callers only. `renderers_of()` is used to add component-level impact when applicable.
 
 ```bash
 tempograph ./my-project --mode blast --file src/lib/db.ts
@@ -235,11 +237,10 @@ tempograph ./my-project --mode blast --file src/lib/db.ts
 
 ### `diff`
 
-**What it does:** Given a list of changed files, renders everything you need to review: what symbols are affected, which exported symbols have external callers (breaking change risk), which files import the changed code, and component tree impact.
+Add structural context to a code diff. Shows affected symbols, breaking-change risk, import impact, and component-tree impact for a set of changed files.
 
 **Input:** `--file src/lib/db.ts,src/lib/settings.ts` (comma-separated file paths).
 
-**Output:**
 ```
 Diff context for 2 changed file(s):
 
@@ -265,7 +266,7 @@ Key symbols in changed files:
     loadSettings(db: Database): Settings
 ```
 
-**Under the hood:** Normalizes file paths (handles partial matches), collects all symbols in changed files, identifies exported symbols with external callers as "breaking change risk", finds all importers of changed files, checks component render tree impact, then renders key symbols with signatures until the token budget (default 6000) runs out.
+Internally: normalizes paths, collects symbols from the changed files, flags exported symbols with external callers as breaking-change risk, finds importers of the changed files, checks render-tree impact, and renders key symbols until the token budget is exhausted.
 
 ```bash
 tempograph ./my-project --mode diff --file src/lib/db.ts,src/lib/settings.ts
@@ -275,11 +276,10 @@ tempograph ./my-project --mode diff --file src/lib/db.ts,src/lib/settings.ts
 
 ### `hotspots`
 
-**What it does:** Ranks every symbol by a risk score combining coupling, complexity, size, and cross-file dependencies. The top 20 are the places where bugs are most likely to hide and changes are most likely to break things.
+Rank the parts of the codebase where size, complexity, and coupling overlap. These are the places most likely to hide bugs or make changes expensive.
 
-**Input:** Repo path only.
+**Input:** Repository path only.
 
-**Output:**
 ```
 Top 20 hotspots (highest coupling + complexity):
 
@@ -296,16 +296,16 @@ Top 20 hotspots (highest coupling + complexity):
     → consider splitting — complex and large
 ```
 
-**Scoring formula:**
-- `callers × 3` (who depends on this)
-- `callees × 1.5` (what this depends on)
+Scoring formula:
+- `callers × 3` (how many things depend on this)
+- `callees × 1.5` (how many things this depends on)
 - `min(line_count / 10, 50)` (size, capped)
 - `children × 2` (internal complexity)
 - `cross_file_callers × 5` (blast radius)
 - `render_count × 2` (component tree coupling)
 - `log₂(cyclomatic_complexity) × 3` (branching complexity)
 
-Actionable warnings are appended: "grep-only" for >500 lines, "high blast radius" for >5 cross-file callers, "refactor candidate" for extreme complexity.
+Actionable warnings are appended automatically: `grep-only` for files over 500 lines, `high blast radius` for more than 5 cross-file callers, `refactor candidate` for extreme complexity.
 
 ```bash
 tempograph ./my-project --mode hotspots
@@ -315,11 +315,10 @@ tempograph ./my-project --mode hotspots
 
 ### `deps`
 
-**What it does:** Analyzes the import graph for circular dependencies and computes dependency layers (topological sort). Layer 0 files depend on nothing; layer N files depend only on layers 0 through N-1.
+Inspect the file-level dependency graph. Finds circular imports and arranges files into dependency layers.
 
-**Input:** Repo path only.
+**Input:** Repository path only.
 
-**Output:**
 ```
 Dependency Analysis:
 
@@ -335,7 +334,7 @@ Dependency layers (5 levels):
   Layer 4: App.tsx, main.tsx
 ```
 
-**Under the hood:** Builds a directed graph of file-level imports, runs cycle detection, then computes a topological ordering into layers. Files in the same layer have no dependencies on each other.
+Internally: builds a directed graph of file-level imports, runs cycle detection, then computes a topological layering. Files in the same layer do not depend on one another.
 
 ```bash
 tempograph ./my-project --mode deps
@@ -345,11 +344,10 @@ tempograph ./my-project --mode deps
 
 ### `dead`
 
-**What it does:** Finds exported symbols that are never referenced by any other symbol in the codebase. Sorted by size (biggest dead code first = most cleanup value).
+Find exported symbols that are not referenced anywhere else in the repository. Sorted by size so the biggest cleanup opportunities appear first.
 
-**Input:** Repo path only.
+**Input:** Repository path only.
 
-**Output:**
 ```
 Potential dead code (23 symbols, showing top 23 by size):
 
@@ -367,7 +365,7 @@ Total: 23 unused symbols (~1,847 lines shown)
 Note: decorator-dispatched symbols (@mcp.tool, @app.route, etc.) may be false positives.
 ```
 
-**Under the hood:** Calls `graph.find_dead_code()` which checks every exported symbol for incoming edges (calls, renders, imports). If a symbol is exported but nothing references it, it's flagged. Groups by file, sorts by line count descending. Warns about false positives for decorator-dispatched patterns (route handlers, MCP tools, etc.).
+Internally: calls `graph.find_dead_code()`, which checks exported symbols for incoming calls, renders, and imports. Results are grouped by file and sorted by line count descending. Decorator-dispatched symbols such as route handlers or MCP tools may appear as false positives.
 
 ```bash
 tempograph ./my-project --mode dead
@@ -377,11 +375,10 @@ tempograph ./my-project --mode dead
 
 ### `arch`
 
-**What it does:** Groups files into modules (top-level directories), shows each module's size/language/exports, then maps inter-module dependencies (both import edges and call/render edges).
+Summarize the repository as modules rather than individual files. Shows each module's size, language mix, exported surface area, and dependencies on other modules.
 
-**Input:** Repo path only.
+**Input:** Repository path only.
 
-**Output:**
 ```
 Architecture Overview:
 
@@ -396,7 +393,7 @@ Module dependencies:
   src-tauri → src(0)
 ```
 
-**Under the hood:** Groups files by their first path segment. Builds two maps: import edges between modules and call/render edges between modules. Merges them into a single dependency count. Identifies top exported symbols per module.
+Internally: groups files by first path segment, builds inter-module import counts plus call/render counts, then merges them into a single dependency summary. Top exported symbols are shown per module.
 
 ```bash
 tempograph ./my-project --mode arch
@@ -406,11 +403,10 @@ tempograph ./my-project --mode arch
 
 ### `stats`
 
-**What it does:** Raw numbers plus token cost estimates for each mode. Useful for understanding how much context each mode would consume if fed to an LLM.
+Repository totals plus token-cost estimates for each mode. Useful when Tempograph output is going to be passed to an LLM.
 
-**Input:** Repo path only.
+**Input:** Repository path only.
 
-**Output:**
 ```
 Build: 0.3s
 Files: 249, Symbols: 3830, Edges: 8241
@@ -420,11 +416,11 @@ Token costs:
   overview:  342
   map:       2,847
   symbols:   ~57,450 (est)
-  focused:   ~2,000-4,000 (query-dep)
-  lookup:    ~100-500 (question-dep)
+  focus:     ~2,000–4,000 (query-dep)
+  lookup:    ~100–500 (question-dep)
 ```
 
-**Under the hood:** Runs `render_overview` and `render_map` to get actual token counts via tiktoken. Estimates symbol mode cost at ~15 tokens per symbol. Focus and lookup are query-dependent so it shows ranges.
+Internally: runs `render_overview` and `render_map` to get actual token counts via tiktoken. Estimates symbols mode at roughly 15 tokens per symbol. `focus` and `lookup` are query-dependent, so Tempograph reports ranges instead of fixed counts.
 
 ```bash
 tempograph ./my-project --mode stats
@@ -434,7 +430,7 @@ tempograph ./my-project --mode stats
 
 ## MCP Server
 
-Tempograph ships an MCP server that gives AI agents structural awareness of your codebase. Instead of pattern-matching over raw text, agents can query the actual dependency graph.
+Tempograph includes an MCP server so AI agents can query the same structural model used by the CLI instead of scraping raw files repeatedly.
 
 ```bash
 tempograph-server
@@ -442,15 +438,15 @@ tempograph-server
 
 | Tool | Input | Output |
 |------|-------|--------|
-| `index_repo` | `repo_path` (string) | Builds graph, returns stats (file/symbol/edge counts) |
-| `overview` | `repo_path` | Same as CLI `overview` mode |
-| `focus` | `repo_path`, `query` | Same as CLI `focus` mode — BFS subgraph for the query |
-| `hotspots` | `repo_path` | Same as CLI `hotspots` mode — ranked risk list |
-| `blast_radius` | `repo_path`, `file_path` | Same as CLI `blast` mode — importers, callers, renderers |
-| `diff_context` | `repo_path` | Auto-detects changed files via `git diff`, renders full context |
-| `dead_code` | `repo_path` | Same as CLI `dead` mode — unreferenced exported symbols |
+| `index_repo` | `repo_path` (string) | Builds graph and returns stats (file/symbol/edge counts) |
+| `overview` | `repo_path` | Same as CLI overview mode |
+| `focus` | `repo_path`, `query` | Same as CLI focus mode — connected subgraph for a topic |
+| `hotspots` | `repo_path` | Same as CLI hotspots mode — ranked risk list |
+| `blast_radius` | `repo_path`, `file_path` | Same as CLI blast mode — importers, callers, renderers |
+| `diff_context` | `repo_path` | Auto-detects changed files via `git diff`, then renders structural context |
+| `dead_code` | `repo_path` | Same as CLI dead mode — unreferenced exported symbols |
 
-Add to your Claude settings (`~/.claude/settings.json`):
+Add it to Claude settings (`~/.claude/settings.json`):
 
 ```json
 {
@@ -464,6 +460,8 @@ Add to your Claude settings (`~/.claude/settings.json`):
 ```
 
 ## Python API
+
+The Python API exposes the same graph model used by the CLI and MCP server.
 
 ```python
 from tempograph import build_graph, CodeGraph
@@ -486,11 +484,11 @@ for edge in graph.edges:
     print(f"{edge.source_id} --{edge.kind.value}--> {edge.target_id}")
 ```
 
-Key `CodeGraph` methods:
+`CodeGraph` methods:
 - `graph.search_symbols(query)` — fuzzy search by name
 - `graph.find_symbol(name)` — exact match
 - `graph.callers_of(symbol_id)` — who calls this symbol
-- `graph.callees_of(symbol_id)` — what does this symbol call
+- `graph.callees_of(symbol_id)` — what this symbol calls
 - `graph.children_of(symbol_id)` — nested symbols (methods inside a class, etc.)
 - `graph.renderers_of(symbol_id)` — components that render this component
 - `graph.importers_of(file_path)` — files that import this file
@@ -500,14 +498,16 @@ Key `CodeGraph` methods:
 
 ## Incremental by Default
 
-Tempograph hashes file contents, not modification times. The cache (`.tempograph/cache.json`) maps each file's content hash to its parsed symbols and edges. On re-index:
+Tempograph keys its cache to file contents, not modification times. The cache in `.tempograph/cache.json` stores each file's content hash alongside its parsed symbols and edges.
 
-1. Hash every file in the repo
-2. Skip files whose hash matches the cache
-3. Re-parse only what actually changed
-4. Merge results into the full graph
+On re-index:
 
-Switch branches, rebase, cherry-pick — if the bytes haven't changed, the work isn't repeated.
+1. Hash every file in the repository.
+2. Skip files whose hash matches the cache.
+3. Re-parse only the files that changed.
+4. Merge the updated results into the full graph.
+
+Switch branches, rebase, cherry-pick — if the file contents are unchanged, Tempograph does not redo the work.
 
 ## License
 
