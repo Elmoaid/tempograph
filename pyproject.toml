@@ -23,6 +23,7 @@ dev = ["pytest>=8.0"]
 bench = [
     "anthropic>=0.40",
     "datasets>=3.0",
+    "httpx>=0.27",
 ]
 
 [project.scripts]
