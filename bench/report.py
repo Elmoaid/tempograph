@@ -136,6 +136,41 @@ def print_swebench_report(results: list[dict]):
     print("  run predictions through: python -m swebench.harness.run_evaluation")
 
 
+def print_nightly_timeseries():
+    """Show EM/ES trends across nightly benchmark runs."""
+    pattern = str(RESULTS_DIR / "nightly_*.jsonl")
+    files = sorted(glob.glob(pattern))
+    if len(files) < 2:
+        return
+
+    print("\n┌─────────────────────────────────────────────────────┐")
+    print("│         Nightly Trend                               │")
+    print("└─────────────────────────────────────────────────────┘\n")
+    print(f"  {'Date':<12} {'EM (base)':>10} {'EM (tgraph)':>12} {'Delta':>8} {'n':>5}")
+    print(f"  {'─' * 52}")
+
+    for f in files:
+        date = Path(f).stem.replace("nightly_", "")
+        results = load_results(f)
+        if not results:
+            continue
+        conditions = sorted(set(r.get("condition", "") for r in results))
+        n = len(results) // max(len(conditions), 1)
+        row = {"date": date, "n": n}
+        for cond in conditions:
+            cond_r = [r for r in results if r["condition"] == cond]
+            if cond_r:
+                agg = aggregate_metrics(cond_r)
+                row[cond] = agg["em"]
+
+        base = row.get("no_context", 0)
+        tgraph = row.get("tempograph", 0)
+        delta = tgraph - base
+        print(f"  {date:<12} {base:>9.1%} {tgraph:>11.1%} {delta:>+7.1%} {n:>5}")
+
+    print()
+
+
 def main():
     parser = argparse.ArgumentParser(description="Benchmark results report")
     parser.add_argument("--file", default=None, help="Results JSONL file")
@@ -161,6 +196,9 @@ def main():
     else:
         print("Unknown results format", file=sys.stderr)
         sys.exit(1)
+
+    # Show nightly trends if available
+    print_nightly_timeseries()
 
 
 if __name__ == "__main__":

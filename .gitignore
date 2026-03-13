@@ -10,3 +10,4 @@ build/
 .venv/
 bench/results/
 archive/
+.claude.local.md
