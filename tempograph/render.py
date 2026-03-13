@@ -200,18 +200,41 @@ def render_symbols(graph: CodeGraph) -> str:
     return "\n".join(lines)
 
 
+_MONOLITH_THRESHOLD = 1000
+
+
 def render_focused(graph: CodeGraph, query: str, *, max_tokens: int = 4000) -> str:
     """Task-focused rendering with BFS graph traversal.
     Starts from search results, then follows call/render/import edges
-    to build a connected subgraph relevant to the query."""
+    to build a connected subgraph relevant to the query.
+
+    For monolith files (>1000 lines), adds intra-file neighborhood context
+    and biases BFS toward cross-file edges to avoid getting trapped in one file."""
     seeds = graph.search_symbols(query)
     if not seeds:
         return f"No symbols matching '{query}'"
 
+    # Determine seed files to detect monolith bias
+    seed_files: set[str] = set()
+    for s in seeds[:10]:
+        fi = graph.files.get(s.file_path)
+        if fi and fi.line_count >= _MONOLITH_THRESHOLD:
+            seed_files.add(s.file_path)
+
     # BFS: expand from seed symbols following edges
+    # In monolith mode, cross-file edges go to front of queue, same-file to back
     seen_ids: set[str] = set()
     queue: list[tuple[Symbol, int]] = [(s, 0) for s in seeds[:10]]
     ordered: list[tuple[Symbol, int]] = []
+
+    def _enqueue(candidate: Symbol, depth: int) -> None:
+        if candidate.id in seen_ids:
+            return
+        # Cross-file edges get priority when seeds are in monolith files
+        if seed_files and candidate.file_path not in seed_files:
+            queue.insert(0, (candidate, depth))
+        else:
+            queue.append((candidate, depth))
 
     while queue and len(ordered) < 40:
         sym, depth = queue.pop(0)
@@ -221,18 +244,12 @@ def render_focused(graph: CodeGraph, query: str, *, max_tokens: int = 4000) -> s
         ordered.append((sym, depth))
 
         if depth < 2:
-            # Expand callers (who calls this?)
             for caller in graph.callers_of(sym.id)[:5]:
-                if caller.id not in seen_ids:
-                    queue.append((caller, depth + 1))
-            # Expand callees (what does this call?)
+                _enqueue(caller, depth + 1)
             for callee in graph.callees_of(sym.id)[:5]:
-                if callee.id not in seen_ids:
-                    queue.append((callee, depth + 1))
-            # Expand children
+                _enqueue(callee, depth + 1)
             for child in graph.children_of(sym.id)[:3]:
-                if child.id not in seen_ids:
-                    queue.append((child, depth + 1))
+                _enqueue(child, depth + 1)
 
     lines = [f"Focus: {query}", ""]
     seen_files: set[str] = set()
@@ -276,6 +293,22 @@ def render_focused(graph: CodeGraph, query: str, *, max_tokens: int = 4000) -> s
         token_count += block_tokens
         seen_files.add(sym.file_path)
 
+    # Monolith neighborhood: for seed symbols in large files, show nearby symbols
+    for sym, depth in ordered:
+        if depth > 0:
+            break  # only seeds
+        fi = graph.files.get(sym.file_path)
+        if not fi or fi.line_count < _MONOLITH_THRESHOLD:
+            continue
+        neighborhood = _monolith_neighborhood(graph, sym)
+        if neighborhood:
+            nb_block = "\n".join(neighborhood)
+            nb_tokens = count_tokens(nb_block)
+            if token_count + nb_tokens <= max_tokens:
+                lines.append("")
+                lines.extend(neighborhood)
+                token_count += nb_tokens
+
     # Related files with size warnings
     related = _find_related_files(graph, [s for s, _ in ordered[:10]])
     if related - seen_files:
@@ -288,6 +321,50 @@ def render_focused(graph: CodeGraph, query: str, *, max_tokens: int = 4000) -> s
                 lines.append(f"  {fp} ({fi.line_count} lines){tag}")
 
     return "\n".join(lines)
+
+
+def _monolith_neighborhood(graph: CodeGraph, seed: Symbol) -> list[str]:
+    """For a symbol in a large file, show its local neighborhood:
+    parent scope, siblings, and nearby symbols by line proximity."""
+    all_syms = graph.symbols_in_file(seed.file_path)
+    if len(all_syms) < 3:
+        return []
+
+    fi = graph.files.get(seed.file_path)
+    lines = [f"Neighborhood in {seed.file_path} ({fi.line_count if fi else '?'} lines):"]
+
+    # Parent scope
+    if seed.parent_id and seed.parent_id in graph.symbols:
+        parent = graph.symbols[seed.parent_id]
+        lines.append(f"  parent: {parent.kind.value} {parent.qualified_name} (L{parent.line_start}-{parent.line_end})")
+
+    # Siblings: same parent, sorted by line
+    siblings = [s for s in all_syms if s.parent_id == seed.parent_id and s.id != seed.id]
+    siblings.sort(key=lambda s: s.line_start)
+    if siblings:
+        # Show nearest siblings (up to 5 before and 5 after by line number)
+        before = [s for s in siblings if s.line_start < seed.line_start][-5:]
+        after = [s for s in siblings if s.line_start > seed.line_start][:5]
+        nearby = before + after
+        if nearby:
+            lines.append(f"  siblings ({len(siblings)} total, showing nearest):")
+            for s in nearby:
+                rel = "↑" if s.line_start < seed.line_start else "↓"
+                dist = abs(s.line_start - seed.line_start)
+                lines.append(f"    {rel} {s.kind.value} {s.name} L{s.line_start} ({dist}L away)")
+
+    # Top-level symbols by size (helps orient in the file)
+    top_level = sorted(
+        [s for s in all_syms if s.parent_id is None and s.line_count > 20],
+        key=lambda s: -s.line_count,
+    )[:8]
+    if top_level:
+        lines.append(f"  landmarks:")
+        for s in top_level:
+            marker = " ← YOU" if s.id == seed.id else ""
+            lines.append(f"    {s.kind.value} {s.name} L{s.line_start}-{s.line_end} ({s.line_count}L){marker}")
+
+    return lines
 
 
 def render_lookup(graph: CodeGraph, question: str) -> str:
@@ -399,8 +476,14 @@ def render_lookup(graph: CodeGraph, question: str) -> str:
     return f"No results for '{question}'."
 
 
-def render_blast_radius(graph: CodeGraph, file_path: str) -> str:
-    """Show what might break if a file is modified."""
+def render_blast_radius(graph: CodeGraph, file_path: str, query: str = "") -> str:
+    """Show what might break if a file or symbol is modified.
+
+    If query is given, shows blast radius for matching symbols instead of
+    the whole file — much more useful for monolith files."""
+    if query:
+        return _render_symbol_blast(graph, query)
+
     fi = graph.files.get(file_path)
     if not fi:
         return f"File '{file_path}' not found."
@@ -446,6 +529,47 @@ def render_blast_radius(graph: CodeGraph, file_path: str) -> str:
 
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
+
+    return "\n".join(lines)
+
+
+def _render_symbol_blast(graph: CodeGraph, query: str) -> str:
+    """Blast radius for specific symbols — targeted alternative to whole-file blast."""
+    matches = graph.search_symbols(query)
+    if not matches:
+        return f"No symbols matching '{query}'"
+
+    lines = [f"Symbol blast radius for '{query}':", ""]
+    for sym in matches[:5]:
+        loc = f"{sym.file_path}:{sym.line_start}-{sym.line_end}"
+        lines.append(f"● {sym.kind.value} {sym.qualified_name} — {loc}")
+
+        callers = graph.callers_of(sym.id)
+        if callers:
+            ext = [c for c in callers if c.file_path != sym.file_path]
+            local = [c for c in callers if c.file_path == sym.file_path]
+            if ext:
+                lines.append(f"  external callers ({len(ext)}):")
+                for c in ext[:8]:
+                    lines.append(f"    {c.file_path}:{c.line_start} — {c.qualified_name}")
+            if local:
+                lines.append(f"  same-file callers ({len(local)}):")
+                for c in local[:5]:
+                    lines.append(f"    L{c.line_start} — {c.qualified_name}")
+        else:
+            lines.append("  no callers")
+
+        renderers = graph.renderers_of(sym.id)
+        if renderers:
+            lines.append(f"  rendered by ({len(renderers)}):")
+            for r in renderers[:5]:
+                lines.append(f"    {r.file_path}:{r.line_start} — {r.qualified_name}")
+
+        children = graph.children_of(sym.id)
+        if children:
+            lines.append(f"  contains {len(children)} child symbol(s)")
+
+        lines.append("")
 
     return "\n".join(lines)
 

@@ -121,16 +121,18 @@ def hotspots(repo_path: str, top_n: int = 15) -> str:
 # ── Tool 5: Blast radius ────────────────────────────────────────────
 
 @mcp.tool()
-def blast_radius(repo_path: str, file_path: str) -> str:
-    """What breaks if you change this file? Shows importers, external callers,
-    component render chains, and cross-language bridges.
+def blast_radius(repo_path: str, file_path: str = "", query: str = "") -> str:
+    """What breaks if you change this file or symbol? Shows importers,
+    external callers, component render chains, and cross-language bridges.
 
-    Use the relative path from repo root: "src/lib/db.ts"
+    Pass file_path for whole-file blast radius: "src/lib/db.ts"
+    Pass query for symbol-level blast radius: "Sparkline.max"
+    For large monolith files, prefer query over file_path.
     """
     start = time.time()
     graph = _get_or_build_graph(repo_path)
-    output = render_blast_radius(graph, file_path)
-    _log_tool("blast_radius", repo_path, output, time.time() - start, file=file_path)
+    output = render_blast_radius(graph, file_path, query=query)
+    _log_tool("blast_radius", repo_path, output, time.time() - start, file=file_path, query=query)
     return output
 
 
