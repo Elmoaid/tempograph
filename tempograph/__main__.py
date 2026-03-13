@@ -109,7 +109,7 @@ def main(argv: list[str] | None = None) -> int:
         "symbols": lambda: render_symbols(graph),
         "focus": lambda: render_focused(graph, args.query or "main", max_tokens=args.max_tokens),
         "lookup": lambda: render_lookup(graph, args.query or ""),
-        "blast": lambda: render_blast_radius(graph, args.file or ""),
+        "blast": lambda: render_blast_radius(graph, args.file or "", query=args.query or ""),
         "diff": lambda: render_diff_context(graph, [f.strip() for f in (args.file or "").split(",") if f.strip()], max_tokens=args.max_tokens),
         "hotspots": lambda: render_hotspots(graph),
         "deps": lambda: render_dependencies(graph),
