@@ -32,7 +32,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("repo", help="Path to the repository root")
     parser.add_argument(
         "--mode", "-m",
-        choices=("overview", "map", "symbols", "focus", "lookup", "blast", "diff", "hotspots", "deps", "dead", "arch", "stats", "serve"),
+        choices=("overview", "map", "symbols", "focus", "lookup", "blast", "diff", "hotspots", "deps", "dead", "arch", "stats", "report", "serve"),
         default="overview",
         help="Rendering mode (default: overview)",
     )
@@ -41,9 +41,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-tokens", type=int, default=4000)
     parser.add_argument("--json", action="store_true", help="Output raw graph as JSON")
     parser.add_argument("--tokens", action="store_true", help="Show token count")
+    parser.add_argument("--no-log", action="store_true", help="Disable usage logging")
 
     args = parser.parse_args(argv)
     repo = str(Path(args.repo).resolve())
+
+    # Report mode: no graph needed
+    if args.mode == "report":
+        from .report import generate_report
+        print(generate_report(repo))
+        return 0
 
     print(f"Building graph for {repo}...", file=sys.stderr)
     start = time.time()
@@ -117,6 +124,22 @@ def main(argv: list[str] | None = None) -> int:
     if args.tokens:
         tokens = count_tokens(output)
         print(f"\n[{tokens:,} tokens]", file=sys.stderr)
+
+    # Usage logging
+    if not args.no_log:
+        from .telemetry import log_usage, is_empty_result
+        tokens = count_tokens(output) if not args.tokens else tokens  # reuse if already computed
+        log_usage(
+            repo,
+            source="cli",
+            mode=args.mode,
+            query=args.query,
+            file=args.file,
+            symbols=stats["symbols"],
+            tokens=tokens,
+            duration_ms=int(elapsed * 1000),
+            empty=is_empty_result(output),
+        )
 
     return 0
 
