@@ -753,37 +753,83 @@ def render_architecture(graph: CodeGraph) -> str:
     return "\n".join(lines)
 
 
+_DISPATCH_PATTERNS = ("handle_", "on_", "test_", "route", "command", "hook", "middleware", "plugin")
+
+
+def _dead_code_confidence(sym: Symbol, graph: CodeGraph) -> int:
+    """Score 0-100: how confident we are this symbol is truly dead."""
+    score = 0
+
+    # No callers at all (even same-file) — strong signal
+    if not graph.callers_of(sym.id):
+        score += 30
+
+    # Parent file has no importers — nothing depends on this file
+    if not graph.importers_of(sym.file_path):
+        score += 25
+
+    # No render relationships
+    if not graph.renderers_of(sym.id):
+        score += 10
+
+    # Larger symbols are higher-value cleanup targets
+    if sym.line_count > 50:
+        score += 15
+
+    # Name looks like a dispatch target — likely wired at runtime
+    name_lower = sym.name.lower()
+    if any(name_lower.startswith(p) or p in name_lower for p in _DISPATCH_PATTERNS):
+        score -= 20
+
+    # Has docstring — suggests intentional public API
+    if sym.doc:
+        score -= 15
+
+    # Parent is not cross-file referenced — parent already dead, this is redundant noise
+    if sym.parent_id and not graph.callers_of(sym.parent_id):
+        score -= 10
+
+    return max(0, min(100, score))
+
+
 def render_dead_code(graph: CodeGraph, *, max_symbols: int = 50) -> str:
     """Find exported symbols that appear to be unused (never referenced externally)."""
     dead = graph.find_dead_code()
     if not dead:
         return "No dead code detected — all exported symbols are referenced."
 
-    # Sort by size (biggest dead code first — most cleanup value)
-    dead.sort(key=lambda s: -(s.line_end - s.line_start))
-    shown = dead[:max_symbols]
+    # Score each symbol
+    scored = [(sym, _dead_code_confidence(sym, graph)) for sym in dead]
+    scored.sort(key=lambda x: (-x[1], -x[0].line_count))
 
-    lines = [f"Potential dead code ({len(dead)} symbols, showing top {len(shown)} by size):", ""]
+    high = [(s, c) for s, c in scored if c >= 70]
+    medium = [(s, c) for s, c in scored if 40 <= c < 70]
+    low = [(s, c) for s, c in scored if c < 40]
 
-    # Group by file
-    by_file: dict[str, list] = {}
-    for sym in shown:
-        by_file.setdefault(sym.file_path, []).append(sym)
-
+    lines = [f"Potential dead code ({len(dead)} symbols):", ""]
     total_lines = 0
-    for fp in sorted(by_file):
-        syms = sorted(by_file[fp], key=lambda s: s.line_start)
-        lines.append(f"{fp}:")
-        for sym in syms:
-            lc = sym.line_count
-            total_lines += lc
-            lines.append(f"  {sym.kind.value} {sym.qualified_name} (L{sym.line_start}-{sym.line_end}, {lc} lines)")
-        lines.append("")
 
-    if len(dead) > max_symbols:
-        lines.append(f"... and {len(dead) - max_symbols} more small symbols")
+    for label, tier in [("HIGH CONFIDENCE (safe to remove)", high),
+                        ("MEDIUM CONFIDENCE (review before removing)", medium),
+                        ("LOW CONFIDENCE (likely false positives)", low)]:
+        if not tier:
+            continue
+        shown = tier[:max_symbols]
+        lines.append(f"{label}:")
+        lines.append("")
+        by_file: dict[str, list[tuple[Symbol, int]]] = {}
+        for sym, conf in shown:
+            by_file.setdefault(sym.file_path, []).append((sym, conf))
+        for fp in sorted(by_file):
+            lines.append(f"  {fp}:")
+            for sym, conf in sorted(by_file[fp], key=lambda x: x[0].line_start):
+                lc = sym.line_count
+                total_lines += lc
+                lines.append(f"    {sym.kind.value} {sym.qualified_name} (L{sym.line_start}-{sym.line_end}, {lc} lines) [confidence: {conf}]")
+            lines.append("")
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
-    lines.append("Note: decorator-dispatched symbols (@mcp.tool, @app.route, etc.) may be false positives.")
+    lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
     return "\n".join(lines)
 
 

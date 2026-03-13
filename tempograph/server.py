@@ -20,6 +20,7 @@ from .render import (
     render_hotspots,
     render_overview,
 )
+from .telemetry import is_empty_result, log_feedback, log_usage
 from .types import CodeGraph
 
 mcp = FastMCP("tempograph")
@@ -37,6 +38,22 @@ def _get_or_build_graph(repo_path: str) -> CodeGraph:
     return _graphs[p]
 
 
+def _log_tool(tool_name: str, repo_path: str, output: str, duration: float, **extra) -> None:
+    """Log an MCP tool invocation."""
+    p = str(Path(repo_path).resolve())
+    log_usage(
+        p,
+        source="mcp",
+        tool=tool_name,
+        symbols=_graphs[p].stats["symbols"] if p in _graphs else 0,
+        tokens=count_tokens(output),
+        duration_ms=int(duration * 1000),
+        empty=is_empty_result(output),
+        cached=p in _build_times and _build_times[p] == 0,
+        **extra,
+    )
+
+
 # ── Tool 1: Build + orient ──────────────────────────────────────────
 
 @mcp.tool()
@@ -50,7 +67,9 @@ def index_repo(repo_path: str) -> str:
     start = time.time()
     graph = _get_or_build_graph(p)
     elapsed = time.time() - start
-    return f"Indexed in {elapsed:.1f}s\n\n{render_overview(graph)}"
+    output = f"Indexed in {elapsed:.1f}s\n\n{render_overview(graph)}"
+    _log_tool("index_repo", p, output, elapsed)
+    return output
 
 
 # ── Tool 2: Overview ────────────────────────────────────────────────
@@ -60,8 +79,11 @@ def overview(repo_path: str) -> str:
     """Repo orientation: project type, languages, biggest/most complex files,
     module dependencies, circular import warnings. ~500 tokens.
     Use this to understand the codebase before diving in."""
+    start = time.time()
     graph = _get_or_build_graph(repo_path)
-    return render_overview(graph)
+    output = render_overview(graph)
+    _log_tool("overview", repo_path, output, time.time() - start)
+    return output
 
 
 # ── Tool 3: Focus ───────────────────────────────────────────────────
@@ -75,8 +97,11 @@ def focus(repo_path: str, query: str, max_tokens: int = 4000) -> str:
     Examples: "authentication middleware", "Canvas command palette",
     "database migrations", "AI assistant toolbar"
     """
+    start = time.time()
     graph = _get_or_build_graph(repo_path)
-    return render_focused(graph, query, max_tokens=max_tokens)
+    output = render_focused(graph, query, max_tokens=max_tokens)
+    _log_tool("focus", repo_path, output, time.time() - start, query=query)
+    return output
 
 
 # ── Tool 4: Hotspots ────────────────────────────────────────────────
@@ -86,8 +111,11 @@ def hotspots(repo_path: str, top_n: int = 15) -> str:
     """Find the riskiest symbols: highest coupling, complexity, and cross-file
     callers. These are where bugs cluster and changes are most dangerous.
     Use before modifying unfamiliar code to know what to be careful around."""
+    start = time.time()
     graph = _get_or_build_graph(repo_path)
-    return render_hotspots(graph, top_n=top_n)
+    output = render_hotspots(graph, top_n=top_n)
+    _log_tool("hotspots", repo_path, output, time.time() - start)
+    return output
 
 
 # ── Tool 5: Blast radius ────────────────────────────────────────────
@@ -99,8 +127,11 @@ def blast_radius(repo_path: str, file_path: str) -> str:
 
     Use the relative path from repo root: "src/lib/db.ts"
     """
+    start = time.time()
     graph = _get_or_build_graph(repo_path)
-    return render_blast_radius(graph, file_path)
+    output = render_blast_radius(graph, file_path)
+    _log_tool("blast_radius", repo_path, output, time.time() - start, file=file_path)
+    return output
 
 
 # ── Tool 6: Diff context ────────────────────────────────────────────
@@ -116,6 +147,7 @@ def diff_context(repo_path: str, changed_files: str = "", scope: str = "unstaged
 
     Shows external callers, importers, component tree impact, key symbols.
     """
+    start = time.time()
     graph = _get_or_build_graph(repo_path)
 
     if changed_files.strip():
@@ -140,7 +172,9 @@ def diff_context(repo_path: str, changed_files: str = "", scope: str = "unstaged
             return f"No changed files (scope={scope}, branch={branch})."
 
     header = f"Impact of {len(files)} changed file{'s' if len(files) != 1 else ''}:\n"
-    return header + render_diff_context(graph, files, max_tokens=max_tokens)
+    output = header + render_diff_context(graph, files, max_tokens=max_tokens)
+    _log_tool("diff_context", repo_path, output, time.time() - start, scope=scope)
+    return output
 
 
 # ── Tool 7: Dead code ───────────────────────────────────────────────
@@ -150,8 +184,31 @@ def dead_code(repo_path: str) -> str:
     """Find exported symbols never referenced by other files.
     Potential cleanup targets — unused exports, orphaned functions,
     dead interfaces. Respects Python __all__ for precise export tracking."""
+    start = time.time()
     graph = _get_or_build_graph(repo_path)
-    return render_dead_code(graph)
+    output = render_dead_code(graph)
+    _log_tool("dead_code", repo_path, output, time.time() - start)
+    return output
+
+
+# ── Tool 8: Feedback ───────────────────────────────────────────────
+
+@mcp.tool()
+def report_feedback(repo_path: str, mode: str, helpful: bool, note: str = "") -> str:
+    """Report whether tempograph output was helpful for your current task.
+    Call after using any tempograph tool. Helps improve the product.
+
+    mode: which tool you used (overview, focus, hotspots, blast_radius, diff_context, dead_code)
+    helpful: true if the output helped, false if not
+    note: optional — what was missing or what worked well
+    """
+    log_feedback(
+        repo_path,
+        mode=mode,
+        helpful=helpful,
+        note=note,
+    )
+    return f"Feedback recorded for '{mode}' (helpful={helpful}). Thanks!"
 
 
 def run_server():
