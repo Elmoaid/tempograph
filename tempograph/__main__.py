@@ -24,7 +24,36 @@ from .render import (
 )
 
 
+def _run_feedback(argv: list[str]) -> int:
+    """Handle: python3 -m tempograph feedback <repo> <mode> <helpful> [note]"""
+    parser = argparse.ArgumentParser(
+        prog="tempograph feedback",
+        description="Report whether tempograph output was helpful.",
+    )
+    parser.add_argument("repo", help="Path to the repository that was analyzed")
+    parser.add_argument("mode", help="Which mode was used (overview, focus, blast, dead, hotspots, diff, etc.)")
+    parser.add_argument("helpful", choices=("true", "false"), help="Was the output helpful?")
+    parser.add_argument("note", nargs="?", default="", help="1-2 sentences: what worked, what was missing")
+    args = parser.parse_args(argv)
+
+    from .telemetry import log_feedback
+    log_feedback(
+        str(Path(args.repo).resolve()),
+        mode=args.mode,
+        helpful=args.helpful == "true",
+        note=args.note,
+    )
+    print(f"Feedback recorded for '{args.mode}' (helpful={args.helpful}). Thanks!")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
+    raw = argv if argv is not None else sys.argv[1:]
+
+    # Intercept 'feedback' subcommand before argparse (avoids graph build)
+    if raw and raw[0] == "feedback":
+        return _run_feedback(raw[1:])
+
     parser = argparse.ArgumentParser(
         prog="tempograph",
         description="Build and query a semantic code graph for any repository.",
@@ -43,7 +72,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--tokens", action="store_true", help="Show token count")
     parser.add_argument("--no-log", action="store_true", help="Disable usage logging")
 
-    args = parser.parse_args(argv)
+    args = parser.parse_args(raw)
     repo = str(Path(args.repo).resolve())
 
     # Report mode: no graph needed

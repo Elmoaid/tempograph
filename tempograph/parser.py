@@ -16,7 +16,7 @@ import tree_sitter_go as tsgo
 from tree_sitter import Language as TSLanguage, Parser, Node
 
 from .types import (
-    CodeGraph, Edge, EdgeKind, FileInfo, Language, Symbol, SymbolKind,
+    Tempo, Edge, EdgeKind, FileInfo, Language, Symbol, SymbolKind,
     EXTENSION_TO_LANGUAGE,
 )
 
@@ -102,6 +102,14 @@ class FileParser:
         tree = parser.parse(self.source)
 
         self._walk(tree.root_node)
+
+        # Detect dynamic import() expressions — e.g. lazy(() => import('./Foo'))
+        # Runs once per file via regex since tree-sitter treats import() as call_expression
+        if self.language in (Language.TYPESCRIPT, Language.TSX, Language.JAVASCRIPT, Language.JSX):
+            import re
+            source_str = self.source.decode("utf-8", errors="replace") if isinstance(self.source, bytes) else self.source
+            for m in re.finditer(r'''import\(\s*['"]([^'"]+)['"]\s*\)''', source_str):
+                self.imports.append(f"import '{m.group(1)}'")
 
         # Apply Python __all__ export narrowing
         if self._dunder_all is not None:
@@ -1110,7 +1118,7 @@ class FileParser:
         "min", "max", "floor", "ceil", "round", "abs", "sqrt", "pow", "random",
         "now", "resolve", "reject", "all", "allSettled", "race", "any",
         "then", "catch", "finally",
-        "createElement", "createRef", "createContext", "forwardRef", "memo", "lazy",
+        "createElement", "createRef", "createContext", "forwardRef", "memo",
         "get", "set", "has", "delete", "clear", "add", "size",
         "match", "replace", "replaceAll", "split", "trim", "trimStart", "trimEnd",
         "startsWith", "endsWith", "padStart", "padEnd", "repeat", "charAt",
@@ -1211,5 +1219,10 @@ class FileParser:
                             EdgeKind.CALLS, from_id, target,
                             node.start_point[0] + 1,
                         ))
+        # Traverse spread elements — e.g. ...createSlice(...args) inside object literals
+        if node.type == "spread_element":
+            for child in node.children:
+                self._scan_calls(child, from_id, depth=depth + 1)
+            return
         for child in node.children:
             self._scan_calls(child, from_id, depth=depth + 1)

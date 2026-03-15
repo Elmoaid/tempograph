@@ -9,6 +9,10 @@ from pathlib import Path
 USAGE_FILE = "usage.jsonl"
 FEEDBACK_FILE = "feedback.jsonl"
 
+# Central store — all telemetry from every repo copies here for cross-repo analysis
+# Use ~/.tempograph/global/ so it works regardless of where the package is installed
+CENTRAL_DIR = Path.home() / ".tempograph" / "global"
+
 
 def _append_jsonl(file_path: Path, data: dict) -> None:
     """Append a single JSON line to a file. Creates parent dirs if needed."""
@@ -33,17 +37,19 @@ def _telemetry_dir(repo_path: str) -> Path:
 
 
 def log_usage(repo_path: str, **kwargs) -> None:
-    """Log a tool/CLI invocation to .tempograph/usage.jsonl."""
+    """Log a tool/CLI invocation to local .tempograph/ and central global store."""
     entry = _base_entry(repo_path)
     entry.update(kwargs)
     _append_jsonl(_telemetry_dir(repo_path) / USAGE_FILE, entry)
+    _append_jsonl(CENTRAL_DIR / USAGE_FILE, entry)
 
 
 def log_feedback(repo_path: str, **kwargs) -> None:
-    """Log agent feedback to .tempograph/feedback.jsonl."""
+    """Log agent feedback to local .tempograph/ and central global store."""
     entry = _base_entry(repo_path)
     entry.update(kwargs)
     _append_jsonl(_telemetry_dir(repo_path) / FEEDBACK_FILE, entry)
+    _append_jsonl(CENTRAL_DIR / FEEDBACK_FILE, entry)
 
 
 def is_empty_result(output: str) -> bool:

@@ -21,15 +21,15 @@ from .render import (
     render_overview,
 )
 from .telemetry import is_empty_result, log_feedback, log_usage
-from .types import CodeGraph
+from .types import Tempo
 
 mcp = FastMCP("tempograph")
 
-_graphs: dict[str, CodeGraph] = {}
+_graphs: dict[str, Tempo] = {}
 _build_times: dict[str, float] = {}
 
 
-def _get_or_build_graph(repo_path: str) -> CodeGraph:
+def _get_or_build_graph(repo_path: str) -> Tempo:
     p = str(Path(repo_path).resolve())
     if p not in _graphs:
         start = time.time()
