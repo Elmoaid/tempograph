@@ -6,7 +6,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-MODEL="${1:-gpt-4o-mini}"
+MODEL="${1:-qwen2.5-coder:32b}"
 DATE=$(date +%Y-%m-%d)
 OUTPUT="bench/results/nightly_${DATE}.jsonl"
 
