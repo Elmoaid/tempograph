@@ -1,4 +1,4 @@
-"""Render a CodeGraph into agent-consumable context.
+"""Render a Tempo into agent-consumable context.
 
 Multiple rendering modes, each optimized for different agent needs:
 - overview: high-level repo summary (cheapest)
@@ -14,7 +14,7 @@ from collections import defaultdict
 
 import tiktoken
 
-from .types import CodeGraph, EdgeKind, FileInfo, Language, Symbol, SymbolKind
+from .types import Tempo, EdgeKind, FileInfo, Language, Symbol, SymbolKind
 
 _ENC = tiktoken.get_encoding("cl100k_base")
 
@@ -23,7 +23,7 @@ def count_tokens(text: str) -> int:
     return len(_ENC.encode(text))
 
 
-def _find_entry_points(graph: CodeGraph) -> list[str]:
+def _find_entry_points(graph: Tempo) -> list[str]:
     """Find actual execution entry points — where the program starts.
     These are what agents need to understand the architecture."""
     entries: list[str] = []
@@ -58,7 +58,7 @@ def _find_entry_points(graph: CodeGraph) -> list[str]:
     return entries[:15]  # Cap at 15
 
 
-def render_overview(graph: CodeGraph) -> str:
+def render_overview(graph: Tempo) -> str:
     """Cheapest mode: repo orientation — stats, entry points, key files, structure."""
     stats = graph.stats
     lines = [f"repo: {graph.root.rsplit('/', 1)[-1]}"]
@@ -120,7 +120,7 @@ def render_overview(graph: CodeGraph) -> str:
     return "\n".join(lines)
 
 
-def render_map(graph: CodeGraph, *, max_symbols_per_file: int = 8) -> str:
+def render_map(graph: Tempo, *, max_symbols_per_file: int = 8) -> str:
     """File tree with top symbols per file. Good for orientation."""
     lines = []
 
@@ -167,7 +167,7 @@ def render_map(graph: CodeGraph, *, max_symbols_per_file: int = 8) -> str:
     return "\n".join(lines)
 
 
-def render_symbols(graph: CodeGraph) -> str:
+def render_symbols(graph: Tempo) -> str:
     """Full symbol index — signatures, locations, relationships."""
     lines = []
     by_file: dict[str, list[Symbol]] = defaultdict(list)
@@ -203,7 +203,7 @@ def render_symbols(graph: CodeGraph) -> str:
 _MONOLITH_THRESHOLD = 1000
 
 
-def render_focused(graph: CodeGraph, query: str, *, max_tokens: int = 4000) -> str:
+def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     """Task-focused rendering with BFS graph traversal.
     Starts from search results, then follows call/render/import edges
     to build a connected subgraph relevant to the query.
@@ -323,7 +323,7 @@ def render_focused(graph: CodeGraph, query: str, *, max_tokens: int = 4000) -> s
     return "\n".join(lines)
 
 
-def _monolith_neighborhood(graph: CodeGraph, seed: Symbol) -> list[str]:
+def _monolith_neighborhood(graph: Tempo, seed: Symbol) -> list[str]:
     """For a symbol in a large file, show its local neighborhood:
     parent scope, siblings, and nearby symbols by line proximity."""
     all_syms = graph.symbols_in_file(seed.file_path)
@@ -367,7 +367,7 @@ def _monolith_neighborhood(graph: CodeGraph, seed: Symbol) -> list[str]:
     return lines
 
 
-def render_lookup(graph: CodeGraph, question: str) -> str:
+def render_lookup(graph: Tempo, question: str) -> str:
     """Answer a specific question about the codebase."""
     q = question.lower()
 
@@ -476,7 +476,7 @@ def render_lookup(graph: CodeGraph, question: str) -> str:
     return f"No results for '{question}'."
 
 
-def render_blast_radius(graph: CodeGraph, file_path: str, query: str = "") -> str:
+def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
     """Show what might break if a file or symbol is modified.
 
     If query is given, shows blast radius for matching symbols instead of
@@ -533,7 +533,7 @@ def render_blast_radius(graph: CodeGraph, file_path: str, query: str = "") -> st
     return "\n".join(lines)
 
 
-def _render_symbol_blast(graph: CodeGraph, query: str) -> str:
+def _render_symbol_blast(graph: Tempo, query: str) -> str:
     """Blast radius for specific symbols — targeted alternative to whole-file blast."""
     matches = graph.search_symbols(query)
     if not matches:
@@ -575,7 +575,7 @@ def _render_symbol_blast(graph: CodeGraph, query: str) -> str:
 
 
 
-def _find_related_files(graph: CodeGraph, symbols: list[Symbol]) -> set[str]:
+def _find_related_files(graph: Tempo, symbols: list[Symbol]) -> set[str]:
     """Find files related to a set of symbols via edges."""
     files: set[str] = set()
     for sym in symbols:
@@ -586,7 +586,7 @@ def _find_related_files(graph: CodeGraph, symbols: list[Symbol]) -> set[str]:
     return files
 
 
-def render_diff_context(graph: CodeGraph, changed_files: list[str], *, max_tokens: int = 6000) -> str:
+def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: int = 6000) -> str:
     """Given changed files, render everything an agent needs: affected symbols,
     external callers, importers, component tree impact, and blast radius."""
     lines = [f"Diff context for {len(changed_files)} changed file(s):", ""]
@@ -687,7 +687,7 @@ def render_diff_context(graph: CodeGraph, changed_files: list[str], *, max_token
     return "\n".join(lines)
 
 
-def render_hotspots(graph: CodeGraph, *, top_n: int = 20) -> str:
+def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
     """Find the most interconnected, complex, high-risk symbols."""
     scores: list[tuple[float, Symbol]] = []
 
@@ -759,7 +759,7 @@ def render_hotspots(graph: CodeGraph, *, top_n: int = 20) -> str:
     return "\n".join(lines)
 
 
-def render_dependencies(graph: CodeGraph) -> str:
+def render_dependencies(graph: Tempo) -> str:
     """Render dependency analysis: circular imports and layer structure."""
     lines = ["Dependency Analysis:", ""]
 
@@ -789,7 +789,7 @@ def render_dependencies(graph: CodeGraph) -> str:
     return "\n".join(lines)
 
 
-def render_architecture(graph: CodeGraph) -> str:
+def render_architecture(graph: Tempo) -> str:
     """High-level architecture view: modules, their roles, and inter-module dependencies."""
     # Group files into modules (top-level directories)
     modules: dict[str, list[str]] = {}
@@ -880,7 +880,7 @@ def render_architecture(graph: CodeGraph) -> str:
 _DISPATCH_PATTERNS = ("handle_", "on_", "test_", "route", "command", "hook", "middleware", "plugin")
 
 
-def _dead_code_confidence(sym: Symbol, graph: CodeGraph) -> int:
+def _dead_code_confidence(sym: Symbol, graph: Tempo) -> int:
     """Score 0-100: how confident we are this symbol is truly dead."""
     score = 0
 
@@ -913,10 +913,19 @@ def _dead_code_confidence(sym: Symbol, graph: CodeGraph) -> int:
     if sym.parent_id and not graph.callers_of(sym.parent_id):
         score -= 10
 
+    # Single-component file — likely lazy-loaded, lower confidence
+    if sym.kind == SymbolKind.COMPONENT and sym.exported:
+        siblings = [
+            s for s in graph.symbols.values()
+            if s.file_path == sym.file_path and s.kind == SymbolKind.COMPONENT
+        ]
+        if len(siblings) == 1:
+            score -= 20
+
     return max(0, min(100, score))
 
 
-def render_dead_code(graph: CodeGraph, *, max_symbols: int = 50) -> str:
+def render_dead_code(graph: Tempo, *, max_symbols: int = 50) -> str:
     """Find exported symbols that appear to be unused (never referenced externally)."""
     dead = graph.find_dead_code()
     if not dead:

@@ -122,7 +122,7 @@ class FileInfo:
 
 
 @dataclass
-class CodeGraph:
+class Tempo:
     root: str
     files: dict[str, FileInfo] = field(default_factory=dict)
     symbols: dict[str, Symbol] = field(default_factory=dict)
@@ -299,9 +299,9 @@ class CodeGraph:
                 continue
             if sym.name in ("main", "__init__", "__main__", "init", "Main"):
                 continue
-            # For top-level symbols: dead if no cross-file references
+            # For top-level symbols: dead if no cross-file references AND no same-file references
             if not sym.parent_id:
-                if sym.id not in referenced_cross_file:
+                if sym.id not in referenced_cross_file and sym.id not in referenced_any:
                     dead.append(sym)
             else:
                 # For methods: dead if neither the method itself NOR via parent is cross-file referenced

@@ -1,4 +1,4 @@
-"""Build a CodeGraph from a repository root."""
+"""Build a Tempo from a repository root."""
 from __future__ import annotations
 
 import fnmatch
@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Sequence
 
 from .cache import check_cache, load_cache, make_cache_entry, save_cache
-from .types import CodeGraph, Edge, EdgeKind, FileInfo, Language, Symbol, SymbolKind, EXTENSION_TO_LANGUAGE
+from .types import Tempo, Edge, EdgeKind, FileInfo, Language, Symbol, SymbolKind, EXTENSION_TO_LANGUAGE
 from .parser import FileParser
 
 DEFAULT_IGNORE_DIRS = frozenset({
@@ -38,9 +38,9 @@ def build_graph(
     include_patterns: Sequence[str] | None = None,
     exclude_patterns: Sequence[str] | None = None,
     use_cache: bool = True,
-) -> CodeGraph:
+) -> Tempo:
     root = Path(root).resolve()
-    graph = CodeGraph(root=str(root))
+    graph = Tempo(root=str(root))
 
     # Detect Tauri project: has src-tauri/ or tauri.conf.json
     is_tauri = (root / "src-tauri").is_dir() or (root / "tauri.conf.json").exists()
@@ -182,7 +182,7 @@ def _walk_files(
             yield file_path
 
 
-def _resolve_edges(graph: CodeGraph) -> None:
+def _resolve_edges(graph: Tempo) -> None:
     """Resolve symbolic call targets to actual symbol IDs where possible.
     Uses scope-aware resolution: same file > imported file > exported symbol > any."""
     # Build a name→id lookup
@@ -277,7 +277,7 @@ def _resolve_edges(graph: CodeGraph) -> None:
     graph.edges = resolved
 
 
-def _resolve_imports(graph: CodeGraph, root: Path) -> None:
+def _resolve_imports(graph: Tempo, root: Path) -> None:
     """Create IMPORTS edges by resolving import paths to actual files."""
     import re
 
