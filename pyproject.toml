@@ -32,3 +32,7 @@ tempograph-server = "tempograph.server:run_server"
 
 [tool.hatch.build.targets.wheel]
 packages = ["tempograph"]
+
+[tool.pytest.ini_options]
+norecursedirs = ["archive", "bench", "node_modules", ".git", "tempo/ui", "dist", ".tempograph"]
+testpaths = ["."]
