@@ -387,15 +387,15 @@ def file_map(repo_path: str, max_symbols_per_file: int = 8, max_tokens: int = 40
     """File tree with top symbols per file. Good for orientation and understanding
     project structure. Shows directory groupings, file sizes, and key symbols.
 
-    Default max_tokens=4000 prevents context overflow. Set 0 for unlimited.
     Use overview for a cheaper orientation, or focus for task-specific context.
 
     max_symbols_per_file: how many symbols to show per file (default 8)
-    max_tokens: cap output (default 4000, set 0 for unlimited)
+    max_tokens: cap output (default 4000; 0 = use default)
     exclude_dirs: comma-separated directory prefixes to skip
     output_format: "text" (default) or "json" for structured response"""
+    cap = max_tokens if max_tokens > 0 else 4000
     return _run_tool("file_map", repo_path, output_format,
-                     lambda g: render_map(g, max_symbols_per_file=max_symbols_per_file, max_tokens=max_tokens),
+                     lambda g: render_map(g, max_symbols_per_file=max_symbols_per_file, max_tokens=cap),
                      exclude_dirs=exclude_dirs)
 
 

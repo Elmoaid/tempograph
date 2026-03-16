@@ -139,7 +139,7 @@ def main(argv: list[str] | None = None) -> int:
 
     mode_map = {
         "overview": lambda: render_overview(graph),
-        "map": lambda: render_map(graph),
+        "map": lambda: render_map(graph, max_tokens=args.max_tokens),
         "symbols": lambda: render_symbols(graph, max_tokens=args.max_tokens),
         "focus": lambda: render_focused(graph, args.query or "main", max_tokens=args.max_tokens),
         "lookup": lambda: render_lookup(graph, args.query or ""),
