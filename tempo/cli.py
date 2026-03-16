@@ -54,7 +54,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Build mode choices from registered plugins
     plugin_modes = sorted(reg.status()["modes"].keys())
-    all_modes = plugin_modes + ["stats", "report", "serve", "plugins"]
+    all_modes = plugin_modes + ["stats", "prepare", "report", "serve", "plugins"]
 
     parser = argparse.ArgumentParser(
         prog="tempo",
@@ -131,6 +131,12 @@ def main(argv: list[str] | None = None) -> int:
         ov = render_overview(graph)
         mp = render_map(graph)
         print(f"Build: {elapsed:.1f}s\nFiles: {stats['files']}, Symbols: {stats['symbols']}, Edges: {stats['edges']}\nLines: {stats['total_lines']:,}\n\nToken costs:\n  overview:  {count_tokens(ov):,}\n  map:       {count_tokens(mp):,}")
+        return 0
+
+    if args.mode == "prepare":
+        from tempograph.render import render_prepare
+        output = render_prepare(graph, args.query or "understand this codebase", args.max_tokens, args.task_type or "")
+        print(output)
         return 0
 
     # Run via plugin registry

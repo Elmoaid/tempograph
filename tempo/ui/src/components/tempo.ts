@@ -3,19 +3,28 @@ import type { TempoResult } from "../App";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let invoke: ((cmd: string, args?: Record<string, unknown>) => Promise<any>) | null = null;
 
+const _fallback = async () => ({
+  success: false,
+  output: "",
+  mode: "",
+});
+
 async function getInvoke() {
   if (invoke) return invoke;
+  // Check if Tauri runtime is available via window globals (instant, no async)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  if (!(window as any).__TAURI_INTERNALS__) {
+    invoke = _fallback;
+    return invoke;
+  }
   try {
     const tauri = await import("@tauri-apps/api/core");
+    if (typeof tauri.invoke !== "function") throw new Error("no invoke");
     invoke = tauri.invoke;
   } catch {
-    invoke = async () => ({
-      success: false,
-      output: "Tauri runtime not available. Run with: pnpm tauri dev",
-      mode: "",
-    });
+    invoke = _fallback;
   }
-  return invoke!;
+  return invoke;
 }
 
 export async function runTempo(

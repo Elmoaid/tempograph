@@ -13,6 +13,9 @@ import tree_sitter_typescript as tstypescript
 import tree_sitter_javascript as tsjavascript
 import tree_sitter_rust as tsrust
 import tree_sitter_go as tsgo
+import tree_sitter_java as tsjava
+import tree_sitter_c_sharp as tscsharp
+import tree_sitter_ruby as tsruby
 from tree_sitter import Language as TSLanguage, Parser, Node
 
 from .types import (
@@ -35,6 +38,9 @@ def _get_ts_language(lang: Language) -> TSLanguage | None:
         Language.JSX: tsjavascript.language,
         Language.RUST: tsrust.language,
         Language.GO: tsgo.language,
+        Language.JAVA: tsjava.language,
+        Language.CSHARP: tscsharp.language,
+        Language.RUBY: tsruby.language,
     }
     factory = mapping.get(lang)
     if factory is None:
@@ -363,7 +369,11 @@ class FileParser:
         for child in node.children:
             t = child.type
             if t in ("import_statement", "import"):
-                self.imports.append(_node_text(child, self.source).strip())
+                text = _node_text(child, self.source).strip()
+                # Skip type-only imports — they have no runtime impact
+                if text.startswith("import type "):
+                    continue
+                self.imports.append(text)
             elif t == "export_statement":
                 self._handle_js_export(child)
             elif t in ("function_declaration", "generator_function_declaration"):
@@ -1098,6 +1108,550 @@ class FileParser:
                                             member.start_point[0] + 1,
                                         ))
 
+    # ── Java ───────────────────────────────────────────────
+
+    def _handle_java(self, node: Node) -> None:
+        for child in node.children:
+            t = child.type
+            if t == "import_declaration":
+                self.imports.append(_node_text(child, self.source).strip())
+            elif t == "class_declaration":
+                self._handle_java_class(child)
+            elif t == "interface_declaration":
+                self._handle_java_interface(child)
+            elif t == "enum_declaration":
+                self._handle_java_enum(child)
+
+    def _handle_java_class(self, node: Node) -> None:
+        name_node = node.child_by_field_name("name")
+        if not name_node:
+            return
+        name = _node_text(name_node, self.source)
+        sym_id = self._make_id(name)
+
+        # Check modifiers for public/export
+        mods = node.child_by_field_name("modifiers") or node.children[0] if node.children and node.children[0].type == "modifiers" else None
+        mod_text = _node_text(mods, self.source) if mods and mods.type == "modifiers" else ""
+        exported = "public" in mod_text
+
+        doc = _first_comment_above(node, self.source)
+        sym = Symbol(
+            id=sym_id, name=name, qualified_name=name,
+            kind=SymbolKind.CLASS, language=self.language,
+            file_path=self.file_path,
+            line_start=node.start_point[0] + 1,
+            line_end=node.end_point[0] + 1,
+            doc=doc,
+            exported=exported,
+            byte_size=node.end_byte - node.start_byte,
+            complexity=self._compute_complexity(node),
+        )
+        self.symbols.append(sym)
+
+        # Check for extends/implements
+        superclass = node.child_by_field_name("superclass")
+        if superclass:
+            sc_name = _node_text(superclass, self.source).replace("extends ", "").strip()
+            if sc_name:
+                self.edges.append(Edge(EdgeKind.INHERITS, sym_id, sc_name, node.start_point[0] + 1))
+        interfaces = node.child_by_field_name("interfaces")
+        if interfaces:
+            for child in interfaces.children:
+                if child.type == "type_identifier" or child.type == "generic_type":
+                    iface = _node_text(child, self.source).split("<")[0].strip()
+                    if iface:
+                        self.edges.append(Edge(EdgeKind.INHERITS, sym_id, iface, node.start_point[0] + 1))
+
+        # Process class body
+        body = node.child_by_field_name("body")
+        if body:
+            self._symbol_stack.append(sym_id)
+            for child in body.children:
+                if child.type == "method_declaration":
+                    self._handle_java_method(child, sym_id, name)
+                elif child.type == "constructor_declaration":
+                    self._handle_java_constructor(child, sym_id, name)
+                elif child.type == "class_declaration":
+                    self._handle_java_class(child)  # inner class
+                elif child.type == "interface_declaration":
+                    self._handle_java_interface(child)
+                elif child.type == "enum_declaration":
+                    self._handle_java_enum(child)
+            self._symbol_stack.pop()
+
+    def _handle_java_method(self, node: Node, class_id: str, class_name: str) -> None:
+        name_node = node.child_by_field_name("name")
+        if not name_node:
+            return
+        name = _node_text(name_node, self.source)
+        qualified = f"{class_name}.{name}"
+        sym_id = f"{self.file_path}::{qualified}"
+
+        mods = node.child_by_field_name("modifiers") or (node.children[0] if node.children and node.children[0].type == "modifiers" else None)
+        mod_text = _node_text(mods, self.source) if mods and mods.type == "modifiers" else ""
+        exported = "public" in mod_text
+
+        doc = _first_comment_above(node, self.source)
+        sym = Symbol(
+            id=sym_id, name=name, qualified_name=qualified,
+            kind=SymbolKind.METHOD, language=self.language,
+            file_path=self.file_path,
+            line_start=node.start_point[0] + 1,
+            line_end=node.end_point[0] + 1,
+            signature=_extract_signature(node, self.source, self.language),
+            doc=doc,
+            parent_id=class_id,
+            exported=exported,
+            byte_size=node.end_byte - node.start_byte,
+            complexity=self._compute_complexity(node),
+        )
+        self.symbols.append(sym)
+        self.edges.append(Edge(EdgeKind.CONTAINS, class_id, sym_id))
+        body = node.child_by_field_name("body")
+        if body:
+            self._scan_calls(body, sym_id)
+
+    def _handle_java_constructor(self, node: Node, class_id: str, class_name: str) -> None:
+        name = _node_text(node.child_by_field_name("name"), self.source) if node.child_by_field_name("name") else class_name
+        qualified = f"{class_name}.{class_name}"
+        sym_id = f"{self.file_path}::{qualified}"
+        sym = Symbol(
+            id=sym_id, name=class_name, qualified_name=qualified,
+            kind=SymbolKind.METHOD, language=self.language,
+            file_path=self.file_path,
+            line_start=node.start_point[0] + 1,
+            line_end=node.end_point[0] + 1,
+            signature=_extract_signature(node, self.source, self.language),
+            parent_id=class_id,
+            exported=True,
+            byte_size=node.end_byte - node.start_byte,
+        )
+        self.symbols.append(sym)
+        self.edges.append(Edge(EdgeKind.CONTAINS, class_id, sym_id))
+        body = node.child_by_field_name("body")
+        if body:
+            self._scan_calls(body, sym_id)
+
+    def _handle_java_interface(self, node: Node) -> None:
+        name_node = node.child_by_field_name("name")
+        if not name_node:
+            return
+        name = _node_text(name_node, self.source)
+        sym_id = self._make_id(name)
+        sym = Symbol(
+            id=sym_id, name=name, qualified_name=name,
+            kind=SymbolKind.INTERFACE, language=self.language,
+            file_path=self.file_path,
+            line_start=node.start_point[0] + 1,
+            line_end=node.end_point[0] + 1,
+            exported=True,
+            byte_size=node.end_byte - node.start_byte,
+        )
+        self.symbols.append(sym)
+
+        body = node.child_by_field_name("body")
+        if body:
+            self._symbol_stack.append(sym_id)
+            for child in body.children:
+                if child.type == "method_declaration":
+                    self._handle_java_method(child, sym_id, name)
+            self._symbol_stack.pop()
+
+    def _handle_java_enum(self, node: Node) -> None:
+        name_node = node.child_by_field_name("name")
+        if not name_node:
+            return
+        name = _node_text(name_node, self.source)
+        sym_id = self._make_id(name)
+        sym = Symbol(
+            id=sym_id, name=name, qualified_name=name,
+            kind=SymbolKind.CLASS, language=self.language,
+            file_path=self.file_path,
+            line_start=node.start_point[0] + 1,
+            line_end=node.end_point[0] + 1,
+            exported=True,
+            byte_size=node.end_byte - node.start_byte,
+        )
+        self.symbols.append(sym)
+
+    # ── C# ────────────────────────────────────────────────
+
+    def _handle_csharp(self, node: Node) -> None:
+        for child in node.children:
+            t = child.type
+            if t == "using_directive":
+                self.imports.append(_node_text(child, self.source).strip())
+            elif t == "namespace_declaration":
+                # Recurse into namespace body
+                body = child.child_by_field_name("body")
+                if body:
+                    self._handle_csharp(body)
+            elif t == "file_scoped_namespace_declaration":
+                self._handle_csharp(child)
+            elif t == "class_declaration":
+                self._handle_csharp_class(child)
+            elif t == "interface_declaration":
+                self._handle_csharp_interface(child)
+            elif t == "enum_declaration":
+                self._handle_csharp_enum(child)
+            elif t == "struct_declaration":
+                self._handle_csharp_struct(child)
+            elif t in ("declaration_list",):
+                self._handle_csharp(child)
+
+    def _has_modifier(self, node: Node, mod: str) -> bool:
+        for child in node.children:
+            if child.type == "modifier":
+                if _node_text(child, self.source).strip() == mod:
+                    return True
+        return False
+
+    def _handle_csharp_class(self, node: Node) -> None:
+        name_node = node.child_by_field_name("name")
+        if not name_node:
+            # Try identifier child
+            for c in node.children:
+                if c.type == "identifier":
+                    name_node = c
+                    break
+        if not name_node:
+            return
+        name = _node_text(name_node, self.source)
+        sym_id = self._make_id(name)
+        exported = self._has_modifier(node, "public")
+
+        doc = _first_comment_above(node, self.source)
+        sym = Symbol(
+            id=sym_id, name=name, qualified_name=name,
+            kind=SymbolKind.CLASS, language=self.language,
+            file_path=self.file_path,
+            line_start=node.start_point[0] + 1,
+            line_end=node.end_point[0] + 1,
+            doc=doc, exported=exported,
+            byte_size=node.end_byte - node.start_byte,
+            complexity=self._compute_complexity(node),
+        )
+        self.symbols.append(sym)
+
+        # base_list for inheritance
+        for child in node.children:
+            if child.type == "base_list":
+                for bc in child.children:
+                    if bc.type in ("identifier", "generic_name", "qualified_name"):
+                        base = _node_text(bc, self.source).split("<")[0].strip()
+                        if base:
+                            self.edges.append(Edge(EdgeKind.INHERITS, sym_id, base, node.start_point[0] + 1))
+
+        # Process body
+        body = None
+        for child in node.children:
+            if child.type == "declaration_list":
+                body = child
+                break
+        if body:
+            self._symbol_stack.append(sym_id)
+            for child in body.children:
+                if child.type == "method_declaration":
+                    self._handle_csharp_method(child, sym_id, name)
+                elif child.type == "constructor_declaration":
+                    self._handle_csharp_constructor(child, sym_id, name)
+                elif child.type == "property_declaration":
+                    self._handle_csharp_property(child, sym_id, name)
+                elif child.type == "class_declaration":
+                    self._handle_csharp_class(child)
+                elif child.type == "interface_declaration":
+                    self._handle_csharp_interface(child)
+                elif child.type == "struct_declaration":
+                    self._handle_csharp_struct(child)
+            self._symbol_stack.pop()
+
+    def _handle_csharp_method(self, node: Node, class_id: str, class_name: str) -> None:
+        name_node = None
+        for c in node.children:
+            if c.type == "identifier":
+                name_node = c
+                break
+        if not name_node:
+            return
+        name = _node_text(name_node, self.source)
+        qualified = f"{class_name}.{name}"
+        sym_id = f"{self.file_path}::{qualified}"
+        exported = self._has_modifier(node, "public")
+
+        doc = _first_comment_above(node, self.source)
+        sym = Symbol(
+            id=sym_id, name=name, qualified_name=qualified,
+            kind=SymbolKind.METHOD, language=self.language,
+            file_path=self.file_path,
+            line_start=node.start_point[0] + 1,
+            line_end=node.end_point[0] + 1,
+            signature=_extract_signature(node, self.source, self.language),
+            doc=doc, parent_id=class_id, exported=exported,
+            byte_size=node.end_byte - node.start_byte,
+            complexity=self._compute_complexity(node),
+        )
+        self.symbols.append(sym)
+        self.edges.append(Edge(EdgeKind.CONTAINS, class_id, sym_id))
+        body = node.child_by_field_name("body")
+        if body:
+            self._scan_calls(body, sym_id)
+
+    def _handle_csharp_constructor(self, node: Node, class_id: str, class_name: str) -> None:
+        qualified = f"{class_name}.{class_name}"
+        sym_id = f"{self.file_path}::{qualified}"
+        sym = Symbol(
+            id=sym_id, name=class_name, qualified_name=qualified,
+            kind=SymbolKind.METHOD, language=self.language,
+            file_path=self.file_path,
+            line_start=node.start_point[0] + 1,
+            line_end=node.end_point[0] + 1,
+            signature=_extract_signature(node, self.source, self.language),
+            parent_id=class_id, exported=True,
+            byte_size=node.end_byte - node.start_byte,
+        )
+        self.symbols.append(sym)
+        self.edges.append(Edge(EdgeKind.CONTAINS, class_id, sym_id))
+        body = node.child_by_field_name("body")
+        if not body:
+            for c in node.children:
+                if c.type == "block":
+                    body = c
+                    break
+        if body:
+            self._scan_calls(body, sym_id)
+
+    def _handle_csharp_property(self, node: Node, class_id: str, class_name: str) -> None:
+        name_node = None
+        for c in node.children:
+            if c.type == "identifier":
+                name_node = c
+                break
+        if not name_node:
+            return
+        name = _node_text(name_node, self.source)
+        qualified = f"{class_name}.{name}"
+        sym_id = f"{self.file_path}::{qualified}"
+        sym = Symbol(
+            id=sym_id, name=name, qualified_name=qualified,
+            kind=SymbolKind.FUNCTION, language=self.language,
+            file_path=self.file_path,
+            line_start=node.start_point[0] + 1,
+            line_end=node.end_point[0] + 1,
+            parent_id=class_id,
+            exported=self._has_modifier(node, "public"),
+            byte_size=node.end_byte - node.start_byte,
+        )
+        self.symbols.append(sym)
+        self.edges.append(Edge(EdgeKind.CONTAINS, class_id, sym_id))
+
+    def _handle_csharp_interface(self, node: Node) -> None:
+        name_node = None
+        for c in node.children:
+            if c.type == "identifier":
+                name_node = c
+                break
+        if not name_node:
+            return
+        name = _node_text(name_node, self.source)
+        sym_id = self._make_id(name)
+        sym = Symbol(
+            id=sym_id, name=name, qualified_name=name,
+            kind=SymbolKind.INTERFACE, language=self.language,
+            file_path=self.file_path,
+            line_start=node.start_point[0] + 1,
+            line_end=node.end_point[0] + 1,
+            exported=self._has_modifier(node, "public"),
+            byte_size=node.end_byte - node.start_byte,
+        )
+        self.symbols.append(sym)
+        body = None
+        for c in node.children:
+            if c.type == "declaration_list":
+                body = c
+                break
+        if body:
+            self._symbol_stack.append(sym_id)
+            for child in body.children:
+                if child.type == "method_declaration":
+                    self._handle_csharp_method(child, sym_id, name)
+            self._symbol_stack.pop()
+
+    def _handle_csharp_enum(self, node: Node) -> None:
+        name_node = None
+        for c in node.children:
+            if c.type == "identifier":
+                name_node = c
+                break
+        if not name_node:
+            return
+        name = _node_text(name_node, self.source)
+        sym_id = self._make_id(name)
+        sym = Symbol(
+            id=sym_id, name=name, qualified_name=name,
+            kind=SymbolKind.CLASS, language=self.language,
+            file_path=self.file_path,
+            line_start=node.start_point[0] + 1,
+            line_end=node.end_point[0] + 1,
+            exported=self._has_modifier(node, "public"),
+            byte_size=node.end_byte - node.start_byte,
+        )
+        self.symbols.append(sym)
+
+    def _handle_csharp_struct(self, node: Node) -> None:
+        name_node = None
+        for c in node.children:
+            if c.type == "identifier":
+                name_node = c
+                break
+        if not name_node:
+            return
+        name = _node_text(name_node, self.source)
+        sym_id = self._make_id(name)
+        sym = Symbol(
+            id=sym_id, name=name, qualified_name=name,
+            kind=SymbolKind.STRUCT, language=self.language,
+            file_path=self.file_path,
+            line_start=node.start_point[0] + 1,
+            line_end=node.end_point[0] + 1,
+            exported=self._has_modifier(node, "public"),
+            byte_size=node.end_byte - node.start_byte,
+        )
+        self.symbols.append(sym)
+
+    # ── Ruby ──────────────────────────────────────────────
+
+    def _handle_ruby(self, node: Node) -> None:
+        for child in node.children:
+            t = child.type
+            if t == "call" and child.children:
+                first = child.children[0]
+                if first.type == "identifier":
+                    name = _node_text(first, self.source)
+                    if name in ("require", "require_relative"):
+                        self.imports.append(_node_text(child, self.source).strip())
+                        continue
+            if t == "class":
+                self._handle_ruby_class(child)
+            elif t == "module":
+                self._handle_ruby_module(child)
+            elif t in ("method", "singleton_method"):
+                self._handle_ruby_method(child, None, "")
+            elif t == "body_statement":
+                self._handle_ruby(child)
+
+    def _handle_ruby_class(self, node: Node) -> None:
+        name_node = None
+        superclass = None
+        for child in node.children:
+            if child.type == "constant":
+                name_node = child
+            elif child.type == "superclass":
+                for sc in child.children:
+                    if sc.type in ("constant", "scope_resolution"):
+                        superclass = _node_text(sc, self.source)
+        if not name_node:
+            return
+        name = _node_text(name_node, self.source)
+        sym_id = self._make_id(name)
+        sym = Symbol(
+            id=sym_id, name=name, qualified_name=name,
+            kind=SymbolKind.CLASS, language=self.language,
+            file_path=self.file_path,
+            line_start=node.start_point[0] + 1,
+            line_end=node.end_point[0] + 1,
+            exported=True,
+            byte_size=node.end_byte - node.start_byte,
+            complexity=self._compute_complexity(node),
+        )
+        self.symbols.append(sym)
+        if superclass:
+            self.edges.append(Edge(EdgeKind.INHERITS, sym_id, superclass, node.start_point[0] + 1))
+
+        # Process body
+        self._symbol_stack.append(sym_id)
+        for child in node.children:
+            if child.type == "body_statement":
+                for sub in child.children:
+                    if sub.type == "method":
+                        self._handle_ruby_method(sub, sym_id, name)
+                    elif sub.type == "singleton_method":
+                        self._handle_ruby_method(sub, sym_id, name)
+                    elif sub.type == "class":
+                        self._handle_ruby_class(sub)
+                    elif sub.type == "module":
+                        self._handle_ruby_module(sub)
+        self._symbol_stack.pop()
+
+    def _handle_ruby_module(self, node: Node) -> None:
+        name_node = None
+        for child in node.children:
+            if child.type == "constant":
+                name_node = child
+                break
+        if not name_node:
+            return
+        name = _node_text(name_node, self.source)
+        sym_id = self._make_id(name)
+        sym = Symbol(
+            id=sym_id, name=name, qualified_name=name,
+            kind=SymbolKind.CLASS, language=self.language,
+            file_path=self.file_path,
+            line_start=node.start_point[0] + 1,
+            line_end=node.end_point[0] + 1,
+            exported=True,
+            byte_size=node.end_byte - node.start_byte,
+        )
+        self.symbols.append(sym)
+
+        self._symbol_stack.append(sym_id)
+        for child in node.children:
+            if child.type == "body_statement":
+                for sub in child.children:
+                    if sub.type in ("method", "singleton_method"):
+                        self._handle_ruby_method(sub, sym_id, name)
+                    elif sub.type == "class":
+                        self._handle_ruby_class(sub)
+                    elif sub.type == "module":
+                        self._handle_ruby_module(sub)
+        self._symbol_stack.pop()
+
+    def _handle_ruby_method(self, node: Node, class_id: str | None, class_name: str) -> None:
+        name_node = node.child_by_field_name("name")
+        if not name_node:
+            for c in node.children:
+                if c.type == "identifier":
+                    name_node = c
+                    break
+        if not name_node:
+            return
+        name = _node_text(name_node, self.source)
+        if class_name:
+            qualified = f"{class_name}.{name}"
+            sym_id = f"{self.file_path}::{qualified}"
+        else:
+            qualified = name
+            sym_id = self._make_id(name)
+
+        sym = Symbol(
+            id=sym_id, name=name, qualified_name=qualified,
+            kind=SymbolKind.METHOD if class_id else SymbolKind.FUNCTION,
+            language=self.language,
+            file_path=self.file_path,
+            line_start=node.start_point[0] + 1,
+            line_end=node.end_point[0] + 1,
+            signature=_extract_signature(node, self.source, self.language),
+            parent_id=class_id,
+            exported=not name.startswith("_"),
+            byte_size=node.end_byte - node.start_byte,
+            complexity=self._compute_complexity(node),
+        )
+        self.symbols.append(sym)
+        if class_id:
+            self.edges.append(Edge(EdgeKind.CONTAINS, class_id, sym_id))
+        body = node.child_by_field_name("body")
+        if body:
+            self._scan_calls(body, sym_id)
+
     # ── Generic fallback ────────────────────────────────────
 
     def _handle_generic(self, node: Node) -> None:
@@ -1180,12 +1734,26 @@ class FileParser:
         """Recursively scan a node for function call expressions."""
         if depth > 20:
             return
-        if node.type == "call_expression" or node.type == "call":
+        if node.type in ("call_expression", "call", "method_invocation", "invocation_expression"):
             func_node = node.child_by_field_name("function") or (
                 node.children[0] if node.children else None
             )
+            # Java method_invocation: has "object" and "name" fields instead of "function"
+            java_name = node.child_by_field_name("name")
+            java_obj = node.child_by_field_name("object")
+            if java_name and not func_node:
+                func_node = java_name
             if func_node:
                 raw = _node_text(func_node, self.source)
+                # For Java/C# method_invocation with object, build qualified name
+                # Only use simple identifiers as object — skip chained calls like repo.findAll()
+                if java_obj and java_name and node.type == "method_invocation":
+                    obj_text = _node_text(java_obj, self.source)
+                    # If object is a simple identifier, use it. Otherwise skip the qualifier.
+                    if java_obj.type == "identifier":
+                        raw = f"{obj_text}.{_node_text(java_name, self.source)}"
+                    else:
+                        raw = _node_text(java_name, self.source)
                 # Detect Tauri invoke("command_name") — cross-language bridge (only in Tauri projects)
                 if self.is_tauri and (raw == "invoke" or raw.endswith(".invoke")):
                     args = node.child_by_field_name("arguments")
@@ -1199,6 +1767,19 @@ class FileParser:
                                         node.start_point[0] + 1,
                                     ))
                                 break
+                # Clean up chained call artifacts — remove anything with parens/brackets
+                # e.g. "findAll().stream" → "stream", "items.Where(x => x.Active).ToList" → "ToList"
+                if "(" in raw or ")" in raw:
+                    # Take only the last clean segment after the last )
+                    after_paren = raw.rsplit(")", 1)[-1].lstrip(".")
+                    if after_paren and after_paren.isidentifier():
+                        raw = after_paren
+                    elif "." in raw:
+                        # Try to extract the last two clean identifiers
+                        clean_parts = [p for p in raw.replace("(", ".").replace(")", ".").split(".") if p.isidentifier()]
+                        if clean_parts:
+                            raw = ".".join(clean_parts[-2:]) if len(clean_parts) >= 2 else clean_parts[-1]
+
                 # For member expressions (obj.method), keep both qualified and bare name
                 # so edge resolution can match Type.method first, then fall back to method
                 if "." in raw:

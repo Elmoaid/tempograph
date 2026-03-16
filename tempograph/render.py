@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
+from pathlib import Path
 
 import tiktoken
 
@@ -117,12 +118,74 @@ def render_overview(graph: Tempo) -> str:
             chain = " → ".join(c.rsplit("/", 1)[-1] for c in cycle)
             lines.append(f"  {chain}")
 
+    # Suggest directories to exclude — detect likely noise
+    noisy = _detect_noisy_dirs(graph, modules)
+    if noisy:
+        lines.append("")
+        lines.append("SUGGESTED EXCLUDES (use exclude_dirs to filter):")
+        for dir_name, reason in noisy[:3]:
+            lines.append(f"  {dir_name}/ — {reason}")
+
     return "\n".join(lines)
 
 
-def render_map(graph: Tempo, *, max_symbols_per_file: int = 8) -> str:
+def _detect_noisy_dirs(graph: Tempo, modules: dict[str, list[str]]) -> list[tuple[str, str]]:
+    """Detect directories that are likely noise — archived code, generated files, etc."""
+    if len(modules) <= 2:
+        return []
+
+    total_files = sum(len(fs) for fs in modules.values())
+    if total_files < 20:
+        return []
+
+    # Known noise patterns
+    noise_names = {"archive", "archived", "old", "backup", "deprecated", "legacy",
+                   "generated", "gen", "dist", "build", "out", "output", ".cache"}
+
+    # Build cross-directory edge counts
+    cross_dir_edges: dict[str, int] = {mod: 0 for mod in modules}
+    for edge in graph.edges:
+        if edge.kind == EdgeKind.CALLS or edge.kind == EdgeKind.IMPORTS:
+            src_file = graph.symbols[edge.source_id].file_path if edge.source_id in graph.symbols else ""
+            tgt_file = graph.symbols[edge.target_id].file_path if edge.target_id in graph.symbols else ""
+            if not src_file or not tgt_file:
+                continue
+            src_dir = src_file.split("/")[0] if "/" in src_file else "."
+            tgt_dir = tgt_file.split("/")[0] if "/" in tgt_file else "."
+            if src_dir != tgt_dir:
+                cross_dir_edges[src_dir] = cross_dir_edges.get(src_dir, 0) + 1
+                cross_dir_edges[tgt_dir] = cross_dir_edges.get(tgt_dir, 0) + 1
+
+    suggestions: list[tuple[str, str]] = []
+    for mod, files in modules.items():
+        if mod == ".":
+            continue
+        file_count = len(files)
+        pct = file_count / total_files * 100
+        cross_edges = cross_dir_edges.get(mod, 0)
+
+        # Heuristic 1: name matches known noise patterns
+        if mod.lower() in noise_names and file_count >= 5:
+            suggestions.append((mod, f"{file_count} files, likely archived/generated"))
+            continue
+
+        # Heuristic 2: large directory with zero cross-dir connections
+        if file_count >= 10 and cross_edges == 0:
+            suggestions.append((mod, f"{file_count} files ({pct:.0f}%), no cross-directory connections"))
+            continue
+
+        # Heuristic 3: large directory with very few cross-dir connections relative to size
+        if file_count >= 20 and cross_edges < 3 and pct > 20:
+            suggestions.append((mod, f"{file_count} files ({pct:.0f}%), only {cross_edges} cross-dir edges"))
+
+    suggestions.sort(key=lambda x: -len(x[1]))
+    return suggestions
+
+
+def render_map(graph: Tempo, *, max_symbols_per_file: int = 8, max_tokens: int = 0) -> str:
     """File tree with top symbols per file. Good for orientation."""
     lines = []
+    token_count = 0
 
     # Group files by directory
     dirs: dict[str, list[FileInfo]] = defaultdict(list)
@@ -131,18 +194,18 @@ def render_map(graph: Tempo, *, max_symbols_per_file: int = 8) -> str:
         dir_path = parts[0] if len(parts) > 1 else "."
         dirs[dir_path].append(fi)
 
+    truncated = False
     for dir_path in sorted(dirs):
         files = dirs[dir_path]
-        lines.append(f"[{dir_path}/]")
+        dir_block = [f"[{dir_path}/]"]
         for fi in files:
             fname = fi.path.rsplit("/", 1)[-1]
             sym_count = len(fi.symbols)
             tag = f" ({fi.line_count} lines, {sym_count} sym)" if sym_count else f" ({fi.line_count} lines)"
-            lines.append(f"  {fname}{tag}")
+            dir_block.append(f"  {fname}{tag}")
 
             # Show top symbols
             symbols = [graph.symbols[sid] for sid in fi.symbols if sid in graph.symbols]
-            # Prioritize: exported functions/classes/components first
             symbols.sort(key=lambda s: (
                 0 if s.kind in (SymbolKind.COMPONENT, SymbolKind.HOOK) else
                 1 if s.kind in (SymbolKind.CLASS, SymbolKind.STRUCT, SymbolKind.TRAIT, SymbolKind.INTERFACE) else
@@ -159,24 +222,36 @@ def render_map(graph: Tempo, *, max_symbols_per_file: int = 8) -> str:
                 if sym.line_count > 5:
                     line_info = f"L{sym.line_start}-{sym.line_end}"
                 sig = f" — {sym.signature}" if sym.signature and len(sym.signature) < 80 else ""
-                lines.append(f"    {kind_tag} {sym.qualified_name} ({line_info}){sig}")
+                dir_block.append(f"    {kind_tag} {sym.qualified_name} ({line_info}){sig}")
             if len(symbols) > max_symbols_per_file:
-                lines.append(f"    ... +{len(symbols) - max_symbols_per_file} more")
-        lines.append("")
+                dir_block.append(f"    ... +{len(symbols) - max_symbols_per_file} more")
+        dir_block.append("")
+
+        block_text = "\n".join(dir_block)
+        if max_tokens > 0:
+            block_tokens = count_tokens(block_text)
+            if token_count + block_tokens > max_tokens:
+                remaining_dirs = len(dirs) - len([l for l in lines if l.startswith("[")])
+                lines.append(f"... truncated ({remaining_dirs} more directories)")
+                truncated = True
+                break
+            token_count += block_tokens
+        lines.extend(dir_block)
 
     return "\n".join(lines)
 
 
-def render_symbols(graph: Tempo) -> str:
+def render_symbols(graph: Tempo, *, max_tokens: int = 0) -> str:
     """Full symbol index — signatures, locations, relationships."""
     lines = []
+    token_count = 0
     by_file: dict[str, list[Symbol]] = defaultdict(list)
     for sym in graph.symbols.values():
         by_file[sym.file_path].append(sym)
 
     for file_path in sorted(by_file):
         symbols = sorted(by_file[file_path], key=lambda s: s.line_start)
-        lines.append(f"── {file_path} ──")
+        file_block = [f"── {file_path} ──"]
         for sym in symbols:
             parts = [f"{sym.kind.value} {sym.qualified_name}"]
             parts.append(f"L{sym.line_start}-{sym.line_end}")
@@ -184,18 +259,26 @@ def render_symbols(graph: Tempo) -> str:
                 parts.append(sym.signature[:120])
             if sym.doc:
                 parts.append(f'"{sym.doc[:80]}"')
-            # Show callers
             callers = graph.callers_of(sym.id)
             if callers:
                 caller_names = [c.qualified_name for c in callers[:5]]
                 parts.append(f"← {', '.join(caller_names)}")
-            # Show callees
             callees = graph.callees_of(sym.id)
             if callees:
                 callee_names = [c.qualified_name for c in callees[:5]]
                 parts.append(f"→ {', '.join(callee_names)}")
-            lines.append("  " + " | ".join(parts))
-        lines.append("")
+            file_block.append("  " + " | ".join(parts))
+        file_block.append("")
+
+        if max_tokens > 0:
+            block_text = "\n".join(file_block)
+            block_tokens = count_tokens(block_text)
+            if token_count + block_tokens > max_tokens:
+                remaining = len(by_file) - len([l for l in lines if l.startswith("──")])
+                lines.append(f"... truncated ({remaining} more files, {sum(len(v) for k, v in by_file.items() if k >= file_path)} more symbols)")
+                break
+            token_count += block_tokens
+        lines.extend(file_block)
 
     return "\n".join(lines)
 
@@ -222,7 +305,7 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
             seed_files.add(s.file_path)
 
     # BFS: expand from seed symbols following edges
-    # In monolith mode, cross-file edges go to front of queue, same-file to back
+    # Wider expansion: depth 3, more callers/callees at depth 0-1
     seen_ids: set[str] = set()
     queue: list[tuple[Symbol, int]] = [(s, 0) for s in seeds[:10]]
     ordered: list[tuple[Symbol, int]] = []
@@ -236,20 +319,24 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
         else:
             queue.append((candidate, depth))
 
-    while queue and len(ordered) < 40:
+    while queue and len(ordered) < 50:
         sym, depth = queue.pop(0)
         if sym.id in seen_ids:
             continue
         seen_ids.add(sym.id)
         ordered.append((sym, depth))
 
-        if depth < 2:
-            for caller in graph.callers_of(sym.id)[:5]:
+        if depth < 3:
+            # More context at shallow depths, less at deeper
+            caller_limit = 8 if depth == 0 else 5 if depth == 1 else 3
+            callee_limit = 8 if depth == 0 else 5 if depth == 1 else 3
+            for caller in graph.callers_of(sym.id)[:caller_limit]:
                 _enqueue(caller, depth + 1)
-            for callee in graph.callees_of(sym.id)[:5]:
+            for callee in graph.callees_of(sym.id)[:callee_limit]:
                 _enqueue(callee, depth + 1)
-            for child in graph.children_of(sym.id)[:3]:
-                _enqueue(child, depth + 1)
+            if depth < 2:
+                for child in graph.children_of(sym.id)[:5]:
+                    _enqueue(child, depth + 1)
 
     lines = [f"Focus: {query}", ""]
     seen_files: set[str] = set()
@@ -257,7 +344,7 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
 
     for sym, depth in ordered:
         indent = "  " * depth if depth > 0 else ""
-        prefix = ["●", "  →", "    ·"][min(depth, 2)]
+        prefix = ["●", "  →", "    ·", "      "][min(depth, 3)]
         # Core info
         loc = f"{sym.file_path}:{sym.line_start}-{sym.line_end}"
         block_lines = [f"{prefix} {sym.kind.value} {sym.qualified_name} — {loc}"]
@@ -265,8 +352,8 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
             block_lines.append(f"{indent}  sig: {sym.signature[:150]}")
         if sym.doc and depth == 0:
             block_lines.append(f"{indent}  doc: {sym.doc}")
-        # Complexity/size warnings
-        if depth == 0:
+        # Detail at depth 0 and 1 (not just 0)
+        if depth <= 1:
             warnings = []
             if sym.line_count > 500:
                 warnings.append(f"LARGE ({sym.line_count} lines — use grep, don't read)")
@@ -276,22 +363,53 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                 block_lines.append(f"{indent}  ⚠ {', '.join(warnings)}")
             callers = graph.callers_of(sym.id)
             if callers:
-                block_lines.append(f"{indent}  called by: {', '.join(c.qualified_name for c in callers[:8])}")
+                shown = 8 if depth == 0 else 5
+                block_lines.append(f"{indent}  called by: {', '.join(c.qualified_name for c in callers[:shown])}")
+                if len(callers) > shown:
+                    block_lines[-1] += f" (+{len(callers) - shown} more)"
             callees = graph.callees_of(sym.id)
             if callees:
-                block_lines.append(f"{indent}  calls: {', '.join(c.qualified_name for c in callees[:8])}")
-            children = graph.children_of(sym.id)
-            if children:
-                block_lines.append(f"{indent}  contains: {', '.join(f'{c.kind.value[:4]} {c.name}' for c in children[:10])}")
+                shown = 8 if depth == 0 else 5
+                block_lines.append(f"{indent}  calls: {', '.join(c.qualified_name for c in callees[:shown])}")
+                if len(callees) > shown:
+                    block_lines[-1] += f" (+{len(callees) - shown} more)"
+            if depth == 0:
+                children = graph.children_of(sym.id)
+                if children:
+                    block_lines.append(f"{indent}  contains: {', '.join(f'{c.kind.value[:4]} {c.name}' for c in children[:10])}")
 
         block = "\n".join(block_lines)
         block_tokens = count_tokens(block)
         if token_count + block_tokens > max_tokens:
-            lines.append(f"... truncated ({len(ordered) - len(lines) + 2} more symbols)")
+            remaining = len(ordered) - len([l for l in lines if l and not l.startswith("...")])
+            if remaining > 0:
+                lines.append(f"... truncated ({remaining} more symbols)")
             break
         lines.append(block)
         token_count += block_tokens
         seen_files.add(sym.file_path)
+
+    # File context: for each file touched, show key co-located symbols
+    file_context: list[str] = []
+    for fp in sorted(seen_files):
+        fi = graph.files.get(fp)
+        if not fi or len(fi.symbols) < 3:
+            continue
+        file_syms = [graph.symbols[sid] for sid in fi.symbols if sid in graph.symbols and sid not in seen_ids]
+        # Show exported symbols the agent might need
+        important = [s for s in file_syms if s.exported and s.kind in (
+            SymbolKind.FUNCTION, SymbolKind.CLASS, SymbolKind.COMPONENT, SymbolKind.HOOK
+        )][:5]
+        if important:
+            names = ", ".join(f"{s.name} L{s.line_start}" for s in important)
+            file_context.append(f"  {fp}: also has {names}")
+
+    if file_context:
+        ctx_block = "\nAlso in these files:\n" + "\n".join(file_context)
+        ctx_tokens = count_tokens(ctx_block)
+        if token_count + ctx_tokens <= max_tokens:
+            lines.append(ctx_block)
+            token_count += ctx_tokens
 
     # Monolith neighborhood: for seed symbols in large files, show nearby symbols
     for sym, depth in ordered:
@@ -689,6 +807,12 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
 
 def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
     """Find the most interconnected, complex, high-risk symbols."""
+    # Pre-build renders-from index to avoid O(symbols*edges) scan
+    renders_from: dict[str, int] = {}
+    for edge in graph.edges:
+        if edge.kind == EdgeKind.RENDERS:
+            renders_from[edge.source_id] = renders_from.get(edge.source_id, 0) + 1
+
     scores: list[tuple[float, Symbol]] = []
 
     for sym in graph.symbols.values():
@@ -707,9 +831,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         score += len(children) * 2.0
         cross_file = len(set(c.file_path for c in callers) - {sym.file_path})
         score += cross_file * 5.0
-        # Count components this symbol renders
-        render_count = len([e for e in graph.edges
-                          if e.kind == EdgeKind.RENDERS and e.source_id == sym.id])
+        render_count = renders_from.get(sym.id, 0)
         score += render_count * 2.0
         # Cyclomatic complexity: log scale to avoid dominating
         if sym.complexity > 1:
@@ -992,3 +1114,52 @@ def _extract_name_from_question(question: str) -> str:
             q = q[:-(len(suffix))].strip()
     q = q.strip("'\"` ")
     return q
+
+
+def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: str = "") -> str:
+    """Batch context preparation: overview + focus + hotspots + diff in one token-budgeted output."""
+    from .git import changed_files_unstaged, is_git_repo
+    sections: list[str] = []
+    token_count = 0
+
+    s = graph.stats
+    sections.append(f"## Repo: {s['files']} files, {s['symbols']} symbols, {s['total_lines']:,} lines")
+    token_count += 20
+
+    focus_budget = int(max_tokens * 0.6)
+    focus_output = render_focused(graph, task, max_tokens=focus_budget)
+    sections.append(focus_output)
+    token_count += count_tokens(focus_output)
+
+    hotspot_budget = int(max_tokens * 0.15)
+    if token_count < max_tokens - 100:
+        hotspot_output = render_hotspots(graph, top_n=5)
+        ht = count_tokens(hotspot_output)
+        if ht <= hotspot_budget:
+            sections.append("\n## Hotspots (top 5 riskiest)")
+            sections.append(hotspot_output)
+            token_count += ht + 10
+
+    if token_count < max_tokens - 100:
+        is_change = any(w in task.lower() for w in (
+            "fix", "bug", "change", "modify", "update", "refactor", "add", "remove",
+            "delete", "rename", "move", "migrate",
+        ))
+        if is_change or task_type in ("debug", "refactor", "feature"):
+            repo_path = str(Path(graph.root).resolve())
+            if is_git_repo(repo_path):
+                try:
+                    changed = changed_files_unstaged(repo_path)
+                    if changed:
+                        diff_budget = max_tokens - token_count - 50
+                        diff_output = render_diff_context(graph, changed, max_tokens=diff_budget)
+                        dt = count_tokens(diff_output)
+                        if dt < diff_budget:
+                            sections.append(f"\n## Uncommitted changes ({len(changed)} files)")
+                            sections.append(diff_output)
+                            token_count += dt + 10
+                except Exception:
+                    pass
+
+    sections.append("---\nCall report_feedback after using this context to improve future recommendations.")
+    return "\n\n".join(sections)

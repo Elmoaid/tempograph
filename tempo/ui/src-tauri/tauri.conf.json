@@ -5,7 +5,7 @@
   "identifier": "com.tempo.app",
   "build": {
     "beforeDevCommand": "pnpm dev",
-    "devUrl": "http://localhost:5173",
+    "devUrl": "http://localhost:4902",
     "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist"
   },

@@ -51,6 +51,9 @@ class Language(str, Enum):
     JSX = "jsx"
     RUST = "rust"
     GO = "go"
+    JAVA = "java"
+    CSHARP = "csharp"
+    RUBY = "ruby"
     JSON = "json"
     TOML = "toml"
     YAML = "yaml"
@@ -69,6 +72,9 @@ EXTENSION_TO_LANGUAGE: dict[str, Language] = {
     ".jsx": Language.JSX,
     ".rs": Language.RUST,
     ".go": Language.GO,
+    ".java": Language.JAVA,
+    ".cs": Language.CSHARP,
+    ".rb": Language.RUBY,
     ".json": Language.JSON,
     ".toml": Language.TOML,
     ".yaml": Language.YAML,
@@ -206,6 +212,16 @@ class Tempo:
                 elif token in searchable:
                     score += 1.0
             if score > 0:
+                # Boost by symbol importance
+                if sym.exported:
+                    score += 2.0
+                callers = self.callers_of(sym.id)
+                cross_file = sum(1 for c in callers if c.file_path != sym.file_path)
+                score += min(cross_file, 5) * 0.5  # up to +2.5 for highly-referenced
+                if sym.kind in (SymbolKind.COMPONENT, SymbolKind.HOOK):
+                    score += 1.5
+                elif sym.kind == SymbolKind.CLASS:
+                    score += 1.0
                 results.append((score, sym))
         results.sort(key=lambda x: (-x[0], x[1].file_path, x[1].line_start))
         return [sym for _, sym in results]
