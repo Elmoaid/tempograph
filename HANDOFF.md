@@ -1,6 +1,6 @@
 # Tempograph — Agent Handoff Document
 
-**Last updated:** 2026-03-15
+**Last updated:** 2026-03-16
 **Last agent:** Claude Opus 4.6
 **Owner:** Elmoaid (elmoaidali)
 **Repo:** /Users/elmoaidali/Desktop/tempograph
@@ -116,7 +116,7 @@ Requires: Node 20+, pnpm, Rust (via rustup). Tauri v2.
 
 **Kill old processes first:**
 ```bash
-lsof -ti :5173 | xargs kill -9 2>/dev/null
+lsof -ti :4902 | xargs kill -9 2>/dev/null
 pkill -f "tempo-ui" 2>/dev/null
 ```
 
@@ -186,6 +186,34 @@ Full Claude Code configuration viewer/editor.
 Tauri IPC bridge. All functions use dynamic `import("@tauri-apps/api/core")` with fallback for non-Tauri environments.
 
 **14 functions:** `runTempo`, `readConfig`, `writeConfig`, `listNotes`, `readFile`, `readTelemetry`, `getRepoInfo`, `detectRepo`, `gitInfo`, `listDir`, `writeNote`, `saveOutput`, `getHomeDir`, `writeFile`
+
+### MCP Server (`server.py`, ~490 lines)
+
+**15 MCP tools** — the primary agent interface:
+
+| Tool | Purpose | Token Cost |
+|------|---------|------------|
+| `index_repo` | Build graph + orientation | ~600 |
+| `overview` | Repo orientation | ~500 |
+| `focus` | Task-scoped context | 2-4K |
+| `lookup` | "where is X?", "what calls X?" | 100-500 |
+| `blast_radius` | Impact analysis for file/symbol | 1-5K |
+| `hotspots` | Riskiest symbols by coupling | ~2.5K |
+| `diff_context` | Impact of changed files | 3-6K |
+| `dead_code` | Unused exports | variable |
+| `symbols` | Full symbol inventory | ~30K |
+| `file_map` | File tree + top symbols | ~20K |
+| `dependencies` | Circular imports + layers | ~1K |
+| `architecture` | Module-level view | ~2K |
+| `stats` | Token budget planner | ~100 |
+| `learn_recommendation` | Data-driven mode suggestions | ~200 |
+| `report_feedback` | Log tool effectiveness | — |
+
+**JSON output:** All tools accept `output_format="json"` → `{"status":"ok","data":"...","tokens":N,"duration_ms":N}`
+
+**Error codes:** `REPO_NOT_FOUND`, `NOT_GIT_REPO`, `NO_MATCH`, `BUILD_FAILED`, `INVALID_PARAMS`, `LEARN_UNAVAILABLE`
+
+**Text mode:** Default, backwards compatible. Errors prefixed with `[ERROR:CODE]`.
 
 ### Rust Backend (`lib.rs`, 423 lines)
 
@@ -304,20 +332,21 @@ fb762e4 feat: kernel wiring, real tests, quality scorer fix
 ## 8. What Needs Doing Next
 
 ### High Priority
-1. **Push to remote** — 8 unpushed commits on main. Ask Elmo before pushing.
+1. **Push to remote** — many unpushed commits on main. Ask Elmo before pushing.
 2. **Scale CrossCodeEval to 200 examples** — for statistical significance
 3. **Run SWE-bench Lite** — needs ANTHROPIC_API_KEY
+4. **Monitor agent feedback** — agents now report via `report_feedback`. Check `~/.tempograph/global/feedback.jsonl` for patterns.
 
 ### Medium Priority
-4. **Add tests for Tempo UI** — no frontend tests yet
-5. **Per-project `.claude/` directory browsing** — ClaudePanel shows per-project CLAUDE.md files from workspaces but doesn't yet browse per-project `.claude/` subdirectories deeply
-6. **Add project-specific `.mcp.json`** — some projects have their own `.mcp.json` at root; could surface these in ClaudePanel
-7. **Publish to PyPI** — `pyproject.toml` is ready
+5. **Add tests for Tempo UI** — no frontend tests yet
+6. **Per-project `.claude/` directory browsing** — ClaudePanel shows per-project CLAUDE.md files from workspaces but doesn't yet browse per-project `.claude/` subdirectories deeply
+7. **Add project-specific `.mcp.json`** — some projects have their own `.mcp.json` at root; could surface these in ClaudePanel
+8. **Publish to PyPI** — `pyproject.toml` is ready
 
 ### Low Priority
-8. **Add C/C++ language support**
-9. **Cross-snapshot diffing** — diff mode only compares within a single snapshot
-10. **GitHub Actions CI** — no tests in CI
+9. **Add C/C++ language support**
+10. **Cross-snapshot diffing** — diff mode only compares within a single snapshot
+11. **GitHub Actions CI** — tests exist (50 passing) but no CI pipeline
 
 ---
 
@@ -329,7 +358,7 @@ fb762e4 feat: kernel wiring, real tests, quality scorer fix
 - `archive/` is gitignored — exists locally with v0/v1 history
 - `bench/results/` is gitignored — only `bench/RESULTS.md` and named JSONL tracked
 - The Tempo UI default workspaces reference paths on Elmo's machine — change them in `App.tsx` if running elsewhere
-- Port 5173 conflicts if old dev processes are still running — kill first
+- Dev port is 4902 (changed from 5173 to avoid NeedYeet conflicts)
 - Decorator-dispatched symbols (@mcp.tool, @app.route) show as dead code — false positives
 
 ---

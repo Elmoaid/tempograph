@@ -2,6 +2,12 @@
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
+
+
+def is_git_repo(repo: str) -> bool:
+    """Check if a directory is a git repository."""
+    return (Path(repo) / ".git").exists()
 
 def _run_git(repo: str, *args: str) -> str | None:
     """Run a git command and return stdout, or None on failure."""

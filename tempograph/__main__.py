@@ -20,6 +20,7 @@ from .render import (
     render_lookup,
     render_map,
     render_overview,
+    render_prepare,
     render_symbols,
 )
 
@@ -61,7 +62,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("repo", help="Path to the repository root")
     parser.add_argument(
         "--mode", "-m",
-        choices=("overview", "map", "symbols", "focus", "lookup", "blast", "diff", "hotspots", "deps", "dead", "arch", "stats", "report", "serve"),
+        choices=("overview", "map", "symbols", "focus", "lookup", "blast", "diff", "hotspots", "deps", "dead", "arch", "stats", "prepare", "report", "serve"),
         default="overview",
         help="Rendering mode (default: overview)",
     )
@@ -149,6 +150,7 @@ def main(argv: list[str] | None = None) -> int:
         "dead": lambda: render_dead_code(graph),
         "arch": lambda: render_architecture(graph),
         "stats": lambda: _render_stats(graph, elapsed),
+        "prepare": lambda: render_prepare(graph, args.query or "understand this codebase", args.max_tokens, args.task_type or ""),
     }
 
     output = mode_map[args.mode]()

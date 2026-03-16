@@ -77,7 +77,7 @@ class TaskMemory:
             # Find most common context mode combo in successful tasks
             mode_counts: dict[str, int] = {}
             for t in successes:
-                key = ",".join(sorted(t.get("context_modes", [])))
+                key = ",".join(sorted(m for m in t.get("context_modes", []) if m))
                 mode_counts[key] = mode_counts.get(key, 0) + 1
             best = max(mode_counts, key=mode_counts.get)
             avg_tokens = sum(t["tokens_used"] for t in successes) // len(successes)
@@ -337,56 +337,54 @@ def analyze_cross_repo_patterns() -> str:
             f"Need {remaining} more sessions across any repo. L3 auto-runs when threshold is met."
         )
 
-    # Build feedback lookup: ts → helpful bool
-    fb_lookup: list[tuple[datetime, bool]] = []
+    # Per-mode success rates from direct feedback (feedback has mode + helpful fields).
+    # This is more accurate than session-level heuristics because each feedback
+    # entry explicitly names which mode it rated.
+    fb_by_mode: dict[str, dict] = {}
     for fb in feedback_lines:
-        try:
-            fb_ts = datetime.fromisoformat(fb["ts"])
-            fb_lookup.append((fb_ts, bool(fb.get("helpful"))))
-        except (ValueError, KeyError):
-            pass
+        m = fb.get("mode")
+        if not m or _is_test_repo(fb.get("repo_path", "")):
+            continue
+        if m not in fb_by_mode:
+            fb_by_mode[m] = {"success": 0, "total": 0}
+        fb_by_mode[m]["total"] += 1
+        if fb.get("helpful") is True:
+            fb_by_mode[m]["success"] += 1
 
-    def session_success(session: list[dict]) -> bool | None:
-        try:
-            last_ts = datetime.fromisoformat(session[-1]["ts"])
-        except (ValueError, KeyError):
-            return None
-        for fb_ts, helpful in fb_lookup:
-            if abs((fb_ts - last_ts).total_seconds()) <= 3600:
-                return helpful
-        empty_count = sum(1 for e in session if e.get("empty"))
-        return empty_count < len(session) * 0.5
-
-    # Per-mode aggregates: success_count, total_count, total_tokens
-    mode_stats: dict[str, dict] = {}
+    # Per-mode token averages from usage (feedback doesn't include token counts)
+    mode_tokens: dict[str, dict] = {}
     repo_counts: dict[str, int] = {}
 
     for session in sessions:
         repo = session[0].get("repo_path", session[0].get("repo", "unknown"))
         repo_counts[repo] = repo_counts.get(repo, 0) + 1
-        success = session_success(session)
         for e in session:
             m = e.get("mode")
             if not m:
                 continue
-            if m not in mode_stats:
-                mode_stats[m] = {"success": 0, "total": 0, "tokens_total": 0, "tokens_count": 0}
-            mode_stats[m]["total"] += 1
-            if success is True:
-                mode_stats[m]["success"] += 1
+            if m not in mode_tokens:
+                mode_tokens[m] = {"tokens_total": 0, "tokens_count": 0}
             t = e.get("tokens", 0)
             if t:
-                mode_stats[m]["tokens_total"] += t
-                mode_stats[m]["tokens_count"] += 1
+                mode_tokens[m]["tokens_total"] += t
+                mode_tokens[m]["tokens_count"] += 1
 
-    # Compute per-mode success rate and avg tokens
+    # Merge per-mode feedback with token averages
     mode_rates: list[dict] = []
-    for m, s in mode_stats.items():
-        if s["total"] < 3:
+    all_modes = set(fb_by_mode) | set(mode_tokens)
+    for m in all_modes:
+        fb = fb_by_mode.get(m, {})
+        tok = mode_tokens.get(m, {})
+        if fb.get("total", 0) < 2:  # need at least 2 feedback entries
             continue
-        rate = s["success"] / s["total"]
-        avg_tokens = s["tokens_total"] // s["tokens_count"] if s["tokens_count"] else 0
-        mode_rates.append({"mode": m, "success_rate": rate, "uses": s["total"], "avg_tokens": avg_tokens})
+        rate = fb["success"] / fb["total"]
+        avg_tokens = tok["tokens_total"] // tok["tokens_count"] if tok.get("tokens_count") else 0
+        mode_rates.append({
+            "mode": m,
+            "success_rate": rate,
+            "uses": fb["total"],
+            "avg_tokens": avg_tokens,
+        })
     mode_rates.sort(key=lambda x: -x["success_rate"])
 
     # Top repos by usage

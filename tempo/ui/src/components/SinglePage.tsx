@@ -4,6 +4,7 @@ import {
   Package, Layers, Hash, Map, Brain, Gauge, BookOpen, Coins,
   Play, Copy, Check, RefreshCw, FolderOpen, Plus, X,
   Save, FileText, Folder, ChevronRight, PenLine, Shield,
+  Search, BarChart3, Zap,
 } from "lucide-react";
 import {
   runTempo, readConfig, writeConfig, listNotes, readFile, readTelemetry,
@@ -45,24 +46,54 @@ interface ModeInfo {
 }
 
 const MODES: ModeInfo[] = [
-  { mode: "overview", label: "Overview", icon: Eye, tag: "core" },
-  { mode: "focus", label: "Focus", icon: Crosshair, tag: "nav" },
-  { mode: "blast", label: "Blast Radius", icon: Bomb, tag: "nav" },
-  { mode: "dead_code", label: "Dead Code", icon: Skull, tag: "core" },
-  { mode: "hotspots", label: "Hotspots", icon: Flame, tag: "core" },
-  { mode: "diff", label: "Diff Context", icon: GitBranch, tag: "nav" },
-  { mode: "deps", label: "Dependencies", icon: Package, tag: "core" },
-  { mode: "arch", label: "Architecture", icon: Layers, tag: "core" },
-  { mode: "symbols", label: "Symbols", icon: Hash, tag: "nav" },
-  { mode: "map", label: "File Map", icon: Map, tag: "nav" },
+  { mode: "prepare", label: "Prepare Context", icon: Zap, tag: "mcp" },
+  { mode: "overview", label: "Overview", icon: Eye, tag: "mcp" },
+  { mode: "focus", label: "Focus", icon: Crosshair, tag: "mcp" },
+  { mode: "lookup", label: "Lookup", icon: Search, tag: "mcp" },
+  { mode: "blast", label: "Blast Radius", icon: Bomb, tag: "mcp" },
+  { mode: "hotspots", label: "Hotspots", icon: Flame, tag: "mcp" },
+  { mode: "diff", label: "Diff Context", icon: GitBranch, tag: "mcp" },
+  { mode: "dead_code", label: "Dead Code", icon: Skull, tag: "mcp" },
+  { mode: "symbols", label: "Symbols", icon: Hash, tag: "mcp" },
+  { mode: "map", label: "File Map", icon: Map, tag: "mcp" },
+  { mode: "deps", label: "Dependencies", icon: Package, tag: "mcp" },
+  { mode: "arch", label: "Architecture", icon: Layers, tag: "mcp" },
+  { mode: "stats", label: "Stats", icon: BarChart3, tag: "mcp" },
   { mode: "context", label: "Context Engine", icon: Brain, tag: "ai" },
   { mode: "quality", label: "Quality Score", icon: Gauge, tag: "ai" },
-  { mode: "learn", label: "Learning", icon: BookOpen, tag: "ai" },
+  { mode: "learn", label: "Learning", icon: BookOpen, tag: "mcp" },
   { mode: "token_stats", label: "Token Stats", icon: Coins, tag: "ai" },
 ];
 
 interface PluginInfo { name: string; enabled: boolean; description: string; }
 interface NoteEntry { name: string; path: string; size: number; modified: string | null; }
+
+interface FeedbackSummary {
+  total: number;
+  helpful: number;
+  recentNotes: { mode: string; helpful: boolean; note: string; ts: string }[];
+  byMode: Record<string, { total: number; helpful: number }>;
+}
+
+function parseFeedback(telemetry: string): FeedbackSummary | null {
+  const section = telemetry.split("=== feedback.jsonl")[1];
+  if (!section) return null;
+  const lines = section.split("\n").filter(l => l.trim().startsWith("{"));
+  if (lines.length === 0) return null;
+  const entries = lines.map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+  const summary: FeedbackSummary = { total: 0, helpful: 0, recentNotes: [], byMode: {} };
+  for (const e of entries) {
+    summary.total++;
+    if (e.helpful) summary.helpful++;
+    const mode = e.mode || "unknown";
+    if (!summary.byMode[mode]) summary.byMode[mode] = { total: 0, helpful: 0 };
+    summary.byMode[mode].total++;
+    if (e.helpful) summary.byMode[mode].helpful++;
+    if (e.note) summary.recentNotes.push({ mode, helpful: e.helpful, note: e.note, ts: e.ts || e.timestamp || "" });
+  }
+  summary.recentNotes = summary.recentNotes.slice(-5).reverse();
+  return summary.total > 0 ? summary : null;
+}
 
 function parsePlugins(output: string): PluginInfo[] {
   return output.split("\n").reduce<PluginInfo[]>((acc, line) => {
@@ -153,16 +184,21 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
     setModeOutput("");
     setNoteContent(null);
 
+    const safe = async <T,>(fn: () => Promise<T>, fallback: T): Promise<T> => {
+      try { return await fn(); } catch { return fallback; }
+    };
+    const emptyResult: TempoResult = { success: false, output: "", mode: "" };
+
     const [ov, q, l, t, pl, nt, tel, cfg, gi] = await Promise.all([
-      runTempo(path, "overview"),
-      runTempo(path, "quality"),
-      runTempo(path, "learn"),
-      runTempo(path, "token_stats"),
-      runTempo(path, "plugins"),
-      listNotes(path),
-      readTelemetry(path),
-      readConfig(path),
-      gitInfo(path),
+      safe(() => runTempo(path, "overview"), emptyResult),
+      safe(() => runTempo(path, "quality"), emptyResult),
+      safe(() => runTempo(path, "learn"), emptyResult),
+      safe(() => runTempo(path, "token_stats"), emptyResult),
+      safe(() => runTempo(path, "plugins"), emptyResult),
+      safe(() => listNotes(path), []),
+      safe(() => readTelemetry(path), emptyResult),
+      safe(() => readConfig(path), { success: false, data: {}, path: "", error: "" }),
+      safe(() => gitInfo(path), emptyResult),
     ]);
 
     cacheRef.current[path] = {
@@ -170,17 +206,18 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
       quality: q,
       learning: l,
       tokens: t,
-      plugins: parsePlugins(pl.output),
-      notes: (nt || []) as NoteEntry[],
-      telemetry: tel.output,
-      config: cfg.success ? (cfg.data as Record<string, unknown>) : {},
-      git: gi.output,
+      plugins: parsePlugins(pl.output || ""),
+      notes: (Array.isArray(nt) ? nt : []) as NoteEntry[],
+      telemetry: (tel as TempoResult).output || "",
+      config: (cfg as { success: boolean; data: Record<string, unknown> }).success
+        ? ((cfg as { data: Record<string, unknown> }).data || {}) : {},
+      git: (gi as TempoResult).output || "",
       loaded: true,
     };
     // Auto-load file browser at repo root
     setFileBrowserPath(path);
     const entries = await listDir(path);
-    setFileBrowserEntries(entries as DirEntry[]);
+    setFileBrowserEntries(Array.isArray(entries) ? entries as DirEntry[] : []);
     setFileViewContent(null);
     setLoading(false);
   }, []);
@@ -267,7 +304,7 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
     setFileBrowserPath(dirPath);
     setFileViewContent(null);
     const entries = await listDir(dirPath);
-    setFileBrowserEntries(entries as DirEntry[]);
+    setFileBrowserEntries(Array.isArray(entries) ? entries as DirEntry[] : []);
   };
 
   const viewFile = async (filePath: string, name: string) => {
@@ -383,7 +420,7 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
         {/* COLUMN 1: Modes + Run */}
         <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
           <div className="cell" style={{ flex: "0 0 auto", maxHeight: "45%" }}>
-            <div className="cell-head">Modes (14)</div>
+            <div className="cell-head">Modes ({MODES.length})</div>
             <div className="cell-body">
               {MODES.map((m) => (
                 <button
@@ -586,6 +623,52 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
               )}
             </div>
           </div>
+
+          {/* Agent Feedback */}
+          {(() => {
+            const fb = parseFeedback(ws.telemetry);
+            if (!fb) return null;
+            const rate = fb.total > 0 ? Math.round((fb.helpful / fb.total) * 100) : 0;
+            return (
+              <div className="cell" style={{ flex: "0 0 auto" }}>
+                <div className="cell-head">Agent Feedback ({fb.total})</div>
+                <div className="cell-body">
+                  <div style={{ display: "flex", gap: 12, marginBottom: 8, fontSize: 11 }}>
+                    <span style={{ color: rate >= 70 ? "var(--success)" : rate >= 40 ? "var(--warning)" : "var(--error)" }}>
+                      {rate}% helpful
+                    </span>
+                    <span style={{ color: "var(--text-tertiary)" }}>
+                      {fb.helpful}/{fb.total} reports
+                    </span>
+                  </div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 8 }}>
+                    {Object.entries(fb.byMode).sort((a, b) => b[1].total - a[1].total).slice(0, 6).map(([mode, data]) => (
+                      <span key={mode} style={{
+                        fontSize: 9, padding: "2px 6px", borderRadius: 4,
+                        background: "var(--bg-active)",
+                        color: data.helpful / data.total >= 0.7 ? "var(--success)" : "var(--text-secondary)"
+                      }}>
+                        {mode} {Math.round((data.helpful / data.total) * 100)}%
+                      </span>
+                    ))}
+                  </div>
+                  {fb.recentNotes.length > 0 && (
+                    <div style={{ fontSize: 10, color: "var(--text-secondary)" }}>
+                      {fb.recentNotes.map((n, i) => (
+                        <div key={i} style={{ marginBottom: 3, display: "flex", gap: 4 }}>
+                          <span style={{ color: n.helpful ? "var(--success)" : "var(--error)", flexShrink: 0 }}>
+                            {n.helpful ? "+" : "−"}
+                          </span>
+                          <span style={{ color: "var(--text-tertiary)", flexShrink: 0 }}>[{n.mode}]</span>
+                          <span>{n.note}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Learning + Tokens combined */}
           <div className="cell" style={{ flex: 1 }}>
