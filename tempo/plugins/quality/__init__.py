@@ -84,16 +84,19 @@ def score_quality(graph, target_file: str = "") -> str:
 
 
 def _score_naming_consistency(graph) -> int:
-    """Score how consistent naming conventions are across the codebase."""
-    from tempograph.types import SymbolKind
-    funcs = [s.name for s in graph.symbols.values() if s.kind == SymbolKind.FUNCTION]
-    if len(funcs) < 5:
-        return 80  # too few to judge
-
-    snake = sum(1 for n in funcs if "_" in n and n == n.lower())
-    camel = sum(1 for n in funcs if n[0].islower() and any(c.isupper() for c in n[1:]))
-    total = max(len(funcs), 1)
-
-    # Dominant style should be >80% for good score
-    dominant = max(snake, camel) / total
-    return min(100, int(dominant * 120))
+    """Score naming convention consistency per language (Python=snake, JS/TS=camel)."""
+    from tempograph.types import SymbolKind, Language
+    lang_scores = []
+    for lang, expected_style in [(Language.PYTHON, "snake"), (Language.TYPESCRIPT, "camel"), (Language.JAVASCRIPT, "camel")]:
+        funcs = [s.name for s in graph.symbols.values()
+                 if s.kind == SymbolKind.FUNCTION and s.language == lang]
+        if len(funcs) < 3:
+            continue
+        if expected_style == "snake":
+            conforming = sum(1 for n in funcs if "_" in n and n == n.lower())
+        else:
+            conforming = sum(1 for n in funcs if n[0].islower() and any(c.isupper() for c in n[1:]))
+        lang_scores.append(conforming / len(funcs))
+    if not lang_scores:
+        return 80
+    return min(100, int(sum(lang_scores) / len(lang_scores) * 110))
