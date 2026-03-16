@@ -164,18 +164,23 @@ def _detect_noisy_dirs(graph: Tempo, modules: dict[str, list[str]]) -> list[tupl
         pct = file_count / total_files * 100
         cross_edges = cross_dir_edges.get(mod, 0)
 
+        # Count files with actual code symbols (skip docs-only dirs)
+        code_files = sum(1 for fp in files if fp in graph.files and len(graph.files[fp].symbols) > 0)
+        if code_files == 0:
+            continue  # no code — docs/notes/config dir, not worth excluding
+
         # Heuristic 1: name matches known noise patterns
-        if mod.lower() in noise_names and file_count >= 5:
-            suggestions.append((mod, f"{file_count} files, likely archived/generated"))
+        if mod.lower() in noise_names and code_files >= 5:
+            suggestions.append((mod, f"{file_count} files ({code_files} with code), likely archived/generated"))
             continue
 
         # Heuristic 2: large directory with zero cross-dir connections
-        if file_count >= 10 and cross_edges == 0:
+        if code_files >= 10 and cross_edges == 0:
             suggestions.append((mod, f"{file_count} files ({pct:.0f}%), no cross-directory connections"))
             continue
 
         # Heuristic 3: large directory with very few cross-dir connections relative to size
-        if file_count >= 20 and cross_edges < 3 and pct > 20:
+        if code_files >= 20 and cross_edges < 3 and pct > 20:
             suggestions.append((mod, f"{file_count} files ({pct:.0f}%), only {cross_edges} cross-dir edges"))
 
     suggestions.sort(key=lambda x: -len(x[1]))
@@ -745,14 +750,21 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
         if ext_callers:
             external_deps.append((sym, ext_callers))
 
-    if external_deps:
+    token_count = count_tokens("\n".join(lines))
+
+    if external_deps and token_count < max_tokens - 200:
         lines.append("EXTERNAL DEPENDENCIES (breaking change risk):")
-        for sym, callers in external_deps[:20]:
-            lines.append(f"  {sym.kind.value} {sym.qualified_name} ({sym.file_path}:{sym.line_start})")
-            for c in callers[:5]:
-                lines.append(f"    <- {c.qualified_name} ({c.file_path}:{c.line_start})")
-            if len(callers) > 5:
-                lines.append(f"    ... +{len(callers) - 5} more callers")
+        for sym, callers in external_deps[:10]:
+            entry = f"  {sym.kind.value} {sym.qualified_name} ({sym.file_path}:{sym.line_start})"
+            for c in callers[:3]:
+                entry += f"\n    <- {c.qualified_name} ({c.file_path}:{c.line_start})"
+            if len(callers) > 3:
+                entry += f"\n    ... +{len(callers) - 3} more callers"
+            et = count_tokens(entry)
+            if token_count + et > max_tokens - 100:
+                break
+            lines.append(entry)
+            token_count += et
         lines.append("")
 
     # Files that import the changed files
@@ -761,30 +773,30 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
         all_importers.update(graph.importers_of(fp))
     all_importers -= normalized
 
-    if all_importers:
+    if all_importers and token_count < max_tokens - 100:
         lines.append(f"Files importing changed code ({len(all_importers)}):")
-        for imp in sorted(all_importers)[:15]:
+        for imp in sorted(all_importers)[:10]:
             lines.append(f"  {imp}")
-        if len(all_importers) > 15:
-            lines.append(f"  ... +{len(all_importers) - 15} more")
+        if len(all_importers) > 10:
+            lines.append(f"  ... +{len(all_importers) - 10} more")
         lines.append("")
+        token_count = count_tokens("\n".join(lines))
 
     # Component tree impact
-    render_impact: list[str] = []
-    for sym in affected_symbols:
-        if sym.kind == SymbolKind.COMPONENT:
-            for renderer in graph.renderers_of(sym.id):
-                if renderer.file_path not in normalized:
-                    render_impact.append(f"  {renderer.qualified_name} ({renderer.file_path}) renders {sym.name}")
+    if token_count < max_tokens - 100:
+        render_impact: list[str] = []
+        for sym in affected_symbols:
+            if sym.kind == SymbolKind.COMPONENT:
+                for renderer in graph.renderers_of(sym.id):
+                    if renderer.file_path not in normalized:
+                        render_impact.append(f"  {renderer.qualified_name} ({renderer.file_path}) renders {sym.name}")
 
-    if render_impact:
-        lines.append("Component tree impact:")
-        for ri in render_impact[:10]:
-            lines.append(ri)
-        lines.append("")
-
-    # Key symbols with signatures
-    token_count = count_tokens("\n".join(lines))
+        if render_impact:
+            lines.append("Component tree impact:")
+            for ri in render_impact[:5]:
+                lines.append(ri)
+            lines.append("")
+            token_count = count_tokens("\n".join(lines))
     if max_tokens - token_count > 500:
         lines.append("Key symbols in changed files:")
         for sym in affected_symbols:
@@ -1151,10 +1163,10 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                 try:
                     changed = changed_files_unstaged(repo_path)
                     if changed:
-                        diff_budget = max_tokens - token_count - 50
+                        diff_budget = max_tokens - token_count
                         diff_output = render_diff_context(graph, changed, max_tokens=diff_budget)
                         dt = count_tokens(diff_output)
-                        if dt < diff_budget:
+                        if dt <= diff_budget + 100:  # allow small overflow
                             sections.append(f"\n## Uncommitted changes ({len(changed)} files)")
                             sections.append(diff_output)
                             token_count += dt + 10

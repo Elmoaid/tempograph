@@ -214,6 +214,11 @@ def infer_from_telemetry(repo_path: str) -> int:
         if sh in existing_hashes:
             continue
 
+        # Skip sessions that look like automated testing (too many calls too fast)
+        if len(session) > 30:
+            # If >30 calls in a 20-minute window, likely a test/audit run
+            continue
+
         modes = [e.get("mode") for e in session if e.get("mode") not in ("stats", "report")]
         if not modes:
             continue

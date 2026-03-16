@@ -368,14 +368,14 @@ def symbols(repo_path: str, max_tokens: int = 8000, exclude_dirs: str = "", outp
     with signatures, locations, and relationships.
 
     WARNING: Can be very large. Default max_tokens=8000 prevents context window overflow.
-    Set max_tokens=0 for unlimited (use with caution on large repos).
     For scoped queries, use focus or lookup instead — they're much cheaper.
 
-    max_tokens: cap output (default 8000, set 0 for unlimited)
+    max_tokens: cap output (default 8000; 0 = use default)
     exclude_dirs: comma-separated directory prefixes to skip
     output_format: "text" (default) or "json" for structured response"""
+    cap = max_tokens if max_tokens > 0 else 8000
     return _run_tool("symbols", repo_path, output_format,
-                     lambda g: render_symbols(g, max_tokens=max_tokens),
+                     lambda g: render_symbols(g, max_tokens=cap),
                      exclude_dirs=exclude_dirs)
 
 
