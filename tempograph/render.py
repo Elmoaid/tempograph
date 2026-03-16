@@ -905,6 +905,10 @@ def _dead_code_confidence(sym: Symbol, graph: Tempo) -> int:
     if any(name_lower.startswith(p) or p in name_lower for p in _DISPATCH_PATTERNS):
         score -= 20
 
+    # Plugin entrypoint: function named 'run' in a plugins/ directory (called via dynamic dispatch)
+    if sym.name == "run" and "/plugins/" in sym.file_path:
+        score -= 30
+
     # Has docstring — suggests intentional public API
     if sym.doc:
         score -= 15

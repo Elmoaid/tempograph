@@ -149,7 +149,7 @@ def main(argv: list[str] | None = None) -> int:
         from tempograph.render import count_tokens
         print(f"\n[{count_tokens(output):,} tokens]", file=sys.stderr)
 
-    if not args.no_log:
+    if not args.no_log and args.mode not in ("stats", "report", "plugins"):
         from tempograph.render import count_tokens
         log_usage(repo, source="cli", mode=args.mode, query=args.query, file=args.file,
                   symbols=stats["symbols"], tokens=count_tokens(output),
