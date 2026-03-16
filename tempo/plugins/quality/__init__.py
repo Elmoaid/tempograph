@@ -27,10 +27,13 @@ def score_quality(graph, target_file: str = "") -> str:
 
     scores = {}
 
-    # Minimality: dead code ratio (exclude archive/ and vendor dirs)
+    # Minimality: dead code ratio (exclude archive/ and vendor dirs; only high-confidence dead code)
     _skip = ("archive/", "bench/", "node_modules/", ".git/", "dist/", "build/")
-    dead = [s for s in graph.find_dead_code()
-            if not any(s.file_path.startswith(p) for p in _skip)]
+    from tempograph.render import _dead_code_confidence
+    dead_raw = [s for s in graph.find_dead_code()
+                if not any(s.file_path.startswith(p) for p in _skip)]
+    # Only count high+medium confidence (>=50) to avoid dynamic dispatch false positives
+    dead = [s for s in dead_raw if _dead_code_confidence(s, graph) >= 50]
     total_exported = sum(1 for s in graph.symbols.values()
                          if s.exported and not any(s.file_path.startswith(p) for p in _skip))
     dead_ratio = len(dead) / max(total_exported, 1)

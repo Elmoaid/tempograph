@@ -310,7 +310,8 @@ def _resolve_imports(graph: Tempo, root: Path) -> None:
 
     # Patterns for extracting import targets
     js_from_re = re.compile(r"""from\s+['"]([^'"]+)['"]""")
-    py_from_re = re.compile(r"""from\s+(\S+)\s+import""")
+    py_from_re = re.compile(r"""from\s+(\S+)\s+import\s+(.+)""")
+    py_names_re = re.compile(r"""from\s+\S+\s+import\s+(.+)""")
     rust_use_re = re.compile(r"""use\s+(?:crate::)?(\S+)""")
 
     for fp, fi in graph.files.items():
@@ -347,15 +348,35 @@ def _resolve_imports(graph: Tempo, root: Path) -> None:
                     if stem in path_lookup:
                         targets.append(path_lookup[stem])
 
-            # Python: from foo.bar import baz
+            # Python: from foo.bar import baz, Qux  (absolute and relative)
+            py_imported_names: list[str] = []
             if not targets:
                 m = py_from_re.search(imp_str)
                 if m:
-                    mod = m.group(1).replace(".", "/")
+                    raw_mod = m.group(1)
+                    # Count leading dots for relative imports
+                    dots = len(raw_mod) - len(raw_mod.lstrip("."))
+                    if dots:
+                        # Relative: resolve against current file's directory
+                        file_parts = fp.split("/")[:-1]  # strip filename
+                        for _ in range(dots - 1):  # one dot = same dir, two dots = parent
+                            if file_parts:
+                                file_parts.pop()
+                        suffix = raw_mod[dots:].replace(".", "/")  # e.g. "types"
+                        mod = "/".join(file_parts + [suffix]) if suffix else "/".join(file_parts)
+                    else:
+                        mod = raw_mod.replace(".", "/")
                     for ext in (".py", "/__init__.py"):
                         candidate = mod + ext
                         if candidate in graph.files:
                             targets.append(candidate)
+                            # Extract named imports for symbol-level edges
+                            names_str = m.group(2).strip().strip("()")
+                            py_imported_names = [
+                                n.strip().split(" as ")[0].strip()
+                                for n in names_str.split(",")
+                                if n.strip() and not n.strip().startswith("#")
+                            ]
                             break
 
             # Rust: use crate::foo::bar — try multiple source directories
@@ -387,3 +408,9 @@ def _resolve_imports(graph: Tempo, root: Path) -> None:
 
             for target in targets:
                 graph.edges.append(Edge(EdgeKind.IMPORTS, fp, target))
+                # Create symbol-level CALLS edges for named Python imports
+                # This prevents false-positive dead code flags for exported names
+                for name in py_imported_names:
+                    sym_id = f"{target}::{name}"
+                    if sym_id in graph.symbols:
+                        graph.edges.append(Edge(EdgeKind.CALLS, fp, sym_id))
