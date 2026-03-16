@@ -78,11 +78,16 @@ def _detect_function_families(graph) -> list[dict]:
     for prefix, members in sorted(prefix_groups.items(), key=lambda x: -len(x[1])):
         if len(members) < 2:
             continue
+        # Deduplicate examples — if all have the same name (e.g. plugin run() fns),
+        # it's an entry point pattern, not a naming family. Skip unless unique names exist.
+        unique_names = list(dict.fromkeys(m["name"] for m in members))
+        if len(unique_names) == 1:
+            continue  # single-name group: entry point pattern, not a naming family
         files = list({m["file"] for m in members})
         families.append({
             "prefix": prefix,
             "count": len(members),
-            "examples": [m["name"] for m in members[:5]],
+            "examples": unique_names[:5],
             "files": files[:3],
             "exported": any(m["exported"] for m in members),
         })

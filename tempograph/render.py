@@ -1226,6 +1226,16 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
             sections.append(dead_output)
             token_count += dt + 10
 
+    # Skills: include coding conventions for feature/refactor tasks so agents write convention-native code
+    if token_count < max_tokens - 200 and task_type in ("feature", "refactor"):
+        skills_budget = min(800, max_tokens - token_count - 100)
+        skills_output = render_skills(graph, max_tokens=skills_budget)
+        st = count_tokens(skills_output)
+        if st <= skills_budget + 50:
+            sections.append("\n## Coding Conventions (follow these when writing new code)")
+            sections.append(skills_output)
+            token_count += st + 10
+
     if token_count < max_tokens - 100:
         is_change = any(w in task.lower() for w in (
             "fix", "bug", "change", "modify", "update", "refactor", "add", "remove",
