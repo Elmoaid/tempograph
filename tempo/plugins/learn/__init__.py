@@ -136,6 +136,8 @@ _MODE_TO_TASK_TYPE = {
     "focus": "code_navigation",
     "blast": "code_navigation",
     "lookup": "code_navigation",
+    "symbols": "code_navigation",
+    "map": "orientation",
     "dead": "cleanup",
     "hotspots": "refactor",
     "diff": "code_review",
@@ -144,6 +146,8 @@ _MODE_TO_TASK_TYPE = {
     "deps": "dependency_audit",
     "context": "task_preparation",
     "quality": "output_review",
+    "learn": "learning",
+    "skills": "patterns",
 }
 
 # MCP tool names → canonical mode names (MCP logs "tool", CLI logs "mode")
@@ -333,9 +337,11 @@ def analyze_cross_repo_patterns() -> str:
         return "L3: No global telemetry found. Use tempo on more repos to build data."
 
     skip_modes = {"stats", "report", "plugins", "serve"}
+    _skip_tools_l3 = _SKIP_TOOLS | {"plugins", "serve"}
     usage_lines = [
         e for e in (json.loads(l) for l in usage_path.read_text().splitlines() if l.strip())
         if e.get("mode") not in skip_modes
+        and e.get("tool") not in _skip_tools_l3
         and not _is_test_repo(e.get("repo_path", e.get("repo", "")))
     ]
 
@@ -395,7 +401,7 @@ def analyze_cross_repo_patterns() -> str:
         repo = session[0].get("repo_path", session[0].get("repo", "unknown"))
         repo_counts[repo] = repo_counts.get(repo, 0) + 1
         for e in session:
-            m = e.get("mode")
+            m = _entry_mode(e)
             if not m:
                 continue
             if m not in mode_tokens:
@@ -411,7 +417,7 @@ def analyze_cross_repo_patterns() -> str:
     for m in all_modes:
         fb = fb_by_mode.get(m, {})
         tok = mode_tokens.get(m, {})
-        if fb.get("total", 0) < 2:  # need at least 2 feedback entries
+        if fb.get("total", 0) < 3:  # need at least 3 feedback entries
             continue
         rate = fb["success"] / fb["total"]
         avg_tokens = tok["tokens_total"] // tok["tokens_count"] if tok.get("tokens_count") else 0

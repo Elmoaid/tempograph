@@ -517,8 +517,9 @@ def learn_recommendation(repo_path: str, task_type: str = "", output_format: str
     """Get a data-driven context strategy recommendation from learned usage patterns.
 
     Returns the best modes to use, expected token cost, and success rate for a given task type.
-    Known task types: debug, refactor, code_navigation, orientation, cleanup, architecture,
-    dependency_audit, code_review, task_preparation, output_review.
+    Known task types: debug, feature, refactor, code_navigation, orientation, cleanup,
+    architecture, dependency_audit, code_review, task_preparation, output_review,
+    learning, patterns.
 
     Leave task_type empty to see all learned strategies for this repo.
 
