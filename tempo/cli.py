@@ -139,7 +139,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"Mode '{args.mode}' is not available (plugin disabled or missing).", file=sys.stderr)
         return 1
 
-    kwargs = {"query": args.query or "", "file": args.file or "", "max_tokens": args.max_tokens}
+    kwargs = {"query": args.query or "", "file": args.file or "", "max_tokens": args.max_tokens,
+              "task_type": args.task_type or ""}
     if args.mode == "diff":
         kwargs["changed_files"] = [f.strip() for f in (args.file or "").split(",") if f.strip()]
 

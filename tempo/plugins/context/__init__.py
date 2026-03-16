@@ -25,16 +25,19 @@ PLUGIN = {
 
 
 def run(graph, *, query: str = "", file: str = "", max_tokens: int = 4000, **kwargs) -> str:
-    return select_context(graph, task=query, target_file=file, budget=max_tokens)
+    task_type = kwargs.get("task_type") or ""
+    return select_context(graph, task=query, target_file=file, budget=max_tokens, task_type=task_type)
 
 
-def select_context(graph, *, task: str, target_file: str = "", budget: int = 4000) -> str:
+def select_context(graph, *, task: str, target_file: str = "", budget: int = 4000, task_type: str = "") -> str:
     """Select optimal context for a task within a token budget.
 
     Priority order (highest signal per token):
     1. Blast radius of target file (if provided) — direct impact map
     2. Focused subgraph around task keywords — structural neighbors
     3. Overview — fallback orientation
+
+    If task_type is provided, appends L2 learned strategy hint from TaskMemory.
     """
     parts: list[tuple[int, str]] = []  # (priority, content)
     used = 0
@@ -76,8 +79,23 @@ def select_context(graph, *, task: str, target_file: str = "", budget: int = 400
     parts.sort(key=lambda x: x[0])
     sections = [content for _, content in parts]
 
-    header = f"[tempo context: {used:,} tokens, {len(sections)} sections]"
+    l2_hint = _get_l2_hint(graph.root, task_type) if task_type else ""
+    header = f"[tempo context: {used:,} tokens, {len(sections)} sections{', ' + l2_hint if l2_hint else ''}]"
     return f"{header}\n\n" + "\n\n---\n\n".join(sections)
+
+
+def _get_l2_hint(repo_path: str, task_type: str) -> str:
+    """Return a short L2 strategy hint for task_type, or empty string if unavailable."""
+    try:
+        from tempo.plugins.learn import TaskMemory
+        rec = TaskMemory(repo_path).get_recommendation(task_type)
+        if rec and rec.get("best_modes"):
+            modes = "+".join(rec["best_modes"])
+            rate = int(rec.get("success_rate", 0) * 100)
+            return f"L2({task_type}): try {modes} ({rate}% success)"
+    except Exception:
+        pass
+    return ""
 
 
 def _extract_task_keywords(task: str) -> list[str]:
