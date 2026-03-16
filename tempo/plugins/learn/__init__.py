@@ -269,9 +269,16 @@ def infer_from_telemetry(repo_path: str) -> int:
     return new_count
 
 
-_L3_MIN_SESSIONS = 20
+_L3_MIN_SESSIONS = 10
 _L3_INSIGHTS_PATH = Path.home() / ".tempograph" / "global" / "l3_insights.json"
 _L3_GLOBAL_DIR = Path.home() / ".tempograph" / "global"
+
+_TEST_PATH_PATTERNS = ("pytest-of-", "/tmp/", "/T/pytest-", "test_telemetry_", "pytest-")
+
+
+def _is_test_repo(path: str) -> bool:
+    """Return True if the path looks like a pytest temp or test-generated directory."""
+    return any(pat in path for pat in _TEST_PATH_PATTERNS)
 
 
 def analyze_cross_repo_patterns() -> str:
@@ -291,8 +298,9 @@ def analyze_cross_repo_patterns() -> str:
 
     skip_modes = {"stats", "report", "plugins", "serve"}
     usage_lines = [
-        json.loads(l) for l in usage_path.read_text().splitlines()
-        if l.strip() and json.loads(l).get("mode") not in skip_modes
+        e for e in (json.loads(l) for l in usage_path.read_text().splitlines() if l.strip())
+        if e.get("mode") not in skip_modes
+        and not _is_test_repo(e.get("repo_path", e.get("repo", "")))
     ]
 
     feedback_lines: list[dict] = []
