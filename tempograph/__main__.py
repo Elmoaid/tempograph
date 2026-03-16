@@ -72,6 +72,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--tokens", action="store_true", help="Show token count")
     parser.add_argument("--no-log", action="store_true", help="Disable usage logging")
     parser.add_argument("--exclude", "-x", help="Comma-separated directory prefixes to exclude (e.g. archive,bench/results)")
+    parser.add_argument("--task-type", help="Explicit task type for L2 learning (e.g. refactor, debug, feature, review)")
 
     args = parser.parse_args(raw)
     repo = str(Path(args.repo).resolve())
@@ -171,6 +172,7 @@ def main(argv: list[str] | None = None) -> int:
             tokens=tokens,
             duration_ms=int(elapsed * 1000),
             empty=is_empty_result(output),
+            task_type=args.task_type,
         )
 
     return 0

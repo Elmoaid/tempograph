@@ -909,6 +909,10 @@ def _dead_code_confidence(sym: Symbol, graph: Tempo) -> int:
     if sym.name == "run" and "/plugins/" in sym.file_path:
         score -= 30
 
+    # Tauri command — invoked via IPC from frontend, static analysis can't see callers
+    if sym.kind == SymbolKind.COMMAND:
+        score -= 40
+
     # Has docstring — suggests intentional public API
     if sym.doc:
         score -= 15

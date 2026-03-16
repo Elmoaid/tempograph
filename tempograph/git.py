@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import subprocess
-from pathlib import Path
-
 
 def _run_git(repo: str, *args: str) -> str | None:
     """Run a git command and return stdout, or None on failure."""
@@ -54,24 +52,3 @@ def current_branch(repo: str) -> str | None:
     return _run_git(repo, "rev-parse", "--abbrev-ref", "HEAD")
 
 
-def file_hashes(repo: str) -> dict[str, str]:
-    """Get SHA hashes for all tracked files. Used for incremental rebuild."""
-    out = _run_git(repo, "ls-files", "-s")
-    if not out:
-        return {}
-    hashes: dict[str, str] = {}
-    for line in out.split("\n"):
-        if not line:
-            continue
-        # Format: mode sha stage\tpath
-        parts = line.split("\t", 1)
-        if len(parts) == 2:
-            sha = parts[0].split()[1]
-            path = parts[1]
-            hashes[path] = sha
-    return hashes
-
-
-def is_git_repo(path: str) -> bool:
-    """Check if a path is inside a git repository."""
-    return _run_git(path, "rev-parse", "--git-dir") is not None

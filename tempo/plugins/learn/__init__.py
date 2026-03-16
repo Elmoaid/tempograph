@@ -262,7 +262,153 @@ def infer_from_telemetry(repo_path: str) -> int:
     return new_count
 
 
+_L3_MIN_SESSIONS = 20
+_L3_INSIGHTS_PATH = Path.home() / ".tempograph" / "global" / "l3_insights.json"
+_L3_GLOBAL_DIR = Path.home() / ".tempograph" / "global"
+
+
+def analyze_cross_repo_patterns() -> str:
+    """L3: Identify universal improvement patterns across all repos.
+
+    Reads global telemetry and extracts patterns that hold regardless of
+    specific codebase. Requires at least _L3_MIN_SESSIONS sessions to produce
+    meaningful output. Writes findings to ~/.tempograph/global/l3_insights.json.
+    """
+    from datetime import datetime, timezone
+
+    usage_path = _L3_GLOBAL_DIR / "usage.jsonl"
+    feedback_path = _L3_GLOBAL_DIR / "feedback.jsonl"
+
+    if not usage_path.exists():
+        return "L3: No global telemetry found. Use tempo on more repos to build data."
+
+    skip_modes = {"stats", "report", "plugins", "serve"}
+    usage_lines = [
+        json.loads(l) for l in usage_path.read_text().splitlines()
+        if l.strip() and json.loads(l).get("mode") not in skip_modes
+    ]
+
+    feedback_lines: list[dict] = []
+    if feedback_path.exists():
+        feedback_lines = [json.loads(l) for l in feedback_path.read_text().splitlines() if l.strip()]
+
+    # Group into sessions per repo (20-min gap = new session)
+    def to_sessions(entries: list[dict]) -> list[list[dict]]:
+        sessions: list[list[dict]] = []
+        current: list[dict] = []
+        prev_ts = None
+        for e in sorted(entries, key=lambda x: x.get("ts", "")):
+            try:
+                ts = datetime.fromisoformat(e["ts"])
+            except (ValueError, KeyError):
+                continue
+            if prev_ts and (ts - prev_ts).total_seconds() > 1200:
+                if current:
+                    sessions.append(current)
+                    current = []
+            current.append(e)
+            prev_ts = ts
+        if current:
+            sessions.append(current)
+        return sessions
+
+    sessions = to_sessions(usage_lines)
+    total_sessions = len(sessions)
+
+    if total_sessions < _L3_MIN_SESSIONS:
+        remaining = _L3_MIN_SESSIONS - total_sessions
+        return (
+            f"L3: Insufficient data — {total_sessions}/{_L3_MIN_SESSIONS} sessions.\n"
+            f"Need {remaining} more sessions across any repo. L3 auto-runs when threshold is met."
+        )
+
+    # Build feedback lookup: ts → helpful bool
+    fb_lookup: list[tuple[datetime, bool]] = []
+    for fb in feedback_lines:
+        try:
+            fb_ts = datetime.fromisoformat(fb["ts"])
+            fb_lookup.append((fb_ts, bool(fb.get("helpful"))))
+        except (ValueError, KeyError):
+            pass
+
+    def session_success(session: list[dict]) -> bool | None:
+        try:
+            last_ts = datetime.fromisoformat(session[-1]["ts"])
+        except (ValueError, KeyError):
+            return None
+        for fb_ts, helpful in fb_lookup:
+            if abs((fb_ts - last_ts).total_seconds()) <= 3600:
+                return helpful
+        empty_count = sum(1 for e in session if e.get("empty"))
+        return empty_count < len(session) * 0.5
+
+    # Per-mode aggregates: success_count, total_count, total_tokens
+    mode_stats: dict[str, dict] = {}
+    repo_counts: dict[str, int] = {}
+
+    for session in sessions:
+        repo = session[0].get("repo_path", session[0].get("repo", "unknown"))
+        repo_counts[repo] = repo_counts.get(repo, 0) + 1
+        success = session_success(session)
+        for e in session:
+            m = e.get("mode")
+            if not m:
+                continue
+            if m not in mode_stats:
+                mode_stats[m] = {"success": 0, "total": 0, "tokens_total": 0, "tokens_count": 0}
+            mode_stats[m]["total"] += 1
+            if success is True:
+                mode_stats[m]["success"] += 1
+            t = e.get("tokens", 0)
+            if t:
+                mode_stats[m]["tokens_total"] += t
+                mode_stats[m]["tokens_count"] += 1
+
+    # Compute per-mode success rate and avg tokens
+    mode_rates: list[dict] = []
+    for m, s in mode_stats.items():
+        if s["total"] < 3:
+            continue
+        rate = s["success"] / s["total"]
+        avg_tokens = s["tokens_total"] // s["tokens_count"] if s["tokens_count"] else 0
+        mode_rates.append({"mode": m, "success_rate": rate, "uses": s["total"], "avg_tokens": avg_tokens})
+    mode_rates.sort(key=lambda x: -x["success_rate"])
+
+    # Top repos by usage
+    top_repos = sorted(repo_counts.items(), key=lambda x: -x[1])[:5]
+
+    insights = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "sessions_analyzed": total_sessions,
+        "repos_seen": len(repo_counts),
+        "top_repos": [{"repo": r, "sessions": c} for r, c in top_repos],
+        "mode_effectiveness": mode_rates,
+    }
+
+    _L3_INSIGHTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _L3_INSIGHTS_PATH.write_text(json.dumps(insights, indent=2))
+
+    lines = [
+        f"L3 Cross-Repo Analysis — {total_sessions} sessions, {len(repo_counts)} repos",
+        "",
+        "Mode effectiveness (success rate, min 3 uses):",
+    ]
+    for r in mode_rates:
+        lines.append(f"  {r['mode']:20s}  {r['success_rate']*100:.0f}%  ({r['uses']} uses, avg {r['avg_tokens']:,} tokens)")
+
+    lines += ["", "Top repos by usage:"]
+    for repo, count in top_repos:
+        lines.append(f"  {count:3d} sessions  {repo}")
+
+    lines.append(f"\nInsights written to {_L3_INSIGHTS_PATH}")
+    return "\n".join(lines)
+
+
 def run(graph, **kwargs) -> str:
+    query = (kwargs.get("query") or "").strip().lower()
+    if query == "l3":
+        return analyze_cross_repo_patterns()
+
     mem = TaskMemory(graph.root)
     # Auto-populate from telemetry on each invocation
     new = infer_from_telemetry(graph.root)
