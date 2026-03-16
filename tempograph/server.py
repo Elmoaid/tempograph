@@ -1,4 +1,4 @@
-"""Lean MCP server — 7 high-value tools for agent codebase understanding.
+"""Lean MCP server — 8 high-value tools for agent codebase understanding.
 
 Each tool is designed to give agents maximum signal per token spent.
 No dump-everything modes — every response is scoped and actionable.
@@ -21,6 +21,12 @@ from .render import (
     render_overview,
 )
 from .telemetry import is_empty_result, log_feedback, log_usage
+
+try:
+    from tempo.plugins.learn import TaskMemory, infer_from_telemetry
+    _LEARN_AVAILABLE = True
+except ImportError:
+    _LEARN_AVAILABLE = False
 from .types import Tempo
 
 mcp = FastMCP("tempograph")
@@ -211,6 +217,42 @@ def report_feedback(repo_path: str, mode: str, helpful: bool, note: str = "") ->
         note=note,
     )
     return f"Feedback recorded for '{mode}' (helpful={helpful}). Thanks!"
+
+
+@mcp.tool()
+def learn_recommendation(repo_path: str, task_type: str = "") -> str:
+    """Get a data-driven context strategy recommendation from learned usage patterns.
+
+    Returns the best modes to use, expected token cost, and success rate for a given task type.
+    Known task types: debug, refactor, code_navigation, orientation, cleanup, architecture,
+    dependency_audit, code_review, task_preparation, output_review.
+
+    Leave task_type empty to see all learned strategies for this repo.
+    """
+    if not _LEARN_AVAILABLE:
+        return "Learning engine not available. Install tempo package."
+
+    start = time.time()
+    infer_from_telemetry(repo_path)
+    mem = TaskMemory(repo_path)
+
+    if task_type:
+        rec = mem.get_recommendation(task_type)
+        if rec:
+            modes = ", ".join(rec["best_modes"])
+            output = (
+                f"Recommendation for '{task_type}':\n"
+                f"  Use modes: [{modes}]\n"
+                f"  Avg tokens: ~{rec['avg_tokens']:,}\n"
+                f"  Success rate: {rec['success_rate']:.0%} (n={rec['sample_size']})"
+            )
+        else:
+            output = f"No learned strategy for '{task_type}' yet. Run more sessions to build data."
+    else:
+        output = mem.summary()
+
+    _log_tool("learn_recommendation", repo_path, output, time.time() - start, task_type=task_type)
+    return output
 
 
 def run_server():
