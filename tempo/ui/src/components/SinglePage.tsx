@@ -43,16 +43,18 @@ interface ModeInfo {
   label: string;
   icon: ComponentType<{ size?: number }>;
   tag: string;
+  hint?: string;
+  argPrefix?: string;
 }
 
 const MODES: ModeInfo[] = [
-  { mode: "prepare", label: "Prepare Context", icon: Zap, tag: "mcp" },
+  { mode: "prepare", label: "Prepare Context", icon: Zap, tag: "mcp", hint: "describe your task", argPrefix: "--query" },
   { mode: "overview", label: "Overview", icon: Eye, tag: "mcp" },
-  { mode: "focus", label: "Focus", icon: Crosshair, tag: "mcp" },
-  { mode: "lookup", label: "Lookup", icon: Search, tag: "mcp" },
-  { mode: "blast", label: "Blast Radius", icon: Bomb, tag: "mcp" },
+  { mode: "focus", label: "Focus", icon: Crosshair, tag: "mcp", hint: "what are you working on?", argPrefix: "--query" },
+  { mode: "lookup", label: "Lookup", icon: Search, tag: "mcp", hint: "where is X? / what calls X?", argPrefix: "--query" },
+  { mode: "blast", label: "Blast Radius", icon: Bomb, tag: "mcp", hint: "symbol or file path", argPrefix: "--query" },
   { mode: "hotspots", label: "Hotspots", icon: Flame, tag: "mcp" },
-  { mode: "diff", label: "Diff Context", icon: GitBranch, tag: "mcp" },
+  { mode: "diff", label: "Diff Context", icon: GitBranch, tag: "mcp", hint: "file1.py,file2.py (or leave blank for unstaged)", argPrefix: "--file" },
   { mode: "dead_code", label: "Dead Code", icon: Skull, tag: "mcp" },
   { mode: "symbols", label: "Symbols", icon: Hash, tag: "mcp" },
   { mode: "map", label: "File Map", icon: Map, tag: "mcp" },
@@ -240,18 +242,31 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
     if (addingWs) addInputRef.current?.focus();
   }, [addingWs]);
 
+  const activeModeInfo = MODES.find(m => m.mode === activeMode);
+
   const runMode = async () => {
     if (!repoPath) return;
     setModeRunning(true);
     setModeOutput("");
-    const args = modeArgs.trim() ? modeArgs.trim().split(/\s+/) : [];
-    // Auto-add exclude_dirs from config if not already in args
-    const wsExclude = ws.config.exclude_dirs;
-    if (Array.isArray(wsExclude) && wsExclude.length > 0 && !args.includes("--exclude")) {
-      args.push("--exclude", (wsExclude as string[]).join(","));
+    try {
+      const args: string[] = [];
+      // Smart arg construction: if mode has argPrefix and user typed plain text, wrap it
+      const raw = modeArgs.trim();
+      if (raw && activeModeInfo?.argPrefix && !raw.startsWith("--")) {
+        args.push(activeModeInfo.argPrefix, raw);
+      } else if (raw) {
+        args.push(...raw.split(/\s+/));
+      }
+      // Auto-add exclude_dirs from config if not already in args
+      const wsExclude = ws.config.exclude_dirs;
+      if (Array.isArray(wsExclude) && wsExclude.length > 0 && !args.includes("--exclude")) {
+        args.push("--exclude", (wsExclude as string[]).join(","));
+      }
+      const r = await runTempo(repoPath, activeMode, args);
+      setModeOutput(r.output || "No output");
+    } catch {
+      setModeOutput("Failed to run mode. Check that tempo is installed.");
     }
-    const r = await runTempo(repoPath, activeMode, args);
-    setModeOutput(r.output);
     setModeRunning(false);
   };
 
@@ -439,7 +454,7 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
                 <button
                   key={m.mode}
                   className={`mode-row ${activeMode === m.mode ? "active" : ""}`}
-                  onClick={() => { setActiveMode(m.mode); setModeOutput(""); }}
+                  onClick={() => { setActiveMode(m.mode); setModeOutput(""); setModeArgs(""); }}
                 >
                   <span className="mode-row-icon"><m.icon size={13} /></span>
                   <span className="mode-row-name">{m.label}</span>
@@ -467,7 +482,7 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
             </div>
             <div className="cell-body">
               <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-                <input className="input" placeholder="--query X --file Y" value={modeArgs} onChange={(e) => setModeArgs(e.target.value)} onKeyDown={(e) => e.key === "Enter" && runMode()} style={{ flex: 1 }} />
+                <input className="input" placeholder={activeModeInfo?.hint || "arguments (optional)"} value={modeArgs} onChange={(e) => setModeArgs(e.target.value)} onKeyDown={(e) => e.key === "Enter" && runMode()} style={{ flex: 1 }} />
                 <button className="btn" onClick={runMode} disabled={modeRunning} style={{ padding: "4px 10px" }}>
                   <Play size={11} /> {modeRunning ? "..." : "Run"}
                 </button>

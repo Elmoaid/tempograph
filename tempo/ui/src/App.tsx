@@ -38,7 +38,7 @@ function App() {
           setWorkspaces([r.output]);
           saveWorkspaces([r.output]);
         }
-      });
+      }).catch(() => { /* no Tauri runtime */ });
     }
   }, []);
 

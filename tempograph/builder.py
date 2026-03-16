@@ -75,8 +75,12 @@ def build_graph(
                 imports = cached["imports"]
                 new_cache[rel_path] = cached
             else:
-                parser = FileParser(rel_path, language, source, is_tauri=is_tauri)
-                symbols, edges, imports = parser.parse()
+                try:
+                    parser = FileParser(rel_path, language, source, is_tauri=is_tauri)
+                    symbols, edges, imports = parser.parse()
+                except Exception:
+                    # Skip files that fail to parse (syntax errors, unsupported constructs)
+                    symbols, edges, imports = [], [], []
                 if use_cache:
                     new_cache[rel_path] = make_cache_entry(
                         source,

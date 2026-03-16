@@ -277,8 +277,12 @@ class FileParser:
         decs = set(decorators or [])
         if "property" in decs:
             kind = SymbolKind.PROPERTY
+        elif any(d for d in decs if ".route" in d or d == "route"):
+            kind = SymbolKind.ROUTE
+        elif name.startswith("test_") or any("pytest.mark" in d for d in decs):
+            kind = SymbolKind.TEST
         elif "staticmethod" in decs or "classmethod" in decs:
-            kind = SymbolKind.FUNCTION  # static/class methods are functions, not bound methods
+            kind = SymbolKind.FUNCTION
         elif is_method:
             kind = SymbolKind.METHOD
         else:
@@ -415,7 +419,7 @@ class FileParser:
         sym_id = self._make_id(name)
         kind = SymbolKind.FUNCTION
         # Detect React components (PascalCase + returns JSX)
-        if name[0].isupper() and self.language in (Language.TSX, Language.JSX):
+        if name and name[0].isupper() and self.language in (Language.TSX, Language.JSX):
             kind = SymbolKind.COMPONENT
         # Detect hooks
         if name.startswith("use") and name[3:4].isupper():
@@ -454,6 +458,8 @@ class FileParser:
             if not name_node:
                 continue
             name = _node_text(name_node, self.source)
+            if not name:
+                continue
             sym_id = self._make_id(name)
 
             # Arrow function or function expression
@@ -786,16 +792,13 @@ class FileParser:
         name = _node_text(name_node, self.source)
         sym_id = self._make_id(name)
         kind = SymbolKind.METHOD if is_method else SymbolKind.FUNCTION
-        # Detect test functions
+        # Detect test functions and Tauri commands
         prev = node.prev_named_sibling
         if prev and prev.type == "attribute_item":
             attr_text = _node_text(prev, self.source)
             if "test" in attr_text:
                 kind = SymbolKind.TEST
-        # Detect Tauri commands
-        if prev and prev.type == "attribute_item":
-            attr_text = _node_text(prev, self.source)
-            if "tauri::command" in attr_text:
+            elif "tauri::command" in attr_text:
                 kind = SymbolKind.COMMAND
 
         doc = _first_comment_above(node, self.source)
@@ -1156,11 +1159,14 @@ class FileParser:
                 self.edges.append(Edge(EdgeKind.INHERITS, sym_id, sc_name, node.start_point[0] + 1))
         interfaces = node.child_by_field_name("interfaces")
         if interfaces:
+            # super_interfaces → type_list → type_identifier/generic_type
             for child in interfaces.children:
-                if child.type == "type_identifier" or child.type == "generic_type":
-                    iface = _node_text(child, self.source).split("<")[0].strip()
-                    if iface:
-                        self.edges.append(Edge(EdgeKind.INHERITS, sym_id, iface, node.start_point[0] + 1))
+                if child.type == "type_list":
+                    for tc in child.children:
+                        if tc.type in ("type_identifier", "generic_type"):
+                            iface = _node_text(tc, self.source).split("<")[0].strip()
+                            if iface:
+                                self.edges.append(Edge(EdgeKind.IMPLEMENTS, sym_id, iface, node.start_point[0] + 1))
 
         # Process class body
         body = node.child_by_field_name("body")
@@ -1212,9 +1218,11 @@ class FileParser:
             self._scan_calls(body, sym_id)
 
     def _handle_java_constructor(self, node: Node, class_id: str, class_name: str) -> None:
-        name = _node_text(node.child_by_field_name("name"), self.source) if node.child_by_field_name("name") else class_name
+        line = node.start_point[0] + 1
+        params = node.child_by_field_name("parameters")
+        nparams = len([c for c in (params.children if params else []) if c.type == "formal_parameter"]) if params else 0
         qualified = f"{class_name}.{class_name}"
-        sym_id = f"{self.file_path}::{qualified}"
+        sym_id = f"{self.file_path}::{qualified}/{nparams}@{line}"
         sym = Symbol(
             id=sym_id, name=class_name, qualified_name=qualified,
             kind=SymbolKind.METHOD, language=self.language,
@@ -1265,7 +1273,7 @@ class FileParser:
         sym_id = self._make_id(name)
         sym = Symbol(
             id=sym_id, name=name, qualified_name=name,
-            kind=SymbolKind.CLASS, language=self.language,
+            kind=SymbolKind.ENUM, language=self.language,
             file_path=self.file_path,
             line_start=node.start_point[0] + 1,
             line_end=node.end_point[0] + 1,
@@ -1333,14 +1341,17 @@ class FileParser:
         )
         self.symbols.append(sym)
 
-        # base_list for inheritance
+        # base_list for inheritance/implements
+        # C# convention: interfaces start with I + uppercase (IDisposable, IComparable)
         for child in node.children:
             if child.type == "base_list":
                 for bc in child.children:
                     if bc.type in ("identifier", "generic_name", "qualified_name"):
                         base = _node_text(bc, self.source).split("<")[0].strip()
                         if base:
-                            self.edges.append(Edge(EdgeKind.INHERITS, sym_id, base, node.start_point[0] + 1))
+                            is_interface = len(base) > 1 and base[0] == "I" and base[1].isupper()
+                            kind = EdgeKind.IMPLEMENTS if is_interface else EdgeKind.INHERITS
+                            self.edges.append(Edge(kind, sym_id, base, node.start_point[0] + 1))
 
         # Process body
         body = None
@@ -1397,8 +1408,11 @@ class FileParser:
             self._scan_calls(body, sym_id)
 
     def _handle_csharp_constructor(self, node: Node, class_id: str, class_name: str) -> None:
+        line = node.start_point[0] + 1
+        params = node.child_by_field_name("parameters")
+        nparams = len([c for c in (params.children if params else []) if c.type == "parameter"]) if params else 0
         qualified = f"{class_name}.{class_name}"
-        sym_id = f"{self.file_path}::{qualified}"
+        sym_id = f"{self.file_path}::{qualified}/{nparams}@{line}"
         sym = Symbol(
             id=sym_id, name=class_name, qualified_name=qualified,
             kind=SymbolKind.METHOD, language=self.language,
@@ -1433,7 +1447,7 @@ class FileParser:
         sym_id = f"{self.file_path}::{qualified}"
         sym = Symbol(
             id=sym_id, name=name, qualified_name=qualified,
-            kind=SymbolKind.FUNCTION, language=self.language,
+            kind=SymbolKind.PROPERTY, language=self.language,
             file_path=self.file_path,
             line_start=node.start_point[0] + 1,
             line_end=node.end_point[0] + 1,
@@ -1443,6 +1457,10 @@ class FileParser:
         )
         self.symbols.append(sym)
         self.edges.append(Edge(EdgeKind.CONTAINS, class_id, sym_id))
+        # Scan accessor bodies for calls (e.g. get { return cache.Load(); })
+        for child in node.children:
+            if child.type == "accessor_list":
+                self._scan_calls(child, sym_id)
 
     def _handle_csharp_interface(self, node: Node) -> None:
         name_node = None
@@ -1488,7 +1506,7 @@ class FileParser:
         sym_id = self._make_id(name)
         sym = Symbol(
             id=sym_id, name=name, qualified_name=name,
-            kind=SymbolKind.CLASS, language=self.language,
+            kind=SymbolKind.ENUM, language=self.language,
             file_path=self.file_path,
             line_start=node.start_point[0] + 1,
             line_end=node.end_point[0] + 1,
@@ -1779,6 +1797,16 @@ class FileParser:
                         clean_parts = [p for p in raw.replace("(", ".").replace(")", ".").split(".") if p.isidentifier()]
                         if clean_parts:
                             raw = ".".join(clean_parts[-2:]) if len(clean_parts) >= 2 else clean_parts[-1]
+                        else:
+                            raw = ""  # no valid identifiers found
+                    else:
+                        raw = ""  # only parens, no identifier
+
+                if not raw:
+                    # No valid call target — skip to children
+                    for child in node.children:
+                        self._scan_calls(child, from_id, depth=depth + 1)
+                    return
 
                 # For member expressions (obj.method), keep both qualified and bare name
                 # so edge resolution can match Type.method first, then fall back to method

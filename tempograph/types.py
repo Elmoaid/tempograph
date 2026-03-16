@@ -139,6 +139,7 @@ class Tempo:
     _callees: dict[str, list[str]] = field(default_factory=dict, repr=False)
     _children: dict[str, list[str]] = field(default_factory=dict, repr=False)
     _importers: dict[str, list[str]] = field(default_factory=dict, repr=False)
+    _subtypes: dict[str, list[str]] = field(default_factory=dict, repr=False)   # parent_name → [child symbol ids]
     _renderers: dict[str, list[str]] = field(default_factory=dict, repr=False)  # target → [sources that render it]
 
     def build_indexes(self) -> None:
@@ -147,6 +148,7 @@ class Tempo:
         self._children.clear()
         self._importers.clear()
         self._renderers.clear()
+        self._subtypes.clear()
         for edge in self.edges:
             if edge.kind == EdgeKind.CALLS:
                 self._callers.setdefault(edge.target_id, []).append(edge.source_id)
@@ -157,8 +159,10 @@ class Tempo:
                 self._importers.setdefault(edge.target_id, []).append(edge.source_id)
             elif edge.kind == EdgeKind.RENDERS:
                 self._renderers.setdefault(edge.target_id, []).append(edge.source_id)
+            elif edge.kind in (EdgeKind.INHERITS, EdgeKind.IMPLEMENTS):
+                self._subtypes.setdefault(edge.target_id, []).append(edge.source_id)
         # deduplicate
-        for d in (self._callers, self._callees, self._children, self._importers, self._renderers):
+        for d in (self._callers, self._callees, self._children, self._importers, self._renderers, self._subtypes):
             for k in d:
                 d[k] = list(dict.fromkeys(d[k]))
 
@@ -177,6 +181,10 @@ class Tempo:
     def renderers_of(self, symbol_id: str) -> list[Symbol]:
         return [self.symbols[s] for s in self._renderers.get(symbol_id, []) if s in self.symbols]
 
+    def subtypes_of(self, name: str) -> list[Symbol]:
+        """Find classes that inherit from or implement the given type name."""
+        return [self.symbols[s] for s in self._subtypes.get(name, []) if s in self.symbols]
+
     def symbols_in_file(self, file_path: str) -> list[Symbol]:
         fi = self.files.get(file_path)
         if not fi:
@@ -191,9 +199,23 @@ class Tempo:
                 results.append(sym)
         return results
 
+    _STOP_WORDS = frozenset({
+        "a", "an", "the", "in", "on", "at", "to", "for", "of", "is", "it",
+        "by", "as", "or", "and", "but", "not", "with", "from", "into", "that",
+        "this", "be", "do", "has", "have", "had", "was", "are", "can", "will",
+        "should", "would", "could", "my", "its", "their", "our", "your", "all",
+        "add", "fix", "get", "set", "new", "use", "make", "find", "show",
+        "update", "change", "create", "delete", "remove", "support", "implement",
+    })
+
     def search_symbols(self, query: str) -> list[Symbol]:
+        return [sym for _, sym in self.search_symbols_scored(query)]
+
+    def search_symbols_scored(self, query: str) -> list[tuple[float, Symbol]]:
         query_lower = query.lower()
-        tokens = query_lower.split()
+        tokens = [t for t in query_lower.split() if t not in self._STOP_WORDS and len(t) > 1]
+        if not tokens:
+            tokens = query_lower.split()
         results: list[tuple[float, Symbol]] = []
         for sym in self.symbols.values():
             name_lower = sym.name.lower()
@@ -202,29 +224,37 @@ class Tempo:
             doc_lower = sym.doc.lower()
             searchable = f"{name_lower} {qname_lower} {sig_lower} {doc_lower} {sym.file_path.lower()}"
             score = 0.0
+            matched_count = 0
             for token in tokens:
+                weight = min(len(token) / 3, 2.0)
                 if token == name_lower:
-                    score += 10.0
+                    score += 10.0 * weight
+                    matched_count += 1
                 elif token in qname_lower:
-                    score += 5.0
+                    score += 5.0 * weight
+                    matched_count += 1
                 elif token in sig_lower:
-                    score += 3.0
+                    score += 3.0 * weight
+                    matched_count += 1
                 elif token in searchable:
-                    score += 1.0
+                    score += 1.0 * weight
+                    matched_count += 1
             if score > 0:
-                # Boost by symbol importance
+                # Conjunction bonus: symbols matching multiple query tokens rank much higher
+                if len(tokens) > 1 and matched_count > 1:
+                    score += matched_count * 4.0
                 if sym.exported:
                     score += 2.0
                 callers = self.callers_of(sym.id)
                 cross_file = sum(1 for c in callers if c.file_path != sym.file_path)
-                score += min(cross_file, 5) * 0.5  # up to +2.5 for highly-referenced
+                score += min(cross_file, 5) * 0.5
                 if sym.kind in (SymbolKind.COMPONENT, SymbolKind.HOOK):
                     score += 1.5
                 elif sym.kind == SymbolKind.CLASS:
                     score += 1.0
                 results.append((score, sym))
         results.sort(key=lambda x: (-x[0], x[1].file_path, x[1].line_start))
-        return [sym for _, sym in results]
+        return results
 
     def detect_circular_imports(self) -> list[list[str]]:
         """Detect circular import chains. Returns list of cycles as file path lists."""

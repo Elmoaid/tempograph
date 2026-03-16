@@ -208,8 +208,9 @@ export function ClaudePanel({ onClose, workspaces = [] }: Props) {
     const r = await readFile(path);
     setActiveFile(path);
     setActiveFileName(name);
-    setFileContent(r.output);
-    setOriginalContent(r.output);
+    const content = r.success ? r.output : `Error reading file: ${r.output || "unknown error"}`;
+    setFileContent(content);
+    setOriginalContent(r.success ? r.output : "");
     setEditing(false);
     setSaved(false);
     setSubDirPath("");
