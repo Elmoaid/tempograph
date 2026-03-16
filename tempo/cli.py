@@ -70,6 +70,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-log", action="store_true", help="Disable usage logging")
     parser.add_argument("--enable", help="Enable a plugin")
     parser.add_argument("--disable", help="Disable a plugin")
+    parser.add_argument("--exclude", "-x", help="Comma-separated directory prefixes to exclude (e.g. archive,bench/results)")
     args = parser.parse_args(raw)
 
     repo = str(Path(args.repo).resolve())
@@ -96,10 +97,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.mode == "plugins":
         return _run_plugins(reg)
 
-    # Build graph
+    # Build graph — merge CLI --exclude with config-persisted exclude_dirs
+    cli_exclude = [p.strip() for p in args.exclude.split(",")] if args.exclude else []
+    cfg_exclude = cfg.get("exclude_dirs") or []
+    exclude_dirs = list(dict.fromkeys(cfg_exclude + cli_exclude)) or None  # deduplicate, preserve order
+
     print(f"Building graph for {repo}...", file=sys.stderr)
     start = time.time()
-    graph = build_graph(repo)
+    graph = build_graph(repo, exclude_dirs=exclude_dirs)
     elapsed = time.time() - start
     stats = graph.stats
     print(f"Done in {elapsed:.1f}s — {stats['files']} files, {stats['symbols']} symbols, {stats['edges']} edges", file=sys.stderr)

@@ -71,6 +71,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="Output raw graph as JSON")
     parser.add_argument("--tokens", action="store_true", help="Show token count")
     parser.add_argument("--no-log", action="store_true", help="Disable usage logging")
+    parser.add_argument("--exclude", "-x", help="Comma-separated directory prefixes to exclude (e.g. archive,bench/results)")
 
     args = parser.parse_args(raw)
     repo = str(Path(args.repo).resolve())
@@ -81,9 +82,11 @@ def main(argv: list[str] | None = None) -> int:
         print(generate_report(repo))
         return 0
 
+    exclude_dirs = [p.strip() for p in args.exclude.split(",")] if args.exclude else None
+
     print(f"Building graph for {repo}...", file=sys.stderr)
     start = time.time()
-    graph = build_graph(repo)
+    graph = build_graph(repo, exclude_dirs=exclude_dirs)
     elapsed = time.time() - start
     stats = graph.stats
     print(
@@ -154,8 +157,8 @@ def main(argv: list[str] | None = None) -> int:
         tokens = count_tokens(output)
         print(f"\n[{tokens:,} tokens]", file=sys.stderr)
 
-    # Usage logging
-    if not args.no_log:
+    # Usage logging — skip stats/report modes (diagnostic only, not real usage signal)
+    if not args.no_log and args.mode not in ("stats", "report"):
         from .telemetry import log_usage, is_empty_result
         tokens = count_tokens(output) if not args.tokens else tokens  # reuse if already computed
         log_usage(

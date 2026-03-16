@@ -12,6 +12,7 @@ DEFAULT_CONFIG = {
     "ui_theme": "dark",
     "telemetry": True,
     "learning": True,
+    "exclude_dirs": [],  # directory prefixes excluded from graph (e.g. ["archive", "bench"])
 }
 
 

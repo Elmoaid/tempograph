@@ -37,6 +37,7 @@ def build_graph(
     ignore_files: frozenset[str] = DEFAULT_IGNORE_FILES,
     include_patterns: Sequence[str] | None = None,
     exclude_patterns: Sequence[str] | None = None,
+    exclude_dirs: Sequence[str] | None = None,
     use_cache: bool = True,
 ) -> Tempo:
     root = Path(root).resolve()
@@ -49,7 +50,7 @@ def build_graph(
     new_cache: dict = {}
     cache_hits = 0
 
-    for file_path in _walk_files(root, ignore_dirs, ignore_files, include_patterns, exclude_patterns):
+    for file_path in _walk_files(root, ignore_dirs, ignore_files, include_patterns, exclude_patterns, exclude_dirs):
         rel_path = str(file_path.relative_to(root))
         ext = file_path.suffix.lower()
         language = EXTENSION_TO_LANGUAGE.get(ext, Language.UNKNOWN)
@@ -153,14 +154,33 @@ def _walk_files(
     ignore_files: frozenset[str],
     include_patterns: Sequence[str] | None,
     exclude_patterns: Sequence[str] | None,
+    exclude_dirs: Sequence[str] | None = None,
 ):
+    # Normalize exclude_dirs to path prefixes (strip trailing slashes)
+    _exclude_prefixes = [p.rstrip("/") for p in (exclude_dirs or [])]
+
     for dirpath, dirnames, filenames in os.walk(root):
-        # Filter directories in-place
+        rel_dir = str(Path(dirpath).relative_to(root))
+
+        # Filter directories in-place — skip ignored names and excluded prefixes
         dirnames[:] = [
             d for d in dirnames
-            if d not in ignore_dirs and not d.startswith(".")
+            if d not in ignore_dirs
+            and not d.startswith(".")
+            and not any(
+                (rel_dir == "." and d == p) or
+                (rel_dir + "/" + d == p) or
+                (rel_dir + "/" + d).startswith(p + "/")
+                for p in _exclude_prefixes
+            )
         ]
         dirnames.sort()
+
+        # Skip files inside excluded path prefixes
+        if _exclude_prefixes and rel_dir != "." and any(
+            rel_dir == p or rel_dir.startswith(p + "/") for p in _exclude_prefixes
+        ):
+            continue
 
         for filename in sorted(filenames):
             if filename in ignore_files or filename.startswith("."):
