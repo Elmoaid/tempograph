@@ -36,6 +36,19 @@ def generate_report(repo_path: str) -> str:
     local_fb_ts = {e.get("ts") for e in feedback}
     feedback += [e for e in global_feedback if e.get("ts") not in local_fb_ts]
 
+    # Filter out test/tmp data that leaked from pytest runs
+    def _is_real(entry: dict) -> bool:
+        repo = entry.get("repo", "")
+        repo_path = entry.get("repo_path", "")
+        if repo.startswith("tmp") and len(repo) < 20:
+            return False
+        if "/tmp/" in repo_path or "pytest" in repo_path:
+            return False
+        return True
+
+    usage = [e for e in usage if _is_real(e)]
+    feedback = [e for e in feedback if _is_real(e)]
+
     if not usage and not feedback:
         return "No telemetry data found. Run tempograph to generate usage data."
 
