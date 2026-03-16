@@ -64,7 +64,8 @@ export async function writeConfig(
 export async function listNotes(repoPath: string) {
   const fn = await getInvoke();
   try {
-    return await fn("list_notes", { repoPath });
+    const result = await fn("list_notes", { repoPath });
+    return Array.isArray(result) ? result : [];
   } catch {
     return [];
   }
@@ -126,7 +127,8 @@ interface FileEntry {
 export async function listDir(path: string): Promise<FileEntry[]> {
   const fn = await getInvoke();
   try {
-    return await fn("list_dir", { path });
+    const result = await fn("list_dir", { path });
+    return Array.isArray(result) ? result : [];
   } catch {
     return [];
   }
@@ -161,9 +163,9 @@ export async function getHomeDir(): Promise<string> {
   const fn = await getInvoke();
   try {
     const r = await fn("get_home_dir");
-    return r.output;
+    return r.output || "";
   } catch {
-    return "/Users/elmoaidali";
+    return "";
   }
 }
 

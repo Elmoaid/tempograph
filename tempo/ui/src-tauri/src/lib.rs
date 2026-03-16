@@ -33,6 +33,15 @@ fn tempo_config_path(repo_path: &str) -> PathBuf {
 /// Run a tempo CLI command and return the output.
 #[tauri::command]
 fn run_tempo(repo_path: String, mode: String, extra_args: Vec<String>) -> TempoResult {
+    // Validate repo_path is an existing directory
+    if !Path::new(&repo_path).is_dir() {
+        return TempoResult {
+            success: false,
+            output: format!("Directory not found: {}", repo_path),
+            mode: mode.clone(),
+        };
+    }
+
     let mut cmd = Command::new("python3");
     cmd.arg("-m").arg("tempo").arg(&repo_path).arg("--mode").arg(&mode);
     for arg in &extra_args {
@@ -43,9 +52,14 @@ fn run_tempo(repo_path: String, mode: String, extra_args: Vec<String>) -> TempoR
         Ok(output) => {
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let out = if output.status.success() {
+                if stdout.trim().is_empty() { stderr } else { stdout }
+            } else {
+                if stderr.trim().is_empty() { stdout } else { stderr }
+            };
             TempoResult {
                 success: output.status.success(),
-                output: if output.status.success() { stdout } else { stderr },
+                output: out,
                 mode,
             }
         }
@@ -152,9 +166,20 @@ fn list_notes(repo_path: String) -> Vec<FileEntry> {
     entries
 }
 
-/// Read a file's contents.
+/// Read a file's contents (max 10MB to prevent OOM).
 #[tauri::command]
 fn read_file(path: String) -> TempoResult {
+    let p = Path::new(&path);
+    // Size guard: reject files over 10MB
+    if let Ok(meta) = fs::metadata(p) {
+        if meta.len() > 10 * 1024 * 1024 {
+            return TempoResult {
+                success: false,
+                output: format!("File too large: {} bytes (max 10MB)", meta.len()),
+                mode: "file".into(),
+            };
+        }
+    }
     match fs::read_to_string(&path) {
         Ok(content) => TempoResult { success: true, output: content, mode: "file".into() },
         Err(e) => TempoResult { success: false, output: format!("Error: {}", e), mode: "file".into() },
@@ -164,7 +189,7 @@ fn read_file(path: String) -> TempoResult {
 /// Read telemetry data (usage.jsonl + feedback.jsonl).
 #[tauri::command]
 fn read_telemetry(repo_path: String) -> TempoResult {
-    let tempo_dir = Path::new(&repo_path).join(".tempo");
+    let tempo_dir = Path::new(&repo_path).join(".tempograph");
     let mut output = String::new();
 
     for file in &["usage.jsonl", "feedback.jsonl"] {
@@ -295,9 +320,11 @@ fn list_dir(path: String) -> Vec<FileEntry> {
 
     if let Ok(rd) = fs::read_dir(dir) {
         for entry in rd.flatten() {
+            if entries.len() >= 5000 { break; } // Safety limit
             if let Ok(meta) = entry.metadata() {
                 let name = entry.file_name().to_string_lossy().to_string();
                 if name.starts_with('.') { continue; }
+                if meta.is_symlink() { continue; } // Skip symlinks
                 entries.push(FileEntry {
                     name,
                     path: entry.path().to_string_lossy().to_string(),
@@ -358,10 +385,32 @@ fn get_home_dir() -> TempoResult {
     TempoResult { success: true, output: home, mode: "home".into() }
 }
 
-/// Write content to any file path.
+/// Write content to a file path (restricted to home dir for safety).
 #[tauri::command]
 fn write_file(path: String, content: String) -> TempoResult {
-    if let Some(parent) = Path::new(&path).parent() {
+    let p = Path::new(&path);
+
+    // Security: only allow writes under the user's home directory
+    let home = std::env::var("HOME").unwrap_or_default();
+    if home.is_empty() || !path.starts_with(&home) {
+        return TempoResult {
+            success: false,
+            output: "Write restricted to home directory".into(),
+            mode: "write".into(),
+        };
+    }
+
+    // Block writes to sensitive paths
+    let lower = path.to_lowercase();
+    if lower.contains(".ssh") || lower.contains(".gnupg") || lower.contains(".aws") {
+        return TempoResult {
+            success: false,
+            output: "Cannot write to sensitive directories".into(),
+            mode: "write".into(),
+        };
+    }
+
+    if let Some(parent) = p.parent() {
         let _ = fs::create_dir_all(parent);
     }
     match fs::write(&path, &content) {

@@ -189,15 +189,24 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
     };
     const emptyResult: TempoResult = { success: false, output: "", mode: "" };
 
-    const [ov, q, l, t, pl, nt, tel, cfg, gi] = await Promise.all([
-      safe(() => runTempo(path, "overview"), emptyResult),
-      safe(() => runTempo(path, "quality"), emptyResult),
-      safe(() => runTempo(path, "learn"), emptyResult),
-      safe(() => runTempo(path, "token_stats"), emptyResult),
-      safe(() => runTempo(path, "plugins"), emptyResult),
+    // Read config first to get exclude_dirs for all subsequent calls
+    const cfgResult = await safe(() => readConfig(path), { success: false, data: {}, path: "", error: "" });
+    const cfgData = (cfgResult as { success: boolean; data: Record<string, unknown> }).success
+      ? ((cfgResult as { data: Record<string, unknown> }).data || {}) : {};
+    const excludeArgs: string[] = [];
+    const excludeDirs = cfgData.exclude_dirs;
+    if (Array.isArray(excludeDirs) && excludeDirs.length > 0) {
+      excludeArgs.push("--exclude", excludeDirs.join(","));
+    }
+
+    const [ov, q, l, t, pl, nt, tel, gi] = await Promise.all([
+      safe(() => runTempo(path, "overview", excludeArgs), emptyResult),
+      safe(() => runTempo(path, "quality", excludeArgs), emptyResult),
+      safe(() => runTempo(path, "learn", excludeArgs), emptyResult),
+      safe(() => runTempo(path, "token_stats", excludeArgs), emptyResult),
+      safe(() => runTempo(path, "plugins", excludeArgs), emptyResult),
       safe(() => listNotes(path), []),
       safe(() => readTelemetry(path), emptyResult),
-      safe(() => readConfig(path), { success: false, data: {}, path: "", error: "" }),
       safe(() => gitInfo(path), emptyResult),
     ]);
 
@@ -209,8 +218,7 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
       plugins: parsePlugins(pl.output || ""),
       notes: (Array.isArray(nt) ? nt : []) as NoteEntry[],
       telemetry: (tel as TempoResult).output || "",
-      config: (cfg as { success: boolean; data: Record<string, unknown> }).success
-        ? ((cfg as { data: Record<string, unknown> }).data || {}) : {},
+      config: cfgData as Record<string, unknown>,
       git: (gi as TempoResult).output || "",
       loaded: true,
     };
@@ -237,6 +245,11 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
     setModeRunning(true);
     setModeOutput("");
     const args = modeArgs.trim() ? modeArgs.trim().split(/\s+/) : [];
+    // Auto-add exclude_dirs from config if not already in args
+    const wsExclude = ws.config.exclude_dirs;
+    if (Array.isArray(wsExclude) && wsExclude.length > 0 && !args.includes("--exclude")) {
+      args.push("--exclude", (wsExclude as string[]).join(","));
+    }
     const r = await runTempo(repoPath, activeMode, args);
     setModeOutput(r.output);
     setModeRunning(false);

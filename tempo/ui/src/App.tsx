@@ -10,10 +10,6 @@ export interface TempoResult {
 }
 
 const STORAGE_KEY = "tempo-workspaces";
-const DEFAULT_WORKSPACES = [
-  "/Users/elmoaidali/Desktop/Final NeedSpec Production Review",
-  "/Users/elmoaidali/Desktop/NeedEnd - Production Review",
-];
 
 function loadWorkspaces(): string[] {
   try {
@@ -23,7 +19,7 @@ function loadWorkspaces(): string[] {
       if (Array.isArray(parsed) && parsed.length > 0) return parsed;
     }
   } catch { /* ignore */ }
-  return DEFAULT_WORKSPACES;
+  return []; // empty — will auto-detect via detectRepo()
 }
 
 function saveWorkspaces(ws: string[]) {

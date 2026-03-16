@@ -189,6 +189,7 @@ export function ClaudePanel({ onClose, workspaces = [] }: Props) {
 
   useEffect(() => {
     getHomeDir().then((h) => {
+      if (!h) return; // No home dir available (browser mode)
       setHomeDir(h);
       buildSections(h);
     });
