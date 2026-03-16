@@ -221,13 +221,20 @@ def infer_from_telemetry(repo_path: str) -> int:
         total_tokens = sum(e.get("tokens", 0) for e in session)
         empty_count = sum(1 for e in session if e.get("empty"))
 
-        # Determine task type from dominant mode
-        mode_weights: dict[str, int] = {}
-        for m in modes:
-            tt = _MODE_TO_TASK_TYPE.get(m)
-            if tt:
-                mode_weights[tt] = mode_weights.get(tt, 0) + 1
-        task_type = max(mode_weights, key=mode_weights.get) if mode_weights else "general"
+        # Prefer explicit --task-type labels; fall back to mode inference
+        explicit_labels = [
+            e["task_type"] for e in session
+            if e.get("task_type") and e["task_type"] not in (None, "null", "unknown")
+        ]
+        if explicit_labels:
+            task_type = max(set(explicit_labels), key=explicit_labels.count)
+        else:
+            mode_weights: dict[str, int] = {}
+            for m in modes:
+                tt = _MODE_TO_TASK_TYPE.get(m)
+                if tt:
+                    mode_weights[tt] = mode_weights.get(tt, 0) + 1
+            task_type = max(mode_weights, key=mode_weights.get) if mode_weights else "general"
 
         # Determine success: prefer explicit feedback, fall back to heuristic
         last_ts_str = session[-1].get("ts", "")
@@ -249,7 +256,7 @@ def infer_from_telemetry(repo_path: str) -> int:
             "context_modes": list(dict.fromkeys(modes)),
             "tokens_used": total_tokens,
             "success": success,
-            "notes": f"inferred from {len(session)} usage events",
+            "notes": f"inferred from {len(session)} usage events; task_type={'explicit' if explicit_labels else 'mode-inferred'}",
             "session_hash": sh,
         }
         with open(mem._log, "a") as f:
@@ -410,7 +417,29 @@ def run(graph, **kwargs) -> str:
         return analyze_cross_repo_patterns()
 
     mem = TaskMemory(graph.root)
-    # Auto-populate from telemetry on each invocation
     new = infer_from_telemetry(graph.root)
     suffix = f"\n\n[Auto-inferred {new} new sessions from telemetry]" if new else ""
+
+    if query and query != "summary":
+        rec = mem.get_recommendation(query)
+        if rec:
+            modes = ", ".join(rec["best_modes"])
+            return (
+                f"Recommendation for '{query}':\n"
+                f"  Use modes: [{modes}]\n"
+                f"  Avg tokens: ~{rec['avg_tokens']:,}\n"
+                f"  Success rate: {rec['success_rate']:.0%} (n={rec['sample_size']})"
+                + suffix
+            )
+        return f"No learned strategy for '{query}' yet. Known types: {_list_known_types(mem)}" + suffix
+
     return mem.summary() + suffix
+
+
+def _list_known_types(mem: "TaskMemory") -> str:
+    if not mem._insights.exists():
+        return "none"
+    try:
+        return ", ".join(json.loads(mem._insights.read_text()).keys()) or "none"
+    except (json.JSONDecodeError, OSError):
+        return "none"
