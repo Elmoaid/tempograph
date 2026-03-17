@@ -206,16 +206,23 @@ class Tempo:
         "should", "would", "could", "my", "its", "their", "our", "your", "all",
         "add", "fix", "get", "set", "new", "use", "make", "find", "show",
         "update", "change", "create", "delete", "remove", "support", "implement",
+        # GitHub PR template words (not code identifiers)
+        "merge", "pull", "request", "pr", "via", "branch", "commit",
     })
 
     def search_symbols(self, query: str) -> list[Symbol]:
         return [sym for _, sym in self.search_symbols_scored(query)]
 
     def search_symbols_scored(self, query: str) -> list[tuple[float, Symbol]]:
+        import re as _re
         query_lower = query.lower()
-        tokens = [t for t in query_lower.split() if t not in self._STOP_WORDS and len(t) > 1]
+        # Split on whitespace AND common separators (/, -, #, @) to handle paths/refs
+        raw_tokens = _re.split(r'[\s/\-#@]+', query_lower)
+        tokens = [t for t in raw_tokens
+                  if t not in self._STOP_WORDS and len(t) > 1
+                  and t.isalpha()]  # drop numeric refs like "675", mixed tokens
         if not tokens:
-            tokens = query_lower.split()
+            tokens = [t for t in query_lower.split() if len(t) > 1]
         results: list[tuple[float, Symbol]] = []
         for sym in self.symbols.values():
             name_lower = sym.name.lower()
@@ -224,7 +231,7 @@ class Tempo:
             doc_lower = sym.doc.lower()
             searchable = f"{name_lower} {qname_lower} {sig_lower} {doc_lower} {sym.file_path.lower()}"
             score = 0.0
-            matched_count = 0
+            matched_count = 0  # only name/qname/sig/doc matches (used for conjunction bonus)
             for token in tokens:
                 weight = min(len(token) / 3, 2.0)
                 if token == name_lower:
@@ -236,11 +243,15 @@ class Tempo:
                 elif token in sig_lower:
                     score += 3.0 * weight
                     matched_count += 1
-                elif token in searchable:
+                elif token in doc_lower:
                     score += 1.0 * weight
                     matched_count += 1
+                elif token in sym.file_path.lower():
+                    # File path matches: weak signal — don't count toward conjunction bonus
+                    score += 0.3 * weight
             if score > 0:
                 # Conjunction bonus: symbols matching multiple query tokens rank much higher
+                # Only counts name/qname/sig/doc matches, not file path matches
                 if len(tokens) > 1 and matched_count > 1:
                     score += matched_count * 4.0
                 if sym.exported:
