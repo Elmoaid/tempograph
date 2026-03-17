@@ -499,6 +499,20 @@ class FileParser:
                 continue
             sym_id = self._make_id(name)
 
+            # const proto = module.exports = { get header() {...}, ... }
+            if value_node and value_node.type == "assignment_expression":
+                val_left = value_node.child_by_field_name("left")
+                val_right = value_node.child_by_field_name("right")
+                if (val_left is not None
+                        and _node_text(val_left, self.source).startswith(("module.exports", "exports."))
+                        and val_right and val_right.type == "object"):
+                    for prop in val_right.children:
+                        if prop.type == "method_definition":
+                            self._handle_js_function(prop, exported=True)
+                        elif prop.type == "shorthand_property_identifier":
+                            self._cjs_exports.add(_node_text(prop, self.source))
+                    continue  # skip creating a variable symbol for proto
+
             # Arrow function or function expression
             if value_node and value_node.type in ("arrow_function", "function_expression", "function"):
                 kind = SymbolKind.FUNCTION
