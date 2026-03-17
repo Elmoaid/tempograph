@@ -37,6 +37,53 @@ except ImportError:
     _LEARN_AVAILABLE = False
 from .types import Tempo
 
+_L3_INSIGHTS_PATH = Path.home() / ".tempograph" / "global" / "l3_insights.json"
+
+
+def _load_l3_insights() -> dict | None:
+    """Load L3 cross-repo insights, or None if unavailable."""
+    try:
+        if _L3_INSIGHTS_PATH.exists():
+            return json.loads(_L3_INSIGHTS_PATH.read_text())
+    except (json.JSONDecodeError, OSError):
+        pass
+    return None
+
+
+# Navigation modes useful for general tasks (not meta/specialized tools)
+_GENERAL_MODES = {"overview", "focus", "hotspots", "dead", "diff", "blast", "arch", "deps", "map", "symbols", "lookup"}
+
+
+def _format_l3_section(l3: dict, task_type: str = "", fallback: bool = False) -> str:
+    """Format L3 cross-repo insights as an appendable section.
+
+    fallback=True: filter to general navigation modes only (not meta-tools like quality/learn).
+    """
+    sessions = l3.get("sessions_analyzed", 0)
+    repos = l3.get("repos_seen", 0)
+    effectiveness = l3.get("mode_effectiveness", [])
+    if not effectiveness:
+        return ""
+
+    header = f"Cross-repo context ({sessions} sessions, {repos} repos):"
+    if fallback:
+        header = f"Cross-repo suggestion ({sessions} sessions, {repos} repos):"
+        # Fallback: show only general navigation modes sorted by success rate then token cost
+        candidates = [e for e in effectiveness if e["mode"] in _GENERAL_MODES and e["success_rate"] >= 0.9]
+        candidates.sort(key=lambda x: (-x["success_rate"], x["avg_tokens"]))
+        top = candidates[:4]
+    else:
+        top = [e for e in effectiveness if e["success_rate"] >= 0.9][:5]
+
+    if not top:
+        top = effectiveness[:3]
+
+    mode_strs = [
+        f"{e['mode']}({e['success_rate']*100:.0f}%, {e['avg_tokens']:,}t)"
+        for e in top
+    ]
+    return header + "\n  " + " | ".join(mode_strs)
+
 mcp = FastMCP("tempograph")
 
 # Cache key includes exclude_dirs so different configs get different graphs
@@ -540,6 +587,7 @@ def learn_recommendation(repo_path: str, task_type: str = "", output_format: str
     start = time.time()
     infer_from_telemetry(p)
     mem = TaskMemory(p)
+    l3 = _load_l3_insights()
 
     if task_type:
         rec = mem.get_recommendation(task_type)
@@ -551,10 +599,29 @@ def learn_recommendation(repo_path: str, task_type: str = "", output_format: str
                 f"  Avg tokens: ~{rec['avg_tokens']:,}\n"
                 f"  Success rate: {rec['success_rate']:.0%} (n={rec['sample_size']})"
             )
+            if l3:
+                l3_section = _format_l3_section(l3, task_type=task_type)
+                if l3_section:
+                    output += "\n\n" + l3_section
         else:
             output = f"No learned strategy for '{task_type}' yet. Run more sessions to build data."
+            if l3:
+                l3_section = _format_l3_section(l3, task_type=task_type, fallback=True)
+                if l3_section:
+                    output += "\n\n" + l3_section
     else:
         output = mem.summary()
+        if l3:
+            sessions = l3.get("sessions_analyzed", 0)
+            repos = l3.get("repos_seen", 0)
+            effectiveness = l3.get("mode_effectiveness", [])
+            if effectiveness:
+                top = effectiveness[:5]
+                mode_strs = [
+                    f"{e['mode']}({e['success_rate']*100:.0f}%)"
+                    for e in top
+                ]
+                output += f"\n\nL3 cross-repo ({sessions} sessions, {repos} repos): {' | '.join(mode_strs)}"
 
     elapsed = time.time() - start
     tokens = count_tokens(output)
