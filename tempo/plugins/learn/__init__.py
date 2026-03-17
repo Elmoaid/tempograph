@@ -310,6 +310,7 @@ def infer_from_telemetry(repo_path: str) -> int:
 
 
 _L3_MIN_SESSIONS = 10
+_L3_STALE_DAYS = 7
 _L3_INSIGHTS_PATH = Path.home() / ".tempograph" / "global" / "l3_insights.json"
 _L3_GLOBAL_DIR = Path.home() / ".tempograph" / "global"
 
@@ -456,6 +457,7 @@ def analyze_cross_repo_patterns() -> str:
         lines.append(f"  {count:3d} sessions  {repo}")
 
     lines.append(f"\nInsights written to {_L3_INSIGHTS_PATH}")
+    lines.append(f"Freshness: just generated — valid for {_L3_STALE_DAYS} days")
     return "\n".join(lines)
 
 
