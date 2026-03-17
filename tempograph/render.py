@@ -1209,11 +1209,42 @@ def _extract_name_from_question(question: str) -> str:
     return q
 
 
+def _task_specificity(task: str) -> int:
+    """Count technical identifiers in task as proxy for task clarity.
+
+    Bench finding (n=112): tasks where the model already has strong signal
+    (baseline predicts 3+ files) are HURT by structural context injection (-7.88% F1).
+    Tasks with weak signal (baseline predicts 0 files) gain +9.12% from context.
+
+    Proxy: CamelCase identifiers (+2 each) and snake_case identifiers (+1 each).
+    Threshold >=6 ≈ "baseline confident" → reduce context noise (conservative).
+    """
+    import re
+    skip = {
+        "the", "and", "for", "from", "with", "this", "that", "fix", "add",
+        "update", "remove", "change", "bug", "feature", "merge", "pull",
+        "request", "branch", "commit", "issue", "use", "make", "new",
+        "when", "not", "all", "can", "should", "would", "into", "also",
+    }
+    text = re.sub(r'Merge pull request #\d+ from \S+\s*', '', task)
+    count = 0
+    for ident in re.findall(r'\b[A-Z][a-zA-Z0-9]+\b', text):
+        if ident.lower() not in skip:
+            count += 2  # CamelCase: high signal (class/type name)
+    for ident in re.findall(r'\b[a-z_][a-z0-9_]{2,}\b', text):
+        if ident not in skip:
+            count += 1  # snake_case / function name: moderate signal
+    return count
+
+
 def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: str = "") -> str:
     """Batch context preparation: overview + focus + hotspots + diff in one token-budgeted output.
 
     If L2 learned insights exist for task_type, includes extra modes (dead code, quality)
     that the data shows are helpful for that task category.
+
+    Adaptive context injection (bench n=112): task specificity score determines context depth.
+    Low specificity (vague task) → full context; high specificity (clear task) → focus only.
     """
     from .git import changed_files_unstaged, is_git_repo
     sections: list[str] = []
@@ -1231,11 +1262,18 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
     except Exception:
         pass
 
+    # Adaptive: measure task specificity to decide context depth.
+    # High specificity (>=6) → model likely knows the files → skip noise, widen focus budget.
+    # Low specificity (<6) → vague task → inject full context.
+    # Threshold 6 is conservative — avoids false-positive suppression on moderately-specific tasks.
+    specificity = _task_specificity(task)
+    high_specificity = specificity >= 6
+
     s = graph.stats
     sections.append(f"## Repo: {s['files']} files, {s['symbols']} symbols, {s['total_lines']:,} lines")
     token_count += 20
 
-    focus_budget = int(max_tokens * 0.6)
+    focus_budget = int(max_tokens * 0.6) if not high_specificity else int(max_tokens * 0.8)
     focus_output = render_focused(graph, task, max_tokens=focus_budget)
 
     # Large-scope heuristic: bench data (n=13) shows tempograph helps for 3-7 file tasks
@@ -1259,11 +1297,20 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
         )
         token_count += 25
 
+    if high_specificity:
+        sections.append(
+            f"ℹ ADAPTIVE: task has strong signal (specificity={specificity}). "
+            "Providing focused context only — overview and hotspot noise suppressed. "
+            "Bench evidence: high-baseline tasks are hurt by structural context injection."
+        )
+        token_count += 25
+
     sections.append(focus_output)
     token_count += count_tokens(focus_output)
 
     hotspot_budget = int(max_tokens * 0.15)
-    if token_count < max_tokens - 100:
+    # Skip hotspots for high-specificity tasks — noise that dilutes clear signal
+    if not high_specificity and token_count < max_tokens - 100:
         hotspot_output = render_hotspots(graph, top_n=5)
         ht = count_tokens(hotspot_output)
         if ht <= hotspot_budget:
