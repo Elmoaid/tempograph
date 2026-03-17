@@ -291,6 +291,34 @@ def render_symbols(graph: Tempo, *, max_tokens: int = 0) -> str:
 _MONOLITH_THRESHOLD = 1000
 
 
+def _suggest_alternatives(graph: Tempo, query: str, max_suggestions: int = 5) -> str:
+    """Build a 'did you mean?' hint when a focus query has no matches.
+
+    Splits the query into tokens and searches for each, returning the
+    top-scoring symbols as suggestions to try instead.
+    """
+    import re
+    tokens = [t for t in re.split(r'[^a-zA-Z0-9]+', query) if len(t) > 2]
+    if not tokens:
+        return ""
+    seen_ids: set[str] = set()
+    candidates: list[tuple[float, Symbol]] = []
+    for token in tokens:
+        for score, sym in graph.search_symbols_scored(token)[:10]:
+            if sym.id not in seen_ids:
+                seen_ids.add(sym.id)
+                candidates.append((score, sym))
+    if not candidates:
+        return ""
+    candidates.sort(key=lambda x: -x[0])
+    lines = [f"No exact match for '{query}'. Closest symbols:"]
+    for _, sym in candidates[:max_suggestions]:
+        file_short = sym.file_path.split("/")[-1] if "/" in sym.file_path else sym.file_path
+        lines.append(f"  {sym.name} ({sym.kind.value}) — {file_short}:{sym.line_start}")
+    lines.append(f"\nTry: focus('{candidates[0][1].name}')")
+    return "\n".join(lines)
+
+
 def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     """Task-focused rendering with BFS graph traversal.
     Starts from search results, then follows call/render/import edges
@@ -300,7 +328,7 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     and biases BFS toward cross-file edges to avoid getting trapped in one file."""
     scored = graph.search_symbols_scored(query)
     if not scored:
-        return f"No symbols matching '{query}'"
+        return _suggest_alternatives(graph, query) or f"No symbols matching '{query}'"
 
     # Quality gate: drop seeds with much lower scores than the best match
     top_score = scored[0][0]
