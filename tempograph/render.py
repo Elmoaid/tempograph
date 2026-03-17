@@ -1204,6 +1204,28 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
 
     focus_budget = int(max_tokens * 0.6)
     focus_output = render_focused(graph, task, max_tokens=focus_budget)
+
+    # Large-scope heuristic: bench data (n=13) shows tempograph helps for 3-7 file tasks
+    # (+9-38% F1 delta) but hurts for 8+ file tasks (-1% to -21% F1 delta).
+    # Detect broad-scope tasks from query keywords and warn agents to use overview instead.
+    _BROAD_SCOPE_MARKERS = {"all", "every", "entire", "throughout", "global", "across",
+                            "everywhere", "whole", "each"}
+    _BROAD_ACTION_MARKERS = {"refactor", "migrate", "update", "port", "convert", "rename",
+                             "replace", "remove", "delete", "rewrite"}
+    _task_lower = task.lower().split()
+    _task_set = set(_task_lower)
+    _is_large_scope = bool(
+        _task_set & _BROAD_SCOPE_MARKERS
+        and _task_set & _BROAD_ACTION_MARKERS
+    )
+    if _is_large_scope:
+        sections.append(
+            "⚠ LARGE SCOPE: task appears to span many files. "
+            "Bench data shows focused context hurts F1 for 8+ file changes. "
+            "Use `overview` for orientation; skip focused context injection."
+        )
+        token_count += 25
+
     sections.append(focus_output)
     token_count += count_tokens(focus_output)
 
