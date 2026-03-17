@@ -98,6 +98,7 @@ class FileParser:
         self.imports: list[str] = []
         self._symbol_stack: list[str] = []  # parent tracking
         self._dunder_all: list[str] | None = None  # Python __all__ names
+        self._cjs_exports: set[str] = set()  # names exported via module.exports = X
 
     def parse(self) -> tuple[list[Symbol], list[Edge], list[str]]:
         ts_lang = _get_ts_language(self.language)
@@ -129,6 +130,20 @@ class FileParser:
                     exported=(s.name in all_set),
                     complexity=s.complexity, byte_size=s.byte_size,
                 ) if s.parent_id is None else s  # only affect top-level symbols
+                for s in self.symbols
+            ]
+
+        # Apply CommonJS module.exports = identifier export marking
+        if self._cjs_exports:
+            self.symbols = [
+                Symbol(
+                    id=s.id, name=s.name, qualified_name=s.qualified_name,
+                    kind=s.kind, language=s.language, file_path=s.file_path,
+                    line_start=s.line_start, line_end=s.line_end,
+                    signature=s.signature, doc=s.doc, parent_id=s.parent_id,
+                    exported=True,
+                    complexity=s.complexity, byte_size=s.byte_size,
+                ) if s.parent_id is None and s.name in self._cjs_exports else s
                 for s in self.symbols
             ]
 
@@ -395,16 +410,16 @@ class FileParser:
             elif t == "expression_statement":
                 self._handle_js_ts(child)
             elif t == "assignment_expression":
-                # Handle `module.exports = class Foo {...}` and `exports.X = class {...}`
-                # CommonJS pattern: class expression assigned to module.exports
+                # Handle CommonJS exports: `module.exports = X` and `exports.X = Y`
                 left = child.child_by_field_name("left")
                 right = child.child_by_field_name("right")
-                if right and right.type in ("class", "class_declaration"):
-                    exported = (
-                        left is not None
-                        and _node_text(left, self.source).startswith(("module.exports", "exports."))
-                    )
-                    self._handle_js_class(right, exported=exported)
+                if left is not None and _node_text(left, self.source).startswith(("module.exports", "exports.")):
+                    if right and right.type in ("class", "class_declaration"):
+                        exported = True
+                        self._handle_js_class(right, exported=exported)
+                    elif right and right.type == "identifier":
+                        # `module.exports = fastify` — mark the named symbol as exported
+                        self._cjs_exports.add(_node_text(right, self.source))
 
     def _handle_js_export(self, node: Node) -> None:
         for child in node.children:
