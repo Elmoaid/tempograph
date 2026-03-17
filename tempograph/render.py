@@ -762,6 +762,11 @@ def _find_related_files(graph: Tempo, symbols: list[Symbol]) -> set[str]:
             files.add(caller.file_path)
         for callee in graph.callees_of(sym.id):
             files.add(callee.file_path)
+        # Include __init__.py importers — package re-exports are often changed
+        # alongside the module they expose (key source of over-narrowing)
+        for importer_fp in graph.importers_of(sym.file_path):
+            if importer_fp.endswith("__init__.py"):
+                files.add(importer_fp)
     return files
 
 
