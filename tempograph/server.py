@@ -54,6 +54,27 @@ def _load_l3_insights() -> dict | None:
 _GENERAL_MODES = {"overview", "focus", "hotspots", "dead", "diff", "blast", "arch", "deps", "map", "symbols", "lookup"}
 
 
+_L3_STALE_DAYS = 7  # warn if insights older than this
+
+
+def _l3_age_note(l3: dict) -> str:
+    """Return a staleness note if L3 insights are old, empty string otherwise."""
+    from datetime import datetime, timezone
+    generated_at = l3.get("generated_at", "")
+    if not generated_at:
+        return ""
+    try:
+        gen_ts = datetime.fromisoformat(generated_at)
+        age_days = (datetime.now(timezone.utc) - gen_ts).total_seconds() / 86400
+        if age_days >= _L3_STALE_DAYS:
+            return f" [STALE: {age_days:.0f}d old — run analyze_cross_repo_patterns to refresh]"
+        if age_days >= 1:
+            return f" [{age_days:.1f}d ago]"
+    except (ValueError, TypeError):
+        pass
+    return ""
+
+
 def _format_l3_section(l3: dict, task_type: str = "", fallback: bool = False) -> str:
     """Format L3 cross-repo insights as an appendable section.
 
@@ -65,9 +86,10 @@ def _format_l3_section(l3: dict, task_type: str = "", fallback: bool = False) ->
     if not effectiveness:
         return ""
 
-    header = f"Cross-repo context ({sessions} sessions, {repos} repos):"
+    age_note = _l3_age_note(l3)
+    header = f"Cross-repo context ({sessions} sessions, {repos} repos){age_note}:"
     if fallback:
-        header = f"Cross-repo suggestion ({sessions} sessions, {repos} repos):"
+        header = f"Cross-repo suggestion ({sessions} sessions, {repos} repos){age_note}:"
         # Fallback: show only general navigation modes sorted by success rate then token cost
         candidates = [e for e in effectiveness if e["mode"] in _GENERAL_MODES and e["success_rate"] >= 0.9]
         candidates.sort(key=lambda x: (-x["success_rate"], x["avg_tokens"]))
@@ -621,7 +643,8 @@ def learn_recommendation(repo_path: str, task_type: str = "", output_format: str
                     f"{e['mode']}({e['success_rate']*100:.0f}%)"
                     for e in top
                 ]
-                output += f"\n\nL3 cross-repo ({sessions} sessions, {repos} repos): {' | '.join(mode_strs)}"
+                age_note = _l3_age_note(l3)
+                output += f"\n\nL3 cross-repo ({sessions} sessions, {repos} repos){age_note}: {' | '.join(mode_strs)}"
 
     elapsed = time.time() - start
     tokens = count_tokens(output)
