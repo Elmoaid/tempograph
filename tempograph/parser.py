@@ -423,10 +423,14 @@ class FileParser:
                         # `module.exports = fastify` — mark the named symbol as exported
                         self._cjs_exports.add(_node_text(right, self.source))
                     elif right and right.type == "object":
-                        # `module.exports = { buildRouting, foo, bar }` — shorthand properties
+                        # `module.exports = { buildRouting, foo, bar }` — shorthand props
+                        # `module.exports = { get header() {...}, redirect() {...} }` — method defs
                         for prop in right.children:
                             if prop.type == "shorthand_property_identifier":
                                 self._cjs_exports.add(_node_text(prop, self.source))
+                            elif prop.type == "method_definition":
+                                # Inline method — treat as exported top-level function
+                                self._handle_js_function(prop, exported=True)
 
     def _handle_js_export(self, node: Node) -> None:
         for child in node.children:
