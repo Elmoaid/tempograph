@@ -415,8 +415,10 @@ class FileParser:
                 right = child.child_by_field_name("right")
                 if left is not None and _node_text(left, self.source).startswith(("module.exports", "exports.")):
                     if right and right.type in ("class", "class_declaration"):
-                        exported = True
-                        self._handle_js_class(right, exported=exported)
+                        self._handle_js_class(right, exported=True)
+                    elif right and right.type in ("function_expression", "generator_function_expression"):
+                        # `module.exports = function override(...) {}` — named function expression
+                        self._handle_js_function(right, exported=True)
                     elif right and right.type == "identifier":
                         # `module.exports = fastify` — mark the named symbol as exported
                         self._cjs_exports.add(_node_text(right, self.source))
