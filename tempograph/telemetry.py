@@ -25,8 +25,10 @@ def _append_jsonl(file_path: Path, data: dict) -> None:
 
 
 def _base_entry(repo_path: str) -> dict:
+    now = datetime.now(timezone.utc).isoformat()
     return {
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": now,
+        "timestamp": now,  # alias for agents that look for "timestamp"
         "repo": Path(repo_path).name,
         "repo_path": str(Path(repo_path).resolve()),
     }
