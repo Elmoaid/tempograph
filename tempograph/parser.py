@@ -394,6 +394,17 @@ class FileParser:
                 self._handle_js_enum(child)
             elif t == "expression_statement":
                 self._handle_js_ts(child)
+            elif t == "assignment_expression":
+                # Handle `module.exports = class Foo {...}` and `exports.X = class {...}`
+                # CommonJS pattern: class expression assigned to module.exports
+                left = child.child_by_field_name("left")
+                right = child.child_by_field_name("right")
+                if right and right.type in ("class", "class_declaration"):
+                    exported = (
+                        left is not None
+                        and _node_text(left, self.source).startswith(("module.exports", "exports."))
+                    )
+                    self._handle_js_class(right, exported=exported)
 
     def _handle_js_export(self, node: Node) -> None:
         for child in node.children:
