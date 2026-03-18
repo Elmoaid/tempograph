@@ -632,7 +632,15 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
             callees = graph.callees_of(sym.id)
             if callees:
                 shown = 8 if depth == 0 else 5
-                block_lines.append(f"{indent}  calls: {', '.join(c.qualified_name for c in callees[:shown])}")
+                # Hot callees (recently-modified files) bubble up — changed callee = likely suspect.
+                hot_callees = [c for c in callees if c.file_path in graph.hot_files]
+                cold_callees = [c for c in callees if c.file_path not in graph.hot_files]
+                ordered_callees = (hot_callees + cold_callees)[:shown]
+                callee_strs = [
+                    f"{c.qualified_name} [hot]" if c.file_path in graph.hot_files else c.qualified_name
+                    for c in ordered_callees
+                ]
+                block_lines.append(f"{indent}  calls: {', '.join(callee_strs)}")
                 if len(callees) > shown:
                     block_lines[-1] += f" (+{len(callees) - shown} more)"
             if depth == 0:
