@@ -357,6 +357,21 @@ def _extract_focus_files(focus_output: str, task_keywords: list[str] | None = No
     return sorted(freq.keys(), key=_sort_key)[:15]
 
 
+def _extract_focus_ranges(focus_output: str, key_files: list[str]) -> dict[str, str]:
+    """Map key file paths to their first line range from focus output.
+
+    Returns dict of filepath → "start-end" (e.g., {"render.py": "1496-1745"}).
+    Parses '— filepath:start-end' patterns; first occurrence wins (depth 0 = most relevant).
+    """
+    import re
+    ranges: dict[str, str] = {}
+    for m in re.finditer(r'— (\S+):(\d+-\d+)', focus_output):
+        fp = m.group(1)
+        if fp not in ranges:
+            ranges[fp] = m.group(2)
+    return {kf: ranges[kf] for kf in key_files if kf in ranges}
+
+
 def _extract_cl_keywords(task: str) -> list[str]:
     """Extract code-symbol keywords from a change-localization task (PR title/commit message).
 
@@ -1619,7 +1634,9 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                 if overlap >= 0.5:
                     return ""  # model already predicts the key files — skip injection
             if key_files:
-                kf_section = "KEY FILES REFERENCED ABOVE:\n" + "\n".join(f"  {f}" for f in key_files[:5])
+                kf_ranges = _extract_focus_ranges("\n\n".join(focus_parts), key_files[:5])
+                kf_lines = [f"  {f}:{kf_ranges[f]}" if f in kf_ranges else f"  {f}" for f in key_files[:5]]
+                kf_section = "KEY FILES REFERENCED ABOVE:\n" + "\n".join(kf_lines)
                 sections.append(kf_section)
                 token_count += count_tokens(kf_section)
         elif path_fallback_files:
@@ -1690,7 +1707,9 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                             "symbol name or function for a tighter focus."
                         )
                         token_count += 20
-                    kf_section = "KEY FILES REFERENCED ABOVE:\n" + "\n".join(f"  {f}" for f in key_files[:5])
+                    kf_ranges = _extract_focus_ranges(focus_output, key_files[:5])
+                    kf_lines = [f"  {f}:{kf_ranges[f]}" if f in kf_ranges else f"  {f}" for f in key_files[:5]]
+                    kf_section = "KEY FILES REFERENCED ABOVE:\n" + "\n".join(kf_lines)
                     sections.append(kf_section)
                     token_count += count_tokens(kf_section)
 
