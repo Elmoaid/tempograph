@@ -455,13 +455,23 @@ tempograph-server
 
 | Tool | Input | Output |
 |------|-------|--------|
-| `index_repo` | `repo_path` (string) | Builds graph and returns stats (file/symbol/edge counts) |
-| `overview` | `repo_path` | Same as CLI overview mode |
-| `focus` | `repo_path`, `query` | Same as CLI focus mode — connected subgraph for a topic |
-| `hotspots` | `repo_path` | Same as CLI hotspots mode — ranked risk list |
-| `blast_radius` | `repo_path`, `file_path` | Same as CLI blast mode — importers, callers, renderers |
-| `diff_context` | `repo_path` | Auto-detects changed files via `git diff`, then renders structural context |
-| `dead_code` | `repo_path` | Same as CLI dead mode — unreferenced exported symbols |
+| **`prepare_context`** | `repo_path`, `task` | **One-shot context for a PR/commit task — recommended for agents.** Extracts keywords, focuses the graph, returns KEY FILES. Adaptive: skips injection when model already knows the files (+6.9% F1, p=0.035). |
+| `index_repo` | `repo_path` | Builds graph and returns stats (file/symbol/edge counts) |
+| `overview` | `repo_path` | Repository orientation: size, languages, entry points, key files |
+| `focus` | `repo_path`, `query` | Connected subgraph for a topic or symbol — callers, callees, depth 3 |
+| `lookup` | `repo_path`, `query` | Answer "where is X?", "what calls X?", "who imports X?" |
+| `blast_radius` | `repo_path`, `query` or `file_path` | What breaks if you change this symbol or file? |
+| `hotspots` | `repo_path` | Ranked risk list — most coupled and complex files |
+| `diff_context` | `repo_path` | Impact analysis of changed files (staged, unstaged, or explicit list) |
+| `dead_code` | `repo_path` | Unreferenced exported symbols — cleanup candidates |
+| `dependencies` | `repo_path` | Circular imports and module layer structure |
+| `architecture` | `repo_path` | Module-level view with cross-module edges |
+| `symbols` | `repo_path` | Full symbol inventory with signatures and relationships |
+| `file_map` | `repo_path` | File tree with top symbols per file |
+| `stats` | `repo_path` | Token budget planner — output size for every mode |
+| `get_patterns` | `repo_path` | Naming conventions, idioms, module roles |
+| `learn_recommendation` | `repo_path` | Data-driven mode suggestions based on feedback history |
+| `report_feedback` | `repo_path`, `mode`, `helpful`, `note` | Log whether a tool's output was useful (feeds learn engine) |
 
 Add it to Claude settings (`~/.claude/settings.json`):
 
