@@ -585,6 +585,28 @@ class TestPrepareContext:
         assert isinstance(r2["data"], str)
 
 
+    def test_definition_first_parameter_accepted(self):
+        # Smoke test: definition_first=True is accepted and doesn't crash.
+        # Gated parameter — no bench evidence yet to enable by default.
+        r = assert_ok(prepare_context(
+            REPO_PATH,
+            task="Merge pull request #1 from org/add-render-focused\nAdd render_focused function",
+            definition_first=True,
+            output_format="json",
+        ))
+        assert isinstance(r["data"], str)
+
+    def test_definition_first_default_false_matches_plain(self):
+        # definition_first=False (default) must produce identical output to omitting the param.
+        from tempograph.render import render_prepare
+        from tempograph.builder import build_graph
+        graph = build_graph(REPO_PATH)
+        task = "Merge pull request #1 from org/add-render-focused\nAdd render_focused function"
+        out_default = render_prepare(graph, task)
+        out_false = render_prepare(graph, task, definition_first=False)
+        assert out_default == out_false
+
+
 # ---------------------------------------------------------------------------
 # Exclude dirs
 # ---------------------------------------------------------------------------
