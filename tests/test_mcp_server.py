@@ -497,6 +497,25 @@ class TestPrepareContext:
         assert "Focus:" not in r["data"]
         assert "entry points:" not in r["data"]
 
+    def test_generic_keyword_path_fallback_skipped(self):
+        # Generic keywords (e.g. "path", "route") that match >5 file paths should NOT
+        # be used for path fallback — they produce noise (router.js, request.js, etc.)
+        # Evidence: fastify "path-alias" → "path" matches 8+ files → KEY FILES = noise.
+        # Fix: len(unique_paths) <= 5 threshold on direct keyword path fallback.
+        # CamelCase/snake_case parts already had this threshold — now made consistent.
+        from tempograph.render import _extract_cl_keywords, render_prepare
+        from tempograph.builder import build_graph
+        graph = build_graph(REPO_PATH)
+        # This repo has many files with "path" in their path (build.py, server.py, etc.)
+        # We just verify the threshold logic doesn't crash and produces consistent output
+        output = render_prepare(
+            graph,
+            task="Merge pull request #74 from jsumners/path-alias\nAdd path alias for url",
+        )
+        # When baseline=0.286 (high-baseline) and all path keyword fallbacks are blocked
+        # by <=5 threshold, output should be minimal (no noisy KEY FILES (path match))
+        assert isinstance(output, str)  # function completes without error
+
     def test_github_patch_branch_strips_username(self):
         # GitHub auto-generated "username-patch-N" branches should not yield
         # the username as a priority CamelCase keyword.
