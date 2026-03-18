@@ -8,6 +8,9 @@ version = "0.4.0"
 description = "Code graph context engine for AI coding agents — structural dependency graph with adaptive injection"
 readme = "README.md"
 license = {file = "LICENSE"}
+authors = [
+    {name = "Elmo", email = "elmoaid@gmail.com"},
+]
 requires-python = ">=3.11"
 keywords = ["code-graph", "ai-agents", "context", "mcp", "tree-sitter", "code-analysis"]
 classifiers = [
@@ -47,6 +50,11 @@ bench = [
 tempograph = "tempograph.__main__:main"
 tempo = "tempo.cli:main"
 tempograph-server = "tempograph.server:run_server"
+
+[project.urls]
+Homepage = "https://github.com/Elmoaid/tempograph"
+Repository = "https://github.com/Elmoaid/tempograph"
+Issues = "https://github.com/Elmoaid/tempograph/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["tempograph", "tempo"]
