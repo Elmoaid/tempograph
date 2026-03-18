@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import fnmatch
+import json
 import os
 from pathlib import Path
 from typing import Sequence
@@ -40,12 +41,27 @@ def build_graph(
     exclude_patterns: Sequence[str] | None = None,
     exclude_dirs: Sequence[str] | None = None,
     use_cache: bool = True,
+    use_config: bool = True,
 ) -> Tempo:
     root = Path(root).resolve()
     # Normalize exclude_dirs: "a,b" string → ["a", "b"] list (str is Sequence[str] in Python,
     # so passing a comma-separated string would silently iterate over characters without this).
     if isinstance(exclude_dirs, str):
         exclude_dirs = [d.strip() for d in exclude_dirs.split(",") if d.strip()]
+
+    # Merge exclude_dirs from .tempo/config.json, matching CLI and MCP server behavior.
+    # Pass use_config=False to bypass (e.g. for tests that need raw unfiltered graph).
+    if use_config:
+        cfg_path = root / ".tempo" / "config.json"
+        if cfg_path.exists():
+            try:
+                cfg_exclude = json.loads(cfg_path.read_text()).get("exclude_dirs", [])
+                if cfg_exclude:
+                    provided = list(exclude_dirs) if exclude_dirs else []
+                    exclude_dirs = list(dict.fromkeys(cfg_exclude + provided)) or None
+            except (json.JSONDecodeError, OSError):
+                pass
+
     graph = Tempo(root=str(root))
 
     # Detect Tauri project: has src-tauri/ or tauri.conf.json

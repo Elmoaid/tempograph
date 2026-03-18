@@ -1120,7 +1120,7 @@ class TestRenderTokenCaps:
     def test_noise_detection(self):
         from tempograph.builder import build_graph
         from tempograph.render import render_overview
-        g = build_graph(REPO_PATH)  # without exclude
+        g = build_graph(REPO_PATH, use_config=False)  # bypass .tempo/config.json to test raw noise detection
         ov = render_overview(g)
         assert "SUGGESTED EXCLUDES" in ov
         assert "archive" in ov.lower()
