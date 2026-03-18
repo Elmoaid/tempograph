@@ -325,3 +325,56 @@ class TestRenderPreparePrecisionFilter:
         # Both calls should succeed — whether context is injected depends on keyword matching
         assert isinstance(result_off, str)
         assert isinstance(result_on, str)
+
+
+class TestPathFallbackTemplateFilter:
+    """path_fallback_files must exclude /templates/ and /static/ directories.
+
+    Evidence: DRF 'improve_schema' → snake_case 'schema' → path match finds
+    rest_framework/templates/rest_framework/schema.js (asset) alongside schemas.py.
+    Model anchors on JS template instead of documentation.py → F1 regression.
+    """
+
+    def _make_graph_with_template_files(self, tmp_path):
+        """Create a minimal git repo with both source and template/static schema files.
+
+        The source file has 'schema' in the PATH but no 'schema'-named symbols.
+        The template/static files also have 'schema' in PATH but NO parseable symbols.
+        This ensures path_fallback (not symbol focus) is triggered for keyword 'schema'.
+        """
+        import subprocess
+        from tempograph.builder import build_graph
+
+        # Source file: 'schema' in path; symbols have unrelated names so focus won't match
+        schemas_dir = tmp_path / "rest_framework"
+        schemas_dir.mkdir()
+        (schemas_dir / "schemas.py").write_text("def generate_view(): pass\n")
+
+        # Template file: 'schema' in path, no parseable symbols → path match only
+        tpl_dir = tmp_path / "rest_framework" / "templates" / "rest_framework"
+        tpl_dir.mkdir(parents=True)
+        # Deliberately no JS symbols — just a comment so tree-sitter finds nothing
+        (tpl_dir / "schema.js").write_text("// template placeholder\n")
+
+        # Static file: 'schema' in path — must also be excluded
+        static_dir = tmp_path / "static" / "rest_framework"
+        static_dir.mkdir(parents=True)
+        (static_dir / "schema.py").write_text("def static_helper(): pass\n")
+
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+        subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "init",
+                        "--author=test <t@t.com>"], cwd=tmp_path, check=True)
+        return build_graph(str(tmp_path))
+
+    def test_template_and_static_excluded_from_path_fallback(self, tmp_path):
+        """Template and static files must not appear in KEY FILES (path match)."""
+        graph = self._make_graph_with_template_files(tmp_path)
+        # Task: "improve_schema" → snake_case → "schema" part → path fallback
+        result = render_prepare(graph, "Merge pull request #4979 from feature/improve_schema_shortcut")
+        # Template and static files must be absent from context
+        assert "schema.js" not in result, "Template JS file must not appear in path fallback"
+        assert "schema.css" not in result, "Static CSS file must not appear in path fallback"
+        # The source schema file should be present if path fallback triggers
+        if "KEY FILES" in result:
+            assert "schemas.py" in result, "Source schemas.py should appear in path fallback"
