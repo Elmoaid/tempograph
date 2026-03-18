@@ -1307,6 +1307,16 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
         if not _no_match:
             key_files = _extract_focus_files(focus_output)
             if key_files:
+                # Broad-scope warning: if focus spans many files, signal to the agent that
+                # the query may be too generic. Feedback evidence: agents misled by broad
+                # focus ("context-menu and click-handler results, not the row height logic").
+                if len(key_files) > 10:
+                    sections.append(
+                        "⚠ BROAD MATCH: query matched many files — results may include "
+                        "loosely related code. Consider re-querying with a more specific "
+                        "symbol name or function for a tighter focus."
+                    )
+                    token_count += 20
                 kf_section = "KEY FILES REFERENCED ABOVE:\n" + "\n".join(f"  {f}" for f in key_files[:5])
                 sections.append(kf_section)
                 token_count += count_tokens(kf_section)
