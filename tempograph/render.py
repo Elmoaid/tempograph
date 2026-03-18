@@ -1702,6 +1702,10 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                             "models", "view", "views", "helper", "helpers", "mixin", "mixins",
                             "return", "raise", "yield", "async", "await", "error", "errors",
                             "init", "main", "common", "factory", "manager",
+                            # Generic domain suffixes: too broad for path match, cause false positives.
+                            # E.g. "DurationField" → "Field" → field_mapping.py (wrong); skip and try
+                            # "Duration" first. "SerializerException" → "Exception" → exceptions.py (wrong).
+                            "field", "fields", "exception", "exceptions",
                         })
                         _parts: list[str] = []
                         _cur: list[str] = []

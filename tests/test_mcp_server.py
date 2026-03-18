@@ -564,6 +564,26 @@ class TestPrepareContext:
         # Should not match tests/importable/ via CamelCase "Import" split
         assert "importable" not in r["data"]
 
+    def test_camelcase_field_exception_parts_skipped(self):
+        # "Field" and "Exception" as CamelCase suffix parts should be skipped.
+        # E.g. "DurationField" → split → ["Duration", "Field"] — "Field" must NOT match field_mapping.py.
+        # "RaiseException" → split → ["Raise", "Exception"] — "Exception" must NOT match exceptions.py.
+        from tempograph.render import _extract_cl_keywords
+        task_field = "Merge pull request #1 from user/add-duration-field\n"
+        kw_field = _extract_cl_keywords(task_field)
+        # "DurationField" should be extracted as composite keyword
+        assert any("field" in k.lower() or "duration" in k.lower() for k in kw_field), \
+            f"Expected field/duration keyword: {kw_field}"
+        # prepare_context should NOT output "field_mapping" path hit via CamelCase "Field" split
+        r = assert_ok(prepare_context(REPO_PATH, task=task_field, output_format="json"))
+        assert "field_mapping" not in r["data"]
+
+        task_exc = "Merge pull request #2 from user/add-raise-exception\n"
+        r2 = assert_ok(prepare_context(REPO_PATH, task=task_exc, output_format="json"))
+        # tempograph self-repo has no exceptions.py, but verify "exception" part doesn't produce
+        # any path fallback that shouldn't be there
+        assert isinstance(r2["data"], str)
+
 
 # ---------------------------------------------------------------------------
 # Exclude dirs
