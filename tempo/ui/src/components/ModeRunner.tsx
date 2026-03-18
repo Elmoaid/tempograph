@@ -54,6 +54,13 @@ const saveHistory = (mode: string, query: string) => {
   localStorage.setItem(historyKey(mode), JSON.stringify([query, ...prev].slice(0, HISTORY_MAX)));
 };
 
+function formatAge(ts: number): string {
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  return `${Math.floor(s / 3600)}h ago`;
+}
+
 export function ModeRunner({ repoPath, excludeDirs }: Props) {
   const [activeMode, setActiveMode] = useState("overview");
   const [modeArgs, setModeArgs] = useState("");
@@ -72,6 +79,12 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
   const filterInputRef = useRef<HTMLInputElement>(null);
   // Per-mode result cache: avoids re-running when switching back to a mode
   const outputCache = useRef<Map<string, string>>(new Map());
+  // Per-mode timestamp cache: when each mode was last run
+  const outputTsCache = useRef<Map<string, number>>(new Map());
+  // Which modes have cached output (drives status dots in mode list)
+  const [cachedModes, setCachedModes] = useState<Set<string>>(new Set());
+  // Timestamp (ms) of when current output was produced
+  const [outputTs, setOutputTs] = useState<number | null>(null);
 
   const activeModeInfo = MODES.find(m => m.mode === activeMode);
 
@@ -99,6 +112,7 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
     setHistory(loadHistory(mode));
     const cached = outputCache.current.get(mode);
     setModeOutput(cached ?? "");
+    setOutputTs(cached ? (outputTsCache.current.get(mode) ?? null) : null);
     // Auto-run arg-free modes if no cached result
     if (!cached && !MODES.find(m => m.mode === mode)?.argPrefix) {
       setTimeout(() => runModeRef.current?.(), 0);
@@ -145,8 +159,12 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
       }
       const r = await runTempo(repoPath, activeMode, args);
       const out = r.output || "No output";
+      const now = Date.now();
       outputCache.current.set(activeMode, out);
+      outputTsCache.current.set(activeMode, now);
       setModeOutput(out);
+      setOutputTs(now);
+      setCachedModes(prev => new Set(prev).add(activeMode));
       if (raw && activeModeInfo?.argPrefix) {
         saveHistory(activeMode, raw);
         setHistory(loadHistory(activeMode));
@@ -203,6 +221,14 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
             >
               <span className="mode-row-icon"><m.icon size={13} /></span>
               <span className="mode-row-name">{m.label}</span>
+              {cachedModes.has(m.mode) && (
+                <span title="Has cached output" style={{
+                  width: 5, height: 5, borderRadius: "50%",
+                  background: activeMode === m.mode ? "var(--accent-hover)" : "var(--success)",
+                  flexShrink: 0, marginLeft: "auto", marginRight: 4,
+                  opacity: activeMode === m.mode ? 0.7 : 1,
+                }} />
+              )}
               <span className="mode-row-tag">{m.tag}</span>
             </button>
           ))}
@@ -329,8 +355,9 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
                     </button>
                   </>
                 )}
-                <span style={{ fontSize: 9, color: "var(--text-tertiary)", marginLeft: "auto" }}>
-                  ~{Math.round(modeOutput.length / 4).toLocaleString()} tok
+                <span style={{ fontSize: 9, color: "var(--text-tertiary)", marginLeft: "auto", display: "flex", gap: 8 }}>
+                  {outputTs && <span title="Time since this output was generated">{formatAge(outputTs)}</span>}
+                  <span>~{Math.round(modeOutput.length / 4).toLocaleString()} tok</span>
                 </span>
               </div>
             </>
