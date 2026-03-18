@@ -75,9 +75,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-log", action="store_true", help="Disable usage logging")
     parser.add_argument("--exclude", "-x", help="Comma-separated directory prefixes to exclude (e.g. archive,bench/results)")
     parser.add_argument("--task-type", help="Explicit task type for L2 learning (e.g. refactor, debug, feature, review)")
+    parser.add_argument("--kit", "-k", metavar="KIT",
+                        help="Run a composable kit workflow. Use --kit list to show all kits.")
 
     args = parser.parse_args(raw)
     repo = str(Path(args.repo).resolve())
+
+    # Kit list: no graph needed
+    if args.kit == "list":
+        from .kits import list_kits
+        kits = list_kits(repo)
+        print("Available kits:")
+        print()
+        for name, desc in sorted(kits.items()):
+            print(f"  {name:15s} — {desc}")
+        return 0
 
     # Report mode: no graph needed
     if args.mode == "report":
@@ -145,6 +157,28 @@ def main(argv: list[str] | None = None) -> int:
     if args.mode == "serve":
         from .server import run_server
         run_server()
+        return 0
+
+    # Kit execution (--kit <name>)
+    if args.kit and args.kit != "list":
+        from .kits import execute_kit, get_all_kits
+        all_kits = get_all_kits(repo)
+        if args.kit not in all_kits:
+            available = ", ".join(sorted(all_kits.keys()))
+            print(f"[ERROR] Unknown kit '{args.kit}'. Available: {available}", file=sys.stderr)
+            return 1
+        kit_def = all_kits[args.kit]
+        output = execute_kit(graph, kit_def, query=args.query or "", max_tokens=args.max_tokens)
+        print(output)
+        if args.tokens:
+            tokens = count_tokens(output)
+            print(f"\n[{tokens:,} tokens]", file=sys.stderr)
+        if not args.no_log:
+            from .telemetry import log_usage, is_empty_result
+            tokens = count_tokens(output) if not args.tokens else tokens
+            log_usage(repo, source="cli", mode=f"kit:{args.kit}", query=args.query,
+                      symbols=stats["symbols"], tokens=tokens,
+                      duration_ms=int(elapsed * 1000), empty=is_empty_result(output))
         return 0
 
     mode_map = {

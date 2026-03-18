@@ -1,4 +1,4 @@
-"""MCP server — 16 tools for agent codebase understanding.
+"""MCP server — 17 tools for agent codebase understanding.
 
 Each tool returns structured JSON (status/data/tokens/duration) or plain text.
 Standardized error codes: REPO_NOT_FOUND, NOT_GIT_REPO, NO_MATCH, BUILD_FAILED, BUILD_TIMEOUT, RENDER_FAILED.
@@ -753,6 +753,72 @@ def get_patterns(repo_path: str, query: str = "", max_tokens: int = 4000,
     return _run_tool("get_patterns", repo_path, output_format,
                      lambda g: render_skills(g, query, max_tokens=max_tokens),
                      exclude_dirs=exclude_dirs, query=query)
+
+
+# ── Tool 18: Run kit ─────────────────────────────────────────────
+
+@mcp.tool()
+def run_kit(repo_path: str, kit: str, query: str = "", max_tokens: int = 4000,
+            exclude_dirs: str = "", output_format: str = "text") -> str:
+    """Run a composable kit — a named multi-mode workflow that combines tempograph
+    modes into a single token-budgeted response.
+
+    kit: name of the kit to run, or "list" to show all available kits.
+      Built-in kits:
+        explore     — overview + hotspots (orient to a new codebase)
+        deep_dive   — focus + blast (deep-dive into a symbol)
+        change_prep — diff + focus (prepare for a code change)
+        code_review — dead + hotspots + focus (code review workflow)
+        health      — hotspots + dead (codebase health check)
+      Custom kits can be defined in .tempo/kits.json.
+    query: optional symbol or topic for focus/blast steps
+    max_tokens: total token budget across all kit steps (default 4000)
+    exclude_dirs: comma-separated directory prefixes to skip
+    output_format: "text" (default) or "json"
+
+    Examples:
+    - run_kit(".", "explore")                         → overview + hotspots
+    - run_kit(".", "deep_dive", query="render_focused") → focus + blast on symbol
+    - run_kit(".", "health")                          → hotspots + dead code
+    - run_kit(".", "list")                            → show all available kits
+    """
+    from .kits import execute_kit, get_all_kits, list_kits
+
+    p, err = _validate_repo(repo_path)
+    if err:
+        return _error(err, f"Directory not found: {repo_path}", output_format)
+
+    if kit == "list":
+        kits = list_kits(p)
+        lines = ["Available kits:", ""]
+        for name, desc in sorted(kits.items()):
+            lines.append(f"  {name:15s} — {desc}")
+        output = "\n".join(lines)
+        tokens = count_tokens(output)
+        return _success(output, tokens, 0.0, output_format)
+
+    all_kits = get_all_kits(p)
+    if kit not in all_kits:
+        available = ", ".join(sorted(all_kits.keys()))
+        return _error(INVALID_PARAMS, f"Unknown kit '{kit}'. Available: {available}", output_format)
+
+    kit_def = all_kits[kit]
+    excludes = _resolve_excludes(p, exclude_dirs)
+    start = time.time()
+    result = _get_or_build_graph(p, exclude_dirs=excludes or None)
+    if isinstance(result, str):
+        code, _, msg = result.partition(":")
+        return _error(code, msg or "Graph build failed", output_format)
+
+    try:
+        output = execute_kit(result, kit_def, query=query, max_tokens=max_tokens)
+    except Exception as exc:
+        return _error("RENDER_FAILED", f"run_kit render error: {exc}", output_format)
+
+    elapsed = time.time() - start
+    tokens = count_tokens(output)
+    _log_tool("run_kit", p, output, elapsed, kit=kit, query=query)
+    return _success(output, tokens, elapsed, output_format)
 
 
 def run_server():
