@@ -59,7 +59,7 @@ class TestExtractKeywords:
         assert "handle" not in kws
 
     def test_generic_identifiers_filtered(self):
-        """error/option/log/ticket should not appear as keywords (universal noise)."""
+        """error/option/log/ticket/docs/readme should not appear as keywords (universal noise)."""
         kws = _kw("Merge pull request #558 from fastify/http-errors")
         assert "errors" not in kws
         assert "error" not in kws
@@ -71,6 +71,12 @@ class TestExtractKeywords:
         kws = _kw("Merge pull request #436 from allevo/logger-to-log")
         assert "log" not in kws
         assert "logger" not in kws
+
+        kws = _kw("Merge pull request #6612 from miketheman/update-docs")
+        assert "docs" not in kws
+
+        kws = _kw("Merge pull request #101 from user/update-readme")
+        assert "readme" not in kws
 
     def test_ticket_branch_mines_body(self):
         """Ticket-reference branches (issue1234, ticket-20550) include body keywords."""
