@@ -873,12 +873,21 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                 callers_sorted = sorted(callers, key=_caller_priority)
                 kw_callers = [c for c in callers_sorted if _caller_priority(c) == 0]
                 other_callers = [c for c in callers_sorted if _caller_priority(c) != 0]
+                # Hot callers (recently-modified files) bubble up within other_callers.
+                # This surfaces the caller most likely relevant to the current task.
+                hot_other = [c for c in other_callers if c.file_path in graph.hot_files]
+                cold_other = [c for c in other_callers if c.file_path not in graph.hot_files]
                 # When keyword callers exist: cap other callers at 3 to reduce noise.
                 # Without keyword matches: show up to 8 (all callers equally relevant).
                 max_other = 3 if kw_callers else (8 if depth == 0 else 5)
-                shown_callers = kw_callers + other_callers[:max_other]
+                shown_other = (hot_other + cold_other)[:max_other]
+                shown_callers = kw_callers + shown_other
                 shown_count = len(kw_callers) + max_other
-                block_lines.append(f"{indent}  called by: {', '.join(c.qualified_name for c in shown_callers)}")
+                caller_strs = [
+                    f"{c.qualified_name} [hot]" if c.file_path in graph.hot_files else c.qualified_name
+                    for c in shown_callers
+                ]
+                block_lines.append(f"{indent}  called by: {', '.join(caller_strs)}")
                 if len(callers) > shown_count:
                     block_lines[-1] += f" (+{len(callers) - shown_count} more)"
             callees = graph.callees_of(sym.id)
