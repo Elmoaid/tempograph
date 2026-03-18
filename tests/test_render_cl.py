@@ -136,6 +136,17 @@ class TestExtractClKeywords:
         assert "someuser" not in kws
         assert "TokenValidator" in kws
 
+    def test_patch_word_not_extracted_from_residual_branch(self):
+        # After stripping "Username-" from "Username-patch-N-...", residual branch starts
+        # with "patch-N-...". The word "patch" should be filtered (generic git term, not
+        # a code identifier). Evidence: Freezerburn-patch-1-rebase → 'patch' was noise keyword.
+        kws = _extract_cl_keywords(
+            "Merge pull request #634 from kgriffs/Freezerburn-patch-1-rebase\nfix(Response): cookies"
+        )
+        assert "patch" not in kws
+        assert "Response" in kws
+        assert "cookies" in kws
+
     def test_language_keywords_skipped(self):
         # Python/JS language keywords must not appear as focus terms.
         # Root cause: DRF 'authtoken-import' → 'import' keyword → focus on settings.py symbols
