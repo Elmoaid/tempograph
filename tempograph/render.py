@@ -407,6 +407,9 @@ def _extract_cl_keywords(task: str) -> list[str]:
         task = branch + ('\n' + body if (_is_ticket or not _branch_has_compound or _is_fork_master) and body else '')
     else:
         task = re.sub(r'^Merge (?:branch|pull request)[^\n]*\n?', '', task, flags=re.IGNORECASE)
+        # Strip conventional commit type prefix (feat:, fix:, chore:, refactor(scope):, etc.)
+        # before keyword extraction — these prefixes are commit metadata, not code identifiers.
+        task = re.sub(r'^(?:feat|fix|chore|refactor|style|perf|ci|build|docs|test|revert)(?:\([^)]*\))?!?:\s*', '', task, flags=re.IGNORECASE)
 
     skip = {
         "the", "and", "for", "from", "with", "this", "that", "fix", "add",
@@ -430,6 +433,8 @@ def _extract_cl_keywords(task: str) -> list[str]:
         "fixed", "improved", "updated", "added", "removed", "changed",
         "fixes", "improves", "updates", "usage", "internal", "external",
         "fork", "syncing", "sync", "backport", "rebase", "cherry", "pick",
+        # Conventional commit type tokens (belt-and-suspenders for any that slip through)
+        "feat", "chore", "refactor", "revert", "perf", "style",
     }
     seen: set[str] = set()
     priority: list[str] = []
@@ -1502,7 +1507,11 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
         focus_budget = max_tokens // 2
         focus_parts: list[str] = []
         path_fallback_files: list[str] = []  # collected when symbol focus is too broad
-        for kw in keywords[:3]:
+        # Skip keywords shorter than 4 chars before taking the top-3 cap.
+        # Short tokens can't trigger path fallback (which requires len>=4) and rarely match
+        # specific symbols. This prevents "req" (len=3) from blocking "resp" (len=4).
+        effective_keywords = [kw for kw in keywords if len(kw) >= 4][:3]
+        for kw in effective_keywords:
             focused = render_focused(graph, kw, max_tokens=focus_budget)
             no_match = not focused or "No symbols matching" in focused or "No exact match" in focused
             if not no_match:
