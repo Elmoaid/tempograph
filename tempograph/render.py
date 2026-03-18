@@ -646,12 +646,26 @@ def _is_docs_branch_task(task: str) -> bool:
 
     Evidence: flask "docs-javascript" overview → F1 0.556→0.154 (-0.402 delta).
               fastapi "fix-10" (Pin versions) overview → F1 0.500→0.286 (-0.214 delta).
+              fastapi "docs/edit-timer-in-middleware" (Merge branch into docs/X) → overview injected
+              because "Merge branch" format wasn't matched — overview misleads to docs_src/ files.
     """
     import re
+    # "Merge pull request #N from user/branch-name" format
     m = re.search(r'Merge pull request \S+ from [^/\s]+/(\S+)', task)
     if not m:
-        return False
-    branch = m.group(1).lower()
+        # "Merge branch 'name' into target" format — also check for docs branch in target
+        m2 = re.search(r"[Mm]erge branch '([^']+)' into ([^\s]+)", task)
+        if m2:
+            # The TARGET branch (after "into") may be the docs branch
+            target = m2.group(2).lower().strip("'\"")
+            source = m2.group(1).lower().strip("'\"")
+            # Use the more specific branch (the one that isn't 'master'/'main')
+            branch = target if target not in ("master", "main", "develop") else source
+        else:
+            return False
+    else:
+        branch = m.group(1).lower()
+    branch = branch.strip("'\"")  # strip any trailing quote chars
     leaf = branch.split('/')[-1]
     # Docs branches: "docs" as a hyphen/underscore/slash-separated component anywhere.
     # Matches: docs-javascript, auth-docs, 5309-docs-viewset (DRF-style mid-name).

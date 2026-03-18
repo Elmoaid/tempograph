@@ -342,8 +342,20 @@ class TestIsDocsBranchTask:
         assert _is_docs_branch_task("Merge pull request #7 from org/fix-auth-bug") is False
 
     def test_non_pr_title_not_docs(self):
-        # Function only matches "Merge pull request ... from org/branch" format
+        # Non-merge commit title not matched by either PR or branch-merge format
         assert _is_docs_branch_task("fix: update documentation for API") is False
+
+    def test_merge_branch_into_docs_branch(self):
+        # "Merge branch 'master' into docs/X" → target IS the docs branch
+        assert _is_docs_branch_task("Merge branch 'master' into docs/edit-timer-in-middleware") is True
+
+    def test_merge_docs_branch_into_master(self):
+        # "Merge branch 'docs/add-feature' into master" → source IS the docs branch
+        assert _is_docs_branch_task("Merge branch 'docs/add-feature' into master") is True
+
+    def test_merge_feature_branch_not_docs(self):
+        # Feature branch merge — not a docs branch
+        assert _is_docs_branch_task("Merge branch 'feature/streaming-body' into main") is False
 
     def test_documentation_prefix_branch(self):
         assert _is_docs_branch_task("Merge pull request #8 from org/documentation-update") is True
