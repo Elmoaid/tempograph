@@ -1375,3 +1375,79 @@ class TestTemporalSymbolWeighting:
         assert _is_hot_source_file("notes/2026-03-18_meta-review.md") is False
         assert _is_hot_source_file("README.rst") is False
         assert _is_hot_source_file("docs/guide.txt") is False
+
+
+class TestBuilderUseConfig:
+    """Tests for build_graph use_config parameter (reads .tempo/config.json exclude_dirs)."""
+
+    def test_use_config_applies_config_exclude_dirs(self, tmp_path):
+        """When use_config=True, .tempo/config.json exclude_dirs are applied to the build."""
+        import json
+        from tempograph.builder import build_graph
+
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "main.py").write_text("def hello(): pass\n")
+        vendor = tmp_path / "vendor"
+        vendor.mkdir()
+        (vendor / "lib.py").write_text("def dep(): pass\n")
+
+        tempo_dir = tmp_path / ".tempo"
+        tempo_dir.mkdir()
+        (tempo_dir / "config.json").write_text(json.dumps({"exclude_dirs": ["vendor"]}))
+
+        g = build_graph(tmp_path, use_cache=False)
+        assert any("main.py" in f for f in g.files), "src/main.py should be indexed"
+        assert not any("lib.py" in f for f in g.files), "vendor/lib.py should be excluded by config"
+
+    def test_use_config_false_bypasses_config(self, tmp_path):
+        """When use_config=False, .tempo/config.json is ignored."""
+        import json
+        from tempograph.builder import build_graph
+
+        # Use a directory name not in DEFAULT_IGNORE_DIRS
+        thirdparty = tmp_path / "thirdparty"
+        thirdparty.mkdir()
+        (thirdparty / "lib.py").write_text("def dep(): pass\n")
+
+        tempo_dir = tmp_path / ".tempo"
+        tempo_dir.mkdir()
+        (tempo_dir / "config.json").write_text(json.dumps({"exclude_dirs": ["thirdparty"]}))
+
+        g = build_graph(tmp_path, use_config=False, use_cache=False)
+        assert any("lib.py" in f for f in g.files), "thirdparty/lib.py should be indexed when use_config=False"
+
+    def test_use_config_deduplicates_with_provided_exclude_dirs(self, tmp_path):
+        """Config exclude_dirs and explicit exclude_dirs are merged without duplicates."""
+        import json
+        from tempograph.builder import build_graph
+
+        vendor = tmp_path / "vendor"
+        vendor.mkdir()
+        (vendor / "lib.py").write_text("def dep(): pass\n")
+        extra = tmp_path / "extra"
+        extra.mkdir()
+        (extra / "mod.py").write_text("def x(): pass\n")
+
+        tempo_dir = tmp_path / ".tempo"
+        tempo_dir.mkdir()
+        (tempo_dir / "config.json").write_text(json.dumps({"exclude_dirs": ["vendor"]}))
+
+        g = build_graph(tmp_path, exclude_dirs=["vendor", "extra"], use_cache=False)
+        assert not any("lib.py" in f for f in g.files), "vendor/lib.py excluded"
+        assert not any("mod.py" in f for f in g.files), "extra/mod.py excluded"
+
+    def test_use_config_malformed_json_is_ignored(self, tmp_path):
+        """Malformed .tempo/config.json does not crash build_graph."""
+        from tempograph.builder import build_graph
+
+        src = tmp_path / "src"
+        src.mkdir()
+        (src / "main.py").write_text("def hello(): pass\n")
+
+        tempo_dir = tmp_path / ".tempo"
+        tempo_dir.mkdir()
+        (tempo_dir / "config.json").write_text("NOT VALID JSON {{{")
+
+        g = build_graph(tmp_path, use_cache=False)
+        assert any("main.py" in f for f in g.files), "src/main.py should still be indexed"
