@@ -1376,6 +1376,48 @@ class TestTemporalSymbolWeighting:
         assert _is_hot_source_file("README.rst") is False
         assert _is_hot_source_file("docs/guide.txt") is False
 
+    def test_hot_caller_label_in_render_focused(self):
+        """render_focused marks callers from hot_files with [hot] in output."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        g = build_graph(REPO_PATH, exclude_dirs=["archive"])
+        # Make tempograph/server.py hot — it contains _get_or_build_graph which calls build_graph
+        g.hot_files = {"tempograph/server.py"}
+        out = render_focused(g, "build_graph", max_tokens=2000)
+        # The [hot] marker must appear for callers from server.py
+        assert "[hot]" in out, "Expected [hot] marker for callers from hot_files"
+
+    def test_hot_caller_bubbles_before_cold(self):
+        """Hot non-keyword callers are shown before cold non-keyword callers in render_focused."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        g = build_graph(REPO_PATH, exclude_dirs=["archive"])
+        # tempo/cli.py is NOT a keyword match for 'build_graph' (path has no 'graph')
+        # so main() from cli.py goes into other_callers — hot version should bubble up
+        g.hot_files = {"tempo/cli.py"}
+        out = render_focused(g, "build_graph", max_tokens=2000)
+        # Find the callers line for the seed symbol
+        callers_line = next(
+            (line for line in out.split("\n") if "called by:" in line),
+            "",
+        )
+        assert "[hot]" in callers_line, "Expected hot caller to appear in callers line"
+        # Hot caller should appear before any test function callers (cold, non-keyword)
+        hot_pos = callers_line.index("[hot]")
+        test_pos = callers_line.find("TestPrepareContext")
+        assert test_pos == -1 or hot_pos < test_pos, (
+            "Hot caller should appear before cold test callers"
+        )
+
+    def test_no_hot_label_when_hot_files_empty(self):
+        """render_focused does not emit [hot] when hot_files is empty (baseline behavior)."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        g = build_graph(REPO_PATH, exclude_dirs=["archive"])
+        g.hot_files = set()
+        out = render_focused(g, "build_graph", max_tokens=2000)
+        assert "[hot]" not in out, "No [hot] markers expected when hot_files is empty"
+
 
 class TestBuilderUseConfig:
     """Tests for build_graph use_config parameter (reads .tempo/config.json exclude_dirs)."""
