@@ -1863,12 +1863,13 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                 overlap = len(predicted_set & path_set) / len(path_set)
                 if overlap >= 0.5:
                     return ""  # model already predicts the path-matched files
+                if len(predicted_set) >= 3:
+                    return ""  # baseline confident (3+ files); path-hint can only mislead
                 # Path-only context (no BFS graph) is weak when model already has a focused prediction.
                 # If baseline predicted exactly 1 file with no overlap to path-match, the model is
                 # likely correct on that file and the path hint would redirect it incorrectly.
                 # Evidence (DRF authtoken-import): baseline=0.5 (auth.py, pred=1, correct),
                 # path=authtoken/models.py (non-overlapping) → injection drops F1 to 0.
-                # Only apply when pred==1 (very focused prediction); ≥2 predictions may be scattered/wrong.
                 if overlap == 0 and len(predicted_set) == 1:
                     return ""  # single focused prediction doesn't align with path hint → risky
             if precision_filter and len(path_fallback_files) > 4:
