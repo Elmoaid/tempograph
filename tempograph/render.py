@@ -1498,7 +1498,7 @@ def _extract_name_from_question(question: str) -> str:
 
 def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: str = "",
                    baseline_predicted_files: list[str] | None = None,
-                   precision_filter: bool = True) -> str:
+                   precision_filter: bool = False) -> str:
     """Batch context preparation: overview + focus + hotspots + diff in one token-budgeted output.
 
     If L2 learned insights exist for task_type, includes extra modes (dead code, quality)
