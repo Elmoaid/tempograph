@@ -1688,8 +1688,22 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                         # Snake_case keyword: try individual components as path keywords.
                         # E.g. "config_from_object" → try "config" → sanic/config.py.
                         # Only use if <= 5 paths (conservative to avoid false positives).
+                        # Skip components that are generic English words — they match wrong files.
+                        # E.g. "fix_named_response_middleware" → "response" → response.py (wrong).
+                        # Evidence: sanic 7c04c9a2 — "response" component → response.py instead of app.py.
+                        # sanic 966b05b4 — "static" component → static.py for "bandit_security_static_analysis".
+                        _PATH_SNAKE_SKIP = frozenset({
+                            # Generic words that cause false path matches as snake_case components.
+                            # E.g. "fix_named_response_middleware" → "response" → response.py (wrong).
+                            # Evidence: sanic 7c04c9a2 — "response" → response.py instead of app.py.
+                            # Evidence: sanic 966b05b4 — "static" → static.py for "bandit_security_static".
+                            # DO NOT include "config" — it correctly points to config.py for config PRs.
+                            "response", "request", "error", "errors", "option", "options",
+                            "handler", "handlers", "helper", "helpers", "server", "client", "router",
+                            "static", "analysis", "middleware", "security",
+                        })
                         for part in kw.split("_"):
-                            if len(part) >= 4:
+                            if len(part) >= 4 and part.lower() not in _PATH_SNAKE_SKIP:
                                 part_lower = part.lower()
                                 part_hits = sorted(set(
                                     sym.file_path for sym in graph.symbols.values()
