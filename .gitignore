@@ -13,5 +13,11 @@ archive/
 .claude.local.md
 .claude/
 .tempo/
-notes/
+# Agent operational logs (high-churn, no git value)
+notes/agent-log/*.jsonl
+# Exception: escalation log IS tracked
+!notes/agent-log/escalation.jsonl
+# Transient lock state
+notes/agent-locks.json
+# Old-style notes (keep agent state files tracked)
 Master Plan/
