@@ -192,15 +192,17 @@ class TestExtractClKeywords:
     def test_short_subparts_not_extracted(self):
         # Sub-parts < 7 chars are too generic to be useful focus queries.
         # "custom-encode-params-method" → full compound kept, but short sub-parts filtered.
-        # Prevents axis regression: "Encode" (6 chars) injecting wrong context.
+        # Prevents axios regression: "Encode" (6 chars) injecting wrong context.
+        # Also: short parts are marked as seen so snake_case loop doesn't re-extract them.
         kws = _extract_cl_keywords(
             "Merge pull request #1 from org/custom-encode-params-method"
         )
         assert "CustomEncodeParamsMethod" in kws  # full compound kept
-        assert "Encode" not in kws   # 6 chars → filtered
-        assert "Custom" not in kws   # 6 chars → filtered
-        assert "Params" not in kws   # 6 chars → filtered
-        assert "Method" not in kws   # 6 chars → filtered
+        assert "Encode" not in kws    # 6 chars → filtered as sub-part AND seen
+        assert "encode" not in kws    # also not re-extracted as single word
+        assert "Custom" not in kws    # 6 chars → same
+        assert "Params" not in kws    # 6 chars → same
+        assert "Method" not in kws    # 6 chars → same
 
     def test_long_subparts_still_extracted(self):
         # Sub-parts >= 7 chars are kept as fallback focus queries.

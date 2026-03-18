@@ -579,13 +579,15 @@ def _extract_cl_keywords(task: str) -> list[str]:
             for _p in re.findall(r'[A-Z][a-z0-9]+', camel):
                 if len(_p) >= 7 and _p.lower() not in _CAMEL_PART_SKIP:
                     _record(_p, general)
-            # Mark the individual hyphen-parts as seen to prevent the snake_case regex below
-            # from re-extracting them as standalone general keywords (e.g. "custom-encode-params"
-            # would otherwise add both the compound "CustomEncodeParams" AND the single words
-            # "custom", "encode", "params" to the general bucket, filling all effective_keywords
-            # slots with generic words and causing harmful context injection).
+            # Mark SHORT (< 7 chars) hyphen-parts as seen to prevent the snake_case regex
+            # below from re-extracting them as standalone general keywords.
+            # E.g. "custom-encode-params-method" → mark "custom","encode","params","method"
+            # as seen → snake_case loop skips them → only the CamelCase compound remains.
+            # Long parts (≥ 7 chars like "streaming") are NOT marked: they can still appear
+            # as sub-parts (recorded a few lines below) which then dedup them naturally.
             for _part in hyphenated.split("-"):
-                seen.add(_part.lower())
+                if len(_part) < 7:
+                    seen.add(_part.lower())
         for ident in re.findall(r'(?<![A-Z_])\b[A-Z][A-Z0-9_]{2,}\b', source):
             if '_' in ident:
                 _record(ident, priority)
