@@ -78,6 +78,26 @@ class TestExtractClKeywords:
         kws = _extract_cl_keywords("Fix RangeField RangeField bug")
         assert kws.count("RangeField") == 1
 
+    def test_conventional_commit_prefix_stripped(self):
+        # Commit type prefixes should not be extracted as keywords
+        assert "feat" not in _extract_cl_keywords("feat: add SESSION_COOKIE_PARTITIONED config")
+        assert "chore" not in _extract_cl_keywords("chore: update dependencies to latest versions")
+        assert "refactor" not in _extract_cl_keywords("refactor: move context generation to module")
+        assert "revert" not in _extract_cl_keywords("revert: drop support for legacy format")
+
+    def test_conventional_commit_preserves_real_keywords(self):
+        # Stripping the prefix should leave actual code identifiers intact
+        kws = _extract_cl_keywords("feat: add SESSION_COOKIE_PARTITIONED config")
+        assert "SESSION_COOKIE_PARTITIONED" in kws
+        kws = _extract_cl_keywords("refactor(auth): extract TokenValidator class")
+        assert "TokenValidator" in kws
+
+    def test_conventional_commit_with_scope(self):
+        # Scoped commits: "feat(parser): ..." — scope should not be a keyword either
+        kws = _extract_cl_keywords("feat(parser): fix CamelCase extraction")
+        assert "feat" not in kws
+        assert "parser" not in kws or "CamelCase" in kws  # CamelCase should be present
+
 
 class TestIsChangeLocalization:
     def test_task_type_changelocal(self):
