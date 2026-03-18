@@ -318,35 +318,33 @@ class TestPrepareContext:
             task="Merge pull request #1 from org/main",
             exclude_dirs="archive", output_format="json",
         ))
-        # Should inject overview (selective fallback for empty keywords)
-        assert "## Repo:" in r["data"]
+        # Should inject full overview: render_overview contains "entry points:" section
+        assert "entry points:" in r["data"]
 
     def test_change_localization_docs_branch_suppresses_overview(self):
         # Docs branches (docs-*, readme-*) → keywords=[] but overview suppressed.
-        # Flask "docs-javascript" -0.402 regression caused by overview steering model to docs/conf.py.
-        # render_prepare always prepends "## Repo: N files..." header, but should NOT inject
-        # a full structured overview (render_overview output begins with module table).
+        # Flask "docs-javascript" -0.402 regression: overview steers model toward docs/conf.py.
+        # Guard: when _is_docs_branch_task → skip overview, model uses training knowledge.
         r = assert_ok(prepare_context(
             REPO_PATH,
             task="Merge pull request #636 from pallets/docs-javascript",
             exclude_dirs="archive", output_format="json",
         ))
-        # Docs branch with keywords=[] → no focus, no overview body (render_overview starts with "## Modules")
-        assert "## Modules" not in r["data"]
+        # render_overview contains "entry points:"; suppressed for docs branches
+        assert "entry points:" not in r["data"]
         assert "Focus:" not in r["data"]
 
     def test_change_localization_keywords_failed_no_overview(self):
         # Keywords exist but focus finds nothing → no overview injection.
-        # "add-fix-update" → keywords ["Fix", "Update"] → focus fails/too broad.
-        # When keywords is non-empty but all fail: inject nothing (model uses training knowledge).
+        # "add-fix-update" → generic words → focus fails/empty → no overview (keywords non-empty).
         # Evidence: overview for non-empty failed keywords hurts high-baseline repos.
         r = assert_ok(prepare_context(
             REPO_PATH,
             task="Merge pull request #100 from org/add-fix-update",
             exclude_dirs="archive", output_format="json",
         ))
-        # Keywords exist but generic → no focus found, no overview injected.
-        assert "## Modules" not in r["data"]
+        # Keywords exist but generic → no focus, no overview
+        assert "entry points:" not in r["data"]
 
     def test_change_localization_broad_keyword_path_fallback(self):
         # Keywords that match >10 symbols trigger path-based fallback.
