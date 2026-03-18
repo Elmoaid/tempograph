@@ -1184,3 +1184,54 @@ class TestGetPatterns:
         result = get_patterns(REPO_PATH)
         assert isinstance(result, str)
         assert len(result) > 0
+
+
+# ---------------------------------------------------------------------------
+# Temporal symbol weighting (recently-modified files boost)
+# ---------------------------------------------------------------------------
+
+class TestTemporalSymbolWeighting:
+    def test_recently_modified_files_returns_set_for_git_repo(self):
+        from tempograph.git import recently_modified_files
+        result = recently_modified_files(REPO_PATH)
+        assert isinstance(result, set)
+        # tempograph is an active repo — must have recent commits
+        assert len(result) > 0
+
+    def test_recently_modified_files_empty_for_non_git_dir(self, tmp_path):
+        from tempograph.git import recently_modified_files
+        result = recently_modified_files(str(tmp_path))
+        assert result == set()
+
+    def test_build_graph_populates_hot_files(self):
+        from tempograph.builder import build_graph
+        g = build_graph(REPO_PATH)
+        # Git repo — hot_files should be populated
+        assert isinstance(g.hot_files, set)
+        assert len(g.hot_files) > 0
+
+    def test_hot_files_scoring_bonus(self):
+        """Symbols in hot_files should outscore identical symbols outside hot_files."""
+        from tempograph.builder import build_graph
+        g = build_graph(REPO_PATH, exclude_dirs=["archive"])
+        # Pick a symbol file that exists in the graph
+        all_syms = list(g.symbols.values())
+        assert all_syms, "Expected symbols in graph"
+        target_sym = all_syms[0]
+
+        # With hot_files containing target_sym's file
+        g.hot_files = {target_sym.file_path}
+        scored_hot = g.search_symbols_scored(target_sym.name)
+
+        # With hot_files empty
+        g.hot_files = set()
+        scored_cold = g.search_symbols_scored(target_sym.name)
+
+        # Find target_sym score in both
+        hot_score = next((sc for sc, s in scored_hot if s.id == target_sym.id), None)
+        cold_score = next((sc for sc, s in scored_cold if s.id == target_sym.id), None)
+
+        if hot_score is not None and cold_score is not None:
+            assert hot_score > cold_score, (
+                f"Expected hot-file bonus: hot={hot_score} cold={cold_score} for {target_sym.name}"
+            )
