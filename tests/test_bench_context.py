@@ -134,3 +134,25 @@ class TestSelectiveOverviewCondition:
     def test_part_ii_title_returns_empty(self):
         """'Part II: The Principles...' from master → empty keywords → overview eligible."""
         assert _kw("Merge pull request #5208 from psf/partII\nPart II: The Principles") == []
+
+
+class TestCrossRepoPRFormat:
+    """Cross-repo PR format: 'Merge pull request org/repo#N from org/branch'."""
+
+    def test_cross_repo_extracts_branch(self):
+        """pydantic-core cross-repo PRs extract branch name despite non-standard format."""
+        kws = _kw("Merge pull request pydantic/pydantic-core#7 from samuelcolvin/pass-data\nPass data")
+        assert "PassData" in kws
+
+    def test_cross_repo_strips_url_trailers(self):
+        """Original-commit-link URL trailers don't pollute keyword extraction."""
+        kws = _kw(
+            "Merge pull request pydantic/pydantic-core#7 from samuelcolvin/pass-data\n"
+            "Pass data\n\n"
+            "Original-commit-link: https://github.com/pydantic/pydantic-core/commit/e5d576f31292c77e164089a36da79ab874eb7b0f"
+        )
+        # Should extract branch-based keywords, NOT URL garbage
+        assert "CommitLink" not in kws
+        assert "PydanticCore" not in kws
+        assert "https" not in kws
+        assert "PassData" in kws
