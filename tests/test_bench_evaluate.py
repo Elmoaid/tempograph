@@ -1,4 +1,4 @@
-"""Tests for bench/changelocal/evaluate.py metric computation."""
+"""Tests for bench/changelocal/evaluate.py and bench/changelocal/run.py utilities."""
 import sys
 from pathlib import Path
 
@@ -6,6 +6,8 @@ REPO = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO))
 
 from bench.changelocal.evaluate import file_metrics, aggregate
+from bench.changelocal.run import _parse_file_list
+from bench.changelocal.context import model_context_budget
 
 
 class TestFileMetrics:
@@ -123,3 +125,52 @@ class TestAggregate:
         agg = aggregate([m1, m2])
         assert agg["avg_predicted"] == 1.5
         assert agg["avg_actual"] == 1.5
+
+
+class TestParseFileList:
+    def test_json_array(self):
+        response = '["src/app.py", "src/utils.py"]'
+        assert _parse_file_list(response) == ["src/app.py", "src/utils.py"]
+
+    def test_json_in_prose(self):
+        response = 'I predict these files: ["src/app.py", "lib/router.js"] based on...'
+        assert _parse_file_list(response) == ["src/app.py", "lib/router.js"]
+
+    def test_empty_json_array(self):
+        assert _parse_file_list("[]") == []
+
+    def test_fallback_quoted_paths(self):
+        """Non-JSON response: extract quoted file paths."""
+        response = 'The files are "src/app.py" and "tests/test_app.py"'
+        result = _parse_file_list(response)
+        assert "src/app.py" in result
+        assert "tests/test_app.py" in result
+
+    def test_no_files_returns_empty(self):
+        assert _parse_file_list("I don't know which files to change.") == []
+
+    def test_filters_non_strings_in_json(self):
+        """JSON array with mixed types — only strings returned."""
+        response = '["src/app.py", 42, null, "src/utils.py"]'
+        result = _parse_file_list(response)
+        assert result == ["src/app.py", "src/utils.py"]
+
+
+class TestModelContextBudget:
+    def test_32b_returns_3000(self):
+        assert model_context_budget("qwen2.5-coder:32b") == 3000
+
+    def test_14b_returns_800(self):
+        assert model_context_budget("llama3.2:14b") == 800
+
+    def test_7b_returns_800(self):
+        assert model_context_budget("codellama:7b") == 800
+
+    def test_no_param_size_returns_3000(self):
+        """Models without a size parameter default to full budget."""
+        assert model_context_budget("gpt-4o") == 3000
+        assert model_context_budget("claude-3-sonnet") == 3000
+
+    def test_case_insensitive(self):
+        assert model_context_budget("Qwen2.5-Coder:32B") == 3000
+        assert model_context_budget("LLaMA:14B") == 800
