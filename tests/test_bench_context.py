@@ -294,3 +294,30 @@ class TestSmallWordSkipList:
         """Standalone 'non' is filtered."""
         kws = _kw("handle non blocking operations")
         assert "non" not in kws
+
+
+class TestParseKeyFilesFromContext:
+    """Tests for _parse_key_files_from_context in run.py."""
+
+    def _parse(self, ctx):
+        from bench.changelocal.run import _parse_key_files_from_context
+        return _parse_key_files_from_context(ctx)
+
+    def test_key_files_referenced_above(self):
+        ctx = "some graph output\n\nKEY FILES REFERENCED ABOVE:\n  lib/reply.js\n  docs/Reply.md\n"
+        assert self._parse(ctx) == ["lib/reply.js", "docs/Reply.md"]
+
+    def test_key_files_path_match(self):
+        ctx = "KEY FILES (path match):\n  tornado/demos/file1.py\n  tornado/demos/file2.py\n"
+        assert self._parse(ctx) == ["tornado/demos/file1.py", "tornado/demos/file2.py"]
+
+    def test_empty_context(self):
+        assert self._parse("") == []
+
+    def test_no_key_files_section(self):
+        ctx = "GRAPH OVERVIEW\n  src/main.py imports src/util.py\n"
+        assert self._parse(ctx) == []
+
+    def test_single_file(self):
+        ctx = "KEY FILES REFERENCED ABOVE:\n  httpx/interfaces.py\n"
+        assert self._parse(ctx) == ["httpx/interfaces.py"]
