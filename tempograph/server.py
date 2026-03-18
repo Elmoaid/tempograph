@@ -711,7 +711,10 @@ def prepare_context(repo_path: str, task: str, task_type: str = "",
     _log_tool("prepare_context", p, output, elapsed, task=task, task_type=task_type)
     if output_format == "json":
         m = _re.search(r'KEY FILES[^:]*:\n((?:  \S+\n?)+)', output)
-        key_files = [ln.strip() for ln in m.group(1).split('\n') if ln.strip()] if m else []
+        # Strip :start-end line range annotations — key_files are bare paths for use
+        # as baseline_predicted_files. Line ranges are available in result["data"] text.
+        key_files = [_re.sub(r':\d+(-\d+)?$', '', ln.strip())
+                     for ln in m.group(1).split('\n') if ln.strip()] if m else []
         return _success(output, tokens, elapsed, output_format,
                         key_files=key_files, injected=bool(output.strip()))
     return output
