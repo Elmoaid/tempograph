@@ -677,9 +677,12 @@ def prepare_context(repo_path: str, task: str, task_type: str = "",
     max_tokens: total token budget for the response (default 6000)
     exclude_dirs: comma-separated directory prefixes to skip
     baseline_predicted_files: optional list of files already predicted by the model
-      (for adaptive injection). If overlap(baseline ∩ KEY FILES) ≥ 50%, returns ""
-      (model already knows the relevant files — skip re-prediction, save tokens).
-      If overlap < 50%, returns full context (model needs the structural graph bridge).
+      (for adaptive injection). Two skip conditions:
+      1. If len(baseline) ≥ 3 → returns "" (model is highly confident with 3+ predictions;
+         any context disagrees more than it helps). Evidence: falcon bl=1.000, 3 correct preds
+         → av2 without this guard injected anyway → F1 1.0→0.5 (commit 988960b/d4eb3c8).
+      2. If overlap(baseline ∩ KEY FILES) ≥ 50% → returns "" (model already knows the files).
+      Otherwise: returns full context (model needs the structural graph bridge).
       Bench (canonical): python3 -m bench.changelocal.analyze --canonical --conditions baseline,tempograph_adaptive
       Canonical result (n=159 Python+JS): +6.9% F1 (p=0.035*). Cost: 2× inference for ~37% of tasks.
     precision_filter: if True, skip context when >4 key files are found (topic too broad).
