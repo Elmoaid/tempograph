@@ -819,3 +819,40 @@ class TestPrecisionFilter:
                 precision_filter=True,
             )
         assert result == "", f"Expected empty (precision_filter gates broad path fallback), got: {result[:100]}"
+
+    def test_template_and_static_dirs_excluded_from_path_fallback(self):
+        """path_fallback_files must not include /templates/ or /static/ directory files.
+
+        Regression test for DRF aafd0a64 (improve_schema): 'schema' keyword path match
+        found rest_framework/templates/rest_framework/schema.js (a JS template asset)
+        alongside schemas.py. Model anchored on the JS file instead of documentation.py.
+        """
+        from unittest.mock import MagicMock, patch
+        from bench.changelocal.context import get_tempograph_context
+
+        # Symbols in different locations — template and static must be filtered out
+        paths = [
+            "rest_framework/schemas.py",                           # source — should match
+            "rest_framework/tests/test_schemas.py",               # test — should match
+            "rest_framework/templates/rest_framework/schema.js",  # template — must exclude
+            "static/rest_framework/schema.css",                   # static — must exclude
+        ]
+        graph = MagicMock()
+        graph.symbols = {f"sym_{i}": MagicMock(file_path=p) for i, p in enumerate(paths)}
+        with patch("bench.changelocal.context.build_graph", return_value=graph), \
+             patch("bench.changelocal.context.render_focused",
+                   return_value="No symbols matching ImproveSchemaShortcut"), \
+             patch("bench.changelocal.context.render_overview", return_value=""):
+            result = get_tempograph_context(
+                MagicMock(),
+                "Merge pull request #4979 from feature/improve_schema_shortcut",
+                precision_filter=False,  # off so we see the path fallback output
+            )
+        # Template and static files must be absent
+        assert "schema.js" not in result, "Template JS must not appear in path fallback"
+        assert "schema.css" not in result, "Static CSS must not appear in path fallback"
+        # Source schema files should appear
+        if result:
+            assert "schemas.py" in result or "test_schemas.py" in result, (
+                "At least one source schema file should appear in path fallback"
+            )
