@@ -52,14 +52,14 @@ export function OutputPanel(props: OutputPanelProps) {
         <div style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
           {modeOutput && (
             <>
-              <button className="btn btn-ghost" onClick={onFilterToggle} style={{ padding: "2px 6px", fontSize: 10 }} title="Filter output (⌘F)">
-                <Search size={10} />
+              <button className="btn btn-ghost" onClick={onFilterToggle} style={{ padding: "2px 6px", fontSize: 10 }} title="Filter output (⌘F)" aria-label="Filter output (⌘F)">
+                <Search size={10} aria-hidden="true" />
               </button>
-              <button className="btn btn-ghost" onClick={onSave} style={{ padding: "2px 6px", fontSize: 10 }} title="Save to .tempo/">
-                <Save size={10} />
+              <button className="btn btn-ghost" onClick={onSave} style={{ padding: "2px 6px", fontSize: 10 }} title="Save to .tempo/" aria-label="Save output to .tempo/">
+                <Save size={10} aria-hidden="true" />
               </button>
-              <button className="btn btn-ghost" onClick={onCopy} style={{ padding: "2px 6px", fontSize: 10 }}>
-                {copied ? <Check size={10} /> : <Copy size={10} />}
+              <button className="btn btn-ghost" onClick={onCopy} style={{ padding: "2px 6px", fontSize: 10 }} aria-label={copied ? "Copied" : "Copy output"}>
+                {copied ? <Check size={10} aria-hidden="true" /> : <Copy size={10} aria-hidden="true" />}
               </button>
             </>
           )}
@@ -77,6 +77,7 @@ export function OutputPanel(props: OutputPanelProps) {
               ref={argsInputRef}
               className="input"
               placeholder={activeModeInfo?.hint || "arguments (optional)"}
+              aria-label="Mode arguments"
               value={modeArgs}
               onChange={(e) => onArgsChange(e.target.value)}
               onKeyDown={(e) => {
@@ -88,14 +89,20 @@ export function OutputPanel(props: OutputPanelProps) {
               style={{ width: "100%" }}
             />
             {historyOpen && history.length > 0 && (
-              <div style={{
-                position: "absolute", top: "100%", left: 0, right: 0, zIndex: 100,
-                background: "var(--bg-secondary)", border: "1px solid var(--border)",
-                borderRadius: 4, marginTop: 2, boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
-              }}>
+              <div
+                role="listbox"
+                aria-label="Argument history"
+                style={{
+                  position: "absolute", top: "100%", left: 0, right: 0, zIndex: 100,
+                  background: "var(--bg-secondary)", border: "1px solid var(--border)",
+                  borderRadius: 4, marginTop: 2, boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
+                }}
+              >
                 {history.map((q, i) => (
                   <div
                     key={i}
+                    role="option"
+                    aria-selected={false}
                     style={{ padding: "5px 10px", fontSize: 11, cursor: "pointer", color: "var(--text-secondary)" }}
                     onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-hover)")}
                     onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
@@ -107,8 +114,8 @@ export function OutputPanel(props: OutputPanelProps) {
               </div>
             )}
           </div>
-          <button className="btn" onClick={onRun} disabled={modeRunning} style={{ padding: "4px 10px" }} title="Run (⌘R)">
-            <Play size={11} /> {modeRunning ? "..." : "Run"}
+          <button className="btn" onClick={onRun} disabled={modeRunning} style={{ padding: "4px 10px" }} title="Run (⌘R)" aria-label={modeRunning ? "Running…" : "Run mode (⌘R)"}>
+            <Play size={11} aria-hidden="true" /> {modeRunning ? "..." : "Run"}
           </button>
         </div>
         {modeRunning ? (
@@ -139,22 +146,23 @@ export function OutputPanel(props: OutputPanelProps) {
                   ref={filterInputRef}
                   className="input"
                   placeholder="Filter lines…"
+                  aria-label="Filter output lines"
                   value={outputFilter}
                   onChange={e => onFilterChange(e.target.value)}
                   onKeyDown={e => { if (e.key === "Escape") onFilterClose(); }}
                   style={{ flex: 1, fontSize: 10, padding: "2px 6px" }}
                 />
                 {filterMatchCount !== null && (
-                  <span style={{ fontSize: 9, color: "var(--text-tertiary)", whiteSpace: "nowrap" }}>
+                  <span style={{ fontSize: 9, color: "var(--text-tertiary)", whiteSpace: "nowrap" }} aria-live="polite" aria-atomic="true">
                     {filterMatchCount} lines
                   </span>
                 )}
-                <button className="btn btn-ghost" onClick={onFilterClose} style={{ padding: "2px 4px" }}>
-                  <X size={9} />
+                <button className="btn btn-ghost" onClick={onFilterClose} style={{ padding: "2px 4px" }} aria-label="Close filter">
+                  <X size={9} aria-hidden="true" />
                 </button>
               </div>
             )}
-            <pre className="output" style={{ maxHeight: activeMode === "prepare" ? "calc(100% - 96px)" : "calc(100% - 64px)", overflow: "auto" }}>{filteredOutput}</pre>
+            <pre className="output" role="region" aria-label="Mode output" aria-live="polite" style={{ maxHeight: activeMode === "prepare" ? "calc(100% - 96px)" : "calc(100% - 64px)", overflow: "auto" }}>{filteredOutput}</pre>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>
               <span style={{ fontSize: 9, color: "var(--text-tertiary)", marginRight: 2 }}>Helpful?</span>
               {feedbackGiven.current.has(activeMode) ? (
@@ -163,11 +171,11 @@ export function OutputPanel(props: OutputPanelProps) {
                 </span>
               ) : (
                 <>
-                  <button className="btn btn-ghost" onClick={() => onFeedback(true)} style={{ padding: "1px 6px", fontSize: 9 }} title="Helpful">
-                    <ThumbsUp size={9} />
+                  <button className="btn btn-ghost" onClick={() => onFeedback(true)} style={{ padding: "1px 6px", fontSize: 9 }} title="Helpful" aria-label="Mark as helpful">
+                    <ThumbsUp size={9} aria-hidden="true" />
                   </button>
-                  <button className="btn btn-ghost" onClick={() => onFeedback(false)} style={{ padding: "1px 6px", fontSize: 9 }} title="Not helpful">
-                    <ThumbsDown size={9} />
+                  <button className="btn btn-ghost" onClick={() => onFeedback(false)} style={{ padding: "1px 6px", fontSize: 9 }} title="Not helpful" aria-label="Mark as not helpful">
+                    <ThumbsDown size={9} aria-hidden="true" />
                   </button>
                 </>
               )}
