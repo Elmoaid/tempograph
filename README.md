@@ -1,10 +1,10 @@
 # tempograph
 
-Tempograph tracks the structure of a codebase across revisions.
+Tempograph is an agent effectiveness engine — a code graph tool that makes AI coding agents measurably better at understanding and navigating codebases.
 
-It parses source files with tree-sitter, extracts symbols and relationships, and builds a semantic graph for each run. Each graph is stored as a content-hashed snapshot of the repository. Run it again after a change and only the affected files are re-parsed.
+**Bench result**: `prepare_context` improves AI file-prediction F1 by **+7.1% (p=0.043)** on Python PR-title tasks (n=111, qwen2.5-coder:32b). With adaptive injection gating: **+6.9% (p=0.035\*)** combined Python+JS.
 
-That gives you a stable way to do three things: understand what is in the codebase now, see what changed structurally between commits, and spot places where coupling or complexity is starting to accumulate.
+It parses source files with tree-sitter, extracts symbols and relationships, and builds a semantic graph. Run it as an MCP server — your AI agent calls `prepare_context` and gets exactly the right context before making code changes.
 
 ## How It Works
 
@@ -18,23 +18,40 @@ Each snapshot is stored in `.tempograph/cache.json`. Only files whose contents c
 
 ## Supported Languages
 
-Python · TypeScript · TSX · JavaScript · JSX · Rust · Go
+Python · TypeScript · TSX · JavaScript · JSX · Rust · Go · Java · C# · Ruby
 
-Parsing is handled by tree-sitter. Each language has dedicated extraction handlers for functions, classes, components, hooks, imports, type aliases, traits, interfaces, and their relationships. The parser (`parser.py`) includes 35 extraction methods across the supported languages.
+Parsing is handled by tree-sitter. Each language has dedicated extraction handlers for functions, classes, components, hooks, imports, type aliases, traits, interfaces, and their relationships.
 
 ## Install
 
 ```bash
-pip install -e .
+pip install tempograph
 ```
 
-Requires Python 3.11+.
+Requires Python 3.11+. Tree-sitter grammars auto-install on first parse.
 
-Dependencies:
-- tree-sitter
-- language grammars (tree-sitter-python, tree-sitter-typescript, etc.)
-- tiktoken (token counting)
-- mcp[cli] (MCP server)
+## MCP Server (primary use — for AI agents)
+
+Add to your `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "tempograph": {
+      "command": "tempograph-server",
+      "args": []
+    }
+  }
+}
+```
+
+Then in your agent system prompt or CLAUDE.md:
+
+```
+prepare_context(repo_path="/path/to/repo", task="fix auth bug in login flow")
+```
+
+The tool auto-selects the right context type (symbol focus, overview, or nothing for vague tasks) and returns KEY FILES within a token budget. See [AGENT_GUIDE.md](AGENT_GUIDE.md) for full agent integration docs.
 
 ## CLI
 
