@@ -1837,9 +1837,17 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
             # Bench evidence (Phase 5.27, n=83): overlap>=0.5 → model already knows the files
             # → skip saves tokens with 0 F1 loss; overlap<0.5 → avg +0.07 F1 gain per case.
             if baseline_predicted_files is not None and key_files:
-                overlap = len(set(baseline_predicted_files) & set(key_files)) / len(key_files)
+                predicted_set = set(baseline_predicted_files)
+                overlap = len(predicted_set & set(key_files)) / len(key_files)
                 if overlap >= 0.5:
                     return ""  # model already predicts the key files — skip injection
+                if len(predicted_set) >= 3:
+                    # Baseline is highly confident (3+ predictions). When context
+                    # disagrees (overlap < 0.5), it misleads the model away from its
+                    # already-correct predictions. Evidence: falcon 16bc3f16 (bl=1.000,
+                    # pred=3 correct files, context disagrees → av2 injects → F1 1.0→0.5).
+                    # Phase 5.28: av2 w/o this guard hurt falcon -13.7%* and DRF -10.9%*.
+                    return ""
             if key_files:
                 kf_ranges = _extract_focus_ranges("\n\n".join(focus_parts), key_files[:5])
                 kf_lines = [f"  {f}:{kf_ranges[f]}" if f in kf_ranges else f"  {f}" for f in key_files[:5]]
