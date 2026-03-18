@@ -658,6 +658,7 @@ def learn_recommendation(repo_path: str, task_type: str = "", output_format: str
 def prepare_context(repo_path: str, task: str, task_type: str = "",
                     max_tokens: int = 6000, exclude_dirs: str = "",
                     baseline_predicted_files: list[str] | None = None,
+                    precision_filter: bool = False,
                     output_format: str = "text") -> str:
     """One-shot context preparation for a task. Runs the optimal combination of
     tools and returns a single, token-budgeted response. Use this instead of
@@ -679,6 +680,9 @@ def prepare_context(repo_path: str, task: str, task_type: str = "",
       (model already knows the relevant files — skip re-prediction, save tokens).
       If overlap < 50%, returns full context (model needs the structural graph bridge).
       Bench evidence (Phase 5.27, n=83): overlap<0.5 → avg +0.08 F1 gain per injected case.
+    precision_filter: if True, skip context when >4 key files are found (topic too broad).
+      Bench evidence (Phase 5.26, n=111): +3.9% (p=0.085, ns). Weaker than baseline_predicted_files.
+      Default False for backward compatibility.
     output_format: "text" (default) or "json" for structured response
 
     Returns: overview summary + focused context + KEY FILES + hotspot warnings,
@@ -686,7 +690,8 @@ def prepare_context(repo_path: str, task: str, task_type: str = "",
     """
     return _run_tool("prepare_context", repo_path, output_format,
                      lambda g: render_prepare(g, task, max_tokens=max_tokens, task_type=task_type,
-                                              baseline_predicted_files=baseline_predicted_files),
+                                              baseline_predicted_files=baseline_predicted_files,
+                                              precision_filter=precision_filter),
                      exclude_dirs=exclude_dirs, task=task, task_type=task_type)
 
 

@@ -1469,7 +1469,8 @@ def _extract_name_from_question(question: str) -> str:
 
 
 def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: str = "",
-                   baseline_predicted_files: list[str] | None = None) -> str:
+                   baseline_predicted_files: list[str] | None = None,
+                   precision_filter: bool = False) -> str:
     """Batch context preparation: overview + focus + hotspots + diff in one token-budgeted output.
 
     If L2 learned insights exist for task_type, includes extra modes (dead code, quality)
@@ -1555,9 +1556,13 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                 sections.append(fp)
                 token_count += count_tokens(fp)
             key_files = _extract_focus_files("\n\n".join(focus_parts), task_keywords=keywords)
+            # Precision gate: >4 key files → topic too broad → skip injection.
+            # Bench evidence (Phase 5.26, n=111): precision_filter=+3.9% (p=0.085, ns).
+            if precision_filter and len(key_files) > 4:
+                return ""  # Too broad — skip context entirely
             # Adaptive gating: if baseline already predicts the key files, skip injection.
             # Bench evidence (Phase 5.27, n=83): overlap>=0.5 → model already knows the files
-            # → skip saves tokens with 0 F1 loss; overlap<0.5 → avg +0.30–0.45 F1 gain per case.
+            # → skip saves tokens with 0 F1 loss; overlap<0.5 → avg +0.07 F1 gain per case.
             if baseline_predicted_files is not None and key_files:
                 overlap = len(set(baseline_predicted_files) & set(key_files)) / len(key_files)
                 if overlap >= 0.5:
