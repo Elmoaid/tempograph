@@ -324,6 +324,10 @@ def _extract_focus_files(focus_output: str, task_keywords: list[str] | None = No
     Hub detection: files like fastify.js appear in 63% of fastify focus outputs
     regardless of task, polluting KEY FILES. Evidence: hub removal cut -0.061 F1
     harm on fastify corpus (n=30). Keyword-matched files are exempt from hub penalty.
+    Primary-match files (from direct ● symbol lines) are also exempt from hub penalty:
+    the file that contains the directly-searched symbol must always be considered relevant.
+    Evidence: fastify reply-not-found — setNotFoundHandler is in fastify.js (14/25 = 56%
+    mentions → hub), but fastify.js IS a changed file. Hub penalty incorrectly demoted it.
     """
     import re
     pattern = r'\b(?:[a-zA-Z0-9_.-]+/)*[a-zA-Z0-9_.-]+\.(?:py|ts|tsx|js|jsx|go|rs|java|cs|rb)\b'
@@ -332,10 +336,22 @@ def _extract_focus_files(focus_output: str, task_keywords: list[str] | None = No
     for p in all_paths:
         freq[p] = freq.get(p, 0) + 1
 
+    # Primary-match files: files referenced on direct symbol lines (● symbol — file:N-M).
+    # These are the files that actually contain the searched symbol → never apply hub penalty.
+    primary_files: set[str] = set()
+    for line in focus_output.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("●"):
+            m = re.search(r'—\s+(\S+\.(?:py|ts|tsx|js|jsx|go|rs|java|cs|rb)):\d', stripped)
+            if m:
+                primary_files.add(m.group(1))
+
     kw_lower = [k.lower() for k in (task_keywords or [])]
     total_mentions = sum(freq.values())
 
     def _is_hub(path: str, stem: str) -> bool:
+        if path in primary_files:
+            return False  # Never penalize directly-matched symbol files
         if total_mentions <= 6:
             return False
         has_kw = any(kw in stem for kw in kw_lower if len(kw) > 3)
@@ -1625,8 +1641,23 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                     path_hits = [
                         sym.file_path for sym in graph.symbols.values()
                         if kw_lower in sym.file_path.lower()
+                        # Exclude asset directories: templates/ and static/ contain JS/CSS/HTML
+                        # that are almost never the primary code change location.
+                        # Evidence: DRF 'schema' → rest_framework/templates/.../schema.js (asset)
+                        # alongside schemas.py, misleading model away from documentation.py.
+                        and "/templates/" not in sym.file_path
+                        and not sym.file_path.startswith("templates/")
+                        and "/static/" not in sym.file_path
+                        and not sym.file_path.startswith("static/")
                     ]
                     unique_paths = sorted(set(path_hits))
+                    # Filter to source files only: test/spec/fixture paths mislead the model.
+                    # Evidence: fastify "option" → test/ajv-options.test.js, test/options.test.js
+                    # → KEY FILES shows only test files → model misses lib/validation.js.
+                    # If no source files match, skip path fallback entirely (no hint > wrong hint).
+                    _test_markers = ("test", "spec", "fixture", "example", "tutorial", "demo", "sample")
+                    source_paths = [p for p in unique_paths if not any(x in p.lower() for x in _test_markers)]
+                    unique_paths = source_paths if source_paths else []
                     if unique_paths and len(unique_paths) <= 5:
                         # Cap at 5 (same threshold as CamelCase/snake_case parts below).
                         # >5 unique paths means keyword is too generic (e.g. "path", "route") → skip.
@@ -1643,7 +1674,13 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                                 part_hits = sorted(set(
                                     sym.file_path for sym in graph.symbols.values()
                                     if part_lower in sym.file_path.lower()
+                                    and "/templates/" not in sym.file_path
+                                    and not sym.file_path.startswith("templates/")
+                                    and "/static/" not in sym.file_path
+                                    and not sym.file_path.startswith("static/")
                                 ))
+                                src_hits = [p for p in part_hits if not any(x in p.lower() for x in _test_markers)]
+                                part_hits = src_hits if src_hits else []
                                 if part_hits and len(part_hits) <= 5:
                                     path_fallback_files = part_hits
                                     break
@@ -1674,7 +1711,13 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                                 part_hits = sorted(set(
                                     sym.file_path for sym in graph.symbols.values()
                                     if part_lower in sym.file_path.lower()
+                                    and "/templates/" not in sym.file_path
+                                    and not sym.file_path.startswith("templates/")
+                                    and "/static/" not in sym.file_path
+                                    and not sym.file_path.startswith("static/")
                                 ))
+                                src_hits = [p for p in part_hits if not any(x in p.lower() for x in _test_markers)]
+                                part_hits = src_hits if src_hits else []
                                 if part_hits and len(part_hits) <= 5:
                                     path_fallback_files = part_hits
                                     break
