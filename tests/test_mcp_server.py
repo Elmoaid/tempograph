@@ -1225,10 +1225,18 @@ class TestTemporalSymbolWeighting:
 
     def test_build_graph_populates_hot_files(self):
         from tempograph.builder import build_graph
-        g = build_graph(REPO_PATH)
-        # Git repo — hot_files should be populated
+        from unittest.mock import patch
+        # Patch recently_modified_files to return a known source file so the test
+        # doesn't depend on the repo's git history (which varies across sessions).
+        with patch(
+            "tempograph.builder.recently_modified_files",
+            return_value={"tempograph/render.py", "notes/readme.md"},
+        ):
+            g = build_graph(REPO_PATH)
+        # hot_files should include the source file but exclude the doc
         assert isinstance(g.hot_files, set)
-        assert len(g.hot_files) > 0
+        assert "tempograph/render.py" in g.hot_files
+        assert "notes/readme.md" not in g.hot_files
 
     def test_hot_files_scoring_bonus(self):
         """Symbols in hot_files should outscore identical symbols outside hot_files."""

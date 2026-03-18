@@ -189,6 +189,28 @@ class TestExtractClKeywords:
         assert "Duration" in kws   # sub-part fallback extracted
         assert "Field" not in kws  # in _CAMEL_PART_SKIP
 
+    def test_short_subparts_not_extracted(self):
+        # Sub-parts < 7 chars are too generic to be useful focus queries.
+        # "custom-encode-params-method" → full compound kept, but short sub-parts filtered.
+        # Prevents axis regression: "Encode" (6 chars) injecting wrong context.
+        kws = _extract_cl_keywords(
+            "Merge pull request #1 from org/custom-encode-params-method"
+        )
+        assert "CustomEncodeParamsMethod" in kws  # full compound kept
+        assert "Encode" not in kws   # 6 chars → filtered
+        assert "Custom" not in kws   # 6 chars → filtered
+        assert "Params" not in kws   # 6 chars → filtered
+        assert "Method" not in kws   # 6 chars → filtered
+
+    def test_long_subparts_still_extracted(self):
+        # Sub-parts >= 7 chars are kept as fallback focus queries.
+        kws = _extract_cl_keywords(
+            "Merge pull request #1 from org/streaming-protocol"
+        )
+        assert "StreamingProtocol" in kws  # full compound
+        assert "Streaming" in kws          # 9 chars → kept
+        assert "Protocol" in kws           # 8 chars → kept
+
 
 class TestIsChangeLocalization:
     def test_task_type_changelocal(self):
