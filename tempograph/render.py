@@ -564,6 +564,15 @@ def _extract_cl_keywords(task: str) -> list[str]:
     branch_text = lines[0]
     body_text = lines[1].strip() if len(lines) > 1 else ''
 
+    # Normalize: replace underscore immediately before a lowerCamelCase identifier with a hyphen.
+    # Underscores are regex word characters (\w), so "_extendServerError" has no \b before 'e',
+    # preventing lowerCamelCase extraction. Replacing the underscore with '-' (non-word char)
+    # creates the necessary word boundary.
+    # E.g. "feature/#235_pass_payload_to_extendServerError" → "...to-extendServerError"
+    # → lowerCamelCase regex extracts "extendServerError" → priority keyword → BFS runs.
+    # Only targets _lowerCamelCase transitions; does not affect all_lowercase_snake or ALLCAPS.
+    _branch_for_extract = re.sub(r'_(?=[a-z][a-zA-Z0-9]*[A-Z])', '-', branch_text)
+
     def _extract_from(source: str, strict_camel: bool = False) -> None:
         # Generic OOP/domain suffixes excluded from CamelCase sub-part fallbacks.
         # These terms match too broadly across a codebase to be useful focus queries.
@@ -635,7 +644,7 @@ def _extract_cl_keywords(task: str) -> list[str]:
     if body_text and (branch_text.endswith('-master') or branch_text.endswith('_master')):
         _extract_from(body_text, strict_camel=True)
     else:
-        _extract_from(branch_text, strict_camel=False)
+        _extract_from(_branch_for_extract, strict_camel=False)
         if body_text:
             _extract_from(body_text, strict_camel=True)
 

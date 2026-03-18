@@ -213,6 +213,20 @@ class TestExtractClKeywords:
         assert "Streaming" in kws          # 9 chars → kept
         assert "Protocol" in kws           # 8 chars → kept
 
+    def test_underscore_before_lower_camel_extracted(self):
+        # "feature/#235_pass_payload_to_extendServerError"
+        # "_extendServerError" — underscore is \w so no \b before 'e', lowerCamelCase regex misses it.
+        # Fix: replace _ before lowerCamelCase with hyphen → word boundary created → extracted.
+        # Evidence: fastify 66e14852 — keywords=[] → overview → harm -0.333 on all conditions.
+        task = "Merge pull request #236 from StarpTech/feature/#235_pass_payload_to_extendServerError"
+        kws = _extract_cl_keywords(task)
+        assert "extendServerError" in kws
+        # MUST NOT change behavior for pure-lowercase snake_case or ALLCAPS
+        assert _extract_cl_keywords("Merge pull request #1 from org/fix_range_field") == ["fix_range_field"]
+        assert "SESSION_COOKIE_PARTITIONED" in _extract_cl_keywords(
+            "Merge pull request #1 from org/SESSION_COOKIE_PARTITIONED"
+        )
+
     def test_json_xml_camel_parts_skipped_in_path_fallback(self):
         # "expose-default-json-serializer" → "ExposeDefaultJsonSerializer"
         # Path fallback splits CamelCase parts; "Json" (4 chars) must be skipped —
