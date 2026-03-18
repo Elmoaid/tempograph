@@ -227,6 +227,23 @@ class TestExtractFocusFiles:
         # With keyword match, fastify.js should NOT be demoted
         assert result[0] == "fastify.js"
 
+    def test_primary_match_hub_file_not_demoted(self):
+        # Primary-match files (on ● lines) must never be hub-penalized, even if
+        # they dominate mention counts. Evidence: fastify reply-not-found —
+        # setNotFoundHandler is in fastify.js (56% of mentions → hub), but fastify.js
+        # IS a changed file. Hub penalty was incorrectly demoting it.
+        primary_line = "● function setNotFoundHandler — fastify.js:607-612"
+        # Add more fastify.js mentions (simulating BFS expansion) + other files
+        extra = ["  fastify.js:9-9", "  fastify.js:385-480", "  fastify.js:595-605",
+                 "  fastify.js:26-665", "  fastify.js:16-16", "  fastify.js:18-18",
+                 "  fastify.js:3-3",
+                 "  lib/reply.js (236 lines)", "  lib/logger.js (50 lines)",
+                 "  lib/hooks.js (40 lines)", "  lib/request.js (26 lines)"]
+        output = primary_line + "\n" + "\n".join(extra)
+        result = _extract_focus_files(output)
+        # fastify.js is a primary-match file → must not be hub-penalized → ranked first
+        assert result[0] == "fastify.js"
+
     def test_caps_at_15_files(self):
         output = self._make_focus_output([f"src/file{i}.py" for i in range(20)])
         result = _extract_focus_files(output)
