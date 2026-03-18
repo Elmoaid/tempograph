@@ -388,268 +388,7 @@ def _extract_focus_ranges(focus_output: str, key_files: list[str]) -> dict[str, 
     return {kf: ranges[kf] for kf in key_files if kf in ranges}
 
 
-def _extract_cl_keywords(task: str) -> list[str]:
-    """Extract code-symbol keywords from a change-localization task (PR title/commit message).
-
-    Ported from bench/changelocal/context.py::_extract_keywords.
-    This is the PR-title-specific extractor used for change localization tasks.
-    For general coding tasks, use the fuzzy search in search_symbols_scored directly.
-    """
-    import re
-    _TRUNK_BRANCHES = frozenset({"master", "main", "develop", "development", "stable", "release"})
-    _cc_scopes: list[str] = []  # conventional commit scopes extracted before stripping
-    m = (re.search(r'Merge pull request #\d+ from [^/\s]+/(\S+)', task)
-         or re.search(r'Merge pull request \S+#\d+ from [^/\s]+/(\S+)', task))
-    if m:
-        branch = m.group(1)
-        leaf = branch.lower().split('/')[-1]
-        if leaf in _TRUNK_BRANCHES:
-            # Trunk/fork-master branch: return [] to trigger the overview fallback.
-            # Overview injection benefits low-baseline repos (requests, django) where
-            # the model has no codebase knowledge and structure helps orient predictions.
-            # Do NOT mine body — generic body keywords (failing, doctests, requests) would
-            # suppress overview without adding BFS signal, hurting F1.
-            # Evidence: requests/3e7d0a87 — overview → F1 0→0.333; body mining → F1=0.
-            return []
-        branch_lower = branch.lower()
-        # "docs" or "doc" as a hyphen/underscore-separated component anywhere in branch name.
-        # Matches: docs-view, doc-view, view-docs, 5309-docs-view (DRF-style), docs/viewset.
-        # Does NOT match: docstring-update (component is "docstring", not "doc/docs").
-        _DOC_COMPONENT = re.compile(r'(?:^|[-_/])docs?(?:[-_/]|$)')
-        if (_DOC_COMPONENT.search(leaf)
-                or any(re.search(r'(?:^|[-_/])' + kw + r'(?:[-_/]|$)', leaf)
-                       for kw in ("readme", "changelog", "documentation"))
-                or branch_lower.startswith("docs/")
-                or branch_lower.startswith("doc/")):
-            return []
-        body = task[task.find('\n')+1:].strip() if '\n' in task else ''
-        body = re.sub(r'https?://\S+', '', body)
-        body = re.sub(r'^[\w-]+:\s+.*$', '', body, flags=re.MULTILINE)
-        body = re.sub(r'@[a-zA-Z][a-zA-Z0-9_-]*', '', body)  # strip GitHub @mentions (usernames ≠ code)
-        body = body.strip()
-        # Mine the PR body for additional keywords when the branch name is not self-describing:
-        # - Ticket-reference branches (issue12345, fix-1587) have numeric names → body is the task.
-        # - Pure snake_case branches with no CamelCase transitions (e.g. "support_forwardred_in_python36")
-        #   may have typos or version suffixes that hide the real identifier; body often names it.
-        # Skip body mining for branches that already produce CamelCase compounds (hyphenated segments
-        # like "reply-not-found" → "ReplyNotFound", or explicit camelCase like "partII" with "tI").
-        # Those branches are self-describing and body mining adds noise.
-        _is_ticket = bool(
-            re.match(r'^(?:issue|ticket|bug|patch|pr|fix)[-_]?\d+', leaf) or
-            re.match(r'^\d+[-_]', leaf)
-        )
-        _branch_has_compound = bool(
-            re.search(r'\b[a-z]{2,}-[a-z]{2,}', branch)  # hyphenated alpha-alpha ("reply-not")
-            or re.search(r'[a-z][A-Z]', branch)           # explicit camelCase ("partII")
-        )
-        # "Username-master" / "OrgName-master": external contributor PR'd from their fork's master.
-        # The compound (camelCase username) is meaningless as a task keyword; mine body instead.
-        # Evidence: falcon "CygnusNetworks-master" / "hooblei-master" → body has "byte ranges" / "context_type".
-        _is_fork_master = leaf.endswith("-master") or leaf.endswith("_master")
-        # GitHub auto-generated "username-patch-N" branches: strip the username prefix.
-        # Pattern: single-word (no hyphens) username followed by "-patch-\d+".
-        # Without this, CamelCase extraction yields the username as a priority keyword.
-        # Evidence: "Freezerburn-patch-1-reb" → "Freezerburn" keyword → false path match.
-        _gh_patch_m = re.match(r'^([A-Za-z][a-zA-Z0-9]*)-patch-\d+', leaf)
-        if _gh_patch_m:
-            branch = branch[len(_gh_patch_m.group(1)) + 1:]  # strip "Username-" prefix
-            _is_ticket = True  # remaining "patch-N-..." → mine body for actual keywords
-        task = branch + ('\n' + body if (_is_ticket or not _branch_has_compound or _is_fork_master) and body else '')
-    else:
-        task = re.sub(r'^Merge (?:branch|pull request)[^\n]*\n?', '', task, flags=re.IGNORECASE)
-        # Extract conventional commit scopes BEFORE stripping them.
-        # `feat(StreamMiddleware):`, `perf(Response):` → scope names the changed component.
-        _cc_scopes = re.findall(
-            r'(?:feat|fix|chore|refactor|style|perf|ci|build|docs|test|revert)\(([^)]+)\)',
-            task, re.IGNORECASE)
-        # Strip conventional commit type prefix (feat:, fix:, chore:, refactor(scope):, etc.)
-        # before keyword extraction — these prefixes are commit metadata, not code identifiers.
-        task = re.sub(r'^(?:feat|fix|chore|refactor|style|perf|ci|build|docs|test|revert)(?:\([^)]*\))?!?:\s*', '', task, flags=re.IGNORECASE)
-
-    skip = {
-        "the", "and", "for", "from", "with", "this", "that", "fix", "add",
-        "update", "remove", "change", "bug", "feature", "merge", "pull",
-        "request", "branch", "commit", "issue", "use", "make", "new",
-        "when", "not", "all", "can", "should", "would", "into", "also",
-        # Short English articles/prepositions/conjunctions (never code identifiers)
-        "are", "its", "via", "any", "but", "has", "was", "had", "yet",
-        "nor", "per", "due", "let", "now", "old", "raw", "off", "out",
-        "non", "sub", "pre", "too",
-        "pass", "through", "methods", "method", "function", "class", "file",
-        "code", "test", "tests", "type", "types", "value", "values", "data",
-        "object", "objects", "item", "items", "list", "dict", "set", "get",
-        "put", "call", "calls", "return", "returns", "allow", "allows",
-        # Python language keywords — never useful as symbol focus terms
-        "import", "raise", "yield", "async", "await", "lambda",
-        "assert", "except", "finally", "none", "true", "false",
-        # JS/TS keywords and constructs
-        "const", "export", "require", "props", "state",
-        "foreach", "callback",  # loop construct / pattern word — never a file identifier
-        "getter", "setter",  # property accessor types — "host-setter" → focus on request.js (wrong; misses context.js)
-        "handle", "handles", "handler", "handlers", "check", "checks", "run", "runs", "create",
-        "support", "supported", "include", "includes", "avoid", "prevent", "ensure",
-        "apply", "improve", "move", "moved", "part", "parts", "some",
-        "name", "named",  # "name" matches ParameterNameConflicts (wrong); compound forms (ParameterName) still work
-        "limit", "limits",  # branch component "limit-selects" → "limit" matches LimitOffsetPagination (wrong)
-        "error", "errors", "option", "options", "response", "config",
-        "host",  # generic HTTP concept — "host-setter" → focus on host getter (wrong); compound "HostSetter" still works
-        "enable", "enabled", "disable", "disabled", "default", "defaults", "global",
-        "log", "logger", "logging", "ticket", "docs", "readme",
-        "fixed", "improved", "updated", "added", "removed", "changed",
-        "fixes", "improves", "updates", "usage", "internal", "external",
-        "fork", "syncing", "sync", "backport", "rebase", "cherry", "pick", "patch", "hotfix",
-        # Version / dependency metadata — never code symbol names
-        "version", "versions", "versioning", "bump", "release", "changelog",
-        "dependency", "dependencies", "package", "packages", "upgrade", "downgrade",
-        "install", "installation", "requirements", "pinned", "unpinned",
-        # PR body prose — common natural language words that appear in PR descriptions
-        # but are never code symbol names. These slip through when body-mining is active.
-        "implement", "implements", "implementation", "related", "regarding",
-        "contribution", "contribute", "thanks", "introduces", "introduce",
-        "follow", "follows", "following", "address", "addresses", "addressing",
-        "resolves", "resolve", "closes", "close", "based", "instead", "rather",
-        # Narrative/descriptive body prose — verbs/adverbs that consume keyword slots,
-        # displacing domain words (e.g. "accidentally broke cookie" → skip 'accidentally'
-        # and 'broke' so 'cookie' advances into the effective_keywords[:3] cap).
-        # Evidence: falcon 3431ac32 — 'accidentally','broke' in slots 2-3 blocked 'cookie'.
-        "accidentally", "broke", "broken", "wrongly", "correctly", "incorrectly",
-        "properly", "caused", "noticed", "realized", "discovered", "detected",
-        "missing", "extra", "leading", "trailing",
-        # HTTP/browser prose words that displace domain identifiers from the top-3 cap.
-        # Evidence: falcon 3431ac32 "fix(Response): Instruct browser to not cache cookies"
-        # → 'Instruct' + 'browser' fill slots 2-3, blocking 'cookies' (the correct target).
-        # With these skipped: effective_keywords = ['Response', 'cache', 'cookies'] → cookies found.
-        "instruct", "browser",
-        # Auxiliary/linking verbs — never symbol names
-        "being", "were", "been", "have", "having", "does", "doing", "done",
-        "getting", "giving", "going", "making", "taking", "using", "using",
-        "seem", "seems", "seemed", "become", "becomes", "became",
-        # Conventional commit type tokens (belt-and-suspenders for any that slip through)
-        "feat", "chore", "refactor", "revert", "perf", "style",
-    }
-    seen: set[str] = set()
-    priority: list[str] = []
-    general: list[str] = []
-
-    def _record(ident: str, bucket: list[str]) -> None:
-        lower = ident.lower()
-        if re.match(r'^(?:issue|ticket|bug|pr|patch|fix)\d+$', lower):
-            return
-        if lower not in skip and lower not in seen and len(ident) > 2:
-            seen.add(lower)
-            bucket.append(ident)
-
-    # Backtick-quoted identifiers are highest-priority: explicitly named symbols.
-    # E.g. "deprecate `should_ignore_error`" → extract "should_ignore_error" first.
-    for backtick_id in re.findall(r'`([a-zA-Z_][a-zA-Z0-9_]{2,})`', task):
-        _record(backtick_id, priority)
-
-    # Conventional commit scopes are high-priority: `feat(StreamMiddleware):`, `perf(Response):`.
-    # Extract scope even if it's a common English word (e.g. "Response") since in this context
-    # it names the changed component, not a generic term.
-    # Conventional commit scopes are high-priority: `feat(StreamMiddleware):`, `perf(Response):`.
-    # For Merge-PR tasks (if m:), search the (modified) task text.
-    # For bare commits (else:), scopes were saved into _cc_scopes before stripping.
-    _inline_scopes = re.findall(
-        r'(?:feat|fix|chore|refactor|style|perf|ci|build|docs|test|revert)\(([^)]+)\)',
-        task, re.IGNORECASE)
-    for raw in _inline_scopes + _cc_scopes:
-        for scope_part in raw.split(','):
-            scope_part = scope_part.strip()
-            if len(scope_part) > 2 and scope_part.lower() not in seen:
-                seen.add(scope_part.lower())
-                priority.append(scope_part)
-
-    lines = task.split('\n', 1)
-    branch_text = lines[0]
-    body_text = lines[1].strip() if len(lines) > 1 else ''
-
-    # Normalize: replace underscore immediately before a lowerCamelCase identifier with a hyphen.
-    # Underscores are regex word characters (\w), so "_extendServerError" has no \b before 'e',
-    # preventing lowerCamelCase extraction. Replacing the underscore with '-' (non-word char)
-    # creates the necessary word boundary.
-    # E.g. "feature/#235_pass_payload_to_extendServerError" → "...to-extendServerError"
-    # → lowerCamelCase regex extracts "extendServerError" → priority keyword → BFS runs.
-    # Only targets _lowerCamelCase transitions; does not affect all_lowercase_snake or ALLCAPS.
-    _branch_for_extract = re.sub(r'_(?=[a-z][a-zA-Z0-9]*[A-Z])', '-', branch_text)
-
-    def _extract_from(source: str, strict_camel: bool = False) -> None:
-        # Generic OOP/domain suffixes excluded from CamelCase sub-part fallbacks.
-        # These terms match too broadly across a codebase to be useful focus queries.
-        _CAMEL_PART_SKIP = frozenset({
-            "base", "core", "util", "utils", "mixin", "factory", "manager",
-            "field", "fields", "exception", "exceptions", "model", "models",
-            "view", "views", "form", "forms", "helper", "helpers", "main",
-        })
-        for hyphenated in re.findall(r'\b[a-z][a-z0-9]*(?:-[a-z][a-z0-9]*)+\b', source):
-            camel = "".join(part.capitalize() for part in hyphenated.split("-"))
-            _record(camel, priority)
-            # Sub-part decomposition: "streaming-body" → "StreamingBody" (priority) +
-            # "Streaming" (general). When the compound is a new symbol added in
-            # this PR and fails focus, long sub-parts may match related existing symbols.
-            # Minimum 7 chars filters generic short words (Encode=6, Custom=6, Params=6,
-            # Method=6) that match too broadly and cause harmful context injection.
-            # IMPORTANT: this must run BEFORE marking hyphen-parts as seen, otherwise
-            # seen.add("streaming") blocks _record("Streaming", general).
-            for _p in re.findall(r'[A-Z][a-z0-9]+', camel):
-                if len(_p) >= 7 and _p.lower() not in _CAMEL_PART_SKIP:
-                    _record(_p, general)
-            # Mark SHORT (< 7 chars) hyphen-parts as seen to prevent the snake_case regex
-            # below from re-extracting them as standalone general keywords.
-            # E.g. "custom-encode-params-method" → mark "custom","encode","params","method"
-            # as seen → snake_case loop skips them → only the CamelCase compound remains.
-            # Long parts (≥ 7 chars like "streaming") are NOT marked: they can still appear
-            # as sub-parts (recorded a few lines below) which then dedup them naturally.
-            for _part in hyphenated.split("-"):
-                if len(_part) < 7:
-                    seen.add(_part.lower())
-        for ident in re.findall(r'(?<![A-Z_])\b[A-Z][A-Z0-9_]{2,}\b', source):
-            if '_' in ident:
-                _record(ident, priority)
-        camel_pat = (r'\b(?:[A-Z][a-z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]+|[A-Z][a-zA-Z0-9]{6,})\b'
-                     if strict_camel else r'\b[A-Z][a-zA-Z0-9]+\b')
-        for ident in re.findall(camel_pat, source):
-            _record(ident, priority)
-            # Same sub-part fallback for direct CamelCase in commit messages.
-            # Minimum 7 chars matches hyphenated case — keeps long distinctive parts only.
-            for _p in re.findall(r'[A-Z][a-z0-9]+', ident):
-                if len(_p) >= 7 and _p.lower() not in _CAMEL_PART_SKIP:
-                    _record(_p, general)
-        # lowerCamelCase identifiers (e.g. `notFound`, `handleRequest`, `setNotFoundHandler`).
-        # Appears in both PR bodies (strict_camel=True) and conventional commit messages (non-strict).
-        # Pattern: starts lowercase, uppercase transition, THEN lowercase continuation (rules out
-        # acronym-style endings like "partII" or "iOS" where uppercase is followed by uppercase).
-        # Evidence: "Add reply.notFound() method" → "notFound" → focus finds setNotFoundHandler.
-        # Evidence: "fix: update handleRequest to support headers" → "handleRequest" extracted.
-        for ident in re.findall(r'\b[a-z][a-zA-Z0-9]*[A-Z][a-z][a-zA-Z0-9]*\b', source):
-            _record(ident, priority)
-        for ident in re.findall(r'\b[a-z_][a-z0-9_]{2,}\b', source):
-            # Multi-component snake_case (render_focused, sort_callers) → priority:
-            # these are specific identifiers, not generic English words.
-            # Single-word (sort, filter, key) → general: likely common verbs/nouns.
-            _record(ident, priority if '_' in ident else general)
-            if ident.count('_') >= 3 and len(ident) > 20:
-                parts = ident.split('_')
-                for i, part in enumerate(parts):
-                    if len(part) > 2:
-                        _record(part, general)
-                    if i + 1 < len(parts):
-                        compound = f"{parts[i]}_{parts[i+1]}"
-                        if len(compound) > 4:
-                            _record(compound, general)
-
-    # For fork-master branches ("Username-master"), the branch is a meaningless GitHub username.
-    # Extract body keywords FIRST so they get priority over the useless branch name.
-    # E.g. "CygnusNetworks-master\nAdd arbitrary byte ranges" → body gives "byte", "ranges" first.
-    if body_text and (branch_text.endswith('-master') or branch_text.endswith('_master')):
-        _extract_from(body_text, strict_camel=True)
-    else:
-        _extract_from(_branch_for_extract, strict_camel=False)
-        if body_text:
-            _extract_from(body_text, strict_camel=True)
-
-    return priority + general
-
+from .keywords import _extract_cl_keywords  # noqa: F401 (re-exported for backward compat)
 
 def _is_docs_branch_task(task: str) -> bool:
     """Return True when the PR is a docs/version/infra PR that should skip overview injection.
@@ -1704,6 +1443,81 @@ def _extract_name_from_question(question: str) -> str:
 
 
 
+_TEST_MARKERS = ("test", "spec", "fixture", "example", "tutorial", "demo", "sample")
+_ASSET_DIRS = ("/templates/", "/static/")
+
+
+def _cl_path_fallback(graph: "Tempo", kw: str) -> list[str]:
+    """Return path-matched files for a keyword that failed symbol focus.
+
+    Tries three strategies in order, returning the first that yields <=5 source files:
+    1. Plain substring match on file paths.
+    2. Snake_case decomposition: "config_from_object" → try "config", "object", etc.
+    3. CamelCase decomposition: "RequestStreamingSupport" → try "Streaming", "Support", etc.
+
+    Returns an empty list when no strategy finds a tight match (<=5 non-test files).
+    """
+    def _source_files(paths: list[str]) -> list[str]:
+        return [p for p in paths if not any(x in p.lower() for x in _TEST_MARKERS)]
+
+    def _path_hits(token: str) -> list[str]:
+        t = token.lower()
+        hits = sorted(set(
+            sym.file_path for sym in graph.symbols.values()
+            if t in sym.file_path.lower()
+            and not any(d in sym.file_path for d in _ASSET_DIRS)
+            and not sym.file_path.startswith(("templates/", "static/"))
+        ))
+        return _source_files(hits)
+
+    # Strategy 1: plain keyword
+    plain = _path_hits(kw)
+    if plain and len(plain) <= 5:
+        return plain[:5]
+
+    if "_" in kw:
+        # Strategy 2: snake_case components
+        _PATH_SNAKE_SKIP = frozenset({
+            "response", "request", "error", "errors", "option", "options",
+            "handler", "handlers", "helper", "helpers", "server", "client", "router",
+            "static", "analysis", "middleware", "security",
+        })
+        for part in kw.split("_"):
+            if len(part) >= 4 and part.lower() not in _PATH_SNAKE_SKIP:
+                hits = _path_hits(part)
+                if hits and len(hits) <= 5:
+                    return hits
+    else:
+        # Strategy 3: CamelCase parts
+        _PATH_CAMEL_SKIP = frozenset({
+            "import", "test", "tests", "type", "types", "base", "core", "util",
+            "utils", "data", "form", "list", "dict", "object", "class", "model",
+            "models", "view", "views", "helper", "helpers", "mixin", "mixins",
+            "return", "raise", "yield", "async", "await", "error", "errors",
+            "init", "main", "common", "factory", "manager",
+            "field", "fields", "exception", "exceptions",
+            "json", "xml",
+            "host", "method", "setter", "getter",
+        })
+        parts: list[str] = []
+        cur: list[str] = []
+        for ch in kw:
+            if ch.isupper() and cur:
+                parts.append("".join(cur))
+                cur = [ch]
+            else:
+                cur.append(ch)
+        if cur:
+            parts.append("".join(cur))
+        for part in parts:
+            if len(part) >= 4 and part.lower() not in _PATH_CAMEL_SKIP:
+                hits = _path_hits(part)
+                if hits and len(hits) <= 5:
+                    return hits
+
+    return []
+
+
 def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: str = "",
                    baseline_predicted_files: list[str] | None = None,
                    precision_filter: bool = False,
@@ -1750,7 +1564,6 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
         # Short tokens can't trigger path fallback (which requires len>=4) and rarely match
         # specific symbols. This prevents "req" (len=3) from blocking "resp" (len=4).
         effective_keywords = [kw for kw in keywords if len(kw) >= 4][:3]
-        _test_markers = ("test", "spec", "fixture", "example", "tutorial", "demo", "sample")
         for kw in effective_keywords:
             focused = render_focused(graph, kw, max_tokens=focus_budget)
             no_match = not focused or "No symbols matching" in focused or "No exact match" in focused
@@ -1761,117 +1574,8 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                 # No symbol match OR too broad — try path-based fallback.
                 # Handles: (a) directory/module keywords (e.g. "demo" → demos/),
                 # (b) keyword is a module name but not a symbol (e.g. "config" → sanic/config.py).
-                # Evidence: tornado "demo" → 15 symbol files (skipped) → path match → demos/ (2-4 files).
-                # Evidence: sanic "config" → 0 symbol matches → path → sanic/config.py (correct).
                 if len(kw) >= 4 and not path_fallback_files:
-                    kw_lower = kw.lower()
-                    path_hits = [
-                        sym.file_path for sym in graph.symbols.values()
-                        if kw_lower in sym.file_path.lower()
-                        # Exclude asset directories: templates/ and static/ contain JS/CSS/HTML
-                        # that are almost never the primary code change location.
-                        # Evidence: DRF 'schema' → rest_framework/templates/.../schema.js (asset)
-                        # alongside schemas.py, misleading model away from documentation.py.
-                        and "/templates/" not in sym.file_path
-                        and not sym.file_path.startswith("templates/")
-                        and "/static/" not in sym.file_path
-                        and not sym.file_path.startswith("static/")
-                    ]
-                    unique_paths = sorted(set(path_hits))
-                    # Filter to source files only: test/spec/fixture paths mislead the model.
-                    # Evidence: fastify "option" → test/ajv-options.test.js, test/options.test.js
-                    # → KEY FILES shows only test files → model misses lib/validation.js.
-                    # If no source files match, skip path fallback entirely (no hint > wrong hint).
-                    source_paths = [p for p in unique_paths if not any(x in p.lower() for x in _test_markers)]
-                    unique_paths = source_paths if source_paths else []
-                    if unique_paths and len(unique_paths) <= 5:
-                        # Cap at 5 (same threshold as CamelCase/snake_case parts below).
-                        # >5 unique paths means keyword is too generic (e.g. "path", "route") → skip.
-                        # Evidence: fastify "path" → 8+ files (router.js, request.js, etc.) = noise.
-                        # Keeps: sanic "config" → 1-2 files ✓; tornado "demo" → 2-4 files ✓.
-                        path_fallback_files = unique_paths[:5]
-                    elif "_" in kw:
-                        # Snake_case keyword: try individual components as path keywords.
-                        # E.g. "config_from_object" → try "config" → sanic/config.py.
-                        # Only use if <= 5 paths (conservative to avoid false positives).
-                        # Skip components that are generic English words — they match wrong files.
-                        # E.g. "fix_named_response_middleware" → "response" → response.py (wrong).
-                        # Evidence: sanic 7c04c9a2 — "response" component → response.py instead of app.py.
-                        # sanic 966b05b4 — "static" component → static.py for "bandit_security_static_analysis".
-                        _PATH_SNAKE_SKIP = frozenset({
-                            # Generic words that cause false path matches as snake_case components.
-                            # E.g. "fix_named_response_middleware" → "response" → response.py (wrong).
-                            # Evidence: sanic 7c04c9a2 — "response" → response.py instead of app.py.
-                            # Evidence: sanic 966b05b4 — "static" → static.py for "bandit_security_static".
-                            # DO NOT include "config" — it correctly points to config.py for config PRs.
-                            "response", "request", "error", "errors", "option", "options",
-                            "handler", "handlers", "helper", "helpers", "server", "client", "router",
-                            "static", "analysis", "middleware", "security",
-                        })
-                        for part in kw.split("_"):
-                            if len(part) >= 4 and part.lower() not in _PATH_SNAKE_SKIP:
-                                part_lower = part.lower()
-                                part_hits = sorted(set(
-                                    sym.file_path for sym in graph.symbols.values()
-                                    if part_lower in sym.file_path.lower()
-                                    and "/templates/" not in sym.file_path
-                                    and not sym.file_path.startswith("templates/")
-                                    and "/static/" not in sym.file_path
-                                    and not sym.file_path.startswith("static/")
-                                ))
-                                src_hits = [p for p in part_hits if not any(x in p.lower() for x in _test_markers)]
-                                part_hits = src_hits if src_hits else []
-                                if part_hits and len(part_hits) <= 5:
-                                    path_fallback_files = part_hits
-                                    break
-                    else:
-                        # CamelCase keyword: split on uppercase boundaries and try each part.
-                        # E.g. "RequestStreamingSupport" → try "streaming" → request/streaming.py.
-                        # Skip generic programming words (import, test, type...) — too broad for path match.
-                        _PATH_CAMEL_SKIP = frozenset({
-                            "import", "test", "tests", "type", "types", "base", "core", "util",
-                            "utils", "data", "form", "list", "dict", "object", "class", "model",
-                            "models", "view", "views", "helper", "helpers", "mixin", "mixins",
-                            "return", "raise", "yield", "async", "await", "error", "errors",
-                            "init", "main", "common", "factory", "manager",
-                            # Generic domain suffixes: too broad for path match, cause false positives.
-                            # E.g. "DurationField" → "Field" → field_mapping.py (wrong); skip and try
-                            # "Duration" first. "SerializerException" → "Exception" → exceptions.py (wrong).
-                            "field", "fields", "exception", "exceptions",
-                            # Encoding format terms: "ExposeDefaultJsonSerializer" → "Json" → serialize.js
-                            # (wrong). "json"/"xml" are technology descriptors, not file-identity markers.
-                            "json", "xml",
-                            # Generic HTTP/property accessors: "HostSetter" → "Host" → request.js (wrong).
-                            # These describe concepts, not files. All are in the keyword skip set for the
-                            # same reason — too generic to be useful as code identifiers.
-                            "host", "method", "setter", "getter",
-                        })
-                        _parts: list[str] = []
-                        _cur: list[str] = []
-                        for _c in kw:
-                            if _c.isupper() and _cur:
-                                _parts.append("".join(_cur))
-                                _cur = [_c]
-                            else:
-                                _cur.append(_c)
-                        if _cur:
-                            _parts.append("".join(_cur))
-                        for part in _parts:
-                            if len(part) >= 4 and part.lower() not in _PATH_CAMEL_SKIP:
-                                part_lower = part.lower()
-                                part_hits = sorted(set(
-                                    sym.file_path for sym in graph.symbols.values()
-                                    if part_lower in sym.file_path.lower()
-                                    and "/templates/" not in sym.file_path
-                                    and not sym.file_path.startswith("templates/")
-                                    and "/static/" not in sym.file_path
-                                    and not sym.file_path.startswith("static/")
-                                ))
-                                src_hits = [p for p in part_hits if not any(x in p.lower() for x in _test_markers)]
-                                part_hits = src_hits if src_hits else []
-                                if part_hits and len(part_hits) <= 5:
-                                    path_fallback_files = part_hits
-                                    break
+                    path_fallback_files = _cl_path_fallback(graph, kw)
                 # Definition-first fallback: when focus is too_broad and all path matching found nothing,
                 # return just the DEFINING file(s) of the top-ranked symbol.
                 # Handles: "redirect" → flask/helpers.py (where redirect() lives) rather than all callers.
@@ -1885,7 +1589,7 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                             def_hits = sorted(set(
                                 sym.file_path for score, sym in scored
                                 if score >= threshold
-                                and not any(x in sym.file_path.lower() for x in _test_markers)
+                                and not any(x in sym.file_path.lower() for x in _TEST_MARKERS)
                                 and "/templates/" not in sym.file_path
                                 and not sym.file_path.startswith("templates/")
                                 and "/static/" not in sym.file_path
@@ -1914,7 +1618,7 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                 if overlap >= 0.5:
                     return ""  # model already predicts the key files — skip injection
                 src_pred_count = len([f for f in predicted_set
-                                      if not any(m in f.lower() for m in _test_markers)])
+                                      if not any(m in f.lower() for m in _TEST_MARKERS)])
                 if src_pred_count >= 3:
                     # Baseline is highly confident (3+ source predictions). When context
                     # disagrees (overlap < 0.5), it misleads the model away from its
@@ -1940,7 +1644,7 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                 if overlap >= 0.5:
                     return ""  # model already predicts the path-matched files
                 src_pred_count = len([f for f in predicted_set
-                                      if not any(m in f.lower() for m in _test_markers)])
+                                      if not any(m in f.lower() for m in _TEST_MARKERS)])
                 if src_pred_count >= 3:
                     return ""  # baseline confident (3+ source files); path-hint can only mislead
                 # Path-only context (no BFS graph) is weak when model already has a focused prediction.
