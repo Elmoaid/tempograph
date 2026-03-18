@@ -321,3 +321,261 @@ class TestParseKeyFilesFromContext:
     def test_single_file(self):
         ctx = "KEY FILES REFERENCED ABOVE:\n  httpx/interfaces.py\n"
         assert self._parse(ctx) == ["httpx/interfaces.py"]
+
+
+# ---------------------------------------------------------------------------
+# Parity tests: context.py _extract_keywords == render.py _extract_cl_keywords
+# These serve as a contract: both implementations must produce identical output.
+# If they diverge, one of them has a bug or missed a feature.
+# ---------------------------------------------------------------------------
+
+class TestExtractKeywordsParity:
+    """Verify context.py::_extract_keywords ≡ render.py::_extract_cl_keywords."""
+
+    CASES = [
+        "Merge pull request #595 from encode/reply-not-found",
+        "Merge pull request #241 from encode/protocol-support",
+        "Merge pull request #1 from org/main",
+        "Merge pull request #1 from org/master",
+        "Merge pull request #1 from org/docs-update",
+        "Merge pull request #675 from PlasmaPower/flush-headers",
+        "Merge pull request #255 from encode/refactor/streaming-improvements",
+        "Merge pull request #595 from encode/24937-ranging-to-victory",
+        "Fix teardown callbacks (#5928)",
+        "fix: prevent null pointer in handler",
+        "Drop Protocol str enum class in favor of plain old string",
+        "fix use of `importlib.util.find_spec` (#5161)",
+        "Merge branch 'stable'",
+        "Merge branch '3.0.x'",
+        "Merge branch 'master' into master",
+        "Merge branch 'main' into patch-1",
+        "Merge pull request pydantic/pydantic-core#7 from samuelcolvin/pass-data",
+        "deprecate `should_ignore_error` (#5899)",
+        "all teardown callbacks are called despite errors",
+        "connect to database via connection pool",
+        "Merge pull request #347 from fastify/no-logger-by-default",
+        "Merge pull request #4978 from sayzlim/master\nFix double image request",
+        "Merge pull request #5208 from psf/partII\nPart II: The Principles",
+    ]
+
+    def test_all_cases_match(self):
+        from bench.changelocal.context import _extract_keywords
+        from tempograph.render import _extract_cl_keywords
+        for task in self.CASES:
+            ctx_result = _extract_keywords(task)
+            rnd_result = _extract_cl_keywords(task)
+            assert ctx_result == rnd_result, (
+                f"Divergence for {task!r}:\n"
+                f"  context.py: {ctx_result}\n"
+                f"  render.py:  {rnd_result}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Parity tests: context.py _extract_file_paths == render.py _extract_focus_files
+# ---------------------------------------------------------------------------
+
+class TestExtractFilePathsParity:
+    """Verify context.py::_extract_file_paths ≡ render.py::_extract_focus_files."""
+
+    # Realistic snippets of tempograph focus output (file paths appear multiple times)
+    CASES = [
+        # Basic source-file extraction
+        "  src/flask/app.py (callers)\n  src/flask/ctx.py (callers)\n  tests/test_app.py\n",
+        # Hub detection: fastify.js dominates
+        ("  fastify.js\n  fastify.js\n  fastify.js\n  fastify.js\n  fastify.js\n"
+         "  lib/reply.js\n  lib/route.js\n  lib/schemas.js\n  lib/hooks.js\n  lib/errors.js\n"
+         "  lib/validation.js\n  lib/middleware.js\n"),
+        # Root-level + nested files
+        "app.py\nlib/router.js\nsrc/server.ts\n",
+        # Test files ranked after source
+        "tests/test_router.py\nsrc/router.py\nsrc/auth.py\n",
+        # Example files ranked last
+        "examples/demo.py\nsrc/core.py\nsrc/utils.py\n",
+        # Multi-language
+        "internal/main.go\nsrc/lib.rs\nlib/util.js\n",
+    ]
+
+    def test_all_cases_match(self):
+        from bench.changelocal.context import _extract_file_paths
+        from tempograph.render import _extract_focus_files
+        for text in self.CASES:
+            ctx_result = _extract_file_paths(text)
+            rnd_result = _extract_focus_files(text)
+            assert ctx_result == rnd_result, (
+                f"Divergence for focus text snippet:\n"
+                f"  context.py: {ctx_result}\n"
+                f"  render.py:  {rnd_result}"
+            )
+
+    def test_keyword_boost_matches(self):
+        """Keyword-boosted ranking must agree between implementations."""
+        from bench.changelocal.context import _extract_file_paths
+        from tempograph.render import _extract_focus_files
+        text = "src/router.py\nsrc/auth.py\nsrc/auth.py\n"
+        ctx = _extract_file_paths(text, task_keywords=["auth"])
+        rnd = _extract_focus_files(text, task_keywords=["auth"])
+        assert ctx == rnd, f"Keyword-boost divergence: context={ctx}, render={rnd}"
+
+    def test_hub_with_keyword_exempt_matches(self):
+        """Hub-exemption for keyword-matched files must agree."""
+        from bench.changelocal.context import _extract_file_paths
+        from tempograph.render import _extract_focus_files
+        # fastify.js appears 5/13 times (38% → hub), but keyword 'fastify' exempts it
+        text = ("  fastify.js\n" * 5 +
+                "  lib/reply.js\n  lib/route.js\n  lib/schemas.js\n"
+                "  lib/hooks.js\n  lib/errors.js\n  lib/validation.js\n"
+                "  lib/middleware.js\n  lib/lifecycles.js\n")
+        ctx = _extract_file_paths(text, task_keywords=["fastify"])
+        rnd = _extract_focus_files(text, task_keywords=["fastify"])
+        assert ctx == rnd, f"Hub-exempt divergence: context={ctx}, render={rnd}"
+
+
+# ---------------------------------------------------------------------------
+# Hub penalty unit tests
+# ---------------------------------------------------------------------------
+
+class TestHubPenalty:
+    """Tests for is_hub() / hub_penalty in _extract_file_paths."""
+
+    def _efp(self, text, keywords=None):
+        from bench.changelocal.context import _extract_file_paths
+        return _extract_file_paths(text, task_keywords=keywords or [])
+
+    def test_hub_file_demoted_to_end(self):
+        """A file consuming >30% of mentions without keyword match is demoted."""
+        # fastify.js: 5/13 = 38% — should NOT be first in output
+        text = (
+            "  fastify.js\n" * 5 +
+            "  lib/reply.js\n  lib/route.js\n  lib/schemas.js\n"
+            "  lib/hooks.js\n  lib/errors.js\n  lib/validation.js\n"
+            "  lib/middleware.js\n  lib/lifecycles.js\n"
+        )
+        result = self._efp(text)
+        assert result[0] != "fastify.js", "Hub file should not be ranked first"
+
+    def test_hub_file_exempt_when_keyword_matches(self):
+        """Hub file with keyword match is NOT demoted."""
+        text = (
+            "  fastify.js\n" * 5 +
+            "  lib/reply.js\n  lib/route.js\n  lib/schemas.js\n"
+            "  lib/hooks.js\n  lib/errors.js\n  lib/validation.js\n"
+            "  lib/middleware.js\n  lib/lifecycles.js\n"
+        )
+        result = self._efp(text, keywords=["fastify"])
+        # With keyword match, fastify.js is exempt → should rank high (frequency wins)
+        assert result[0] == "fastify.js", "Keyword-exempt hub should rank first"
+
+    def test_hub_threshold_not_triggered_on_small_total(self):
+        """Hub penalty skipped when total_mentions <= 6 (too small to be meaningful)."""
+        # Only 4 mentions total — hub guard inactive
+        text = "  fastify.js\n  fastify.js\n  lib/reply.js\n  lib/route.js\n"
+        result = self._efp(text)
+        # fastify.js (2/4 = 50%) but total<=6 → no penalty → appears first by frequency
+        assert result[0] == "fastify.js"
+
+    def test_hub_threshold_exactly_at_boundary(self):
+        """A file at exactly 30% mention share is NOT penalised (strict >)."""
+        # 3 out of 10 total = 30.0% — exactly at boundary, not >30%, no penalty
+        text = (
+            "  fastify.js\n" * 3 +
+            "  lib/a.js\n  lib/b.js\n  lib/c.js\n  lib/d.js\n"
+            "  lib/e.js\n  lib/f.js\n  lib/g.js\n"
+        )
+        result = self._efp(text)
+        # 30% is not > 30%, so no hub penalty → fastify.js ranks first by freq
+        assert result[0] == "fastify.js"
+
+    def test_hub_triggered_just_above_boundary(self):
+        """A file at 31%+ mention share IS penalised."""
+        # 4 out of 11 total = 36% — above 30%, hub penalty applies
+        text = (
+            "  fastify.js\n" * 4 +
+            "  lib/a.js\n  lib/b.js\n  lib/c.js\n  lib/d.js\n"
+            "  lib/e.js\n  lib/f.js\n  lib/g.js\n"
+        )
+        result = self._efp(text)
+        assert result[0] != "fastify.js", "Hub (36%) should be demoted"
+
+
+# ---------------------------------------------------------------------------
+# _prioritize_files unit tests
+# ---------------------------------------------------------------------------
+
+class TestPrioritizeFiles:
+    """Tests for _prioritize_files() in run.py."""
+
+    def _pf(self, files, max_files=200):
+        from bench.changelocal.run import _prioritize_files
+        return _prioritize_files(files, max_files=max_files)
+
+    def test_source_files_before_docs(self):
+        """Python/JS source files appear before markdown docs."""
+        files = [
+            "docs/guide/intro.md",
+            "docs/api.md",
+            "sanic/app.py",
+            "sanic/handlers.py",
+        ]
+        result = self._pf(files)
+        # .py files should appear before .md files
+        py_indices = [i for i, f in enumerate(result) if f.endswith(".py")]
+        md_indices = [i for i, f in enumerate(result) if f.endswith(".md")]
+        assert max(py_indices) < min(md_indices), "Source files must precede markdown docs"
+
+    def test_source_files_before_config(self):
+        """Source files appear before config files, which appear before docs."""
+        files = [
+            "setup.cfg",
+            "pyproject.toml",
+            "README.md",
+            "falcon/app.py",
+            "falcon/errors.py",
+        ]
+        result = self._pf(files)
+        py_positions = [result.index(f) for f in files if f.endswith(".py")]
+        toml_positions = [result.index(f) for f in files if f.endswith(".toml") or f.endswith(".cfg")]
+        md_positions = [result.index(f) for f in files if f.endswith(".md")]
+        assert max(py_positions) < min(toml_positions), "Source before config"
+        assert max(toml_positions) < min(md_positions), "Config before docs"
+
+    def test_max_files_cap_respected(self):
+        """max_files parameter limits output length."""
+        files = [f"module/file{i}.py" for i in range(50)]
+        result = self._pf(files, max_files=10)
+        assert len(result) == 10
+
+    def test_all_source_files_fit_before_cap(self):
+        """When source files < max_files, all source files appear in output."""
+        files = (
+            ["guides/chapter{i}.md".format(i=i) for i in range(300)] +
+            ["sanic/core.py", "sanic/router.py"]
+        )
+        result = self._pf(files, max_files=200)
+        assert "sanic/core.py" in result
+        assert "sanic/router.py" in result
+
+    def test_makefile_treated_as_config(self):
+        """Makefile is config-tier (not docs)."""
+        files = ["Makefile", "README.md", "src/main.py"]
+        result = self._pf(files)
+        assert result.index("src/main.py") < result.index("Makefile")
+        assert result.index("Makefile") < result.index("README.md")
+
+    def test_all_languages_recognized(self):
+        """All supported source extensions get tier 0."""
+        files = [
+            "mod.go", "lib.rs", "App.java", "Module.cs",
+            "script.rb", "Component.tsx", "util.jsx",
+            "README.md",
+        ]
+        result = self._pf(files)
+        md_pos = result.index("README.md")
+        for f in files[:-1]:
+            assert result.index(f) < md_pos, f"{f} should be before README.md"
+
+    def test_within_tier_alphabetical_order(self):
+        """Files in the same tier are sorted alphabetically."""
+        files = ["src/z.py", "src/a.py", "src/m.py"]
+        result = self._pf(files)
+        assert result == ["src/a.py", "src/m.py", "src/z.py"]
