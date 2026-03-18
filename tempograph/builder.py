@@ -127,11 +127,50 @@ def build_graph(
     graph.build_indexes()
 
     # Temporal weighting: populate hot_files from recent git history.
-    # Symbols in recently-modified files will rank higher in search.
+    # Source files only — test files and docs are excluded so that test symbols
+    # don't outrank implementations for ambiguous queries.
     if is_git_repo(str(root)):
-        graph.hot_files = recently_modified_files(str(root), n_commits=5)
+        all_hot = recently_modified_files(str(root), n_commits=5)
+        graph.hot_files = {f for f in all_hot if _is_hot_source_file(f)}
 
     return graph
+
+
+# Path patterns that identify test and documentation files.
+# These are excluded from the temporal bonus to prevent test symbols
+# from outranking implementation symbols in search results.
+_TEST_SEGMENTS = frozenset({"test", "tests", "__tests__", "spec", "specs", "__spec__"})
+_TEST_PREFIXES = ("test_", "spec_")
+_TEST_SUFFIXES = (
+    "_test.py", "_spec.py",
+    "_test.ts", "_spec.ts", ".spec.ts", ".test.ts",
+    "_test.js", "_spec.js", ".spec.js", ".test.js",
+    "_test.go", "_test.rb",
+)
+_DOC_EXTENSIONS = frozenset({".md", ".rst", ".txt", ".adoc"})
+
+
+def _is_hot_source_file(path: str) -> bool:
+    """Return True if path is a source file eligible for temporal bonus.
+
+    Excludes test files, spec files, and documentation files.
+    """
+    parts = path.replace("\\", "/").split("/")
+    name = parts[-1] if parts else path
+    # Exclude files inside test/spec directories
+    if any(p.lower() in _TEST_SEGMENTS for p in parts[:-1]):
+        return False
+    # Exclude files whose name starts or ends with test/spec patterns
+    nl = name.lower()
+    if any(nl.startswith(p) for p in _TEST_PREFIXES):
+        return False
+    if any(nl.endswith(s) for s in _TEST_SUFFIXES):
+        return False
+    # Exclude documentation files by extension
+    ext = "." + name.rsplit(".", 1)[-1] if "." in name else ""
+    if ext.lower() in _DOC_EXTENSIONS:
+        return False
+    return True
 
 
 def _sym_to_dict(sym: Symbol) -> dict:

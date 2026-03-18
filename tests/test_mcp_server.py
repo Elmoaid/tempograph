@@ -1255,3 +1255,35 @@ class TestTemporalSymbolWeighting:
             assert hot_score > cold_score, (
                 f"Expected hot-file bonus: hot={hot_score} cold={cold_score} for {target_sym.name}"
             )
+
+    def test_hot_files_excludes_test_files(self):
+        """build_graph should not include test files in hot_files."""
+        from tempograph.builder import build_graph
+        g = build_graph(REPO_PATH)
+        for f in g.hot_files:
+            parts = f.replace("\\", "/").split("/")
+            assert not any(p.lower() in {"test", "tests", "__tests__", "spec", "specs"} for p in parts[:-1]), \
+                f"Test directory file should not be in hot_files: {f}"
+            name = parts[-1].lower()
+            assert not name.startswith("test_"), f"Test file should not be in hot_files: {f}"
+            assert not name.endswith(("_test.py", "_spec.py")), f"Test file should not be in hot_files: {f}"
+
+    def test_is_hot_source_file(self):
+        """_is_hot_source_file correctly classifies source vs test/doc files."""
+        from tempograph.builder import _is_hot_source_file
+
+        # Source files: eligible
+        assert _is_hot_source_file("tempograph/render.py") is True
+        assert _is_hot_source_file("src/main.ts") is True
+        assert _is_hot_source_file("bench/changelocal/context.py") is True
+
+        # Test files: excluded
+        assert _is_hot_source_file("tests/test_mcp_server.py") is False
+        assert _is_hot_source_file("test/foo_test.py") is False
+        assert _is_hot_source_file("src/app.spec.ts") is False
+        assert _is_hot_source_file("__tests__/app.ts") is False
+
+        # Documentation: excluded
+        assert _is_hot_source_file("notes/2026-03-18_meta-review.md") is False
+        assert _is_hot_source_file("README.rst") is False
+        assert _is_hot_source_file("docs/guide.txt") is False
