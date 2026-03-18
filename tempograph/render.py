@@ -375,10 +375,10 @@ def _extract_cl_keywords(task: str) -> list[str]:
         if leaf in _TRUNK_BRANCHES:
             return []
         branch_lower = branch.lower()
-        # "docs" as a hyphen/underscore-separated component anywhere in branch name.
-        # Matches: docs-view, view-docs, 5309-docs-view (DRF-style), docs/viewset.
-        # Does NOT match: docstring-update (component is "docstring", not "docs").
-        _DOC_COMPONENT = re.compile(r'(?:^|[-_/])docs(?:[-_/]|$)')
+        # "docs" or "doc" as a hyphen/underscore-separated component anywhere in branch name.
+        # Matches: docs-view, doc-view, view-docs, 5309-docs-view (DRF-style), docs/viewset.
+        # Does NOT match: docstring-update (component is "docstring", not "doc/docs").
+        _DOC_COMPONENT = re.compile(r'(?:^|[-_/])docs?(?:[-_/]|$)')
         if (_DOC_COMPONENT.search(leaf)
                 or any(re.search(r'(?:^|[-_/])' + kw + r'(?:[-_/]|$)', leaf)
                        for kw in ("readme", "changelog", "documentation"))
@@ -534,11 +534,14 @@ def _is_docs_branch_task(task: str) -> bool:
         return False
     branch = m.group(1).lower()
     leaf = branch.split('/')[-1]
-    _DOC_PREFIXES = ("docs-", "doc-", "readme-", "changelog-", "documentation-")
-    _DOC_SUFFIXES = ("-docs", "-doc", "-readme", "-changelog")
+    # Component-based detection: "docs" as a hyphen/underscore/slash-separated word anywhere.
+    # Matches: docs-javascript, auth-docs, 5309-docs-viewset (DRF-style mid-name).
+    # Does NOT match: docstring-update (component is "docstring", not "docs").
+    _DOC_COMPONENT = re.compile(r'(?:^|[-_/])docs?(?:[-_/]|$)')
     return (
-        any(leaf.startswith(p) for p in _DOC_PREFIXES)
-        or any(leaf.endswith(s) for s in _DOC_SUFFIXES)
+        bool(_DOC_COMPONENT.search(leaf))
+        or any(re.search(r'(?:^|[-_/])' + kw + r'(?:[-_/]|$)', leaf)
+               for kw in ("readme", "changelog", "documentation"))
         or branch.startswith("docs/")
         or branch.startswith("doc/")
     )
