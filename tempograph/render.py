@@ -1427,13 +1427,26 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
         keywords = _extract_cl_keywords(task)
         focus_budget = max_tokens // 2
         focus_parts: list[str] = []
+        path_fallback_files: list[str] = []  # collected when symbol focus is too broad
         for kw in keywords[:3]:
             focused = render_focused(graph, kw, max_tokens=focus_budget)
             if not focused or "No symbols matching" in focused or "No exact match" in focused:
                 continue
             kw_files = _extract_focus_files(focused)
             if len(kw_files) > 10:
-                continue  # keyword too generic for this codebase
+                # Too broad at symbol level — try path-based fallback.
+                # Handles directory/module keywords (e.g. "demo" → demos/, "fixtures" → test/fixtures/).
+                # Evidence: tornado "demo" → 15 symbol files (skipped) → path match → demos/ (2-4 files).
+                if len(kw) >= 4 and not path_fallback_files:
+                    kw_lower = kw.lower()
+                    path_hits = [
+                        sym.file_path for sym in graph.symbols.values()
+                        if kw_lower in sym.file_path.lower()
+                    ]
+                    unique_paths = sorted(set(path_hits))
+                    if unique_paths:
+                        path_fallback_files = unique_paths[:8]
+                continue
             focus_parts.append(focused)
 
         if focus_parts:
@@ -1445,6 +1458,12 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                 kf_section = "KEY FILES REFERENCED ABOVE:\n" + "\n".join(f"  {f}" for f in key_files[:5])
                 sections.append(kf_section)
                 token_count += count_tokens(kf_section)
+        elif path_fallback_files:
+            # All symbol searches were too broad, but path matching found specific files.
+            # E.g. "demo" fails symbol focus (15+ matches) but path match → demos/ directory.
+            kf_section = "KEY FILES (path match):\n" + "\n".join(f"  {f}" for f in path_fallback_files[:5])
+            sections.append(kf_section)
+            token_count += count_tokens(kf_section)
         elif not keywords:
             # Truly vague task (no keywords extracted) — overview provides structure.
             # Evidence: requests base≈0 benefits from overview when keywords=[] (+131%).
