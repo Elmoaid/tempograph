@@ -291,6 +291,29 @@ def render_symbols(graph: Tempo, *, max_tokens: int = 0) -> str:
 _MONOLITH_THRESHOLD = 1000
 
 
+def _extract_focus_files(focus_output: str) -> list[str]:
+    """Extract unique file paths from a render_focused output string.
+
+    Returns up to 15 paths, source files ranked above test/example files.
+    """
+    import re
+    pattern = r'\b(?:[a-zA-Z0-9_.-]+/)*[a-zA-Z0-9_.-]+\.(?:py|ts|tsx|js|jsx|go|rs|java|cs|rb)\b'
+    all_paths = re.findall(pattern, focus_output)
+    freq: dict[str, int] = {}
+    for p in all_paths:
+        freq[p] = freq.get(p, 0) + 1
+
+    def _tier(path: str) -> int:
+        lower = path.lower()
+        if any(x in lower for x in ("example", "tutorial", "demo", "sample")):
+            return 2
+        if any(x in lower for x in ("test", "spec", "fixture")):
+            return 1
+        return 0
+
+    return sorted(freq.keys(), key=lambda p: (_tier(p), -freq[p]))[:15]
+
+
 def _suggest_alternatives(graph: Tempo, query: str, max_suggestions: int = 5) -> str:
     """Build a 'did you mean?' hint when a focus query has no matches.
 
@@ -1269,6 +1292,16 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
 
     sections.append(focus_output)
     token_count += count_tokens(focus_output)
+
+    # KEY FILES: compact file list extracted from focus output — helps agents navigate
+    # without parsing the full graph structure. Only added when focus produced real output.
+    _no_match = not focus_output or "No symbols matching" in focus_output or "No exact match" in focus_output
+    if not _no_match:
+        key_files = _extract_focus_files(focus_output)
+        if key_files:
+            kf_section = "KEY FILES REFERENCED ABOVE:\n" + "\n".join(f"  {f}" for f in key_files)
+            sections.append(kf_section)
+            token_count += count_tokens(kf_section)
 
     hotspot_budget = int(max_tokens * 0.15)
     if token_count < max_tokens - 100:
