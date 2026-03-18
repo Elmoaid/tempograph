@@ -314,6 +314,9 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
               )}
               <pre className="output" style={{ maxHeight: activeMode === "prepare" ? "calc(100% - 96px)" : "calc(100% - 64px)", overflow: "auto" }}>{filteredOutput}</pre>
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>
+                <span style={{ fontSize: 9, color: "var(--text-tertiary)", marginLeft: "auto", marginRight: 4 }}>
+                  ~{Math.round(modeOutput.length / 4).toLocaleString()} tok
+                </span>
                 <span style={{ fontSize: 9, color: "var(--text-tertiary)", marginRight: 2 }}>Helpful?</span>
                 {feedbackGiven.current.has(activeMode) ? (
                   <span style={{ fontSize: 9, color: "var(--text-tertiary)" }}>

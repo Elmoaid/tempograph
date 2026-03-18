@@ -444,6 +444,14 @@ class TestPrepareContext:
         assert "injected" in r, "JSON output must include injected"
         assert isinstance(r["key_files"], list)
         assert isinstance(r["injected"], bool)
+        # Regression: key_files must be bare paths (no ":line-range" annotations)
+        # Fix: 50f706f — used as baseline_predicted_files in adaptive pipeline where
+        # bare path matching is required.
+        import re
+        for path in r["key_files"]:
+            assert not re.search(r":\d+-\d+$", path), (
+                f"key_files must not contain line ranges, got: {path!r}"
+            )
 
     def test_json_output_injected_false_on_gating(self):
         # When gating triggers (high overlap), injected=False and key_files=[].
