@@ -487,7 +487,7 @@ def _extract_cl_keywords(task: str) -> list[str]:
         "limit", "limits",  # branch component "limit-selects" → "limit" matches LimitOffsetPagination (wrong)
         "error", "errors", "option", "options", "response", "config",
         "host",  # generic HTTP concept — "host-setter" → focus on host getter (wrong); compound "HostSetter" still works
-        "enable", "enabled", "disable", "disabled", "default", "global",
+        "enable", "enabled", "disable", "disabled", "default", "defaults", "global",
         "log", "logger", "logging", "ticket", "docs", "readme",
         "fixed", "improved", "updated", "added", "removed", "changed",
         "fixes", "improves", "updates", "usage", "internal", "external",
