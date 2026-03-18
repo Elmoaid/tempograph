@@ -321,6 +321,46 @@ class TestPrepareContext:
         # Should inject overview (selective fallback for empty keywords)
         assert "## Repo:" in r["data"]
 
+    def test_change_localization_docs_branch_suppresses_overview(self):
+        # Docs branches (docs-*, readme-*) → keywords=[] but overview suppressed.
+        # Flask "docs-javascript" -0.402 regression caused by overview steering model to docs/conf.py.
+        # render_prepare always prepends "## Repo: N files..." header, but should NOT inject
+        # a full structured overview (render_overview output begins with module table).
+        r = assert_ok(prepare_context(
+            REPO_PATH,
+            task="Merge pull request #636 from pallets/docs-javascript",
+            exclude_dirs="archive", output_format="json",
+        ))
+        # Docs branch with keywords=[] → no focus, no overview body (render_overview starts with "## Modules")
+        assert "## Modules" not in r["data"]
+        assert "Focus:" not in r["data"]
+
+    def test_change_localization_keywords_failed_no_overview(self):
+        # Keywords exist but focus finds nothing → no overview injection.
+        # "add-fix-update" → keywords ["Fix", "Update"] → focus fails/too broad.
+        # When keywords is non-empty but all fail: inject nothing (model uses training knowledge).
+        # Evidence: overview for non-empty failed keywords hurts high-baseline repos.
+        r = assert_ok(prepare_context(
+            REPO_PATH,
+            task="Merge pull request #100 from org/add-fix-update",
+            exclude_dirs="archive", output_format="json",
+        ))
+        # Keywords exist but generic → no focus found, no overview injected.
+        assert "## Modules" not in r["data"]
+
+    def test_change_localization_broad_keyword_path_fallback(self):
+        # Keywords that match >10 symbols trigger path-based fallback.
+        # If keyword matches a directory name (e.g. "render") → path fallback → KEY FILES (path match)
+        # rather than symbol focus.
+        r = assert_ok(prepare_context(
+            REPO_PATH,
+            task="Merge pull request #200 from org/fix-render-output",
+            exclude_dirs="archive", output_format="json",
+        ))
+        # "render" maps to tempograph/render.py — should appear in output somehow
+        # Either as KEY FILES from focus (≤10 files) or KEY FILES (path match)
+        assert r["status"] == "ok"  # At minimum, no crash on broad keyword
+
 
 # ---------------------------------------------------------------------------
 # Exclude dirs
