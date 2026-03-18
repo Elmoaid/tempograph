@@ -872,3 +872,25 @@ class TestCommonJSExports:
         names = {s.name for s in syms}
         assert 'inspect' in names, f"inspect not extracted: {names}"
         assert 'onerror' in names, f"onerror not extracted: {names}"
+
+    def test_es_export_default_identifier(self):
+        """export default settle → settle marked exported."""
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b'const settle = (resolve, reject, response) => {};\nexport default settle'
+        p = FileParser('settle.js', Language.JAVASCRIPT, code)
+        syms, _, _ = p.parse()
+        s = next((s for s in syms if s.name == 'settle'), None)
+        assert s is not None, "settle not found"
+        assert s.exported, "settle should be exported via export default"
+
+    def test_es_export_named_clause(self):
+        """export { foo, bar } → both marked exported."""
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b'function buildFullPath(a, b) {}\nfunction mergeConfig(a, b) {}\nexport { buildFullPath, mergeConfig }'
+        p = FileParser('path.js', Language.JAVASCRIPT, code)
+        syms, _, _ = p.parse()
+        by_name = {s.name: s for s in syms}
+        assert by_name.get('buildFullPath') and by_name['buildFullPath'].exported
+        assert by_name.get('mergeConfig') and by_name['mergeConfig'].exported
