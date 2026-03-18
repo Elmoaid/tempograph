@@ -300,6 +300,27 @@ class TestPrepareContext:
         assert not r.startswith("{")
         assert "Focus:" in r
 
+    def test_change_localization_path_for_pr_title(self):
+        # PR title format triggers per-keyword focus (not general-task path)
+        # "extract-cl-keywords" → CamelCase "ExtractClKeywords" → finds _extract_cl_keywords (≤10 files)
+        r = assert_ok(prepare_context(
+            REPO_PATH,
+            task="Merge pull request #595 from encode/extract-cl-keywords",
+            exclude_dirs="archive", output_format="json",
+        ))
+        assert "Focus:" in r["data"]
+        assert "KEY FILES" in r["data"]
+
+    def test_change_localization_trunk_branch_uses_overview(self):
+        # Trunk branches (master/main) → keywords=[] → selective overview fallback
+        r = assert_ok(prepare_context(
+            REPO_PATH,
+            task="Merge pull request #1 from org/main",
+            exclude_dirs="archive", output_format="json",
+        ))
+        # Should inject overview (selective fallback for empty keywords)
+        assert "## Repo:" in r["data"]
+
 
 # ---------------------------------------------------------------------------
 # Exclude dirs
