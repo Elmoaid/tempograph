@@ -385,11 +385,22 @@ def _extract_cl_keywords(task: str) -> list[str]:
         body = re.sub(r'https?://\S+', '', body)
         body = re.sub(r'^[\w-]+:\s+.*$', '', body, flags=re.MULTILINE)
         body = body.strip()
+        # Mine the PR body for additional keywords when the branch name is not self-describing:
+        # - Ticket-reference branches (issue12345, fix-1587) have numeric names → body is the task.
+        # - Pure snake_case branches with no CamelCase transitions (e.g. "support_forwardred_in_python36")
+        #   may have typos or version suffixes that hide the real identifier; body often names it.
+        # Skip body mining for branches that already produce CamelCase compounds (hyphenated segments
+        # like "reply-not-found" → "ReplyNotFound", or explicit camelCase like "partII" with "tI").
+        # Those branches are self-describing and body mining adds noise.
         _is_ticket = bool(
             re.match(r'^(?:issue|ticket|bug|patch|pr|fix)[-_]?\d+', leaf) or
             re.match(r'^\d+[-_]', leaf)
         )
-        task = branch + ('\n' + body if _is_ticket and body else '')
+        _branch_has_compound = bool(
+            re.search(r'\b[a-z]{2,}-[a-z]{2,}', branch)  # hyphenated alpha-alpha ("reply-not")
+            or re.search(r'[a-z][A-Z]', branch)           # explicit camelCase ("partII")
+        )
+        task = branch + ('\n' + body if (_is_ticket or not _branch_has_compound) and body else '')
     else:
         task = re.sub(r'^Merge (?:branch|pull request)[^\n]*\n?', '', task, flags=re.IGNORECASE)
 

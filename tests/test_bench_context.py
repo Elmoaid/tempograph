@@ -105,6 +105,25 @@ class TestExtractKeywords:
         assert "ShouldNotAppear" not in kws
         assert "ReplyNotFound" in kws or "reply" in kws
 
+    def test_snake_case_branch_typo_mines_body(self):
+        """Branch with typo (forwardred vs ForwardRef) mines body to recover correct identifier."""
+        kws = _kw(
+            "Merge pull request #706 from koxudaxi/support_forwardred_in_python36\n"
+            "support ForwardRef in Python 3.6"
+        )
+        # Body contains the correct identifier "ForwardRef" (strict_camel has internal capital F→R)
+        assert "ForwardRef" in kws
+        # And ForwardRef should be near the front (it's a priority/CamelCase token from body)
+        assert kws.index("ForwardRef") < 4
+
+    def test_pure_snake_case_branch_mines_body(self):
+        """Pure snake_case branch with no CamelCase also mines body for symbol names."""
+        kws = _kw(
+            "Merge pull request #100 from org/some_feature_branch\n"
+            "Fix SessionCookiePartitioned flag handling"
+        )
+        assert "SessionCookiePartitioned" in kws
+
 
 class TestSelectiveOverviewCondition:
     """Validate which tasks produce empty keywords (→ overview) vs non-empty (→ no overview)."""
