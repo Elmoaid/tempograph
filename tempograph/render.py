@@ -404,6 +404,12 @@ def _extract_cl_keywords(task: str) -> list[str]:
         branch = m.group(1)
         leaf = branch.lower().split('/')[-1]
         if leaf in _TRUNK_BRANCHES:
+            # Trunk/fork-master branch: return [] to trigger the overview fallback.
+            # Overview injection benefits low-baseline repos (requests, django) where
+            # the model has no codebase knowledge and structure helps orient predictions.
+            # Do NOT mine body — generic body keywords (failing, doctests, requests) would
+            # suppress overview without adding BFS signal, hurting F1.
+            # Evidence: requests/3e7d0a87 — overview → F1 0→0.333; body mining → F1=0.
             return []
         branch_lower = branch.lower()
         # "docs" or "doc" as a hyphen/underscore-separated component anywhere in branch name.
