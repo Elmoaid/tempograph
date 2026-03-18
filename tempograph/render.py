@@ -388,6 +388,11 @@ def _extract_cl_keywords(task: str) -> list[str]:
             seen.add(lower)
             bucket.append(ident)
 
+    # Backtick-quoted identifiers are highest-priority: explicitly named symbols.
+    # E.g. "deprecate `should_ignore_error`" → extract "should_ignore_error" first.
+    for backtick_id in re.findall(r'`([a-zA-Z_][a-zA-Z0-9_]{2,})`', task):
+        _record(backtick_id, priority)
+
     lines = task.split('\n', 1)
     branch_text = lines[0]
     body_text = lines[1].strip() if len(lines) > 1 else ''
