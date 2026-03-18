@@ -570,10 +570,12 @@ def _extract_cl_keywords(task: str) -> list[str]:
             camel = "".join(part.capitalize() for part in hyphenated.split("-"))
             _record(camel, priority)
             # Sub-part decomposition: "streaming-body" → "StreamingBody" (priority) +
-            # "Streaming", "Body" (general). When the compound is a new symbol added in
-            # this PR and fails focus, sub-parts may match related existing symbols.
+            # "Streaming" (general). When the compound is a new symbol added in
+            # this PR and fails focus, long sub-parts may match related existing symbols.
+            # Minimum 7 chars filters generic short words (Encode=6, Custom=6, Params=6,
+            # Method=6) that match too broadly and cause harmful context injection.
             for _p in re.findall(r'[A-Z][a-z0-9]+', camel):
-                if len(_p) >= 4 and _p.lower() not in _CAMEL_PART_SKIP:
+                if len(_p) >= 7 and _p.lower() not in _CAMEL_PART_SKIP:
                     _record(_p, general)
         for ident in re.findall(r'(?<![A-Z_])\b[A-Z][A-Z0-9_]{2,}\b', source):
             if '_' in ident:
@@ -583,8 +585,9 @@ def _extract_cl_keywords(task: str) -> list[str]:
         for ident in re.findall(camel_pat, source):
             _record(ident, priority)
             # Same sub-part fallback for direct CamelCase in commit messages.
+            # Minimum 7 chars matches hyphenated case — keeps long distinctive parts only.
             for _p in re.findall(r'[A-Z][a-z0-9]+', ident):
-                if len(_p) >= 4 and _p.lower() not in _CAMEL_PART_SKIP:
+                if len(_p) >= 7 and _p.lower() not in _CAMEL_PART_SKIP:
                     _record(_p, general)
         # lowerCamelCase identifiers (e.g. `notFound`, `handleRequest`, `setNotFoundHandler`).
         # Appears in both PR bodies (strict_camel=True) and conventional commit messages (non-strict).
