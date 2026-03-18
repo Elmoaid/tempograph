@@ -710,3 +710,60 @@ class TestNoMatchPathFallback:
         result = self._make_mock_context(task, ["sanic/app.py", "sanic/server.py"])
         # 'bandit' and 'security' and 'static' are not in ['sanic/app.py', 'sanic/server.py']
         assert result == ""
+
+
+class TestPrecisionFilter:
+    """precision_filter=True skips context when >4 unique key files are found."""
+
+    _BROAD_FOCUS = (
+        "flask/app.py: Flask\n"
+        "flask/ctx.py: AppContext\n"
+        "flask/blueprints.py: Blueprint\n"
+        "flask/testing.py: FlaskClient\n"
+        "flask/globals.py: current_app\n"
+        "flask/helpers.py: send_file\n"
+    )  # 6 unique .py files → triggers precision gate
+
+    _NARROW_FOCUS = (
+        "flask/app.py: Flask\n"
+        "flask/ctx.py: AppContext\n"
+    )  # 2 unique files → passes through
+
+    def _run(self, task, focused_return, precision_filter):
+        from unittest.mock import MagicMock, patch
+        from bench.changelocal.context import get_tempograph_context
+        graph = MagicMock()
+        graph.symbols = {}
+        with patch("bench.changelocal.context.build_graph", return_value=graph), \
+             patch("bench.changelocal.context.render_focused", return_value=focused_return), \
+             patch("bench.changelocal.context.render_overview", return_value=""):
+            return get_tempograph_context(MagicMock(), task, precision_filter=precision_filter)
+
+    def test_precision_filter_skips_broad_context(self):
+        """precision_filter=True + >4 key files → returns empty string."""
+        result = self._run(
+            "Merge pull request #500 from pallets/dispatch-context",
+            self._BROAD_FOCUS,
+            precision_filter=True,
+        )
+        assert result == ""
+
+    def test_precision_filter_off_keeps_broad_context(self):
+        """precision_filter=False (default) + >4 key files → context returned."""
+        result = self._run(
+            "Merge pull request #500 from pallets/dispatch-context",
+            self._BROAD_FOCUS,
+            precision_filter=False,
+        )
+        assert result != ""
+        assert "KEY FILES" in result
+
+    def test_precision_filter_keeps_narrow_context(self):
+        """precision_filter=True + ≤4 key files → context returned normally."""
+        result = self._run(
+            "Merge pull request #501 from pallets/fix-appcontext",
+            self._NARROW_FOCUS,
+            precision_filter=True,
+        )
+        assert result != ""
+        assert "KEY FILES" in result
