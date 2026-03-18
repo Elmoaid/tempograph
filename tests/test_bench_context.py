@@ -732,6 +732,41 @@ class TestNoMatchPathFallback:
         assert "KEY FILES (path match):" in result
         assert "sanic/streaming.py" in result
 
+    def test_json_sub_part_skipped_in_path_fallback(self):
+        """'ExposeDefaultJsonSerializer' path fallback must NOT try 'json' as path fragment.
+
+        Regression test for commit 07dac81. Without the fix, 'Json' sub-part would match
+        json.js or json.py files instead of the correct serializer file (fastify e9b68878 harm case).
+        """
+        from unittest.mock import MagicMock, patch
+        from bench.changelocal.context import get_tempograph_context
+
+        # Graph has both a json file (wrong match) and a serializer file (correct match)
+        paths = [
+            "lib/json.js",         # wrong — 'Json' sub-part should be skipped
+            "lib/serialize.js",    # correct — 'Serializer' sub-part should match
+            "lib/hooks.js",
+        ]
+        graph = MagicMock()
+        graph.symbols = {f"sym_{i}": MagicMock(file_path=p) for i, p in enumerate(paths)}
+
+        # BFS returns too-broad (>10 files) → triggers path fallback
+        broad_focus = "\n".join(f"file_{i}.js: sym_{i}" for i in range(12))
+        with patch("bench.changelocal.context.build_graph", return_value=graph), \
+             patch("bench.changelocal.context.render_focused", return_value=broad_focus), \
+             patch("bench.changelocal.context.render_overview", return_value=""), \
+             patch("bench.changelocal.context.render_blast_radius", return_value=""):
+            result = get_tempograph_context(
+                MagicMock(),
+                "Merge pull request #347 from fastify/expose-default-json-serializer",
+            )
+        # 'Json' must be skipped; 'Serializer' should match serialize.js instead
+        # (If json were NOT skipped, lib/json.js would be returned as a false positive)
+        assert "lib/json.js" not in result, (
+            "lib/json.js injected: 'Json' sub-part was NOT skipped. "
+            "Add 'json' to context.py _PATH_CAMEL_SKIP."
+        )
+
 
 class TestPrecisionFilter:
     """precision_filter=True skips context when >4 unique key files are found."""
