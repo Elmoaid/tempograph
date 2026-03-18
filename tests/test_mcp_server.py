@@ -48,7 +48,7 @@ from tempograph.server import (
     index_repo, overview, focus, hotspots, blast_radius,
     diff_context, dead_code, lookup, symbols, file_map,
     dependencies, architecture, stats, report_feedback,
-    learn_recommendation, prepare_context,
+    learn_recommendation, prepare_context, get_patterns,
 )
 
 
@@ -1041,3 +1041,29 @@ class TestCommonJSExports:
         by_name = {s.name: s for s in syms}
         assert by_name.get('buildFullPath') and by_name['buildFullPath'].exported
         assert by_name.get('mergeConfig') and by_name['mergeConfig'].exported
+
+
+# ---------------------------------------------------------------------------
+# get_patterns tool
+# ---------------------------------------------------------------------------
+
+class TestGetPatterns:
+    def test_returns_ok(self):
+        result = get_patterns(REPO_PATH, output_format="json")
+        d = assert_ok(result)
+        assert len(d["data"]) > 0
+
+    def test_query_filter(self):
+        result = get_patterns(REPO_PATH, query="render", output_format="json")
+        d = assert_ok(result)
+        # query filter should return relevant output (render_ family is large)
+        assert "render" in d["data"].lower()
+
+    def test_invalid_repo(self):
+        result = get_patterns("/nonexistent/path", output_format="json")
+        assert_error(result, "REPO_NOT_FOUND")
+
+    def test_text_output(self):
+        result = get_patterns(REPO_PATH)
+        assert isinstance(result, str)
+        assert len(result) > 0
