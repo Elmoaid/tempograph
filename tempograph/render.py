@@ -1618,6 +1618,14 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                     else:
                         # CamelCase keyword: split on uppercase boundaries and try each part.
                         # E.g. "RequestStreamingSupport" → try "streaming" → request/streaming.py.
+                        # Skip generic programming words (import, test, type...) — too broad for path match.
+                        _PATH_CAMEL_SKIP = frozenset({
+                            "import", "test", "tests", "type", "types", "base", "core", "util",
+                            "utils", "data", "form", "list", "dict", "object", "class", "model",
+                            "models", "view", "views", "helper", "helpers", "mixin", "mixins",
+                            "return", "raise", "yield", "async", "await", "error", "errors",
+                            "init", "main", "common", "factory", "manager",
+                        })
                         _parts: list[str] = []
                         _cur: list[str] = []
                         for _c in kw:
@@ -1629,7 +1637,7 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                         if _cur:
                             _parts.append("".join(_cur))
                         for part in _parts:
-                            if len(part) >= 4:
+                            if len(part) >= 4 and part.lower() not in _PATH_CAMEL_SKIP:
                                 part_lower = part.lower()
                                 part_hits = sorted(set(
                                     sym.file_path for sym in graph.symbols.values()
