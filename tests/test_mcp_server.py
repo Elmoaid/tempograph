@@ -777,3 +777,79 @@ class TestRenderTokenCaps:
         syms, _, _ = p.parse()
         assert any(s.name == "Foo" for s in syms)
         assert any(s.qualified_name == "Foo.Bar" for s in syms)
+
+
+# ---------------------------------------------------------------------------
+# CommonJS export detection
+# ---------------------------------------------------------------------------
+
+class TestCommonJSExports:
+    def test_module_exports_class(self):
+        """module.exports = class Foo {} → class marked exported."""
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b'module.exports = class Application extends Emitter { constructor() {} }'
+        p = FileParser('app.js', Language.JAVASCRIPT, code)
+        syms, _, _ = p.parse()
+        app = next((s for s in syms if s.name == 'Application'), None)
+        assert app is not None, "Application class not found"
+        assert app.exported, "Application should be exported"
+
+    def test_module_exports_identifier(self):
+        """module.exports = fastify → fastify function marked exported."""
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b'function fastify(opts) { return {} }\nmodule.exports = fastify'
+        p = FileParser('fastify.js', Language.JAVASCRIPT, code)
+        syms, _, _ = p.parse()
+        fn = next((s for s in syms if s.name == 'fastify'), None)
+        assert fn is not None, "fastify function not found"
+        assert fn.exported, "fastify should be exported via module.exports"
+
+    def test_module_exports_function_expression(self):
+        """module.exports = function override(...) {} → named fn exported."""
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b'module.exports = function override(old, fn) { return fn }'
+        p = FileParser('override.js', Language.JAVASCRIPT, code)
+        syms, _, _ = p.parse()
+        fn = next((s for s in syms if s.name == 'override'), None)
+        assert fn is not None, "override function not found"
+        assert fn.exported, "override should be exported"
+
+    def test_module_exports_shorthand_object(self):
+        """module.exports = { buildRouting, foo } → symbols marked exported."""
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b'function buildRouting() {}\nfunction foo() {}\nmodule.exports = { buildRouting, foo }'
+        p = FileParser('route.js', Language.JAVASCRIPT, code)
+        syms, _, _ = p.parse()
+        routing = next((s for s in syms if s.name == 'buildRouting'), None)
+        foo = next((s for s in syms if s.name == 'foo'), None)
+        assert routing and routing.exported, "buildRouting should be exported"
+        assert foo and foo.exported, "foo should be exported"
+
+    def test_module_exports_object_methods(self):
+        """module.exports = { get header() {}, redirect() {} } → methods extracted."""
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b'module.exports = {\n  get header() { return this.res.headers },\n  redirect(url) { this.res.redirect(url) }\n}'
+        p = FileParser('response.js', Language.JAVASCRIPT, code)
+        syms, _, _ = p.parse()
+        names = {s.name for s in syms}
+        assert 'header' in names, f"header method not extracted: {names}"
+        assert 'redirect' in names, f"redirect method not extracted: {names}"
+        for s in syms:
+            if s.name in ('header', 'redirect'):
+                assert s.exported, f"{s.name} should be exported"
+
+    def test_const_proto_module_exports_methods(self):
+        """const proto = module.exports = { method() {} } → methods extracted."""
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b'const proto = module.exports = {\n  inspect() { return this.toJSON() },\n  onerror(err) { console.error(err) }\n}'
+        p = FileParser('context.js', Language.JAVASCRIPT, code)
+        syms, _, _ = p.parse()
+        names = {s.name for s in syms}
+        assert 'inspect' in names, f"inspect not extracted: {names}"
+        assert 'onerror' in names, f"onerror not extracted: {names}"
