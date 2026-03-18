@@ -61,6 +61,29 @@ def test_tool_count():
     assert len(mcp._tool_manager._tools) == 17
 
 
+def test_agent_guide_bench_numbers():
+    """Guard against fabricated bench numbers in AGENT_GUIDE.md.
+
+    Verified canonical results (python3 -m bench.changelocal.analyze --canonical):
+    - precision_filter: +3.7% F1 (p=0.21, ns), n=159
+    - adaptive: +6.9% F1 (p=0.035*), n=159
+
+    Numbers above 10% for precision_filter are fabricated. This test catches reinsertion.
+    """
+    agent_guide = Path(__file__).parent.parent / "AGENT_GUIDE.md"
+    content = agent_guide.read_text()
+    # Fabricated numbers that have been reinserted multiple times
+    assert "+13.4%" not in content, "Fabricated precision_filter +13.4% in AGENT_GUIDE"
+    assert "+13.8%" not in content, "Fabricated precision_filter +13.8% in AGENT_GUIDE"
+    assert "+13.9%" not in content, "Fabricated precision_filter +13.9% in AGENT_GUIDE"
+    assert "p=0.022" not in content, "Fabricated p=0.022 in AGENT_GUIDE"
+    assert "p=0.014" not in content, "Fabricated p=0.014 in AGENT_GUIDE"
+    # Verified numbers must be present
+    assert "+3.7%" in content, "Verified precision_filter +3.7% missing from AGENT_GUIDE"
+    assert "+6.9%" in content, "Verified adaptive +6.9% missing from AGENT_GUIDE"
+    assert "p=0.035" in content, "Verified adaptive p=0.035 missing from AGENT_GUIDE"
+
+
 # ---------------------------------------------------------------------------
 # JSON output — every tool returns valid JSON with correct shape
 # ---------------------------------------------------------------------------
