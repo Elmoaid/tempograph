@@ -303,10 +303,11 @@ class TestPrepareContext:
     def test_change_localization_path_for_pr_title(self):
         # PR title format triggers per-keyword focus (not general-task path)
         # "extract-cl-keywords" → CamelCase "ExtractClKeywords" → finds _extract_cl_keywords (≤10 files)
+        # precision_filter=False to test the focus path in isolation (not the broad-skip gate)
         r = assert_ok(prepare_context(
             REPO_PATH,
             task="Merge pull request #595 from encode/extract-cl-keywords",
-            exclude_dirs="archive", output_format="json",
+            exclude_dirs="archive", output_format="json", precision_filter=False,
         ))
         assert "Focus:" in r["data"]
         assert "KEY FILES" in r["data"]
