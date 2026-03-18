@@ -1704,6 +1704,81 @@ def _extract_name_from_question(question: str) -> str:
 
 
 
+_TEST_MARKERS = ("test", "spec", "fixture", "example", "tutorial", "demo", "sample")
+_ASSET_DIRS = ("/templates/", "/static/")
+
+
+def _cl_path_fallback(graph: "Tempo", kw: str) -> list[str]:
+    """Return path-matched files for a keyword that failed symbol focus.
+
+    Tries three strategies in order, returning the first that yields <=5 source files:
+    1. Plain substring match on file paths.
+    2. Snake_case decomposition: "config_from_object" → try "config", "object", etc.
+    3. CamelCase decomposition: "RequestStreamingSupport" → try "Streaming", "Support", etc.
+
+    Returns an empty list when no strategy finds a tight match (<=5 non-test files).
+    """
+    def _source_files(paths: list[str]) -> list[str]:
+        return [p for p in paths if not any(x in p.lower() for x in _TEST_MARKERS)]
+
+    def _path_hits(token: str) -> list[str]:
+        t = token.lower()
+        hits = sorted(set(
+            sym.file_path for sym in graph.symbols.values()
+            if t in sym.file_path.lower()
+            and not any(d in sym.file_path for d in _ASSET_DIRS)
+            and not sym.file_path.startswith(("templates/", "static/"))
+        ))
+        return _source_files(hits)
+
+    # Strategy 1: plain keyword
+    plain = _path_hits(kw)
+    if plain and len(plain) <= 5:
+        return plain[:5]
+
+    if "_" in kw:
+        # Strategy 2: snake_case components
+        _PATH_SNAKE_SKIP = frozenset({
+            "response", "request", "error", "errors", "option", "options",
+            "handler", "handlers", "helper", "helpers", "server", "client", "router",
+            "static", "analysis", "middleware", "security",
+        })
+        for part in kw.split("_"):
+            if len(part) >= 4 and part.lower() not in _PATH_SNAKE_SKIP:
+                hits = _path_hits(part)
+                if hits and len(hits) <= 5:
+                    return hits
+    else:
+        # Strategy 3: CamelCase parts
+        _PATH_CAMEL_SKIP = frozenset({
+            "import", "test", "tests", "type", "types", "base", "core", "util",
+            "utils", "data", "form", "list", "dict", "object", "class", "model",
+            "models", "view", "views", "helper", "helpers", "mixin", "mixins",
+            "return", "raise", "yield", "async", "await", "error", "errors",
+            "init", "main", "common", "factory", "manager",
+            "field", "fields", "exception", "exceptions",
+            "json", "xml",
+            "host", "method", "setter", "getter",
+        })
+        parts: list[str] = []
+        cur: list[str] = []
+        for ch in kw:
+            if ch.isupper() and cur:
+                parts.append("".join(cur))
+                cur = [ch]
+            else:
+                cur.append(ch)
+        if cur:
+            parts.append("".join(cur))
+        for part in parts:
+            if len(part) >= 4 and part.lower() not in _PATH_CAMEL_SKIP:
+                hits = _path_hits(part)
+                if hits and len(hits) <= 5:
+                    return hits
+
+    return []
+
+
 def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: str = "",
                    baseline_predicted_files: list[str] | None = None,
                    precision_filter: bool = False,
@@ -1750,7 +1825,6 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
         # Short tokens can't trigger path fallback (which requires len>=4) and rarely match
         # specific symbols. This prevents "req" (len=3) from blocking "resp" (len=4).
         effective_keywords = [kw for kw in keywords if len(kw) >= 4][:3]
-        _test_markers = ("test", "spec", "fixture", "example", "tutorial", "demo", "sample")
         for kw in effective_keywords:
             focused = render_focused(graph, kw, max_tokens=focus_budget)
             no_match = not focused or "No symbols matching" in focused or "No exact match" in focused
@@ -1761,117 +1835,8 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                 # No symbol match OR too broad — try path-based fallback.
                 # Handles: (a) directory/module keywords (e.g. "demo" → demos/),
                 # (b) keyword is a module name but not a symbol (e.g. "config" → sanic/config.py).
-                # Evidence: tornado "demo" → 15 symbol files (skipped) → path match → demos/ (2-4 files).
-                # Evidence: sanic "config" → 0 symbol matches → path → sanic/config.py (correct).
                 if len(kw) >= 4 and not path_fallback_files:
-                    kw_lower = kw.lower()
-                    path_hits = [
-                        sym.file_path for sym in graph.symbols.values()
-                        if kw_lower in sym.file_path.lower()
-                        # Exclude asset directories: templates/ and static/ contain JS/CSS/HTML
-                        # that are almost never the primary code change location.
-                        # Evidence: DRF 'schema' → rest_framework/templates/.../schema.js (asset)
-                        # alongside schemas.py, misleading model away from documentation.py.
-                        and "/templates/" not in sym.file_path
-                        and not sym.file_path.startswith("templates/")
-                        and "/static/" not in sym.file_path
-                        and not sym.file_path.startswith("static/")
-                    ]
-                    unique_paths = sorted(set(path_hits))
-                    # Filter to source files only: test/spec/fixture paths mislead the model.
-                    # Evidence: fastify "option" → test/ajv-options.test.js, test/options.test.js
-                    # → KEY FILES shows only test files → model misses lib/validation.js.
-                    # If no source files match, skip path fallback entirely (no hint > wrong hint).
-                    source_paths = [p for p in unique_paths if not any(x in p.lower() for x in _test_markers)]
-                    unique_paths = source_paths if source_paths else []
-                    if unique_paths and len(unique_paths) <= 5:
-                        # Cap at 5 (same threshold as CamelCase/snake_case parts below).
-                        # >5 unique paths means keyword is too generic (e.g. "path", "route") → skip.
-                        # Evidence: fastify "path" → 8+ files (router.js, request.js, etc.) = noise.
-                        # Keeps: sanic "config" → 1-2 files ✓; tornado "demo" → 2-4 files ✓.
-                        path_fallback_files = unique_paths[:5]
-                    elif "_" in kw:
-                        # Snake_case keyword: try individual components as path keywords.
-                        # E.g. "config_from_object" → try "config" → sanic/config.py.
-                        # Only use if <= 5 paths (conservative to avoid false positives).
-                        # Skip components that are generic English words — they match wrong files.
-                        # E.g. "fix_named_response_middleware" → "response" → response.py (wrong).
-                        # Evidence: sanic 7c04c9a2 — "response" component → response.py instead of app.py.
-                        # sanic 966b05b4 — "static" component → static.py for "bandit_security_static_analysis".
-                        _PATH_SNAKE_SKIP = frozenset({
-                            # Generic words that cause false path matches as snake_case components.
-                            # E.g. "fix_named_response_middleware" → "response" → response.py (wrong).
-                            # Evidence: sanic 7c04c9a2 — "response" → response.py instead of app.py.
-                            # Evidence: sanic 966b05b4 — "static" → static.py for "bandit_security_static".
-                            # DO NOT include "config" — it correctly points to config.py for config PRs.
-                            "response", "request", "error", "errors", "option", "options",
-                            "handler", "handlers", "helper", "helpers", "server", "client", "router",
-                            "static", "analysis", "middleware", "security",
-                        })
-                        for part in kw.split("_"):
-                            if len(part) >= 4 and part.lower() not in _PATH_SNAKE_SKIP:
-                                part_lower = part.lower()
-                                part_hits = sorted(set(
-                                    sym.file_path for sym in graph.symbols.values()
-                                    if part_lower in sym.file_path.lower()
-                                    and "/templates/" not in sym.file_path
-                                    and not sym.file_path.startswith("templates/")
-                                    and "/static/" not in sym.file_path
-                                    and not sym.file_path.startswith("static/")
-                                ))
-                                src_hits = [p for p in part_hits if not any(x in p.lower() for x in _test_markers)]
-                                part_hits = src_hits if src_hits else []
-                                if part_hits and len(part_hits) <= 5:
-                                    path_fallback_files = part_hits
-                                    break
-                    else:
-                        # CamelCase keyword: split on uppercase boundaries and try each part.
-                        # E.g. "RequestStreamingSupport" → try "streaming" → request/streaming.py.
-                        # Skip generic programming words (import, test, type...) — too broad for path match.
-                        _PATH_CAMEL_SKIP = frozenset({
-                            "import", "test", "tests", "type", "types", "base", "core", "util",
-                            "utils", "data", "form", "list", "dict", "object", "class", "model",
-                            "models", "view", "views", "helper", "helpers", "mixin", "mixins",
-                            "return", "raise", "yield", "async", "await", "error", "errors",
-                            "init", "main", "common", "factory", "manager",
-                            # Generic domain suffixes: too broad for path match, cause false positives.
-                            # E.g. "DurationField" → "Field" → field_mapping.py (wrong); skip and try
-                            # "Duration" first. "SerializerException" → "Exception" → exceptions.py (wrong).
-                            "field", "fields", "exception", "exceptions",
-                            # Encoding format terms: "ExposeDefaultJsonSerializer" → "Json" → serialize.js
-                            # (wrong). "json"/"xml" are technology descriptors, not file-identity markers.
-                            "json", "xml",
-                            # Generic HTTP/property accessors: "HostSetter" → "Host" → request.js (wrong).
-                            # These describe concepts, not files. All are in the keyword skip set for the
-                            # same reason — too generic to be useful as code identifiers.
-                            "host", "method", "setter", "getter",
-                        })
-                        _parts: list[str] = []
-                        _cur: list[str] = []
-                        for _c in kw:
-                            if _c.isupper() and _cur:
-                                _parts.append("".join(_cur))
-                                _cur = [_c]
-                            else:
-                                _cur.append(_c)
-                        if _cur:
-                            _parts.append("".join(_cur))
-                        for part in _parts:
-                            if len(part) >= 4 and part.lower() not in _PATH_CAMEL_SKIP:
-                                part_lower = part.lower()
-                                part_hits = sorted(set(
-                                    sym.file_path for sym in graph.symbols.values()
-                                    if part_lower in sym.file_path.lower()
-                                    and "/templates/" not in sym.file_path
-                                    and not sym.file_path.startswith("templates/")
-                                    and "/static/" not in sym.file_path
-                                    and not sym.file_path.startswith("static/")
-                                ))
-                                src_hits = [p for p in part_hits if not any(x in p.lower() for x in _test_markers)]
-                                part_hits = src_hits if src_hits else []
-                                if part_hits and len(part_hits) <= 5:
-                                    path_fallback_files = part_hits
-                                    break
+                    path_fallback_files = _cl_path_fallback(graph, kw)
                 # Definition-first fallback: when focus is too_broad and all path matching found nothing,
                 # return just the DEFINING file(s) of the top-ranked symbol.
                 # Handles: "redirect" → flask/helpers.py (where redirect() lives) rather than all callers.
@@ -1885,7 +1850,7 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                             def_hits = sorted(set(
                                 sym.file_path for score, sym in scored
                                 if score >= threshold
-                                and not any(x in sym.file_path.lower() for x in _test_markers)
+                                and not any(x in sym.file_path.lower() for x in _TEST_MARKERS)
                                 and "/templates/" not in sym.file_path
                                 and not sym.file_path.startswith("templates/")
                                 and "/static/" not in sym.file_path
@@ -1914,7 +1879,7 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                 if overlap >= 0.5:
                     return ""  # model already predicts the key files — skip injection
                 src_pred_count = len([f for f in predicted_set
-                                      if not any(m in f.lower() for m in _test_markers)])
+                                      if not any(m in f.lower() for m in _TEST_MARKERS)])
                 if src_pred_count >= 3:
                     # Baseline is highly confident (3+ source predictions). When context
                     # disagrees (overlap < 0.5), it misleads the model away from its
@@ -1940,7 +1905,7 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                 if overlap >= 0.5:
                     return ""  # model already predicts the path-matched files
                 src_pred_count = len([f for f in predicted_set
-                                      if not any(m in f.lower() for m in _test_markers)])
+                                      if not any(m in f.lower() for m in _TEST_MARKERS)])
                 if src_pred_count >= 3:
                     return ""  # baseline confident (3+ source files); path-hint can only mislead
                 # Path-only context (no BFS graph) is weak when model already has a focused prediction.
