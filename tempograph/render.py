@@ -486,6 +486,7 @@ def _extract_cl_keywords(task: str) -> list[str]:
         "name", "named",  # "name" matches ParameterNameConflicts (wrong); compound forms (ParameterName) still work
         "limit", "limits",  # branch component "limit-selects" → "limit" matches LimitOffsetPagination (wrong)
         "error", "errors", "option", "options", "response", "config",
+        "host",  # generic HTTP concept — "host-setter" → focus on host getter (wrong); compound "HostSetter" still works
         "enable", "enabled", "disable", "disabled", "default", "global",
         "log", "logger", "logging", "ticket", "docs", "readme",
         "fixed", "improved", "updated", "added", "removed", "changed",
@@ -558,9 +559,22 @@ def _extract_cl_keywords(task: str) -> list[str]:
     body_text = lines[1].strip() if len(lines) > 1 else ''
 
     def _extract_from(source: str, strict_camel: bool = False) -> None:
+        # Generic OOP/domain suffixes excluded from CamelCase sub-part fallbacks.
+        # These terms match too broadly across a codebase to be useful focus queries.
+        _CAMEL_PART_SKIP = frozenset({
+            "base", "core", "util", "utils", "mixin", "factory", "manager",
+            "field", "fields", "exception", "exceptions", "model", "models",
+            "view", "views", "form", "forms", "helper", "helpers", "main",
+        })
         for hyphenated in re.findall(r'\b[a-z][a-z0-9]*(?:-[a-z][a-z0-9]*)+\b', source):
             camel = "".join(part.capitalize() for part in hyphenated.split("-"))
             _record(camel, priority)
+            # Sub-part decomposition: "streaming-body" → "StreamingBody" (priority) +
+            # "Streaming", "Body" (general). When the compound is a new symbol added in
+            # this PR and fails focus, sub-parts may match related existing symbols.
+            for _p in re.findall(r'[A-Z][a-z0-9]+', camel):
+                if len(_p) >= 4 and _p.lower() not in _CAMEL_PART_SKIP:
+                    _record(_p, general)
         for ident in re.findall(r'(?<![A-Z_])\b[A-Z][A-Z0-9_]{2,}\b', source):
             if '_' in ident:
                 _record(ident, priority)
@@ -568,6 +582,10 @@ def _extract_cl_keywords(task: str) -> list[str]:
                      if strict_camel else r'\b[A-Z][a-zA-Z0-9]+\b')
         for ident in re.findall(camel_pat, source):
             _record(ident, priority)
+            # Same sub-part fallback for direct CamelCase in commit messages.
+            for _p in re.findall(r'[A-Z][a-z0-9]+', ident):
+                if len(_p) >= 4 and _p.lower() not in _CAMEL_PART_SKIP:
+                    _record(_p, general)
         # lowerCamelCase identifiers (e.g. `notFound`, `handleRequest`, `setNotFoundHandler`).
         # Appears in both PR bodies (strict_camel=True) and conventional commit messages (non-strict).
         # Pattern: starts lowercase, uppercase transition, THEN lowercase continuation (rules out

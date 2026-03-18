@@ -166,6 +166,29 @@ class TestExtractClKeywords:
         assert "props" not in kws
         assert "state" not in kws
 
+    def test_camelcase_compound_subparts_extracted(self):
+        # Hyphenated compound → CamelCase + sub-parts in general bucket.
+        # When "StreamingBody" is a new symbol (added in this PR) and fails focus,
+        # sub-parts "Streaming", "Body" serve as fallback focus queries.
+        kws = _extract_cl_keywords("Merge pull request #1 from org/streaming-body")
+        assert "StreamingBody" in kws  # full compound → priority
+        assert "Streaming" in kws      # sub-part → general (fallback)
+
+    def test_camelcase_subparts_skip_generic_words(self):
+        # _CAMEL_PART_SKIP excludes generic OOP/domain terms from sub-part decomposition.
+        # "DurationField" → "Duration" (specific, useful) + "Field" (too generic, skipped).
+        kws = _extract_cl_keywords("Merge pull request #1 from org/duration-field")
+        assert "DurationField" in kws
+        assert "Duration" in kws   # specific → extracted as fallback
+        assert "Field" not in kws  # in _CAMEL_PART_SKIP → excluded
+
+    def test_direct_camelcase_compound_decomposes(self):
+        # Direct CamelCase in commit message (not from hyphenated branch) also decomposes.
+        kws = _extract_cl_keywords("feat: add DurationField support")
+        assert "DurationField" in kws
+        assert "Duration" in kws   # sub-part fallback extracted
+        assert "Field" not in kws  # in _CAMEL_PART_SKIP
+
 
 class TestIsChangeLocalization:
     def test_task_type_changelocal(self):
