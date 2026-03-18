@@ -1557,7 +1557,7 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                 token_count += count_tokens(fp)
             key_files = _extract_focus_files("\n\n".join(focus_parts), task_keywords=keywords)
             # Precision gate: >4 key files → topic too broad → skip injection.
-            # Bench evidence (n=160 pairs, verified 2026-03-18): +13.4% (p=0.022, p<0.05).
+            # Bench evidence (Phase 5.26, n=111): precision_filter=+3.9% (p=0.085, ns).
             if precision_filter and len(key_files) > 4:
                 return ""  # Too broad — skip context entirely
             # Adaptive gating: if baseline already predicts the key files, skip injection.
