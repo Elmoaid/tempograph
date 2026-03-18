@@ -623,6 +623,23 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
 
     For monolith files (>1000 lines), adds intra-file neighborhood context
     and biases BFS toward cross-file edges to avoid getting trapped in one file."""
+    import re as _re
+    # Extract query tokens for caller relevance sorting (len > 3 to avoid generic words).
+    # Also split CamelCase: "ReplyNotFound" → ["Reply", "Not", "Found"] so that
+    # "reply" matches "test/internals/reply.test.js" even when query is CamelCase.
+    _raw_tokens = _re.split(r'[^a-zA-Z0-9]+', query)
+    _camel_tokens = []
+    for tok in _raw_tokens:
+        # Split CamelCase into components (e.g. ReplyNotFound → Reply, Not, Found)
+        parts = _re.sub(r'([A-Z][a-z]+)', r' \1', _re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1 \2', tok)).split()
+        _camel_tokens.extend(parts if len(parts) > 1 else [tok])
+    _query_tokens = [t.lower() for t in _camel_tokens if len(t) > 3]
+
+    def _caller_priority(sym: "Symbol") -> int:
+        """0 = keyword match in path (show first), 1 = no match (show after)."""
+        path_lower = sym.file_path.lower()
+        return 0 if _query_tokens and any(tok in path_lower for tok in _query_tokens) else 1
+
     scored = graph.search_symbols_scored(query)
     if not scored:
         return _suggest_alternatives(graph, query) or f"No symbols matching '{query}'"
@@ -699,7 +716,9 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
             callers = graph.callers_of(sym.id)
             if callers:
                 shown = 8 if depth == 0 else 5
-                block_lines.append(f"{indent}  called by: {', '.join(c.qualified_name for c in callers[:shown])}")
+                # Keyword-matching callers first (e.g. test/reply.test.js before lib/logger.js)
+                callers_sorted = sorted(callers, key=_caller_priority)
+                block_lines.append(f"{indent}  called by: {', '.join(c.qualified_name for c in callers_sorted[:shown])}")
                 if len(callers) > shown:
                     block_lines[-1] += f" (+{len(callers) - shown} more)"
             callees = graph.callees_of(sym.id)

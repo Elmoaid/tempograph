@@ -43,6 +43,16 @@ interface Props {
   excludeDirs?: string[];
 }
 
+const HISTORY_MAX = 8;
+const historyKey = (mode: string) => `tempo-history-${mode}`;
+const loadHistory = (mode: string): string[] => {
+  try { return JSON.parse(localStorage.getItem(historyKey(mode)) || "[]"); } catch { return []; }
+};
+const saveHistory = (mode: string, query: string) => {
+  const prev = loadHistory(mode).filter(q => q !== query);
+  localStorage.setItem(historyKey(mode), JSON.stringify([query, ...prev].slice(0, HISTORY_MAX)));
+};
+
 export function ModeRunner({ repoPath, excludeDirs }: Props) {
   const [activeMode, setActiveMode] = useState("overview");
   const [modeArgs, setModeArgs] = useState("");
@@ -50,6 +60,8 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
   const [modeRunning, setModeRunning] = useState(false);
   const [copied, setCopied] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [history, setHistory] = useState<string[]>([]);
   const argsInputRef = useRef<HTMLInputElement>(null);
   // Per-mode result cache: avoids re-running when switching back to a mode
   const outputCache = useRef<Map<string, string>>(new Map());
@@ -59,6 +71,8 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
   const switchMode = (mode: string) => {
     setActiveMode(mode);
     setModeArgs("");
+    setHistoryOpen(false);
+    setHistory(loadHistory(mode));
     const cached = outputCache.current.get(mode);
     setModeOutput(cached ?? "");
     // Auto-run arg-free modes if no cached result
@@ -105,6 +119,10 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
       const out = r.output || "No output";
       outputCache.current.set(activeMode, out);
       setModeOutput(out);
+      if (raw && activeModeInfo?.argPrefix) {
+        saveHistory(activeMode, raw);
+        setHistory(loadHistory(activeMode));
+      }
     } catch {
       setModeOutput("Failed to run mode. Check that tempo is installed.");
     }
@@ -173,16 +191,47 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
           </div>
         </div>
         <div className="cell-body">
-          <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-            <input
-              ref={argsInputRef}
-              className="input"
-              placeholder={activeModeInfo?.hint || "arguments (optional)"}
-              value={modeArgs}
-              onChange={(e) => setModeArgs(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && runMode()}
-              style={{ flex: 1 }}
-            />
+          {activeModeInfo?.desc && (
+            <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 8, lineHeight: 1.5 }}>
+              {activeModeInfo.desc}
+            </div>
+          )}
+          <div style={{ display: "flex", gap: 6, marginBottom: 8, position: "relative" }}>
+            <div style={{ flex: 1, position: "relative" }}>
+              <input
+                ref={argsInputRef}
+                className="input"
+                placeholder={activeModeInfo?.hint || "arguments (optional)"}
+                value={modeArgs}
+                onChange={(e) => setModeArgs(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") { setHistoryOpen(false); runMode(); }
+                  if (e.key === "Escape") setHistoryOpen(false);
+                }}
+                onFocus={() => { if (history.length > 0) setHistoryOpen(true); }}
+                onBlur={() => setTimeout(() => setHistoryOpen(false), 150)}
+                style={{ width: "100%" }}
+              />
+              {historyOpen && history.length > 0 && (
+                <div style={{
+                  position: "absolute", top: "100%", left: 0, right: 0, zIndex: 100,
+                  background: "var(--bg-secondary)", border: "1px solid var(--border)",
+                  borderRadius: 4, marginTop: 2, boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
+                }}>
+                  {history.map((q, i) => (
+                    <div
+                      key={i}
+                      style={{ padding: "5px 10px", fontSize: 11, cursor: "pointer", color: "var(--text-secondary)" }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-hover)")}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+                      onMouseDown={() => { setModeArgs(q); setHistoryOpen(false); setTimeout(() => runModeRef.current?.(), 0); }}
+                    >
+                      {q}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
             <button className="btn" onClick={runMode} disabled={modeRunning} style={{ padding: "4px 10px" }} title="Run (⌘R)">
               <Play size={11} /> {modeRunning ? "..." : "Run"}
             </button>
