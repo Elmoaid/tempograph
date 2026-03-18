@@ -1627,8 +1627,12 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                         if kw_lower in sym.file_path.lower()
                     ]
                     unique_paths = sorted(set(path_hits))
-                    if unique_paths:
-                        path_fallback_files = unique_paths[:8]
+                    if unique_paths and len(unique_paths) <= 5:
+                        # Cap at 5 (same threshold as CamelCase/snake_case parts below).
+                        # >5 unique paths means keyword is too generic (e.g. "path", "route") → skip.
+                        # Evidence: fastify "path" → 8+ files (router.js, request.js, etc.) = noise.
+                        # Keeps: sanic "config" → 1-2 files ✓; tornado "demo" → 2-4 files ✓.
+                        path_fallback_files = unique_paths[:5]
                     elif "_" in kw:
                         # Snake_case keyword: try individual components as path keywords.
                         # E.g. "config_from_object" → try "config" → sanic/config.py.
