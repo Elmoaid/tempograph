@@ -85,6 +85,11 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
   const [cachedModes, setCachedModes] = useState<Set<string>>(new Set());
   // Timestamp (ms) of when current output was produced
   const [outputTs, setOutputTs] = useState<number | null>(null);
+  // Run timing: per-mode duration cache + live elapsed counter
+  const runStart = useRef<number | null>(null);
+  const runDurationCache = useRef<Map<string, number>>(new Map());
+  const [runDuration, setRunDuration] = useState<number | null>(null);
+  const [elapsed, setElapsed] = useState<number>(0);
 
   const activeModeInfo = MODES.find(m => m.mode === activeMode);
 
@@ -113,6 +118,7 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
     const cached = outputCache.current.get(mode);
     setModeOutput(cached ?? "");
     setOutputTs(cached ? (outputTsCache.current.get(mode) ?? null) : null);
+    setRunDuration(runDurationCache.current.get(mode) ?? null);
     // Auto-run arg-free modes if no cached result
     if (!cached && !MODES.find(m => m.mode === mode)?.argPrefix) {
       setTimeout(() => runModeRef.current?.(), 0);
@@ -136,6 +142,15 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
     return () => window.removeEventListener("keydown", handler);
   }, [modeRunning, modeOutput]);
 
+  // Live elapsed counter — ticks every 250ms while a run is active
+  useEffect(() => {
+    if (!modeRunning) return;
+    const id = setInterval(() => {
+      setElapsed(runStart.current ? Math.floor((Date.now() - runStart.current) / 1000) : 0);
+    }, 250);
+    return () => clearInterval(id);
+  }, [modeRunning]);
+
   // Stable ref so the keydown closure always calls the latest runMode
   const runModeRef = useRef<(() => void) | null>(null);
 
@@ -144,6 +159,8 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
 
   const runMode = async () => {
     if (!repoPath || modeRunning) return;
+    runStart.current = Date.now();
+    setElapsed(0);
     setModeRunning(true);
     setModeOutput("");
     try {
@@ -160,10 +177,13 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
       const r = await runTempo(repoPath, activeMode, args);
       const out = r.output || "No output";
       const now = Date.now();
+      const dur = runStart.current ? (now - runStart.current) / 1000 : null;
       outputCache.current.set(activeMode, out);
       outputTsCache.current.set(activeMode, now);
+      if (dur !== null) runDurationCache.current.set(activeMode, dur);
       setModeOutput(out);
       setOutputTs(now);
+      if (dur !== null) setRunDuration(dur);
       setCachedModes(prev => new Set(prev).add(activeMode));
       if (raw && activeModeInfo?.argPrefix) {
         saveHistory(activeMode, raw);
@@ -305,6 +325,11 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
               <span style={{ animation: "pulse 1.2s ease-in-out infinite", display: "inline-block" }}>
                 Running {activeMode}…
               </span>
+              {elapsed > 0 && (
+                <span style={{ marginLeft: 8, fontFamily: "var(--font-mono)", opacity: 0.7 }}>
+                  {elapsed}s
+                </span>
+              )}
             </div>
           ) : modeOutput ? (
             <>
@@ -356,6 +381,7 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
                   </>
                 )}
                 <span style={{ fontSize: 9, color: "var(--text-tertiary)", marginLeft: "auto", display: "flex", gap: 8 }}>
+                  {runDuration !== null && <span title="Run duration" style={{ fontFamily: "var(--font-mono)" }}>{runDuration < 10 ? runDuration.toFixed(1) : Math.round(runDuration)}s</span>}
                   {outputTs && <span title="Time since this output was generated">{formatAge(outputTs)}</span>}
                   <span>~{Math.round(modeOutput.length / 4).toLocaleString()} tok</span>
                 </span>
