@@ -5,8 +5,22 @@ build-backend = "hatchling.build"
 [project]
 name = "tempograph"
 version = "0.4.0"
-description = "Semantic code graph — track how your codebase evolves over time"
+description = "Code graph context engine for AI coding agents — structural dependency graph with adaptive injection"
+readme = "README.md"
+license = {file = "LICENSE"}
 requires-python = ">=3.11"
+keywords = ["code-graph", "ai-agents", "context", "mcp", "tree-sitter", "code-analysis"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 dependencies = [
     "tree-sitter>=0.21",
     "tree-sitter-python>=0.21",
