@@ -471,6 +471,10 @@ def _extract_cl_keywords(task: str) -> list[str]:
         "fixed", "improved", "updated", "added", "removed", "changed",
         "fixes", "improves", "updates", "usage", "internal", "external",
         "fork", "syncing", "sync", "backport", "rebase", "cherry", "pick",
+        # Version / dependency metadata — never code symbol names
+        "version", "versions", "versioning", "bump", "release", "changelog",
+        "dependency", "dependencies", "package", "packages", "upgrade", "downgrade",
+        "install", "installation", "requirements", "pinned", "unpinned",
         # PR body prose — common natural language words that appear in PR descriptions
         # but are never code symbol names. These slip through when body-mining is active.
         "implement", "implements", "implementation", "related", "regarding",
