@@ -1,4 +1,4 @@
-"""MCP server — 17 tools for agent codebase understanding.
+"""MCP server — 18 tools for agent codebase understanding.
 
 Each tool returns structured JSON (status/data/tokens/duration) or plain text.
 Standardized error codes: REPO_NOT_FOUND, NOT_GIT_REPO, NO_MATCH, BUILD_FAILED, BUILD_TIMEOUT, RENDER_FAILED.
