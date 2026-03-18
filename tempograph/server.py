@@ -658,7 +658,7 @@ def learn_recommendation(repo_path: str, task_type: str = "", output_format: str
 def prepare_context(repo_path: str, task: str, task_type: str = "",
                     max_tokens: int = 6000, exclude_dirs: str = "",
                     baseline_predicted_files: list[str] | None = None,
-                    precision_filter: bool = True,
+                    precision_filter: bool = False,
                     output_format: str = "text") -> str:
     """One-shot context preparation for a task. Runs the optimal combination of
     tools and returns a single, token-budgeted response. Use this instead of
@@ -683,8 +683,8 @@ def prepare_context(repo_path: str, task: str, task_type: str = "",
       Canonical result (n=159 Python+JS): +6.9% F1 (p=0.035*). Cost: 2× inference for ~37% of tasks.
     precision_filter: if True, skip context when >4 key files are found (topic too broad).
       Canonical bench: python3 -m bench.changelocal.analyze --canonical --conditions baseline,tempograph_precision
-      Canonical result (n=159 Python+JS): +3.7% F1 (p=0.21, ns). Zero overhead. Default True.
-      Helps on high-baseline repos (converts flask −42% to positive); neutral or slightly harmful elsewhere.
+      Canonical result (n=159 Python+JS): +3.7% F1 (p=0.21, ns). Default False (plain tempograph = +6.0%
+      outperforms precision_filter on canonical corpus). Enable only for high-baseline repos.
     output_format: "text" (default) or "json" for structured response
 
     Returns: overview summary + focused context + KEY FILES + hotspot warnings,
