@@ -548,6 +548,14 @@ def _extract_cl_keywords(task: str) -> list[str]:
                      if strict_camel else r'\b[A-Z][a-zA-Z0-9]+\b')
         for ident in re.findall(camel_pat, source):
             _record(ident, priority)
+        # lowerCamelCase identifiers (e.g. `notFound`, `handleRequest`, `setNotFoundHandler`).
+        # Appears in both PR bodies (strict_camel=True) and conventional commit messages (non-strict).
+        # Pattern: starts lowercase, uppercase transition, THEN lowercase continuation (rules out
+        # acronym-style endings like "partII" or "iOS" where uppercase is followed by uppercase).
+        # Evidence: "Add reply.notFound() method" → "notFound" → focus finds setNotFoundHandler.
+        # Evidence: "fix: update handleRequest to support headers" → "handleRequest" extracted.
+        for ident in re.findall(r'\b[a-z][a-zA-Z0-9]*[A-Z][a-z][a-zA-Z0-9]*\b', source):
+            _record(ident, priority)
         for ident in re.findall(r'\b[a-z_][a-z0-9_]{2,}\b', source):
             # Multi-component snake_case (render_focused, sort_callers) → priority:
             # these are specific identifiers, not generic English words.
