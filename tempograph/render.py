@@ -530,7 +530,10 @@ def _extract_cl_keywords(task: str) -> list[str]:
         for ident in re.findall(camel_pat, source):
             _record(ident, priority)
         for ident in re.findall(r'\b[a-z_][a-z0-9_]{2,}\b', source):
-            _record(ident, general)
+            # Multi-component snake_case (render_focused, sort_callers) → priority:
+            # these are specific identifiers, not generic English words.
+            # Single-word (sort, filter, key) → general: likely common verbs/nouns.
+            _record(ident, priority if '_' in ident else general)
             if ident.count('_') >= 3 and len(ident) > 20:
                 parts = ident.split('_')
                 for i, part in enumerate(parts):
@@ -1710,6 +1713,8 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                 # Only apply when pred==1 (very focused prediction); ≥2 predictions may be scattered/wrong.
                 if overlap == 0 and len(predicted_set) == 1:
                     return ""  # single focused prediction doesn't align with path hint → risky
+            if precision_filter and len(path_fallback_files) > 4:
+                return ""  # Too broad (path match) — skip context entirely
             kf_section = "KEY FILES (path match):\n" + "\n".join(f"  {f}" for f in path_fallback_files[:5])
             sections.append(kf_section)
             token_count += count_tokens(kf_section)

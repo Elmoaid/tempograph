@@ -41,6 +41,10 @@ def build_graph(
     use_cache: bool = True,
 ) -> Tempo:
     root = Path(root).resolve()
+    # Normalize exclude_dirs: "a,b" string → ["a", "b"] list (str is Sequence[str] in Python,
+    # so passing a comma-separated string would silently iterate over characters without this).
+    if isinstance(exclude_dirs, str):
+        exclude_dirs = [d.strip() for d in exclude_dirs.split(",") if d.strip()]
     graph = Tempo(root=str(root))
 
     # Detect Tauri project: has src-tauri/ or tauri.conf.json
