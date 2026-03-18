@@ -220,7 +220,7 @@ class Tempo:
         raw_tokens = _re.split(r'[\s/\-#@]+', query_lower)
         tokens = [t for t in raw_tokens
                   if t not in self._STOP_WORDS and len(t) > 1
-                  and t.isalpha()]  # drop numeric refs like "675", mixed tokens
+                  and _re.match(r'^[a-z][a-z0-9_]*$', t)]  # valid identifier chars only
         if not tokens:
             tokens = [t for t in query_lower.split() if len(t) > 1]
         results: list[tuple[float, Symbol]] = []
