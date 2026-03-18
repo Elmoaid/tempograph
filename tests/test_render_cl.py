@@ -1,6 +1,6 @@
 """Tests for change-localization helpers in render.py."""
 import pytest
-from tempograph.render import _extract_cl_keywords, _is_change_localization, _extract_focus_files, _is_docs_branch_task
+from tempograph.render import _extract_cl_keywords, _is_change_localization, _extract_focus_files, _is_docs_branch_task, render_prepare
 
 
 class TestExtractClKeywords:
@@ -215,3 +215,28 @@ class TestIsDocsBranchTask:
 
     def test_documentation_prefix_branch(self):
         assert _is_docs_branch_task("Merge pull request #8 from org/documentation-update") is True
+
+
+class TestRenderPreparePrecisionFilter:
+    """render_prepare(precision_filter=True) skips context when >4 key files found."""
+
+    def _make_graph(self, tmp_path):
+        """Create a minimal real git repo for render_prepare."""
+        import subprocess
+        from tempograph.builder import build_graph
+        (tmp_path / "a.py").write_text("def alpha(): pass\n")
+        (tmp_path / "b.py").write_text("def beta(): pass\n")
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+        subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "init",
+                        "--author=test <t@t.com>"], cwd=tmp_path, check=True)
+        return build_graph(str(tmp_path))
+
+    def test_precision_filter_passes_through_to_render(self, tmp_path):
+        """precision_filter param is accepted without error."""
+        graph = self._make_graph(tmp_path)
+        result_off = render_prepare(graph, "fix alpha function", precision_filter=False)
+        result_on = render_prepare(graph, "fix alpha function", precision_filter=True)
+        # Both calls should succeed — whether context is injected depends on keyword matching
+        assert isinstance(result_off, str)
+        assert isinstance(result_on, str)
