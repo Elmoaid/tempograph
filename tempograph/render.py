@@ -56,7 +56,21 @@ def _find_entry_points(graph: Tempo) -> list[str]:
         if sym.name in ("main", "app", "run_server", "create_app", "cli"):
             entries.append(f"{sym.file_path}::{sym.name}")
 
-    return entries[:15]  # Cap at 15
+    # Deduplicate: if file already listed at file level, skip redundant file::symbol entry.
+    # e.g. "tempo/cli.py" and "tempo/cli.py::main" → keep "tempo/cli.py::main" (more specific).
+    seen_files: set[str] = set()
+    deduped: list[str] = []
+    # Two passes: symbol entries (more informative) take precedence over bare file entries
+    symbol_entries = [e for e in entries if "::" in e]
+    file_entries = [e for e in entries if "::" not in e]
+    for e in symbol_entries:
+        file_part = e.split("::")[0]
+        seen_files.add(file_part)
+        deduped.append(e)
+    for e in file_entries:
+        if e not in seen_files:
+            deduped.append(e)
+    return sorted(set(deduped), key=lambda e: ("::" not in e, e))[:15]  # files first, capped
 
 
 def render_overview(graph: Tempo) -> str:
@@ -78,8 +92,17 @@ def render_overview(graph: Tempo) -> str:
             lines.append(f"  {e}")
 
     # Top files by combined size + complexity (not two separate lists)
+    # Exclude non-code files: JSON schemas, markdown docs, CSS, TOML configs, etc.
+    # These have cx=0 but large line counts (e.g. auto-generated Tauri schemas at 2564L),
+    # which dominate the ranking and mislead agents about which files actually matter.
+    _CODE_LANGS = {
+        "python", "typescript", "tsx", "javascript", "jsx",
+        "rust", "go", "java", "csharp", "ruby",
+    }
     file_scores: list[tuple[float, FileInfo]] = []
     for fi in graph.files.values():
+        if fi.language.value not in _CODE_LANGS:
+            continue  # skip markdown, json, toml, yaml, html, css — never "key" for coding
         cx = sum(graph.symbols[sid].complexity for sid in fi.symbols if sid in graph.symbols)
         # Score: lines matter, complexity matters more
         score = fi.line_count + cx * 3
@@ -375,6 +398,10 @@ def _extract_cl_keywords(task: str) -> list[str]:
         "update", "remove", "change", "bug", "feature", "merge", "pull",
         "request", "branch", "commit", "issue", "use", "make", "new",
         "when", "not", "all", "can", "should", "would", "into", "also",
+        # Short English articles/prepositions/conjunctions (never code identifiers)
+        "are", "its", "via", "any", "but", "has", "was", "had", "yet",
+        "nor", "per", "due", "let", "now", "old", "raw", "off", "out",
+        "non", "sub", "pre", "too",
         "pass", "through", "methods", "method", "function", "class", "file",
         "code", "test", "tests", "type", "types", "value", "values", "data",
         "object", "objects", "item", "items", "list", "dict", "set", "get",
