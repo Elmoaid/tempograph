@@ -633,7 +633,7 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
         # Split CamelCase into components (e.g. ReplyNotFound → Reply, Not, Found)
         parts = _re.sub(r'([A-Z][a-z]+)', r' \1', _re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1 \2', tok)).split()
         _camel_tokens.extend(parts if len(parts) > 1 else [tok])
-    _query_tokens = [t.lower() for t in _camel_tokens if len(t) > 3]
+    _query_tokens = [t.lower() for t in _camel_tokens if len(t) >= 3]
 
     def _caller_priority(sym: "Symbol") -> int:
         """0 = keyword match in path (show first), 1 = no match (show after)."""
@@ -715,12 +715,18 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                 block_lines.append(f"{indent}  ⚠ {', '.join(warnings)}")
             callers = graph.callers_of(sym.id)
             if callers:
-                shown = 8 if depth == 0 else 5
                 # Keyword-matching callers first (e.g. test/reply.test.js before lib/logger.js)
                 callers_sorted = sorted(callers, key=_caller_priority)
-                block_lines.append(f"{indent}  called by: {', '.join(c.qualified_name for c in callers_sorted[:shown])}")
-                if len(callers) > shown:
-                    block_lines[-1] += f" (+{len(callers) - shown} more)"
+                kw_callers = [c for c in callers_sorted if _caller_priority(c) == 0]
+                other_callers = [c for c in callers_sorted if _caller_priority(c) != 0]
+                # When keyword callers exist: cap other callers at 3 to reduce noise.
+                # Without keyword matches: show up to 8 (all callers equally relevant).
+                max_other = 3 if kw_callers else (8 if depth == 0 else 5)
+                shown_callers = kw_callers + other_callers[:max_other]
+                shown_count = len(kw_callers) + max_other
+                block_lines.append(f"{indent}  called by: {', '.join(c.qualified_name for c in shown_callers)}")
+                if len(callers) > shown_count:
+                    block_lines[-1] += f" (+{len(callers) - shown_count} more)"
             callees = graph.callees_of(sym.id)
             if callees:
                 shown = 8 if depth == 0 else 5
@@ -1675,9 +1681,19 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
             # All symbol searches were too broad, but path matching found specific files.
             # E.g. "demo" fails symbol focus (15+ matches) but path match → demos/ directory.
             if baseline_predicted_files is not None:
-                overlap = len(set(baseline_predicted_files) & set(path_fallback_files)) / len(path_fallback_files)
+                predicted_set = set(baseline_predicted_files)
+                path_set = set(path_fallback_files)
+                overlap = len(predicted_set & path_set) / len(path_set)
                 if overlap >= 0.5:
                     return ""  # model already predicts the path-matched files
+                # Path-only context (no BFS graph) is weak when model already has a focused prediction.
+                # If baseline predicted exactly 1 file with no overlap to path-match, the model is
+                # likely correct on that file and the path hint would redirect it incorrectly.
+                # Evidence (DRF authtoken-import): baseline=0.5 (auth.py, pred=1, correct),
+                # path=authtoken/models.py (non-overlapping) → injection drops F1 to 0.
+                # Only apply when pred==1 (very focused prediction); ≥2 predictions may be scattered/wrong.
+                if overlap == 0 and len(predicted_set) == 1:
+                    return ""  # single focused prediction doesn't align with path hint → risky
             kf_section = "KEY FILES (path match):\n" + "\n".join(f"  {f}" for f in path_fallback_files[:5])
             sections.append(kf_section)
             token_count += count_tokens(kf_section)
