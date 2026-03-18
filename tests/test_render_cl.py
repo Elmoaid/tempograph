@@ -1,6 +1,6 @@
 """Tests for change-localization helpers in render.py."""
 import pytest
-from tempograph.render import _extract_cl_keywords, _is_change_localization, _extract_focus_files
+from tempograph.render import _extract_cl_keywords, _is_change_localization, _extract_focus_files, _is_docs_branch_task
 
 
 class TestExtractClKeywords:
@@ -160,3 +160,38 @@ class TestExtractFocusFiles:
                  self._make_focus_output(["src/foo.py"], {"src/foo.py": 1})
         result = _extract_focus_files(output)
         assert result[0] == "src/bar.py"  # higher frequency first
+
+
+class TestIsDocsBranchTask:
+    """Tests for _is_docs_branch_task — suppresses overview for docs-named branches."""
+
+    def test_docs_prefix_branch(self):
+        assert _is_docs_branch_task("Merge pull request #636 from pallets/docs-javascript") is True
+
+    def test_doc_prefix_branch(self):
+        assert _is_docs_branch_task("Merge pull request #1 from org/doc-fix") is True
+
+    def test_readme_prefix_branch(self):
+        assert _is_docs_branch_task("Merge pull request #2 from org/readme-update") is True
+
+    def test_changelog_prefix_branch(self):
+        assert _is_docs_branch_task("Merge pull request #3 from org/changelog-bump") is True
+
+    def test_docs_directory_path(self):
+        assert _is_docs_branch_task("Merge pull request #4 from org/docs/fix-typo") is True
+
+    def test_docs_suffix_branch(self):
+        assert _is_docs_branch_task("Merge pull request #5 from org/auth-docs") is True
+
+    def test_trunk_branch_not_docs(self):
+        assert _is_docs_branch_task("Merge pull request #6 from org/main") is False
+
+    def test_feature_branch_not_docs(self):
+        assert _is_docs_branch_task("Merge pull request #7 from org/fix-auth-bug") is False
+
+    def test_non_pr_title_not_docs(self):
+        # Function only matches "Merge pull request ... from org/branch" format
+        assert _is_docs_branch_task("fix: update documentation for API") is False
+
+    def test_documentation_prefix_branch(self):
+        assert _is_docs_branch_task("Merge pull request #8 from org/documentation-update") is True
