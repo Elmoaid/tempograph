@@ -57,3 +57,44 @@ class TestExtractKeywords:
         assert "the" not in kws
         assert "fix" not in kws
         assert "handle" not in kws
+
+    def test_generic_identifiers_filtered(self):
+        """error/option/log/ticket should not appear as keywords (universal noise)."""
+        kws = _kw("Merge pull request #558 from fastify/http-errors")
+        assert "errors" not in kws
+        assert "error" not in kws
+
+        kws = _kw("Merge pull request #674 from fastify/no-ajv-option")
+        assert "option" not in kws
+        assert "options" not in kws
+
+        kws = _kw("Merge pull request #436 from allevo/logger-to-log")
+        assert "log" not in kws
+        assert "logger" not in kws
+
+    def test_ticket_branch_mines_body(self):
+        """Ticket-reference branches (issue1234, ticket-20550) include body keywords."""
+        kws = _kw(
+            "Merge pull request #2764 from gchp/ticket-20550\n"
+            "Fixed #20550 -- Added keepdb argument to destroy_test_db"
+        )
+        # Body-derived snake_case identifiers should be included
+        assert "keepdb" in kws or "destroy_test_db" in kws
+
+    def test_numeric_branch_mines_body(self):
+        """Branches starting with numbers (24937-word) include body for better context."""
+        kws = _kw(
+            "Merge pull request #4818 from dracos/24937-ranging-to-victory\n"
+            "Fixed #24937 -- fix serialization of DateTimeRangeField."
+        )
+        assert "DateTimeRangeField" in kws or "RangeField" in kws
+
+    def test_good_branch_does_not_mine_body(self):
+        """Informative branches (reply-not-found) do NOT include body to avoid noise."""
+        kws = _kw(
+            "Merge pull request #588 from nwoltman/reply-not-found\n"
+            "ShouldNotAppear IrrelevantClass in body text"
+        )
+        assert "IrrelevantClass" not in kws
+        assert "ShouldNotAppear" not in kws
+        assert "ReplyNotFound" in kws or "reply" in kws
