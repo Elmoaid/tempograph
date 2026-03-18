@@ -93,10 +93,30 @@ class TestExtractClKeywords:
         assert "TokenValidator" in kws
 
     def test_conventional_commit_with_scope(self):
-        # Scoped commits: "feat(parser): ..." — scope should not be a keyword either
+        # Scoped commits: "feat(parser): ..." — scope IS a keyword (names the changed component)
         kws = _extract_cl_keywords("feat(parser): fix CamelCase extraction")
         assert "feat" not in kws
-        assert "parser" not in kws or "CamelCase" in kws  # CamelCase should be present
+        assert "parser" in kws  # scope extracted as priority keyword
+        assert "CamelCase" in kws
+
+    def test_conventional_commit_scope_priority(self):
+        # Scope names the component being changed — extracted even if it's a common English word
+        kws = _extract_cl_keywords("perf(Response): Optimize body handling")
+        assert "Response" in kws
+        assert kws.index("Response") < 2  # should be first or second keyword
+
+    def test_conventional_commit_scope_merge_pr(self):
+        # Scope extraction works for Merge PR tasks (scope is in the body)
+        kws = _extract_cl_keywords(
+            "Merge pull request #686 from kgriffs/tuning\nperf(Response): Optimize body"
+        )
+        assert "Response" in kws
+        assert kws.index("Response") < 2  # priority keyword
+
+    def test_conventional_commit_scope_streamclass(self):
+        kws = _extract_cl_keywords("feat(StreamMiddleware): Add streaming support")
+        assert "StreamMiddleware" in kws
+        assert kws.index("StreamMiddleware") == 0
 
 
 class TestIsChangeLocalization:
