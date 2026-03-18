@@ -1832,6 +1832,10 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                             # Encoding format terms: "ExposeDefaultJsonSerializer" → "Json" → serialize.js
                             # (wrong). "json"/"xml" are technology descriptors, not file-identity markers.
                             "json", "xml",
+                            # Generic HTTP/property accessors: "HostSetter" → "Host" → request.js (wrong).
+                            # These describe concepts, not files. All are in the keyword skip set for the
+                            # same reason — too generic to be useful as code identifiers.
+                            "host", "method", "setter", "getter",
                         })
                         _parts: list[str] = []
                         _cur: list[str] = []
