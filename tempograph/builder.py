@@ -10,7 +10,7 @@ from typing import Sequence
 from .cache import check_cache, load_cache, make_cache_entry, save_cache
 from .types import Tempo, Edge, EdgeKind, FileInfo, Language, Symbol, SymbolKind, EXTENSION_TO_LANGUAGE
 from .parser import FileParser
-from .git import is_git_repo, recently_modified_files
+from .git import is_git_repo, recently_modified_files, changed_files_staged, changed_files_unstaged
 
 DEFAULT_IGNORE_DIRS = frozenset({
     "node_modules", ".git", "__pycache__", "target", "dist", "build",
@@ -142,11 +142,11 @@ def build_graph(
     _resolve_edges(graph)
     graph.build_indexes()
 
-    # Temporal weighting: populate hot_files from recent git history.
+    # Temporal weighting: populate hot_files from working-tree or recent history.
     # Source files only — test files and docs are excluded so that test symbols
     # don't outrank implementations for ambiguous queries.
     if is_git_repo(str(root)):
-        all_hot = recently_modified_files(str(root), n_commits=5)
+        all_hot = _get_hot_files(str(root))
         graph.hot_files = {f for f in all_hot if _is_hot_source_file(f)}
 
     return graph
@@ -164,6 +164,22 @@ _TEST_SUFFIXES = (
     "_test.go", "_test.rb",
 )
 _DOC_EXTENSIONS = frozenset({".md", ".rst", ".txt", ".adoc"})
+
+
+def _get_hot_files(repo: str) -> set[str]:
+    """Return candidate hot file paths for temporal weighting.
+
+    Priority: working-tree changes (staged + unstaged) reflect what the developer
+    is actively editing right now. If the working tree is clean, fall back to the
+    last 2 commits so a freshly-committed session still gets a signal.
+
+    Using working-tree changes prevents stale commits (e.g., UI work from yesterday)
+    from injecting false temporal bonuses during unrelated Python queries.
+    """
+    working = set(changed_files_staged(repo) + changed_files_unstaged(repo))
+    if working:
+        return working
+    return recently_modified_files(repo, n_commits=2)
 
 
 def _is_hot_source_file(path: str) -> bool:

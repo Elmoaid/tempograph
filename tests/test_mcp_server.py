@@ -1306,10 +1306,10 @@ class TestTemporalSymbolWeighting:
     def test_build_graph_populates_hot_files(self):
         from tempograph.builder import build_graph
         from unittest.mock import patch
-        # Patch recently_modified_files to return a known source file so the test
-        # doesn't depend on the repo's git history (which varies across sessions).
+        # Patch _get_hot_files to return a known set so the test doesn't depend on
+        # the repo's working tree or git history, which varies across sessions.
         with patch(
-            "tempograph.builder.recently_modified_files",
+            "tempograph.builder._get_hot_files",
             return_value={"tempograph/render.py", "notes/readme.md"},
         ):
             g = build_graph(REPO_PATH)
