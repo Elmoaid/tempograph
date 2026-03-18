@@ -57,6 +57,13 @@ class TestExtractClKeywords:
         assert "update" not in kws
         assert "merge" not in kws
 
+    def test_defaults_plural_skipped(self):
+        # 'defaults' (plural of skipped 'default') must be excluded. Commit 46522c5.
+        # "redirect defaults to 303" → only 'redirect' is meaningful; 'defaults' is noise.
+        kws = _extract_cl_keywords("fix redirect defaults to 303")
+        assert "defaults" not in kws
+        assert "redirect" in kws  # the meaningful keyword is retained
+
     def test_cross_repo_pr_format(self):
         # "Merge pull request org/repo#123 from org/branch"
         kws = _extract_cl_keywords("Merge pull request encode/httpx#595 from encode/reply-not-found")
