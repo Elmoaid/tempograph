@@ -115,6 +115,15 @@ class TestSelectiveOverviewCondition:
         assert _kw("Merge branch 'main' into patch-1") == []
         assert _kw("Merge pull request #2 from requests/master\nSyncing fork") == []
 
+    def test_trunk_branch_with_body_still_empty(self):
+        """Contributor using fork master even with a real body → [] to preserve overview fallback.
+
+        Returning [] triggers selective-overview, which benefits low-baseline repos (requests +131%).
+        Extracting keywords from body would suppress overview and hurt these cases.
+        """
+        assert _kw("Merge pull request #4978 from sayzlim/master\nFix double image request") == []
+        assert _kw("Merge pull request #456 from user/master") == []
+
     def test_logger_branch_returns_nonempty(self):
         """no-logger-by-default → ['NoLoggerByDefault'] (non-empty → no overview fallback).
 
