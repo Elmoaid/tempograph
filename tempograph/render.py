@@ -479,8 +479,9 @@ def _extract_cl_keywords(task: str) -> list[str]:
         # JS/TS keywords
         "const", "export", "require", "props", "state",
         "handle", "handles", "check", "checks", "run", "runs", "create",
-        "support", "include", "includes", "avoid", "prevent", "ensure",
+        "support", "supported", "include", "includes", "avoid", "prevent", "ensure",
         "apply", "improve", "move", "moved", "part", "parts", "some",
+        "limit", "limits",  # branch component "limit-selects" → "limit" matches LimitOffsetPagination (wrong)
         "error", "errors", "option", "options", "response", "config",
         "enable", "enabled", "disable", "disabled", "default", "global",
         "log", "logger", "logging", "ticket", "docs", "readme",
