@@ -686,13 +686,33 @@ def prepare_context(repo_path: str, task: str, task_type: str = "",
     output_format: "text" (default) or "json" for structured response
 
     Returns: overview summary + focused context + KEY FILES + hotspot warnings,
-    all within the token budget.
+    all within the token budget. JSON format adds `key_files` (parsed list) and `injected` (bool).
     """
-    return _run_tool("prepare_context", repo_path, output_format,
-                     lambda g: render_prepare(g, task, max_tokens=max_tokens, task_type=task_type,
-                                              baseline_predicted_files=baseline_predicted_files,
-                                              precision_filter=precision_filter),
-                     exclude_dirs=exclude_dirs, task=task, task_type=task_type)
+    import re as _re
+    p, err = _validate_repo(repo_path)
+    if err:
+        return _error(err, f"Directory not found: {repo_path}", output_format)
+    excludes = _resolve_excludes(p, exclude_dirs)
+    start = time.time()
+    result = _get_or_build_graph(p, exclude_dirs=excludes or None)
+    if isinstance(result, str):
+        code, _, msg = result.partition(":")
+        return _error(code, msg or "Graph build failed", output_format)
+    try:
+        output = render_prepare(result, task, max_tokens=max_tokens, task_type=task_type,
+                                baseline_predicted_files=baseline_predicted_files,
+                                precision_filter=precision_filter)
+    except Exception as exc:
+        return _error("RENDER_FAILED", f"prepare_context render error: {exc}", output_format)
+    elapsed = time.time() - start
+    tokens = count_tokens(output)
+    _log_tool("prepare_context", p, output, elapsed, task=task, task_type=task_type)
+    if output_format == "json":
+        m = _re.search(r'KEY FILES[^:]*:\n((?:  \S+\n?)+)', output)
+        key_files = [ln.strip() for ln in m.group(1).split('\n') if ln.strip()] if m else []
+        return _success(output, tokens, elapsed, output_format,
+                        key_files=key_files, injected=bool(output.strip()))
+    return output
 
 
 # ── Tool 17: Skills / pattern catalog ────────────────────────────

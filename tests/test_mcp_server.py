@@ -405,6 +405,47 @@ class TestPrepareContext:
         assert r["status"] == "ok"
         assert "## Repo:" in r["data"]
 
+    def test_json_output_includes_key_files_and_injected(self):
+        # JSON mode: key_files is a parsed list, injected is a bool.
+        r = assert_ok(prepare_context(
+            REPO_PATH,
+            task="Merge pull request #1 from org/fix-render-focused",
+            output_format="json",
+        ))
+        assert "key_files" in r, "JSON output must include key_files"
+        assert "injected" in r, "JSON output must include injected"
+        assert isinstance(r["key_files"], list)
+        assert isinstance(r["injected"], bool)
+
+    def test_json_output_injected_false_on_gating(self):
+        # When gating triggers (high overlap), injected=False and key_files=[].
+        import re
+        task = "Merge pull request #1 from org/fix-render-focused"
+        base_r = assert_ok(prepare_context(REPO_PATH, task=task, output_format="json"))
+        if not base_r.get("key_files"):
+            pytest.skip("Task produces no KEY FILES")
+        gated_r = assert_ok(prepare_context(
+            REPO_PATH, task=task,
+            baseline_predicted_files=base_r["key_files"],
+            output_format="json",
+        ))
+        assert gated_r["injected"] is False
+        assert gated_r["key_files"] == []
+        assert gated_r["data"].strip() == ""
+
+    def test_json_output_injected_true_when_context_added(self):
+        # When context is injected (no gating), injected=True and key_files is non-empty.
+        task = "Merge pull request #1 from org/fix-render-focused"
+        r = assert_ok(prepare_context(
+            REPO_PATH, task=task,
+            baseline_predicted_files=["unrelated/file.py"],  # 0% overlap → inject
+            output_format="json",
+        ))
+        if "KEY FILES" not in r["data"]:
+            pytest.skip("Task produces no KEY FILES for this repo")
+        assert r["injected"] is True
+        assert len(r["key_files"]) > 0
+
 
 # ---------------------------------------------------------------------------
 # Exclude dirs
