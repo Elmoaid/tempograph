@@ -637,14 +637,15 @@ def _extract_cl_keywords(task: str) -> list[str]:
 
 
 def _is_docs_branch_task(task: str) -> bool:
-    """Return True when the PR branch name is a docs-specific path.
+    """Return True when the PR is a docs/version/infra PR that should skip overview injection.
 
-    Docs branches (docs-javascript, docs/#4574, readme-fix, changelog-update) often change
-    both docs AND code, but the overview fallback incorrectly focuses the model on generic
-    structure (conf.py, README) rather than the actual code paths changed.
-    Suppressing overview lets the model use training knowledge → tie instead of regression.
+    Three cases where overview injection misleads (changes files outside the code graph):
+    1. Docs branches: docs-javascript, docs/#4574, readme-fix → README/conf.py changes
+    2. Version-release branches: version-0.1.5, v1.2.3 → changelog/pyproject changes
+    3. Pure-infra body: "Pin versions of dependencies" → requirements.txt changes
 
-    Evidence: flask "docs-javascript" overview → F1 0.556→0.154 (-0.402 delta, n=71 dataset).
+    Evidence: flask "docs-javascript" overview → F1 0.556→0.154 (-0.402 delta).
+              fastapi "fix-10" (Pin versions) overview → F1 0.500→0.286 (-0.214 delta).
     """
     import re
     m = re.search(r'Merge pull request \S+ from [^/\s]+/(\S+)', task)
@@ -652,17 +653,43 @@ def _is_docs_branch_task(task: str) -> bool:
         return False
     branch = m.group(1).lower()
     leaf = branch.split('/')[-1]
-    # Component-based detection: "docs" as a hyphen/underscore/slash-separated word anywhere.
+    # Docs branches: "docs" as a hyphen/underscore/slash-separated component anywhere.
     # Matches: docs-javascript, auth-docs, 5309-docs-viewset (DRF-style mid-name).
     # Does NOT match: docstring-update (component is "docstring", not "docs").
     _DOC_COMPONENT = re.compile(r'(?:^|[-_/])docs?(?:[-_/]|$)')
-    return (
-        bool(_DOC_COMPONENT.search(leaf))
-        or any(re.search(r'(?:^|[-_/])' + kw + r'(?:[-_/]|$)', leaf)
-               for kw in ("readme", "changelog", "documentation"))
-        or branch.startswith("docs/")
-        or branch.startswith("doc/")
+    if (bool(_DOC_COMPONENT.search(leaf))
+            or any(re.search(r'(?:^|[-_/])' + kw + r'(?:[-_/]|$)', leaf)
+                   for kw in ("readme", "changelog", "documentation"))
+            or branch.startswith("docs/")
+            or branch.startswith("doc/")):
+        return True
+    # Version-release branches: "version-X.Y.Z", "v1.2.3", "release-1.0" in branch leaf.
+    # These change pyproject.toml / CHANGELOG, not source files.
+    if (re.search(r'(?:^|[-_/])v?\d+\.\d+', leaf)
+            or re.search(r'(?:^|[-_/])version(?:[-_/]|$)', leaf)
+            or re.search(r'(?:^|[-_/])release(?:[-_/]|$)', leaf)):
+        return True
+    # Pure-infrastructure body: ticket-ref branch where body ONLY contains infra words.
+    # "fix-10" + "Pin versions of dependencies and bump version" → requirements.txt.
+    # Keyword extraction already returns [] for these; overview adds no code-graph signal.
+    _is_ticket = bool(
+        re.match(r'^(?:issue|ticket|bug|patch|pr|fix|hotfix)[-_]?\d+', leaf)
+        or re.match(r'^\d+[-_]', leaf)
     )
+    if _is_ticket:
+        body = task[task.find('\n') + 1:].strip() if '\n' in task else ''
+        _INFRA_ONLY = frozenset({
+            "pin", "pinned", "pinning", "bump", "bumped", "bumping",
+            "version", "versions", "versioning", "release", "releases",
+            "dependency", "dependencies", "deps", "package", "packages",
+            "upgrade", "upgraded", "upgrading", "downgrade", "downgraded",
+            "install", "installation", "requirements", "freeze", "frozen",
+            "and", "the", "a", "an", "of", "to", "for", "in", "with", "from",
+        })
+        body_words = set(re.findall(r'[a-zA-Z]+', body.lower()))
+        if body_words and body_words <= _INFRA_ONLY:
+            return True
+    return False
 
 
 def _is_change_localization(task: str, task_type: str) -> bool:

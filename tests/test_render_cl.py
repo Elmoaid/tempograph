@@ -348,6 +348,27 @@ class TestIsDocsBranchTask:
     def test_documentation_prefix_branch(self):
         assert _is_docs_branch_task("Merge pull request #8 from org/documentation-update") is True
 
+    def test_version_branch_skips_overview(self):
+        # "version-0.1.5" branch → release PR, changed files are pyproject/CHANGELOG (outside graph)
+        assert _is_docs_branch_task("Merge pull request #50 from encode/version-0.1.5") is True
+
+    def test_explicit_version_tag_branch(self):
+        assert _is_docs_branch_task("Merge pull request #1 from org/v2.3.1") is True
+
+    def test_release_branch_skips_overview(self):
+        assert _is_docs_branch_task("Merge pull request #1 from org/release-1.0") is True
+
+    def test_infra_body_ticket_branch_skips_overview(self):
+        # "fix-10" ticket ref + pure infra body → requirements.txt change, model knows better
+        # Evidence: fastapi de431d94 — overview → F1 0.500→0.286 (-0.214 delta)
+        task = "Merge pull request #11 from tiangolo/fix-10\nPin versions of dependencies and bump version"
+        assert _is_docs_branch_task(task) is True
+
+    def test_ticket_branch_with_code_body_not_infra(self):
+        # Ticket ref but body describes code changes → should NOT skip overview
+        task = "Merge pull request #1 from org/fix-10\nFix handler error in request processing"
+        assert _is_docs_branch_task(task) is False
+
 
 class TestRenderPreparePrecisionFilter:
     """render_prepare(precision_filter=True) skips context when >4 key files found."""
