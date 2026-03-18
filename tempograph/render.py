@@ -486,7 +486,7 @@ def _extract_cl_keywords(task: str) -> list[str]:
         "log", "logger", "logging", "ticket", "docs", "readme",
         "fixed", "improved", "updated", "added", "removed", "changed",
         "fixes", "improves", "updates", "usage", "internal", "external",
-        "fork", "syncing", "sync", "backport", "rebase", "cherry", "pick",
+        "fork", "syncing", "sync", "backport", "rebase", "cherry", "pick", "patch", "hotfix",
         # Version / dependency metadata — never code symbol names
         "version", "versions", "versioning", "bump", "release", "changelog",
         "dependency", "dependencies", "package", "packages", "upgrade", "downgrade",
