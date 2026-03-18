@@ -104,3 +104,33 @@ class TestExtractKeywords:
         assert "IrrelevantClass" not in kws
         assert "ShouldNotAppear" not in kws
         assert "ReplyNotFound" in kws or "reply" in kws
+
+
+class TestSelectiveOverviewCondition:
+    """Validate which tasks produce empty keywords (→ overview) vs non-empty (→ no overview)."""
+
+    def test_master_merge_returns_empty(self):
+        """Merge branch master/main → empty keywords → overview eligible."""
+        assert _kw("Merge branch 'master' into master") == []
+        assert _kw("Merge branch 'main' into patch-1") == []
+        assert _kw("Merge pull request #2 from requests/master\nSyncing fork") == []
+
+    def test_logger_branch_returns_nonempty(self):
+        """no-logger-by-default → ['NoLoggerByDefault'] (non-empty → no overview fallback).
+
+        This is the key: a well-named branch like 'no-logger-by-default' extracts a keyword
+        even though 'logger' and 'default' are in the skip list. 'no' (2 chars) is filtered,
+        but the compound CamelCase 'NoLoggerByDefault' passes. Non-empty → selective overview
+        will NOT inject overview for high-baseline repos where focus search fails.
+        """
+        kws = _kw("Merge pull request #347 from fastify/no-logger-by-default")
+        assert len(kws) > 0  # non-empty → no overview fallback under selective strategy
+
+    def test_descriptive_branch_returns_nonempty(self):
+        """reply-not-found → non-empty → no overview fallback."""
+        kws = _kw("Merge pull request #588 from nwoltman/reply-not-found")
+        assert len(kws) > 0
+
+    def test_part_ii_title_returns_empty(self):
+        """'Part II: The Principles...' from master → empty keywords → overview eligible."""
+        assert _kw("Merge pull request #5208 from psf/partII\nPart II: The Principles") == []
