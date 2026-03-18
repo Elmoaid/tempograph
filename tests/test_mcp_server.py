@@ -377,8 +377,8 @@ class TestPrepareContext:
             baseline_predicted_files=key_file_paths,
             output_format="json",
         ))
-        assert "KEY FILES" not in gated_r["data"]
-        assert "Focus:" not in gated_r["data"]
+        # Gating triggered: returns "" (model already correct — 0 F1 loss, saves tokens)
+        assert gated_r["data"].strip() == ""
 
     def test_adaptive_gating_low_overlap_injects_context(self):
         # When baseline_predicted_files don't overlap with KEY FILES, full context is injected.

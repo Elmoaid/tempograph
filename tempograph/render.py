@@ -1561,7 +1561,7 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
             if baseline_predicted_files is not None and key_files:
                 overlap = len(set(baseline_predicted_files) & set(key_files)) / len(key_files)
                 if overlap >= 0.5:
-                    return sections[0]  # model already predicts the key files — skip injection
+                    return ""  # model already predicts the key files — skip injection
             if key_files:
                 kf_section = "KEY FILES REFERENCED ABOVE:\n" + "\n".join(f"  {f}" for f in key_files[:5])
                 sections.append(kf_section)
@@ -1572,7 +1572,7 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
             if baseline_predicted_files is not None:
                 overlap = len(set(baseline_predicted_files) & set(path_fallback_files)) / len(path_fallback_files)
                 if overlap >= 0.5:
-                    return sections[0]  # model already predicts the path-matched files
+                    return ""  # model already predicts the path-matched files
             kf_section = "KEY FILES (path match):\n" + "\n".join(f"  {f}" for f in path_fallback_files[:5])
             sections.append(kf_section)
             token_count += count_tokens(kf_section)

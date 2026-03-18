@@ -675,8 +675,9 @@ def prepare_context(repo_path: str, task: str, task_type: str = "",
     max_tokens: total token budget for the response (default 6000)
     exclude_dirs: comma-separated directory prefixes to skip
     baseline_predicted_files: optional list of files already predicted by the model
-      (for adaptive injection). If provided, context is skipped when the model's
-      prediction overlaps ≥50% with KEY FILES — it already knows the relevant files.
+      (for adaptive injection). If overlap(baseline ∩ KEY FILES) ≥ 50%, returns ""
+      (model already knows the relevant files — skip re-prediction, save tokens).
+      If overlap < 50%, returns full context (model needs the structural graph bridge).
       Bench evidence (Phase 5.27, n=83): overlap<0.5 → avg +0.30–0.45 F1 gain per case.
     output_format: "text" (default) or "json" for structured response
 
