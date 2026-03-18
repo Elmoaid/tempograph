@@ -788,3 +788,34 @@ class TestPrecisionFilter:
         )
         assert result != ""
         assert "KEY FILES" in result
+
+    def test_precision_filter_skips_broad_path_fallback(self):
+        """precision_filter=True + >4 path-fallback files → returns empty (no injection).
+
+        Regression test for DRF authtoken-import: 'authtoken' keyword found 5 authtoken module
+        files via path match. Without this gate, precision_filter=True still injected those 5 files
+        and hurt the high-baseline model (F1 0.5→0). Fix: gate path_fallback_files the same way.
+        """
+        from unittest.mock import MagicMock, patch
+        from bench.changelocal.context import get_tempograph_context
+
+        # 5 path-matched files (>4 threshold) for a well-known module
+        five_paths = [
+            "rest_framework/authtoken/admin.py",
+            "rest_framework/authtoken/migrations/0001_initial.py",
+            "rest_framework/authtoken/models.py",
+            "rest_framework/authtoken/serializers.py",
+            "rest_framework/authtoken/views.py",
+        ]
+        graph = MagicMock()
+        graph.symbols = {f"sym_{i}": MagicMock(file_path=p) for i, p in enumerate(five_paths)}
+        with patch("bench.changelocal.context.build_graph", return_value=graph), \
+             patch("bench.changelocal.context.render_focused",
+                   return_value="No symbols matching AuthtokenImport"), \
+             patch("bench.changelocal.context.render_overview", return_value=""):
+            result = get_tempograph_context(
+                MagicMock(),
+                "Merge pull request #3785 from sheppard/authtoken-import\ndont import authtoken",
+                precision_filter=True,
+            )
+        assert result == "", f"Expected empty (precision_filter gates broad path fallback), got: {result[:100]}"
