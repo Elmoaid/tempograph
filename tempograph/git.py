@@ -58,3 +58,16 @@ def current_branch(repo: str) -> str | None:
     return _run_git(repo, "rev-parse", "--abbrev-ref", "HEAD")
 
 
+def recently_modified_files(repo: str, n_commits: int = 5) -> set[str]:
+    """Return set of file paths (relative to repo root) touched in the last n_commits.
+
+    Used for temporal weighting: symbols in recently-modified files are more
+    likely relevant to the current task in an active development session.
+    Gracefully returns empty set if not a git repo or git unavailable.
+    """
+    out = _run_git(repo, "log", f"--max-count={n_commits}", "--name-only", "--format=")
+    if not out:
+        return set()
+    return {line for line in out.splitlines() if line.strip()}
+
+

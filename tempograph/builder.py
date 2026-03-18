@@ -9,6 +9,7 @@ from typing import Sequence
 from .cache import check_cache, load_cache, make_cache_entry, save_cache
 from .types import Tempo, Edge, EdgeKind, FileInfo, Language, Symbol, SymbolKind, EXTENSION_TO_LANGUAGE
 from .parser import FileParser
+from .git import is_git_repo, recently_modified_files
 
 DEFAULT_IGNORE_DIRS = frozenset({
     "node_modules", ".git", "__pycache__", "target", "dist", "build",
@@ -124,6 +125,12 @@ def build_graph(
     # Resolve call edges: match target names to actual symbol IDs
     _resolve_edges(graph)
     graph.build_indexes()
+
+    # Temporal weighting: populate hot_files from recent git history.
+    # Symbols in recently-modified files will rank higher in search.
+    if is_git_repo(str(root)):
+        graph.hot_files = recently_modified_files(str(root), n_commits=5)
+
     return graph
 
 
