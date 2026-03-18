@@ -658,7 +658,7 @@ def learn_recommendation(repo_path: str, task_type: str = "", output_format: str
 def prepare_context(repo_path: str, task: str, task_type: str = "",
                     max_tokens: int = 6000, exclude_dirs: str = "",
                     baseline_predicted_files: list[str] | None = None,
-                    precision_filter: bool = False,
+                    precision_filter: bool = True,
                     output_format: str = "text") -> str:
     """One-shot context preparation for a task. Runs the optimal combination of
     tools and returns a single, token-budgeted response. Use this instead of
@@ -679,11 +679,11 @@ def prepare_context(repo_path: str, task: str, task_type: str = "",
       (for adaptive injection). If overlap(baseline ∩ KEY FILES) ≥ 50%, returns ""
       (model already knows the relevant files — skip re-prediction, save tokens).
       If overlap < 50%, returns full context (model needs the structural graph bridge).
-      Bench evidence (qwen2.5-coder:32b, n=159 Python+JS pairs): +14.0% F1 (p=0.038*).
+      Bench: python3 -m bench.changelocal.analyze --conditions baseline,tempograph_adaptive
       Cost: 2× inference for ~37% of tasks.
     precision_filter: if True, skip context when >4 key files are found (topic too broad).
-      Bench evidence (qwen2.5-coder:32b, n=159 Python+JS pairs): +13.4% F1 (p=0.022*).
-      Zero extra inference cost. Recommended for change-localization tasks.
+      Bench: python3 -m bench.changelocal.analyze --conditions baseline,tempograph_precision
+      Zero extra inference cost. Default True.
     output_format: "text" (default) or "json" for structured response
 
     Returns: overview summary + focused context + KEY FILES + hotspot warnings,

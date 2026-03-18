@@ -749,7 +749,7 @@ class TestPrecisionFilter:
         assert result == ""
 
     def test_precision_filter_off_keeps_broad_context(self):
-        """precision_filter=False (default) + >4 key files → context returned."""
+        """precision_filter=False + >4 key files → context returned."""
         result = self._run(
             "Merge pull request #500 from pallets/dispatch-context",
             self._BROAD_FOCUS,
