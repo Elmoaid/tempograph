@@ -136,6 +136,25 @@ class TestExtractClKeywords:
         assert "someuser" not in kws
         assert "TokenValidator" in kws
 
+    def test_language_keywords_skipped(self):
+        # Python/JS language keywords must not appear as focus terms.
+        # Root cause: DRF 'authtoken-import' → 'import' keyword → focus on settings.py symbols
+        # (IMPORT_STRINGS, perform_import) → wrong file predictions → F1 0.5→0.0.
+        kws = _extract_cl_keywords(
+            "Merge pull request #3785 from sheppard/authtoken-import"
+        )
+        # 'import' is a Python keyword — must be in skip set
+        assert "import" not in kws
+        assert "Import" not in kws  # also ensure capitalized form is excluded
+
+    def test_js_keywords_skipped(self):
+        # JS/TS reserved words should not be extracted as code keywords.
+        kws = _extract_cl_keywords("add const export props state handling")
+        assert "const" not in kws
+        assert "export" not in kws
+        assert "props" not in kws
+        assert "state" not in kws
+
 
 class TestIsChangeLocalization:
     def test_task_type_changelocal(self):
