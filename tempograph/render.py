@@ -1641,7 +1641,8 @@ def _extract_name_from_question(question: str) -> str:
 
 def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: str = "",
                    baseline_predicted_files: list[str] | None = None,
-                   precision_filter: bool = False) -> str:
+                   precision_filter: bool = False,
+                   definition_first: bool = False) -> str:
     """Batch context preparation: overview + focus + hotspots + diff in one token-budgeted output.
 
     If L2 learned insights exist for task_type, includes extra modes (dead code, quality)
@@ -1799,6 +1800,27 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                                 if part_hits and len(part_hits) <= 5:
                                     path_fallback_files = part_hits
                                     break
+                # Definition-first fallback: when focus is too_broad and all path matching found nothing,
+                # return just the DEFINING file(s) of the top-ranked symbol.
+                # Handles: "redirect" → flask/helpers.py (where redirect() lives) rather than all callers.
+                # Gated behind definition_first=True (bench evidence required before enabling by default).
+                if definition_first and too_broad and not path_fallback_files:
+                    scored = graph.search_symbols_scored(kw)
+                    if scored:
+                        top_score = scored[0][0]
+                        if top_score >= 10.0:
+                            threshold = top_score * 0.6
+                            def_hits = sorted(set(
+                                sym.file_path for score, sym in scored
+                                if score >= threshold
+                                and not any(x in sym.file_path.lower() for x in _test_markers)
+                                and "/templates/" not in sym.file_path
+                                and not sym.file_path.startswith("templates/")
+                                and "/static/" not in sym.file_path
+                                and not sym.file_path.startswith("static/")
+                            ))
+                            if 1 <= len(def_hits) <= 2:
+                                path_fallback_files = def_hits
                 continue
             focus_parts.append(focused)
 

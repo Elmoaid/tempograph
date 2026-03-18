@@ -659,6 +659,7 @@ def prepare_context(repo_path: str, task: str, task_type: str = "",
                     max_tokens: int = 6000, exclude_dirs: str = "",
                     baseline_predicted_files: list[str] | None = None,
                     precision_filter: bool = False,
+                    definition_first: bool = False,
                     output_format: str = "text") -> str:
     """One-shot context preparation for a task. Runs the optimal combination of
     tools and returns a single, token-budgeted response. Use this instead of
@@ -685,6 +686,10 @@ def prepare_context(repo_path: str, task: str, task_type: str = "",
       Canonical bench: python3 -m bench.changelocal.analyze --canonical --conditions baseline,tempograph_precision
       Canonical result (n=159 Python+JS): +3.7% F1 (p=0.21, ns). Default False (plain tempograph = +6.0%
       outperforms precision_filter on canonical corpus). Enable only for high-baseline repos.
+    definition_first: if True, when a keyword produces too-broad focus (>10 files) and no path match,
+      fall back to the *defining file* of the top-ranked symbol (requires score≥10 and ≤2 defining files).
+      Handles "redirect" → flask/helpers.py instead of injecting nothing. Default False (no bench evidence
+      yet — will be enabled after Phase 5.29 validation confirms positive F1 delta).
     output_format: "text" (default) or "json" for structured response
 
     Returns: overview summary + focused context + KEY FILES + hotspot warnings,
@@ -703,7 +708,8 @@ def prepare_context(repo_path: str, task: str, task_type: str = "",
     try:
         output = render_prepare(result, task, max_tokens=max_tokens, task_type=task_type,
                                 baseline_predicted_files=baseline_predicted_files,
-                                precision_filter=precision_filter)
+                                precision_filter=precision_filter,
+                                definition_first=definition_first)
     except Exception as exc:
         return _error("RENDER_FAILED", f"prepare_context render error: {exc}", output_format)
     elapsed = time.time() - start
