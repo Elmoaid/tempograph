@@ -843,6 +843,25 @@ class TestCommonJSExports:
             if s.name in ('header', 'redirect'):
                 assert s.exported, f"{s.name} should be exported"
 
+    def test_exports_dot_anonymous_function(self):
+        """exports.normalizeType = function(type){} → symbol named from prop."""
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = (
+            b'exports.normalizeType = function(type){ return type.split(";")[0].trim() }\n'
+            b'exports.compileETag = function(val){\n  return val\n}\n'
+            b'exports.setCharset = function setCharset(type, charset){\n  return type\n}\n'
+        )
+        p = FileParser('utils.js', Language.JAVASCRIPT, code)
+        syms, _, _ = p.parse()
+        names = {s.name for s in syms}
+        assert 'normalizeType' in names, f"normalizeType not extracted: {names}"
+        assert 'compileETag' in names, f"compileETag not extracted: {names}"
+        assert 'setCharset' in names, f"setCharset not extracted: {names}"
+        for s in syms:
+            if s.name in ('normalizeType', 'compileETag', 'setCharset'):
+                assert s.exported, f"{s.name} should be exported"
+
     def test_const_proto_module_exports_methods(self):
         """const proto = module.exports = { method() {} } → methods extracted."""
         from tempograph.parser import FileParser

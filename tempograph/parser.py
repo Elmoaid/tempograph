@@ -417,8 +417,15 @@ class FileParser:
                     if right and right.type in ("class", "class_declaration"):
                         self._handle_js_class(right, exported=True)
                     elif right and right.type in ("function_expression", "generator_function_expression"):
-                        # `module.exports = function override(...) {}` — named function expression
-                        self._handle_js_function(right, exported=True)
+                        # `module.exports = function override() {}` — named, or
+                        # `exports.normalizeType = function(type) {}` — anonymous: use prop name
+                        prop_name = None
+                        left_text = _node_text(left, self.source)
+                        if left_text.startswith("exports.") and "." not in left_text[8:]:
+                            prop = left_text[len("exports."):]
+                            if prop and not right.child_by_field_name("name"):
+                                prop_name = prop
+                        self._handle_js_function(right, exported=True, name_override=prop_name)
                     elif right and right.type == "identifier":
                         # `module.exports = fastify` — mark the named symbol as exported
                         self._cjs_exports.add(_node_text(right, self.source))
@@ -448,11 +455,11 @@ class FileParser:
             elif t == "enum_declaration":
                 self._handle_js_enum(child, exported=True)
 
-    def _handle_js_function(self, node: Node, *, exported: bool = False) -> None:
+    def _handle_js_function(self, node: Node, *, exported: bool = False, name_override: str | None = None) -> None:
         name_node = node.child_by_field_name("name")
-        if not name_node:
+        if not name_node and not name_override:
             return
-        name = _node_text(name_node, self.source)
+        name = name_override if name_override else _node_text(name_node, self.source)
         sym_id = self._make_id(name)
         kind = SymbolKind.FUNCTION
         # Detect React components (PascalCase + returns JSX)
