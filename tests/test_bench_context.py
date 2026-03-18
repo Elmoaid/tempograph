@@ -856,3 +856,127 @@ class TestPrecisionFilter:
             assert "schemas.py" in result or "test_schemas.py" in result, (
                 "At least one source schema file should appear in path fallback"
             )
+
+
+# ---------------------------------------------------------------------------
+# Definition-first fallback (too_broad + no path match → use defining file)
+# ---------------------------------------------------------------------------
+
+class TestDefinitionFirstFallback:
+    """When focus is too_broad (>10 files) and path fallback finds nothing,
+    use the DEFINING file of the top-ranked symbol as a focused hint."""
+
+    def _broad_focus_output(self, n_files=12):
+        """Generate a render_focused return value that spans >10 unique files."""
+        lines = []
+        for i in range(n_files):
+            lines.append(f"flask/module_{i:02d}.py: some_symbol_{i}")
+        return "\n".join(lines)
+
+    def test_definition_first_fires_when_path_fallback_empty(self):
+        """too_broad + no path match + strong symbol score → KEY FILES shows defining file."""
+        from unittest.mock import MagicMock, patch
+        from bench.changelocal.context import get_tempograph_context
+
+        # Graph has symbols only in flask/helpers.py (no 'redirect' in any path name)
+        sym_redirect = MagicMock()
+        sym_redirect.file_path = "flask/helpers.py"
+        sym_redirect.name = "redirect"
+
+        graph = MagicMock()
+        graph.symbols = {"redirect": sym_redirect}
+        # Simulate strong exact-name match: score=22.0 (well above 10.0 threshold)
+        graph.search_symbols_scored.return_value = [(22.0, sym_redirect)]
+
+        broad_output = self._broad_focus_output(12)
+
+        with patch("bench.changelocal.context.build_graph", return_value=graph), \
+             patch("bench.changelocal.context.render_focused", return_value=broad_output), \
+             patch("bench.changelocal.context.render_overview", return_value=""):
+            result = get_tempograph_context(
+                MagicMock(),
+                "fix: redirect defaults to 303 instead of 302",
+                definition_first=True,
+            )
+        assert "KEY FILES (path match):" in result
+        assert "flask/helpers.py" in result
+
+    def test_definition_first_skips_weak_score(self):
+        """Weak symbol match (score < 10.0) should NOT trigger definition-first fallback."""
+        from unittest.mock import MagicMock, patch
+        from bench.changelocal.context import get_tempograph_context
+
+        sym = MagicMock()
+        sym.file_path = "flask/helpers.py"
+        sym.name = "something_unrelated"
+
+        graph = MagicMock()
+        graph.symbols = {"s": sym}
+        # Weak score (doc match only)
+        graph.search_symbols_scored.return_value = [(2.5, sym)]
+
+        broad_output = self._broad_focus_output(12)
+
+        with patch("bench.changelocal.context.build_graph", return_value=graph), \
+             patch("bench.changelocal.context.render_focused", return_value=broad_output), \
+             patch("bench.changelocal.context.render_overview", return_value=""):
+            result = get_tempograph_context(
+                MagicMock(),
+                "fix: redirect defaults to 303 instead of 302",
+                definition_first=True,
+            )
+        # Weak score → no definition-first → empty output
+        assert "flask/helpers.py" not in result
+
+    def test_definition_first_skips_when_too_many_files(self):
+        """When top-scored symbols span >2 unique files, definition-first is skipped (too broad)."""
+        from unittest.mock import MagicMock, patch
+        from bench.changelocal.context import get_tempograph_context
+
+        syms = [MagicMock() for _ in range(3)]
+        for i, s in enumerate(syms):
+            s.file_path = f"flask/module_{i:02d}.py"
+            s.name = "redirect"
+
+        graph = MagicMock()
+        graph.symbols = {f"s{i}": s for i, s in enumerate(syms)}
+        # All three match with high score → 3 unique files → skip
+        graph.search_symbols_scored.return_value = [(20.0, s) for s in syms]
+
+        broad_output = self._broad_focus_output(12)
+
+        with patch("bench.changelocal.context.build_graph", return_value=graph), \
+             patch("bench.changelocal.context.render_focused", return_value=broad_output), \
+             patch("bench.changelocal.context.render_overview", return_value=""):
+            result = get_tempograph_context(
+                MagicMock(),
+                "fix: redirect defaults to 303 instead of 302",
+                definition_first=True,
+            )
+        assert result == ""
+
+    def test_definition_first_filters_test_files(self):
+        """Definition-first must not return test files even with strong match."""
+        from unittest.mock import MagicMock, patch
+        from bench.changelocal.context import get_tempograph_context
+
+        sym_test = MagicMock()
+        sym_test.file_path = "tests/test_redirect.py"
+        sym_test.name = "redirect"
+
+        graph = MagicMock()
+        graph.symbols = {"s": sym_test}
+        graph.search_symbols_scored.return_value = [(22.0, sym_test)]
+
+        broad_output = self._broad_focus_output(12)
+
+        with patch("bench.changelocal.context.build_graph", return_value=graph), \
+             patch("bench.changelocal.context.render_focused", return_value=broad_output), \
+             patch("bench.changelocal.context.render_overview", return_value=""):
+            result = get_tempograph_context(
+                MagicMock(),
+                "fix: redirect defaults to 303 instead of 302",
+                definition_first=True,
+            )
+        # Only test file → filtered out → 0 def_hits → no injection
+        assert "tests/test_redirect.py" not in result
