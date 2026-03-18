@@ -400,7 +400,11 @@ def _extract_cl_keywords(task: str) -> list[str]:
             re.search(r'\b[a-z]{2,}-[a-z]{2,}', branch)  # hyphenated alpha-alpha ("reply-not")
             or re.search(r'[a-z][A-Z]', branch)           # explicit camelCase ("partII")
         )
-        task = branch + ('\n' + body if (_is_ticket or not _branch_has_compound) and body else '')
+        # "Username-master" / "OrgName-master": external contributor PR'd from their fork's master.
+        # The compound (camelCase username) is meaningless as a task keyword; mine body instead.
+        # Evidence: falcon "CygnusNetworks-master" / "hooblei-master" → body has "byte ranges" / "context_type".
+        _is_fork_master = leaf.endswith("-master") or leaf.endswith("_master")
+        task = branch + ('\n' + body if (_is_ticket or not _branch_has_compound or _is_fork_master) and body else '')
     else:
         task = re.sub(r'^Merge (?:branch|pull request)[^\n]*\n?', '', task, flags=re.IGNORECASE)
 
@@ -471,9 +475,15 @@ def _extract_cl_keywords(task: str) -> list[str]:
                         if len(compound) > 4:
                             _record(compound, general)
 
-    _extract_from(branch_text, strict_camel=False)
-    if body_text:
+    # For fork-master branches ("Username-master"), the branch is a meaningless GitHub username.
+    # Extract body keywords FIRST so they get priority over the useless branch name.
+    # E.g. "CygnusNetworks-master\nAdd arbitrary byte ranges" → body gives "byte", "ranges" first.
+    if body_text and (branch_text.endswith('-master') or branch_text.endswith('_master')):
         _extract_from(body_text, strict_camel=True)
+    else:
+        _extract_from(branch_text, strict_camel=False)
+        if body_text:
+            _extract_from(body_text, strict_camel=True)
 
     return priority + general
 
