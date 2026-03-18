@@ -428,7 +428,7 @@ def _extract_cl_keywords(task: str) -> list[str]:
         # Pattern: single-word (no hyphens) username followed by "-patch-\d+".
         # Without this, CamelCase extraction yields the username as a priority keyword.
         # Evidence: "Freezerburn-patch-1-reb" → "Freezerburn" keyword → false path match.
-        _gh_patch_m = re.match(r'^([a-z][a-z0-9]*)-patch-\d+', leaf)
+        _gh_patch_m = re.match(r'^([A-Za-z][a-zA-Z0-9]*)-patch-\d+', leaf)
         if _gh_patch_m:
             branch = branch[len(_gh_patch_m.group(1)) + 1:]  # strip "Username-" prefix
             _is_ticket = True  # remaining "patch-N-..." → mine body for actual keywords
