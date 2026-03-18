@@ -165,3 +165,79 @@ class TestCrossRepoPRFormat:
         assert "PydanticCore" not in kws
         assert "https" not in kws
         assert "PassData" in kws
+
+
+def _fp(text: str, keywords: list[str] | None = None) -> list[str]:
+    from bench.changelocal.context import _extract_file_paths
+    return _extract_file_paths(text, task_keywords=keywords)
+
+
+class TestExtractFilePaths:
+    def test_extracts_py_files(self):
+        ctx = "src/flask/app.py mentioned here and again src/flask/app.py, also src/flask/ctx.py"
+        files = _fp(ctx)
+        assert "src/flask/app.py" in files
+        assert "src/flask/ctx.py" in files
+
+    def test_root_level_files_matched(self):
+        """Root-level files like fastify.js (no dir prefix) must be captured."""
+        ctx = "fastify.js is the main file; also lib/router.js"
+        files = _fp(ctx)
+        assert "fastify.js" in files
+        assert "lib/router.js" in files
+
+    def test_source_ranked_above_tests(self):
+        """Source files should appear before test/spec files."""
+        ctx = "src/app.py src/app.py tests/test_app.py src/app.py"
+        files = _fp(ctx)
+        assert files.index("src/app.py") < files.index("tests/test_app.py")
+
+    def test_source_ranked_above_examples(self):
+        """Example/demo files should be ranked last."""
+        ctx = "src/core.py examples/demo.py src/core.py"
+        files = _fp(ctx)
+        assert files.index("src/core.py") < files.index("examples/demo.py")
+
+    def test_frequency_breaks_ties(self):
+        """Higher-frequency files rank first within same tier."""
+        ctx = "src/a.py src/b.py src/a.py src/b.py src/a.py"
+        files = _fp(ctx)
+        assert files.index("src/a.py") < files.index("src/b.py")
+
+    def test_keyword_match_boosts_file(self):
+        """File whose name contains a task keyword is boosted over same-tier files."""
+        ctx = "src/router.py src/auth.py src/auth.py src/router.py src/router.py"
+        # Without keyword: router wins by frequency
+        files_no_kw = _fp(ctx)
+        assert files_no_kw[0] == "src/router.py"
+        # With keyword auth: auth is boosted despite lower frequency
+        files_with_kw = _fp(ctx, keywords=["auth"])
+        assert files_with_kw[0] == "src/auth.py"
+
+    def test_capped_at_15(self):
+        """Result is capped at 15 files even if more are present."""
+        files_text = " ".join(f"src/module{i}.py" for i in range(20))
+        files = _fp(files_text)
+        assert len(files) <= 15
+
+    def test_deduplicates_paths(self):
+        """Same path appearing multiple times returns only one entry."""
+        ctx = "src/app.py src/app.py src/app.py"
+        files = _fp(ctx)
+        assert files.count("src/app.py") == 1
+
+    def test_ignores_non_code_extensions(self):
+        """Non-code files (rst, md, txt) are not extracted."""
+        ctx = "docs/config.rst CHANGES.rst README.md src/app.py"
+        files = _fp(ctx)
+        assert not any(f.endswith(".rst") or f.endswith(".md") for f in files)
+        assert "src/app.py" in files
+
+    def test_multi_language_support(self):
+        """JS, TS, Go, Rust files are all captured."""
+        ctx = "lib/router.js src/server.ts internal/main.go src/lib.rs"
+        files = _fp(ctx)
+        assert "lib/router.js" in files
+        assert "src/server.ts" in files
+        assert "internal/main.go" in files
+        assert "src/lib.rs" in files
