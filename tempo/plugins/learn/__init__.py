@@ -28,20 +28,6 @@ class TaskMemory:
         self._log = self._dir / "tasks.jsonl"
         self._insights = self._dir / "insights.json"
 
-    def record_task(self, task_type: str, context_modes: list[str],
-                    tokens_used: int, success: bool, notes: str = "") -> None:
-        entry = {
-            "ts": time.time(),
-            "task_type": task_type,
-            "context_modes": context_modes,
-            "tokens_used": tokens_used,
-            "success": success,
-            "notes": notes,
-        }
-        with open(self._log, "a") as f:
-            f.write(json.dumps(entry) + "\n")
-        self._update_insights()
-
     def _load_tasks(self) -> list[dict]:
         if not self._log.exists():
             return []
