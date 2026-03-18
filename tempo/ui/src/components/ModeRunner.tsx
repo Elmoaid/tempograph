@@ -1,9 +1,9 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import {
   Eye, Crosshair, Bomb, Skull, Flame, GitBranch,
   Package, Layers, Hash, Map as MapIcon, Brain, Gauge, BookOpen, Coins,
   Play, Copy, Check, Save, Search, BarChart3, Zap,
-  ThumbsUp, ThumbsDown,
+  ThumbsUp, ThumbsDown, X,
 } from "lucide-react";
 import { runTempo, saveOutput, reportFeedback } from "./tempo";
 import { CommandPalette } from "./CommandPalette";
@@ -67,15 +67,35 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
   const feedbackGiven = useRef<Map<string, boolean>>(new Map<string, boolean>());
   const [feedbackMode, setFeedbackMode] = useState<string | null>(null);
   const argsInputRef = useRef<HTMLInputElement>(null);
+  const [outputFilter, setOutputFilter] = useState("");
+  const [filterVisible, setFilterVisible] = useState(false);
+  const filterInputRef = useRef<HTMLInputElement>(null);
   // Per-mode result cache: avoids re-running when switching back to a mode
   const outputCache = useRef<Map<string, string>>(new Map());
 
   const activeModeInfo = MODES.find(m => m.mode === activeMode);
 
+  const filteredOutput = useMemo(() => {
+    if (!outputFilter.trim() || !modeOutput) return modeOutput;
+    const q = outputFilter.toLowerCase();
+    return modeOutput
+      .split("\n")
+      .filter(line => line.toLowerCase().includes(q))
+      .join("\n");
+  }, [modeOutput, outputFilter]);
+
+  const filterMatchCount = useMemo(() => {
+    if (!outputFilter.trim() || !modeOutput) return null;
+    const q = outputFilter.toLowerCase();
+    return modeOutput.split("\n").filter(l => l.toLowerCase().includes(q)).length;
+  }, [modeOutput, outputFilter]);
+
   const switchMode = (mode: string) => {
     setActiveMode(mode);
     setModeArgs("");
     setHistoryOpen(false);
+    setOutputFilter("");
+    setFilterVisible(false);
     setHistory(loadHistory(mode));
     const cached = outputCache.current.get(mode);
     setModeOutput(cached ?? "");
@@ -85,18 +105,22 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
     }
   };
 
-  // Keyboard shortcuts: Cmd+K = palette, Cmd+R = run, Cmd+1-9 = switch mode
+  // Keyboard shortcuts: Cmd+K = palette, Cmd+R = run, Cmd+F = filter, Cmd+1-9 = switch mode
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (!e.metaKey && !e.ctrlKey) return;
       if (e.key === "k") { e.preventDefault(); setPaletteOpen(true); }
       if (e.key === "r" && !modeRunning) { e.preventDefault(); runModeRef.current?.(); }
+      if (e.key === "f" && modeOutput) {
+        e.preventDefault();
+        setFilterVisible(v => { if (!v) setTimeout(() => filterInputRef.current?.focus(), 50); return true; });
+      }
       const n = parseInt(e.key, 10);
       if (n >= 1 && n <= 9 && n <= MODES.length) { e.preventDefault(); switchMode(MODES[n - 1].mode); }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [modeRunning]);
+  }, [modeRunning, modeOutput]);
 
   // Stable ref so the keydown closure always calls the latest runMode
   const runModeRef = useRef<(() => void) | null>(null);
@@ -168,7 +192,7 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
       <div className="cell" style={{ flex: "0 0 auto", maxHeight: "45%" }}>
         <div className="cell-head">
           Modes ({MODES.length})
-          <span style={{ marginLeft: "auto", fontSize: 9, color: "var(--text-tertiary)", fontWeight: 400 }}>⌘K</span>
+          <span style={{ marginLeft: "auto", fontSize: 9, color: "var(--text-tertiary)", fontWeight: 400 }}>⌘K · ⌘F filter</span>
         </div>
         <div className="cell-body">
           {MODES.map((m) => (
@@ -191,6 +215,9 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
           <div style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
             {modeOutput && (
               <>
+                <button className="btn btn-ghost" onClick={() => { setFilterVisible(v => !v); setTimeout(() => filterInputRef.current?.focus(), 50); }} style={{ padding: "2px 6px", fontSize: 10 }} title="Filter output (⌘F)">
+                  <Search size={10} />
+                </button>
                 <button className="btn btn-ghost" onClick={handleSaveOutput} style={{ padding: "2px 6px", fontSize: 10 }} title="Save to .tempo/">
                   <Save size={10} />
                 </button>
@@ -264,7 +291,28 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
                   {copied ? <><Check size={11} /> Copied!</> : <><Copy size={11} /> Copy for Claude</>}
                 </button>
               )}
-              <pre className="output" style={{ maxHeight: activeMode === "prepare" ? "calc(100% - 96px)" : "calc(100% - 64px)", overflow: "auto" }}>{modeOutput}</pre>
+              {filterVisible && (
+                <div style={{ display: "flex", gap: 4, alignItems: "center", marginBottom: 4 }}>
+                  <input
+                    ref={filterInputRef}
+                    className="input"
+                    placeholder="Filter lines…"
+                    value={outputFilter}
+                    onChange={e => setOutputFilter(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Escape") { setFilterVisible(false); setOutputFilter(""); } }}
+                    style={{ flex: 1, fontSize: 10, padding: "2px 6px" }}
+                  />
+                  {filterMatchCount !== null && (
+                    <span style={{ fontSize: 9, color: "var(--text-tertiary)", whiteSpace: "nowrap" }}>
+                      {filterMatchCount} lines
+                    </span>
+                  )}
+                  <button className="btn btn-ghost" onClick={() => { setFilterVisible(false); setOutputFilter(""); }} style={{ padding: "2px 4px" }}>
+                    <X size={9} />
+                  </button>
+                </div>
+              )}
+              <pre className="output" style={{ maxHeight: activeMode === "prepare" ? "calc(100% - 96px)" : "calc(100% - 64px)", overflow: "auto" }}>{filteredOutput}</pre>
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>
                 <span style={{ fontSize: 9, color: "var(--text-tertiary)", marginRight: 2 }}>Helpful?</span>
                 {feedbackGiven.current.has(activeMode) ? (
