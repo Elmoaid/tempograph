@@ -574,9 +574,18 @@ def _extract_cl_keywords(task: str) -> list[str]:
             # this PR and fails focus, long sub-parts may match related existing symbols.
             # Minimum 7 chars filters generic short words (Encode=6, Custom=6, Params=6,
             # Method=6) that match too broadly and cause harmful context injection.
+            # IMPORTANT: this must run BEFORE marking hyphen-parts as seen, otherwise
+            # seen.add("streaming") blocks _record("Streaming", general).
             for _p in re.findall(r'[A-Z][a-z0-9]+', camel):
                 if len(_p) >= 7 and _p.lower() not in _CAMEL_PART_SKIP:
                     _record(_p, general)
+            # Mark the individual hyphen-parts as seen to prevent the snake_case regex below
+            # from re-extracting them as standalone general keywords (e.g. "custom-encode-params"
+            # would otherwise add both the compound "CustomEncodeParams" AND the single words
+            # "custom", "encode", "params" to the general bucket, filling all effective_keywords
+            # slots with generic words and causing harmful context injection).
+            for _part in hyphenated.split("-"):
+                seen.add(_part.lower())
         for ident in re.findall(r'(?<![A-Z_])\b[A-Z][A-Z0-9_]{2,}\b', source):
             if '_' in ident:
                 _record(ident, priority)
