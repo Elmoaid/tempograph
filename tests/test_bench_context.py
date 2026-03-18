@@ -241,3 +241,56 @@ class TestExtractFilePaths:
         assert "src/server.ts" in files
         assert "internal/main.go" in files
         assert "src/lib.rs" in files
+
+
+class TestBacktickExtraction:
+    def test_backtick_name_extracted_first(self):
+        """Backtick-quoted names are highest-priority keywords."""
+        kws = _kw("deprecate `should_ignore_error` (#5899)")
+        assert kws[0] == "should_ignore_error"
+
+    def test_backtick_snake_case_extracted(self):
+        """snake_case names in backticks are extracted."""
+        kws = _kw("fix `url_for` to handle query params")
+        assert "url_for" in kws
+        assert kws.index("url_for") < kws.index("query") if "query" in kws else True
+
+    def test_backtick_priority_over_prose(self):
+        """Backtick names come before generic prose words."""
+        kws = _kw("add `session_interface` to handle sessions")
+        assert "session_interface" in kws
+        assert kws.index("session_interface") == 0
+
+    def test_backtick_too_short_ignored(self):
+        """Single/double-char backtick names (like `x`, `id`) are not extracted."""
+        kws = _kw("fix `x` and `ab` handling")
+        assert "x" not in kws
+        assert "ab" not in kws
+
+    def test_backtick_in_merge_pr_body(self):
+        """Backtick names extracted from PR body for ticket branches."""
+        title = "Merge pull request #5899 from pallets/issue5899-deprecate\ndeprecate `should_ignore_error` method"
+        kws = _kw(title)
+        assert "should_ignore_error" in kws
+
+
+class TestSmallWordSkipList:
+    def test_are_filtered(self):
+        """'are' should not appear as a keyword (English article, not a symbol)."""
+        kws = _kw("all teardown callbacks are called despite errors")
+        assert "are" not in kws
+
+    def test_via_filtered(self):
+        """'via' is filtered."""
+        kws = _kw("connect to database via connection pool")
+        assert "via" not in kws
+
+    def test_pre_filtered_as_standalone(self):
+        """Standalone 'pre' is filtered (but 'pre-commit' → 'PreCommit' still works)."""
+        kws = _kw("run pre and post hooks")
+        assert "pre" not in kws
+
+    def test_non_filtered(self):
+        """Standalone 'non' is filtered."""
+        kws = _kw("handle non blocking operations")
+        assert "non" not in kws
