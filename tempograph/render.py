@@ -1569,6 +1569,10 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
         elif path_fallback_files:
             # All symbol searches were too broad, but path matching found specific files.
             # E.g. "demo" fails symbol focus (15+ matches) but path match → demos/ directory.
+            if baseline_predicted_files is not None:
+                overlap = len(set(baseline_predicted_files) & set(path_fallback_files)) / len(path_fallback_files)
+                if overlap >= 0.5:
+                    return sections[0]  # model already predicts the path-matched files
             kf_section = "KEY FILES (path match):\n" + "\n".join(f"  {f}" for f in path_fallback_files[:5])
             sections.append(kf_section)
             token_count += count_tokens(kf_section)

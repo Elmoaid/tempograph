@@ -359,6 +359,52 @@ class TestPrepareContext:
         # Either as KEY FILES from focus (≤10 files) or KEY FILES (path match)
         assert r["status"] == "ok"  # At minimum, no crash on broad keyword
 
+    def test_adaptive_gating_high_overlap_skips_injection(self):
+        # When baseline_predicted_files covers all KEY FILES (100% overlap), injection is skipped.
+        # Bench evidence (Phase 5.27, n=83): overlap>=0.5 → 0 F1 delta (model already knows).
+        import re
+        task = "Merge pull request #1 from org/fix-render-focused"
+        # First: baseline call to confirm KEY FILES are produced for this task
+        base_r = assert_ok(prepare_context(REPO_PATH, task=task, output_format="json"))
+        if "KEY FILES" not in base_r["data"]:
+            pytest.skip("Task produces no KEY FILES — gating path can't trigger")
+        # Extract the file paths listed in KEY FILES section
+        key_file_paths = re.findall(r'  (\S+\.(?:py|js|ts))', base_r["data"])
+        assert key_file_paths, "KEY FILES present but no paths parsed"
+        # Second call with those exact files as baseline → 100% overlap → skip injection
+        gated_r = assert_ok(prepare_context(
+            REPO_PATH, task=task,
+            baseline_predicted_files=key_file_paths,
+            output_format="json",
+        ))
+        assert "KEY FILES" not in gated_r["data"]
+        assert "Focus:" not in gated_r["data"]
+
+    def test_adaptive_gating_low_overlap_injects_context(self):
+        # When baseline_predicted_files don't overlap with KEY FILES, full context is injected.
+        import re
+        task = "Merge pull request #1 from org/fix-render-focused"
+        base_r = assert_ok(prepare_context(REPO_PATH, task=task, output_format="json"))
+        if "KEY FILES" not in base_r["data"]:
+            pytest.skip("Task produces no KEY FILES")
+        # Pass completely unrelated files as baseline → 0% overlap → inject normally
+        gated_r = assert_ok(prepare_context(
+            REPO_PATH, task=task,
+            baseline_predicted_files=["unrelated/file.py", "another/unrelated.py"],
+            output_format="json",
+        ))
+        assert "KEY FILES" in gated_r["data"]
+
+    def test_adaptive_gating_none_baseline_no_change(self):
+        # Without baseline_predicted_files (None default), normal flow is unchanged.
+        r = assert_ok(prepare_context(
+            REPO_PATH,
+            task="Merge pull request #1 from org/fix-render-focused",
+            output_format="json",
+        ))
+        assert r["status"] == "ok"
+        assert "## Repo:" in r["data"]
+
 
 # ---------------------------------------------------------------------------
 # Exclude dirs

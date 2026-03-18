@@ -657,6 +657,7 @@ def learn_recommendation(repo_path: str, task_type: str = "", output_format: str
 @mcp.tool()
 def prepare_context(repo_path: str, task: str, task_type: str = "",
                     max_tokens: int = 6000, exclude_dirs: str = "",
+                    baseline_predicted_files: list[str] | None = None,
                     output_format: str = "text") -> str:
     """One-shot context preparation for a task. Runs the optimal combination of
     tools and returns a single, token-budgeted response. Use this instead of
@@ -673,13 +674,18 @@ def prepare_context(repo_path: str, task: str, task_type: str = "",
                of task format; also accepts "debug", "feature", "refactor", "review"
     max_tokens: total token budget for the response (default 6000)
     exclude_dirs: comma-separated directory prefixes to skip
+    baseline_predicted_files: optional list of files already predicted by the model
+      (for adaptive injection). If provided, context is skipped when the model's
+      prediction overlaps ≥50% with KEY FILES — it already knows the relevant files.
+      Bench evidence (Phase 5.27, n=83): overlap<0.5 → avg +0.30–0.45 F1 gain per case.
     output_format: "text" (default) or "json" for structured response
 
     Returns: overview summary + focused context + KEY FILES + hotspot warnings,
     all within the token budget.
     """
     return _run_tool("prepare_context", repo_path, output_format,
-                     lambda g: render_prepare(g, task, max_tokens=max_tokens, task_type=task_type),
+                     lambda g: render_prepare(g, task, max_tokens=max_tokens, task_type=task_type,
+                                              baseline_predicted_files=baseline_predicted_files),
                      exclude_dirs=exclude_dirs, task=task, task_type=task_type)
 
 
