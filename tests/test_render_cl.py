@@ -213,6 +213,19 @@ class TestExtractClKeywords:
         assert "Streaming" in kws          # 9 chars → kept
         assert "Protocol" in kws           # 8 chars → kept
 
+    def test_json_xml_camel_parts_skipped_in_path_fallback(self):
+        # "expose-default-json-serializer" → "ExposeDefaultJsonSerializer"
+        # Path fallback splits CamelCase parts; "Json" (4 chars) must be skipped —
+        # it matches serialize.js, config.json, etc. (wrong files).
+        # Evidence: fastify e9b68878 — "Json" path match → -0.333 F1 harm.
+        kws = _extract_cl_keywords(
+            "Merge pull request #1 from org/expose-default-json-serializer"
+        )
+        assert "ExposeDefaultJsonSerializer" in kws  # full compound extracted
+        # The path fallback must NOT use "Json" or "Xml" alone
+        assert "Json" not in kws
+        assert "Xml" not in kws
+
 
 class TestIsChangeLocalization:
     def test_task_type_changelocal(self):
