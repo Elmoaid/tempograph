@@ -668,7 +668,7 @@ def prepare_context(repo_path: str, task: str, task_type: str = "",
       - PR/commit titles ("Merge pull request #123 from org/fix-auth-bug",
         "fix: prevent null pointer in handler", "Fix teardown callbacks (#5928)")
         → keyword extraction from branch name → per-keyword symbol focus → KEY FILES list
-        → proven +9-15% file prediction improvement on real PRs (n=111, bench data)
+        → proven +7% file prediction improvement on real PRs (canonical n=159, p=0.035*)
       - General coding tasks ("add pagination to user list", "refactor database layer")
         → fuzzy symbol search → overview fallback if no match
     task_type: optional hint — "changelocal" forces keyword-extraction path regardless

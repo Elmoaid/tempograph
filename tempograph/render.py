@@ -476,8 +476,10 @@ def _extract_cl_keywords(task: str) -> list[str]:
         # Python language keywords — never useful as symbol focus terms
         "import", "raise", "yield", "async", "await", "lambda",
         "assert", "except", "finally", "none", "true", "false",
-        # JS/TS keywords
+        # JS/TS keywords and constructs
         "const", "export", "require", "props", "state",
+        "foreach", "callback",  # loop construct / pattern word — never a file identifier
+        "getter", "setter",  # property accessor types — "host-setter" → focus on request.js (wrong; misses context.js)
         "handle", "handles", "handler", "handlers", "check", "checks", "run", "runs", "create",
         "support", "supported", "include", "includes", "avoid", "prevent", "ensure",
         "apply", "improve", "move", "moved", "part", "parts", "some",
