@@ -291,10 +291,11 @@ def render_symbols(graph: Tempo, *, max_tokens: int = 0) -> str:
 _MONOLITH_THRESHOLD = 1000
 
 
-def _extract_focus_files(focus_output: str) -> list[str]:
+def _extract_focus_files(focus_output: str, task_keywords: list[str] | None = None) -> list[str]:
     """Extract unique file paths from a render_focused output string.
 
-    Returns up to 15 paths, source files ranked above test/example files.
+    Returns up to 15 paths sorted by: (1) source vs example/test tier,
+    (2) task keyword match (filename stem contains a keyword), (3) frequency.
     """
     import re
     pattern = r'\b(?:[a-zA-Z0-9_.-]+/)*[a-zA-Z0-9_.-]+\.(?:py|ts|tsx|js|jsx|go|rs|java|cs|rb)\b'
@@ -303,15 +304,143 @@ def _extract_focus_files(focus_output: str) -> list[str]:
     for p in all_paths:
         freq[p] = freq.get(p, 0) + 1
 
-    def _tier(path: str) -> int:
+    kw_lower = [k.lower() for k in (task_keywords or [])]
+
+    def _sort_key(path: str) -> tuple[int, int, int]:
         lower = path.lower()
         if any(x in lower for x in ("example", "tutorial", "demo", "sample")):
-            return 2
-        if any(x in lower for x in ("test", "spec", "fixture")):
-            return 1
-        return 0
+            tier = 2
+        elif any(x in lower for x in ("test", "spec", "fixture")):
+            tier = 1
+        else:
+            tier = 0
+        stem = lower.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+        kw_rank = 0 if kw_lower and any(kw in stem for kw in kw_lower if len(kw) > 3) else 1
+        return (tier, kw_rank, -freq[path])
 
-    return sorted(freq.keys(), key=lambda p: (_tier(p), -freq[p]))[:15]
+    return sorted(freq.keys(), key=_sort_key)[:15]
+
+
+def _extract_cl_keywords(task: str) -> list[str]:
+    """Extract code-symbol keywords from a change-localization task (PR title/commit message).
+
+    Ported from bench/changelocal/context.py::_extract_keywords.
+    This is the PR-title-specific extractor used for change localization tasks.
+    For general coding tasks, use the fuzzy search in search_symbols_scored directly.
+    """
+    import re
+    _TRUNK_BRANCHES = frozenset({"master", "main", "develop", "development", "stable", "release"})
+    m = (re.search(r'Merge pull request #\d+ from [^/\s]+/(\S+)', task)
+         or re.search(r'Merge pull request \S+#\d+ from [^/\s]+/(\S+)', task))
+    if m:
+        branch = m.group(1)
+        leaf = branch.lower().split('/')[-1]
+        if leaf in _TRUNK_BRANCHES:
+            return []
+        _DOC_PREFIXES = ("docs-", "doc-", "readme-", "changelog-", "documentation-")
+        _DOC_SUFFIXES = ("-docs", "-doc", "-readme", "-changelog")
+        branch_lower = branch.lower()
+        if (any(leaf.startswith(p) for p in _DOC_PREFIXES)
+                or any(leaf.endswith(s) for s in _DOC_SUFFIXES)
+                or branch_lower.startswith("docs/")
+                or branch_lower.startswith("doc/")):
+            return []
+        body = task[task.find('\n')+1:].strip() if '\n' in task else ''
+        body = re.sub(r'https?://\S+', '', body)
+        body = re.sub(r'^[\w-]+:\s+.*$', '', body, flags=re.MULTILINE)
+        body = body.strip()
+        _is_ticket = bool(
+            re.match(r'^(?:issue|ticket|bug|patch|pr|fix)[-_]?\d+', leaf) or
+            re.match(r'^\d+[-_]', leaf)
+        )
+        task = branch + ('\n' + body if _is_ticket and body else '')
+    else:
+        task = re.sub(r'^Merge (?:branch|pull request)[^\n]*\n?', '', task, flags=re.IGNORECASE)
+
+    skip = {
+        "the", "and", "for", "from", "with", "this", "that", "fix", "add",
+        "update", "remove", "change", "bug", "feature", "merge", "pull",
+        "request", "branch", "commit", "issue", "use", "make", "new",
+        "when", "not", "all", "can", "should", "would", "into", "also",
+        "pass", "through", "methods", "method", "function", "class", "file",
+        "code", "test", "tests", "type", "types", "value", "values", "data",
+        "object", "objects", "item", "items", "list", "dict", "set", "get",
+        "put", "call", "calls", "return", "returns", "allow", "allows",
+        "handle", "handles", "check", "checks", "run", "runs", "create",
+        "support", "include", "includes", "avoid", "prevent", "ensure",
+        "apply", "improve", "move", "moved", "part", "parts", "some",
+        "error", "errors", "option", "options", "response", "config",
+        "enable", "enabled", "disable", "disabled", "default", "global",
+        "log", "logger", "logging", "ticket", "docs", "readme",
+        "fixed", "improved", "updated", "added", "removed", "changed",
+        "fixes", "improves", "updates", "usage", "internal", "external",
+        "fork", "syncing", "sync", "backport", "rebase", "cherry", "pick",
+    }
+    seen: set[str] = set()
+    priority: list[str] = []
+    general: list[str] = []
+
+    def _record(ident: str, bucket: list[str]) -> None:
+        lower = ident.lower()
+        if re.match(r'^(?:issue|ticket|bug|pr|patch|fix)\d+$', lower):
+            return
+        if lower not in skip and lower not in seen and len(ident) > 2:
+            seen.add(lower)
+            bucket.append(ident)
+
+    lines = task.split('\n', 1)
+    branch_text = lines[0]
+    body_text = lines[1].strip() if len(lines) > 1 else ''
+
+    def _extract_from(source: str, strict_camel: bool = False) -> None:
+        for hyphenated in re.findall(r'\b[a-z][a-z0-9]*(?:-[a-z][a-z0-9]*)+\b', source):
+            camel = "".join(part.capitalize() for part in hyphenated.split("-"))
+            _record(camel, priority)
+        for ident in re.findall(r'(?<![A-Z_])\b[A-Z][A-Z0-9_]{2,}\b', source):
+            if '_' in ident:
+                _record(ident, priority)
+        camel_pat = (r'\b(?:[A-Z][a-z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]+|[A-Z][a-zA-Z0-9]{6,})\b'
+                     if strict_camel else r'\b[A-Z][a-zA-Z0-9]+\b')
+        for ident in re.findall(camel_pat, source):
+            _record(ident, priority)
+        for ident in re.findall(r'\b[a-z_][a-z0-9_]{2,}\b', source):
+            _record(ident, general)
+            if ident.count('_') >= 3 and len(ident) > 20:
+                parts = ident.split('_')
+                for i, part in enumerate(parts):
+                    if len(part) > 2:
+                        _record(part, general)
+                    if i + 1 < len(parts):
+                        compound = f"{parts[i]}_{parts[i+1]}"
+                        if len(compound) > 4:
+                            _record(compound, general)
+
+    _extract_from(branch_text, strict_camel=False)
+    if body_text:
+        _extract_from(body_text, strict_camel=True)
+
+    return priority + general
+
+
+def _is_change_localization(task: str, task_type: str) -> bool:
+    """Detect if a task is a change-localization task (PR title, commit message, issue ref).
+
+    Change-localization tasks benefit from the per-keyword focus algorithm.
+    General coding tasks ("add login feature") should use the default multi-token approach.
+    """
+    import re
+    if task_type in ("changelocal", "debug", "bugfix"):
+        return True
+    lower = task.lower()
+    if "merge pull request" in lower or re.match(r"merge branch '", lower):
+        return True
+    # Conventional commit prefix
+    if re.match(r'^(fix|feat|refactor|chore|perf|style|build|ci|docs|test)(\(.+\))?:', lower):
+        return True
+    # PR title with issue reference: "Fix #1234" or "Fix teardown (#5928)"
+    if re.search(r'\(#\d+\)\s*$', task) or re.search(r'^\w.*#\d+', task):
+        return True
+    return False
 
 
 def _suggest_alternatives(graph: Tempo, query: str, max_suggestions: int = 5) -> str:
@@ -1268,58 +1397,91 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
     sections.append(f"## Repo: {s['files']} files, {s['symbols']} symbols, {s['total_lines']:,} lines")
     token_count += 20
 
-    focus_output = render_focused(graph, task, max_tokens=int(max_tokens * 0.6))
+    if _is_change_localization(task, task_type):
+        # Change-localization path: per-keyword focus + breadth filter + selective overview.
+        # Bench evidence (n=111, Phase 5.26): +9-12% F1 improvement vs raw task passthrough.
+        # Key differences from general path:
+        #   - Extract code-symbol keywords from PR title/branch name (not raw task string)
+        #   - Run separate focus per keyword (up to 3) → better symbol targeting
+        #   - Breadth filter: skip keyword if focus returns >10 files (too generic)
+        #   - Selective overview: only inject when keywords=[] (vague task, no code signal)
+        #   - "Keywords found but focus failed" → inject nothing (model uses training knowledge)
+        keywords = _extract_cl_keywords(task)
+        focus_budget = max_tokens // 2
+        focus_parts: list[str] = []
+        for kw in keywords[:3]:
+            focused = render_focused(graph, kw, max_tokens=focus_budget)
+            if not focused or "No symbols matching" in focused or "No exact match" in focused:
+                continue
+            kw_files = _extract_focus_files(focused)
+            if len(kw_files) > 10:
+                continue  # keyword too generic for this codebase
+            focus_parts.append(focused)
 
-    # Large-scope heuristic: bench data (n=13) shows tempograph helps for 3-7 file tasks
-    # (+9-38% F1 delta) but hurts for 8+ file tasks (-1% to -21% F1 delta).
-    # Detect broad-scope tasks from query keywords and warn agents to use overview instead.
-    _BROAD_SCOPE_MARKERS = {"all", "every", "entire", "throughout", "global", "across",
-                            "everywhere", "whole", "each"}
-    _BROAD_ACTION_MARKERS = {"refactor", "migrate", "update", "port", "convert", "rename",
-                             "replace", "remove", "delete", "rewrite"}
-    _task_set = set(task.lower().split())
-    _is_large_scope = bool(
-        _task_set & _BROAD_SCOPE_MARKERS
-        and _task_set & _BROAD_ACTION_MARKERS
-    )
-    if _is_large_scope:
-        sections.append(
-            "⚠ LARGE SCOPE: task appears to span many files. "
-            "Bench data shows focused context hurts F1 for 8+ file changes. "
-            "Use `overview` for orientation; skip focused context injection."
-        )
-        token_count += 25
-
-    _no_match = not focus_output or "No symbols matching" in focus_output or "No exact match" in focus_output
-    if _no_match and not _is_large_scope:
-        # Focus found nothing — fall back to repo overview so the agent isn't left with
-        # empty structural context. Mirrors bench strategy: overview when focus fails on
-        # vague tasks (evidence: requests +131% with overview on keyword=[] tasks).
-        overview_fallback = render_overview(graph)
-        sections.append(overview_fallback)
-        token_count += count_tokens(overview_fallback)
-    else:
-        sections.append(focus_output)
-        token_count += count_tokens(focus_output)
-
-        # KEY FILES: compact file list extracted from focus output — helps agents navigate
-        # without parsing the full graph structure. Only added when focus produced real output.
-        if not _no_match:
-            key_files = _extract_focus_files(focus_output)
+        if focus_parts:
+            for fp in focus_parts:
+                sections.append(fp)
+                token_count += count_tokens(fp)
+            key_files = _extract_focus_files("\n\n".join(focus_parts), task_keywords=keywords)
             if key_files:
-                # Broad-scope warning: if focus spans many files, signal to the agent that
-                # the query may be too generic. Feedback evidence: agents misled by broad
-                # focus ("context-menu and click-handler results, not the row height logic").
-                if len(key_files) > 10:
-                    sections.append(
-                        "⚠ BROAD MATCH: query matched many files — results may include "
-                        "loosely related code. Consider re-querying with a more specific "
-                        "symbol name or function for a tighter focus."
-                    )
-                    token_count += 20
                 kf_section = "KEY FILES REFERENCED ABOVE:\n" + "\n".join(f"  {f}" for f in key_files[:5])
                 sections.append(kf_section)
                 token_count += count_tokens(kf_section)
+        elif not keywords:
+            # Truly vague task (no keywords extracted) — overview provides structure.
+            # Evidence: requests base≈0 benefits from overview when keywords=[] (+131%).
+            overview_fallback = render_overview(graph)
+            sections.append(overview_fallback)
+            token_count += count_tokens(overview_fallback)
+        # else: keywords exist but focus found nothing → inject nothing; model uses training knowledge.
+        # Evidence: overview hurts high-baseline repos (pydantic -40%, starlette -11%) when
+        # focus fails on non-empty keywords.
+
+    else:
+        # General coding task path: multi-token fuzzy search + always-overview fallback.
+        # Suitable for: "add login feature", "fix broken test", "explain this function".
+        focus_output = render_focused(graph, task, max_tokens=int(max_tokens * 0.6))
+
+        # Large-scope heuristic: bench data shows focused context hurts for 8+ file tasks.
+        _BROAD_SCOPE_MARKERS = {"all", "every", "entire", "throughout", "global", "across",
+                                "everywhere", "whole", "each"}
+        _BROAD_ACTION_MARKERS = {"refactor", "migrate", "update", "port", "convert", "rename",
+                                 "replace", "remove", "delete", "rewrite"}
+        _task_set = set(task.lower().split())
+        _is_large_scope = bool(
+            _task_set & _BROAD_SCOPE_MARKERS
+            and _task_set & _BROAD_ACTION_MARKERS
+        )
+        if _is_large_scope:
+            sections.append(
+                "⚠ LARGE SCOPE: task appears to span many files. "
+                "Bench data shows focused context hurts F1 for 8+ file changes. "
+                "Use `overview` for orientation; skip focused context injection."
+            )
+            token_count += 25
+
+        _no_match = not focus_output or "No symbols matching" in focus_output or "No exact match" in focus_output
+        if _no_match and not _is_large_scope:
+            overview_fallback = render_overview(graph)
+            sections.append(overview_fallback)
+            token_count += count_tokens(overview_fallback)
+        else:
+            sections.append(focus_output)
+            token_count += count_tokens(focus_output)
+
+            if not _no_match:
+                key_files = _extract_focus_files(focus_output)
+                if key_files:
+                    if len(key_files) > 10:
+                        sections.append(
+                            "⚠ BROAD MATCH: query matched many files — results may include "
+                            "loosely related code. Consider re-querying with a more specific "
+                            "symbol name or function for a tighter focus."
+                        )
+                        token_count += 20
+                    kf_section = "KEY FILES REFERENCED ABOVE:\n" + "\n".join(f"  {f}" for f in key_files[:5])
+                    sections.append(kf_section)
+                    token_count += count_tokens(kf_section)
 
     hotspot_budget = int(max_tokens * 0.15)
     if token_count < max_tokens - 100:
