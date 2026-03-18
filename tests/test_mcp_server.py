@@ -1418,6 +1418,34 @@ class TestTemporalSymbolWeighting:
         out = render_focused(g, "build_graph", max_tokens=2000)
         assert "[hot]" not in out, "No [hot] markers expected when hot_files is empty"
 
+    def test_hot_callee_label_in_render_focused(self):
+        """render_focused marks callees from hot_files with [hot] in calls: line."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        g = build_graph(REPO_PATH, exclude_dirs=["archive"])
+        # _get_or_build_graph in server.py calls build_graph from builder.py
+        g.hot_files = {"tempograph/builder.py"}
+        out = render_focused(g, "_get_or_build_graph", max_tokens=2000)
+        calls_line = next((line for line in out.split("\n") if "calls:" in line), "")
+        assert "[hot]" in calls_line, "Expected [hot] marker for callees from hot_files"
+
+    def test_hot_callee_bubbles_before_cold(self):
+        """Hot callees are shown before cold callees in the calls: line."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        g = build_graph(REPO_PATH, exclude_dirs=["archive"])
+        # _get_or_build_graph calls build_graph (builder.py=hot) and Config.get (cold)
+        g.hot_files = {"tempograph/builder.py"}
+        out = render_focused(g, "_get_or_build_graph", max_tokens=2000)
+        calls_line = next((line for line in out.split("\n") if "calls:" in line), "")
+        assert "[hot]" in calls_line, "Hot callee must appear in calls: line"
+        hot_pos = calls_line.index("[hot]")
+        # Config.get is cold — must come after the hot callee
+        cold_pos = calls_line.find("Config.get")
+        assert cold_pos == -1 or hot_pos < cold_pos, (
+            "Hot callee should appear before cold callees in calls: line"
+        )
+
 
 class TestBuilderUseConfig:
     """Tests for build_graph use_config parameter (reads .tempo/config.json exclude_dirs)."""
