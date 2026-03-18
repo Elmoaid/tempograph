@@ -133,6 +133,9 @@ class Tempo:
     files: dict[str, FileInfo] = field(default_factory=dict)
     symbols: dict[str, Symbol] = field(default_factory=dict)
     edges: list[Edge] = field(default_factory=list)
+    # Files touched in recent git history — used for temporal ranking bonus.
+    # Populated by build_graph() when inside a git repo. Paths are relative to root.
+    hot_files: set[str] = field(default_factory=set)
 
     # precomputed indexes (built after parsing)
     _callers: dict[str, list[str]] = field(default_factory=dict, repr=False)
@@ -263,6 +266,10 @@ class Tempo:
                     score += 1.5
                 elif sym.kind == SymbolKind.CLASS:
                     score += 1.0
+                # Temporal bonus: symbols in recently-modified files rank higher.
+                # A tiebreaker signal — current dev focus zone should win ambiguous matches.
+                if self.hot_files and sym.file_path in self.hot_files:
+                    score += 2.5
                 results.append((score, sym))
         results.sort(key=lambda x: (-x[0], x[1].file_path, x[1].line_start))
         return results
