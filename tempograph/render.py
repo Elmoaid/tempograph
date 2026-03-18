@@ -1732,6 +1732,7 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
         # Short tokens can't trigger path fallback (which requires len>=4) and rarely match
         # specific symbols. This prevents "req" (len=3) from blocking "resp" (len=4).
         effective_keywords = [kw for kw in keywords if len(kw) >= 4][:3]
+        _test_markers = ("test", "spec", "fixture", "example", "tutorial", "demo", "sample")
         for kw in effective_keywords:
             focused = render_focused(graph, kw, max_tokens=focus_budget)
             no_match = not focused or "No symbols matching" in focused or "No exact match" in focused
@@ -1763,7 +1764,6 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                     # Evidence: fastify "option" → test/ajv-options.test.js, test/options.test.js
                     # → KEY FILES shows only test files → model misses lib/validation.js.
                     # If no source files match, skip path fallback entirely (no hint > wrong hint).
-                    _test_markers = ("test", "spec", "fixture", "example", "tutorial", "demo", "sample")
                     source_paths = [p for p in unique_paths if not any(x in p.lower() for x in _test_markers)]
                     unique_paths = source_paths if source_paths else []
                     if unique_paths and len(unique_paths) <= 5:
@@ -1820,6 +1820,9 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                             # E.g. "DurationField" → "Field" → field_mapping.py (wrong); skip and try
                             # "Duration" first. "SerializerException" → "Exception" → exceptions.py (wrong).
                             "field", "fields", "exception", "exceptions",
+                            # Encoding format terms: "ExposeDefaultJsonSerializer" → "Json" → serialize.js
+                            # (wrong). "json"/"xml" are technology descriptors, not file-identity markers.
+                            "json", "xml",
                         })
                         _parts: list[str] = []
                         _cur: list[str] = []
@@ -1888,12 +1891,16 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                 overlap = len(predicted_set & set(key_files)) / len(key_files)
                 if overlap >= 0.5:
                     return ""  # model already predicts the key files — skip injection
-                if len(predicted_set) >= 3:
-                    # Baseline is highly confident (3+ predictions). When context
+                src_pred_count = len([f for f in predicted_set
+                                      if not any(m in f.lower() for m in _test_markers)])
+                if src_pred_count >= 3:
+                    # Baseline is highly confident (3+ source predictions). When context
                     # disagrees (overlap < 0.5), it misleads the model away from its
                     # already-correct predictions. Evidence: falcon 16bc3f16 (bl=1.000,
-                    # pred=3 correct files, context disagrees → av2 injects → F1 1.0→0.5).
+                    # pred=3 correct source files, context disagrees → av2 injects → F1 1.0→0.5).
                     # Phase 5.28: av2 w/o this guard hurt falcon -13.7%* and DRF -10.9%*.
+                    # Count only source files (not test/spec): koa b658fe7c had 4 predictions
+                    # (1 source + 3 test) → guard fired incorrectly, blocking a +25% F1 gain.
                     return ""
             if key_files:
                 kf_ranges = _extract_focus_ranges("\n\n".join(focus_parts), key_files[:5])
@@ -1910,8 +1917,10 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                 overlap = len(predicted_set & path_set) / len(path_set)
                 if overlap >= 0.5:
                     return ""  # model already predicts the path-matched files
-                if len(predicted_set) >= 3:
-                    return ""  # baseline confident (3+ files); path-hint can only mislead
+                src_pred_count = len([f for f in predicted_set
+                                      if not any(m in f.lower() for m in _test_markers)])
+                if src_pred_count >= 3:
+                    return ""  # baseline confident (3+ source files); path-hint can only mislead
                 # Path-only context (no BFS graph) is weak when model already has a focused prediction.
                 # If baseline predicted exactly 1 file with no overlap to path-match, the model is
                 # likely correct on that file and the path hint would redirect it incorrectly.
