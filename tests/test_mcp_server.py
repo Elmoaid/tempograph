@@ -1521,6 +1521,48 @@ class TestTemporalSymbolWeighting:
         # Deterministic: same output both times
         assert out1 == out2, "BFS with no hot files should be deterministic"
 
+    def test_cochange_orbit_appears_for_real_repo(self):
+        """render_focused emits Co-change orbit for a seed in a file with git co-change partners."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        g = build_graph(REPO_PATH, exclude_dirs=["archive"])
+        # build_graph is in builder.py which co-changes with parser.py, cache.py, types.py, etc.
+        out = render_focused(g, "build_graph", max_tokens=4000)
+        # Co-change orbit may or may not appear (depends on git history depth).
+        # If it appears, format must be correct: percentage + explanatory note.
+        if "Co-change orbit:" in out:
+            assert "%" in out, "Co-change orbit entries must include a percentage"
+            assert "historically change" in out, "Co-change orbit should include explanatory note"
+
+    def test_cochange_orbit_filters_seen_files(self):
+        """_cochange_orbit never returns files already in seen_files."""
+        from tempograph.render import _cochange_orbit
+        # Mock: builder.py co-changes with parser.py (already seen) and types.py (not seen)
+        from unittest.mock import patch
+        mock_matrix = {
+            "tempograph/builder.py": [
+                ("tempograph/parser.py", 0.8),  # already seen — must be excluded
+                ("tempograph/types.py", 0.6),   # not seen — must be included
+            ]
+        }
+        with patch("tempograph.git.cochange_matrix", return_value=mock_matrix), \
+             patch("tempograph.git.is_git_repo", return_value=True):
+            result = _cochange_orbit(
+                REPO_PATH,
+                ["tempograph/builder.py"],
+                {"tempograph/parser.py"},  # seen_files
+                n=3,
+            )
+        fps = [fp for fp, _ in result]
+        assert "tempograph/parser.py" not in fps, "seen_files must be excluded from orbit"
+        assert "tempograph/types.py" in fps, "unseen co-change partner must be included"
+
+    def test_cochange_orbit_empty_for_non_git_repo(self, tmp_path):
+        """_cochange_orbit returns [] gracefully for non-git directories."""
+        from tempograph.render import _cochange_orbit
+        result = _cochange_orbit(str(tmp_path), ["some/file.py"], set(), n=3)
+        assert result == [], "Must return [] for non-git repo, not raise"
+
 
 class TestBuilderUseConfig:
     """Tests for build_graph use_config parameter (reads .tempo/config.json exclude_dirs)."""
