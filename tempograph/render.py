@@ -1243,11 +1243,12 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         callees = graph.callees_of(sym.id)
         children = graph.children_of(sym.id)
 
-        score += len(callers) * 3.0
+        caller_files = set(c.file_path for c in callers)
+        score += len(caller_files) * 3.0
         score += len(callees) * 1.5
         score += min(sym.line_count / 10, 50)
         score += len(children) * 2.0
-        cross_file = len(set(c.file_path for c in callers) - {sym.file_path})
+        cross_file = len(caller_files - {sym.file_path})
         score += cross_file * 5.0
         render_count = renders_from.get(sym.id, 0)
         score += render_count * 2.0
@@ -1265,7 +1266,8 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         callers = graph.callers_of(sym.id)
         callees = graph.callees_of(sym.id)
         children = graph.children_of(sym.id)
-        cross_files = len(set(c.file_path for c in callers) - {sym.file_path})
+        caller_files_display = set(c.file_path for c in callers)
+        cross_files = len(caller_files_display - {sym.file_path})
 
         lines.append(
             f"{i:2d}. {sym.kind.value} {sym.qualified_name} "
@@ -1273,7 +1275,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         )
         details = []
         if callers:
-            details.append(f"{len(callers)} callers ({cross_files} cross-file)")
+            details.append(f"{len(caller_files_display)} caller files ({cross_files} cross-file)")
         if callees:
             details.append(f"{len(callees)} callees")
         if children:

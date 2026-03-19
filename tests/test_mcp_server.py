@@ -1828,3 +1828,62 @@ class TestCochangeContext:
         result = cochange_context(REPO_PATH, "tempograph/render.py")
         assert isinstance(result, str)
         assert len(result) > 0
+
+
+# ---------------------------------------------------------------------------
+# Hotspot unique-caller-file dedup
+# ---------------------------------------------------------------------------
+
+class TestHotspotUniqueCallerFiles:
+    def test_hotspot_counts_unique_files_not_raw_callers(self):
+        """Hotspot score uses unique caller files, not raw caller count.
+
+        A symbol called by 10 functions in 2 files should rank as if it has
+        2 callers (file-level coupling), not 10 (symbol-level noise).
+        """
+        from tempograph.render import render_hotspots
+        from tempograph.types import (
+            Edge, EdgeKind, FileInfo, Language, Symbol, SymbolKind, Tempo,
+        )
+
+        def _sym(fpath, name, line=1):
+            return Symbol(
+                id=f"{fpath}::{name}", name=name, qualified_name=name,
+                kind=SymbolKind.FUNCTION, language=Language.PYTHON,
+                file_path=fpath, line_start=line, line_end=line + 5,
+                signature=f"def {name}()", exported=True, complexity=2,
+                byte_size=50,
+            )
+
+        target = _sym("lib.py", "core_fn")
+        # 5 callers each from 2 different test files = 10 raw callers, 2 unique files
+        callers_a = [_sym("test_a.py", f"test_{i}") for i in range(5)]
+        callers_b = [_sym("test_b.py", f"test_{i}") for i in range(5)]
+
+        all_syms = {s.id: s for s in [target] + callers_a + callers_b}
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=c.id, target_id=target.id, line=1)
+            for c in callers_a + callers_b
+        ]
+        files = {
+            "lib.py": FileInfo(path="lib.py", language=Language.PYTHON,
+                               line_count=10, byte_size=200, symbols=[target.id]),
+            "test_a.py": FileInfo(path="test_a.py", language=Language.PYTHON,
+                                  line_count=50, byte_size=1000,
+                                  symbols=[c.id for c in callers_a]),
+            "test_b.py": FileInfo(path="test_b.py", language=Language.PYTHON,
+                                  line_count=50, byte_size=1000,
+                                  symbols=[c.id for c in callers_b]),
+        }
+        graph = Tempo(root="/tmp/fake", files=files, symbols=all_syms, edges=edges)
+        graph.build_indexes()
+
+        output = render_hotspots(graph, top_n=5)
+
+        # Display should report 2 caller files, not 10 raw callers
+        assert "2 caller files" in output, (
+            f"Expected '2 caller files' in hotspot output, got:\n{output}"
+        )
+        assert "10 caller" not in output, (
+            f"Expected raw caller count (10) not to appear in output, got:\n{output}"
+        )
