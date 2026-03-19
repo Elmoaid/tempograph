@@ -221,6 +221,17 @@ def _run_tool(tool_name: str, repo_path: str, output_format: str, render_fn,
     if err:
         return _error(err, f"Directory not found: {repo_path}", output_format)
 
+    # Check prefetch cache first
+    cache_key = f"{p}:{tool_name}"
+    if cache_key in _prefetch_cache:
+        output = _prefetch_cache.pop(cache_key)
+        start = time.time()
+        elapsed = 0.001  # ~instant from cache
+        tokens = count_tokens(output)
+        _log_tool(tool_name, p, output, elapsed, prefetch_hit=True, **log_extra)
+        _prefetch_next(tool_name, p, _resolve_excludes(p, exclude_dirs))
+        return _success(output, tokens, elapsed, output_format)
+
     excludes = _resolve_excludes(p, exclude_dirs)
     start = time.time()
     result = _get_or_build_graph(p, exclude_dirs=excludes or None)
