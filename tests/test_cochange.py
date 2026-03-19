@@ -38,10 +38,19 @@ class TestCochangeMatrix:
         assert result == {}
 
     def test_symmetric_coupling(self):
-        """If A couples with B, B should couple with A."""
+        """If A couples with B, B should couple with A (unless B's list is at the 10-partner cap).
+
+        cochange_matrix truncates each file's partner list to 10 entries. When B has exactly 10
+        partners, A may validly be absent from B's list because higher-frequency partners fill
+        all slots. The asymmetry is expected truncation behaviour, not a bug.
+        """
+        MAX_PARTNERS = 10
         result = cochange_matrix(".", n_commits=100)
         for file_a, partners in result.items():
             for file_b, freq_ab in partners:
                 if file_b in result:
-                    b_partners = dict(result[file_b])
+                    b_partners_list = result[file_b]
+                    if len(b_partners_list) >= MAX_PARTNERS:
+                        continue  # B's list is at cap; omission of A is expected
+                    b_partners = dict(b_partners_list)
                     assert file_a in b_partners, f"{file_a}->{file_b} but not reverse"
