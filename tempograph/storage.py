@@ -357,6 +357,39 @@ class GraphDB:
         row = self._conn.execute("SELECT COUNT(*) as c FROM files").fetchone()
         return row["c"] if row else 0
 
+    def graph_stats(self) -> dict:
+        """Comprehensive graph statistics for dashboards and monitoring."""
+        stats: dict = {}
+        stats["files"] = self.file_count()
+        stats["symbols"] = self.symbol_count()
+        stats["edges"] = self._conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+
+        # Language breakdown
+        lang_rows = self._conn.execute(
+            "SELECT language, COUNT(*) as c FROM files GROUP BY language ORDER BY c DESC"
+        ).fetchall()
+        stats["languages"] = {row["language"]: row["c"] for row in lang_rows}
+
+        # Symbol kind breakdown
+        kind_rows = self._conn.execute(
+            "SELECT kind, COUNT(*) as c FROM symbols GROUP BY kind ORDER BY c DESC"
+        ).fetchall()
+        stats["symbol_kinds"] = {row["kind"]: row["c"] for row in kind_rows}
+
+        # DB size
+        stats["db_size_bytes"] = self.db_path.stat().st_size if self.db_path.exists() else 0
+
+        # Vector count
+        if getattr(self, '_has_vectors', False):
+            try:
+                stats["vectors"] = self._conn.execute("SELECT COUNT(*) FROM symbol_vectors").fetchone()[0]
+            except Exception:
+                stats["vectors"] = 0
+        else:
+            stats["vectors"] = 0
+
+        return stats
+
     def close(self) -> None:
         self._conn.close()
 
