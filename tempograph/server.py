@@ -825,6 +825,45 @@ def run_kit(repo_path: str, kit: str, query: str = "", max_tokens: int = 4000,
 
 
 @mcp.tool()
+def search_semantic(repo_path: str, query: str, limit: int = 10,
+                    exclude_dirs: str = "", output_format: str = "text") -> str:
+    """Hybrid semantic + structural search across all symbols in a codebase.
+
+    Combines FTS5 keyword matching with vector similarity (if embeddings exist)
+    using Reciprocal Rank Fusion. Finds symbols by meaning, not just exact name match.
+
+    Example: search_semantic(repo, "handle user authentication") finds auth-related
+    functions even if they're named validate_token or check_credentials.
+
+    Run `python3 -m tempograph <repo> --embed` first to enable semantic vectors.
+
+    repo_path: absolute path to repository
+    query: natural language description of what you're looking for
+    limit: max results (default 10)
+    """
+    start = time.time()
+    p, err = _validate_repo(repo_path)
+    if err:
+        return err
+    graph = _get_or_build_graph(p, _resolve_excludes(exclude_dirs))
+    if isinstance(graph, str):
+        return graph
+
+    results = graph.search_symbols_scored(query)[:limit]
+    lines = []
+    for score, sym in results:
+        callers = len(graph.callers_of(sym.id))
+        hot = " [hot]" if graph.hot_files and sym.file_path in graph.hot_files else ""
+        lines.append(f"{score:6.1f}  {sym.kind.value:10s}  {sym.qualified_name:40s}  {sym.file_path}:{sym.line_start}  ({callers} callers){hot}")
+
+    output = "\n".join(lines) if lines else "No matches found."
+    elapsed = time.time() - start
+    tokens = count_tokens(output)
+    _log_tool("search_semantic", p, output, elapsed, query=query)
+    return _success(output, tokens, elapsed, output_format)
+
+
+@mcp.tool()
 def watch_repo(repo_path: str, exclude_dirs: str = "") -> str:
     """Start watching a repository for file changes. Incrementally updates the graph DB
     when files are added, modified, or deleted. Uses Rust-backed file watcher for performance.

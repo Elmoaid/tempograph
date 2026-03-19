@@ -77,9 +77,31 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--task-type", help="Explicit task type for L2 learning (e.g. refactor, debug, feature, review)")
     parser.add_argument("--kit", "-k", metavar="KIT",
                         help="Run a composable kit workflow. Use --kit list to show all kits.")
+    parser.add_argument("--embed", action="store_true",
+                        help="Generate embeddings for semantic search (requires fastembed)")
+    parser.add_argument("--search", metavar="QUERY",
+                        help="Hybrid semantic+structural search for symbols")
 
     args = parser.parse_args(raw)
     repo = str(Path(args.repo).resolve())
+
+    # Embed: generate embeddings for semantic search
+    if args.embed:
+        from .embeddings import embed_symbols as _embed_symbols
+        _eg = __import__('tempograph.builder', fromlist=['build_graph']).build_graph
+        _g = _eg(repo, exclude_dirs=args.exclude.split(",") if args.exclude else None)
+        count = _embed_symbols(_g._db if hasattr(_g, '_db') else None)
+        print(f"Embedded {count} symbols for semantic search")
+        return 0
+
+    # Search: hybrid semantic+structural search
+    if args.search:
+        _sg = __import__('tempograph.builder', fromlist=['build_graph']).build_graph
+        _g = _sg(repo, exclude_dirs=args.exclude.split(",") if args.exclude else None)
+        results = _g.search_symbols_scored(args.search)[:20]
+        for score, sym in results:
+            print(f"  {score:6.1f}  {sym.kind.value:10s}  {sym.qualified_name:40s}  {sym.file_path}:{sym.line_start}")
+        return 0
 
     # Kit list: no graph needed
     if args.kit == "list":
