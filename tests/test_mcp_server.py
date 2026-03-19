@@ -759,6 +759,26 @@ class TestSearchRanking:
             fifth_score = scored[4][0]
             assert top_score > fifth_score, "Top score should be significantly higher"
 
+    def test_camelcase_query_matches_snake_case(self):
+        """CamelCase queries should match snake_case symbols via token expansion."""
+        from tempograph.builder import build_graph
+        g = build_graph(REPO_PATH, exclude_dirs=["archive"])
+        # "buildGraph" (CamelCase) → expands to "build graph" → matches build_graph
+        results = g.search_symbols("buildGraph")
+        names = [s.qualified_name for s in results[:5]]
+        assert any("build_graph" in n for n in names), \
+            f"CamelCase 'buildGraph' did not match snake_case build_graph. Top 5: {names}"
+
+    def test_pascalcase_query_matches_class(self):
+        """PascalCase class name query should match the class symbol."""
+        from tempograph.builder import build_graph
+        g = build_graph(REPO_PATH, exclude_dirs=["archive"])
+        # "FileParser" → expands to "File Parser" → matches FileParser class
+        results = g.search_symbols("FileParser")
+        names = [s.name for s in results[:5]]
+        assert any("FileParser" in n for n in names), \
+            f"'FileParser' query did not find FileParser class. Top 5: {names}"
+
     def test_seed_quality_gate_filters_low_relevance(self):
         """Focus mode should filter out low-scoring seeds instead of showing noise."""
         from tempograph.render import render_focused
