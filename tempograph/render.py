@@ -602,9 +602,13 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
             # More context at shallow depths, less at deeper
             caller_limit = 8 if depth == 0 else 5 if depth == 1 else 3
             callee_limit = 8 if depth == 0 else 5 if depth == 1 else 3
-            for caller in graph.callers_of(sym.id)[:caller_limit]:
+            # Hot-first traversal: when the 50-node cap forces truncation, prefer
+            # recently-modified symbols. Sort hot-file symbols first so they're
+            # selected within the per-step limit before cold stragglers.
+            _hot_key = lambda s: s.file_path not in graph.hot_files  # False(0)=hot first
+            for caller in sorted(graph.callers_of(sym.id), key=_hot_key)[:caller_limit]:
                 _enqueue(caller, depth + 1)
-            for callee in graph.callees_of(sym.id)[:callee_limit]:
+            for callee in sorted(graph.callees_of(sym.id), key=_hot_key)[:callee_limit]:
                 _enqueue(callee, depth + 1)
             if depth < 2:
                 for child in graph.children_of(sym.id)[:5]:
