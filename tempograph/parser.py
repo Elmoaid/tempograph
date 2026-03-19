@@ -2039,6 +2039,13 @@ class FileParser:
                             EdgeKind.CALLS, from_id, target,
                             node.start_point[0] + 1,
                         ))
+            # Recurse into arguments only — skip the receiver chain so that
+            # a.get().min().filter() registers as 1 edge, not 3.
+            args_node = node.child_by_field_name("arguments")
+            if args_node:
+                for child in args_node.children:
+                    self._scan_calls(child, from_id, depth=depth + 1)
+            return
         # Traverse spread elements — e.g. ...createSlice(...args) inside object literals
         if node.type == "spread_element":
             for child in node.children:
