@@ -237,7 +237,56 @@ def _run_tool(tool_name: str, repo_path: str, output_format: str, render_fn,
     elapsed = time.time() - start
     tokens = count_tokens(output)
     _log_tool(tool_name, p, output, elapsed, **log_extra)
+
+    # Speculative prefetch: pre-warm the predicted next mode in background
+    _prefetch_next(tool_name, p, excludes)
+
     return _success(output, tokens, elapsed, output_format)
+
+
+# Prefetch cache: store pre-computed results for predicted next modes
+_prefetch_cache: dict[str, str] = {}  # key = f"{repo}:{mode}", value = rendered output
+
+
+def _prefetch_next(current_tool: str, repo_path: str, exclude_dirs: list[str] | None) -> None:
+    """Pre-warm the most likely next mode based on session prediction."""
+    import threading
+    try:
+        from .predict import suggest_prefetch
+        suggestions = suggest_prefetch(repo_path, current_tool, threshold=0.4)
+        if not suggestions:
+            return
+        # Only prefetch the single most likely mode
+        next_mode = suggestions[0]
+        cache_key = f"{repo_path}:{next_mode}"
+        if cache_key in _prefetch_cache:
+            return  # already cached
+
+        def _do_prefetch():
+            try:
+                graph = _get_or_build_graph(repo_path, exclude_dirs=exclude_dirs)
+                if isinstance(graph, str):
+                    return
+                _prefetch_renderers = {
+                    "overview": lambda g: render_overview(g),
+                    "hotspots": lambda g: render_hotspots(g),
+                    "focus": None,  # needs query, can't prefetch
+                    "dead_code": lambda g: render_dead_code(g),
+                    "stats": None,  # cheap enough, skip
+                    "architecture": lambda g: render_architecture(g),
+                    "file_map": lambda g: render_map(g),
+                    "dependencies": lambda g: render_dependencies(g),
+                }
+                fn = _prefetch_renderers.get(next_mode)
+                if fn:
+                    _prefetch_cache[cache_key] = fn(graph)
+            except Exception:
+                pass
+
+        t = threading.Thread(target=_do_prefetch, daemon=True)
+        t.start()
+    except (ImportError, Exception):
+        pass
 
 
 # ── Tool 1: Build + orient ──────────────────────────────────────────
