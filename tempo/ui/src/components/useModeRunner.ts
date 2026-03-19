@@ -2,6 +2,8 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { runTempo, saveOutput, reportFeedback, readFile } from "./tempo";
 import { MODES, loadHistory, saveHistory } from "./modes";
 import { BUILTIN_KITS, type KitInfo } from "./kits";
+import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
+import { useRunMode } from "../hooks/useRunMode";
 
 export interface ModeRunnerState {
   activeMode: string;
@@ -177,23 +179,17 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     }
   };
 
-  // Keyboard shortcuts
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (!e.metaKey && !e.ctrlKey) return;
-      if (e.key === "k") { e.preventDefault(); setPaletteOpen(true); }
-      if (e.key === "n") { e.preventDefault(); setKitBuilderOpen(true); setSidebarTab("kits"); }
-      if (e.key === "r" && !modeRunning) { e.preventDefault(); runModeRef.current?.(); }
-      if (e.key === "f" && modeOutput) {
-        e.preventDefault();
-        setFilterVisible(v => { if (!v) setTimeout(() => filterInputRef.current?.focus(), 50); return true; });
-      }
-      const n = parseInt(e.key, 10);
-      if (n >= 1 && n <= 9 && n <= MODES.length) { e.preventDefault(); switchMode(MODES[n - 1].mode); }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [modeRunning, modeOutput]);
+  useKeyboardShortcuts({
+    modeRunning,
+    modeOutput,
+    runModeRef,
+    filterInputRef,
+    switchMode,
+    setPaletteOpen,
+    setKitBuilderOpen,
+    setSidebarTab,
+    setFilterVisible,
+  });
 
   // Live elapsed counter
   useEffect(() => {
@@ -207,57 +203,25 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   // Auto-run overview on mount
   useEffect(() => { runModeRef.current?.(); }, []);
 
-  const runMode = async () => {
-    if (!repoPath || modeRunning) return;
-    const cacheKey = activeKit ? `kit:${activeKit}` : activeMode;
-    runStart.current = Date.now();
-    setElapsed(0);
-    setModeRunning(true);
-    setModeOutput("");
-    try {
-      let r;
-      if (activeKit) {
-        const args = ["--kit", activeKit];
-        const raw = modeArgs.trim();
-        if (raw) args.push("--query", raw);
-        r = await runTempo(repoPath, "kit", args);
-      } else {
-        const args: string[] = [];
-        const raw = modeArgs.trim();
-        const modeInfo = MODES.find(m => m.mode === activeMode);
-        if (raw && modeInfo?.argPrefix && !raw.startsWith("--")) {
-          args.push(modeInfo.argPrefix, raw);
-        } else if (raw) {
-          args.push(...raw.split(/\s+/));
-        }
-        if (excludeDirs && excludeDirs.length > 0 && !args.includes("--exclude")) {
-          args.push("--exclude", excludeDirs.join(","));
-        }
-        r = await runTempo(repoPath, activeMode, args);
-      }
-      const out = r.output || "No output";
-      const now = Date.now();
-      const dur = runStart.current ? (now - runStart.current) / 1000 : null;
-      outputCache.current.set(cacheKey, out);
-      outputTsCache.current.set(cacheKey, now);
-      if (dur !== null) runDurationCache.current.set(cacheKey, dur);
-      setModeOutput(out);
-      setOutputTs(now);
-      if (dur !== null) setRunDuration(dur);
-      setCachedModes(prev => new Set(prev).add(cacheKey));
-      if (!activeKit) {
-        const raw = modeArgs.trim();
-        const modeInfo = MODES.find(m => m.mode === activeMode);
-        if (raw && modeInfo?.argPrefix) {
-          saveHistory(activeMode, raw);
-          setHistory(loadHistory(activeMode));
-        }
-      }
-    } catch {
-      setModeOutput("Failed to run mode. Check that tempo is installed.");
-    }
-    setModeRunning(false);
-  };
+  const { runMode } = useRunMode({
+    repoPath,
+    excludeDirs,
+    activeMode,
+    activeKit,
+    modeArgs,
+    modeRunning,
+    outputCache,
+    outputTsCache,
+    runDurationCache,
+    runStart,
+    setElapsed,
+    setModeRunning,
+    setModeOutput,
+    setOutputTs,
+    setRunDuration,
+    setCachedModes,
+    setHistory,
+  });
   runModeRef.current = runMode;
 
   const copyOutput = () => {
