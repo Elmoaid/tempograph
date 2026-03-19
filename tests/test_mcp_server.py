@@ -1085,6 +1085,36 @@ class TestRubyParser:
 
 
 # ---------------------------------------------------------------------------
+# Call chain deduplication
+# ---------------------------------------------------------------------------
+
+class TestCallChainDedup:
+    def test_fluent_chain_counts_as_one_edge(self):
+        """a.fetchData().transform().paginate() should register 1 call edge, not 3."""
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        # JS fluent chain with non-builtin user-defined methods
+        code = b'function run() { return a.fetchData().transform().paginate(); }'
+        p = FileParser('a.js', Language.JAVASCRIPT, code)
+        _, edges, _ = p.parse()
+        call_targets = [e.target_id for e in edges if e.kind.value == "calls"]
+        # Only the outermost call in the chain should be recorded (not all 3)
+        assert len(call_targets) == 1, f"Expected 1 edge, got {len(call_targets)}: {call_targets}"
+        assert call_targets[0] == "paginate", f"Expected 'paginate', got {call_targets}"
+
+    def test_argument_calls_still_tracked(self):
+        """foo(bar()) should record both foo and bar (argument call, not receiver chain)."""
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b'function run() { return foo(bar()); }'
+        p = FileParser('a.js', Language.JAVASCRIPT, code)
+        _, edges, _ = p.parse()
+        call_targets = {e.target_id for e in edges if e.kind.value == "calls"}
+        assert "foo" in call_targets, f"Expected 'foo' in {call_targets}"
+        assert "bar" in call_targets, f"Expected 'bar' in {call_targets}"
+
+
+# ---------------------------------------------------------------------------
 # Render module — token caps and noise detection
 # ---------------------------------------------------------------------------
 
