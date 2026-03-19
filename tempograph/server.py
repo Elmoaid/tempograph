@@ -267,10 +267,54 @@ def index_repo(repo_path: str, exclude_dirs: str = "", output_format: str = "tex
         return _error(code, msg or "Graph build failed", output_format)
 
     elapsed = time.time() - start
-    output = f"Indexed in {elapsed:.1f}s\n\n{render_overview(result)}"
+    # Add storage and embedding status
+    db_status = ""
+    if hasattr(result, '_db') and result._db is not None:
+        db = result._db
+        db_status = f"\nStorage: SQLite ({db.symbol_count()} symbols, {db.file_count()} files)"
+        if getattr(db, '_has_vectors', False):
+            db_status += " + vectors enabled"
+        else:
+            db_status += " | run embed_repo to enable semantic search"
+    output = f"Indexed in {elapsed:.1f}s{db_status}\n\n{render_overview(result)}"
     tokens = count_tokens(output)
     _log_tool("index_repo", p, output, elapsed)
     return _success(output, tokens, elapsed, output_format)
+
+
+@mcp.tool()
+def embed_repo(repo_path: str, exclude_dirs: str = "", output_format: str = "text") -> str:
+    """Generate embeddings for semantic search across all symbols in the codebase.
+
+    Run after index_repo to enable hybrid search (FTS5 + vector similarity).
+    Uses BAAI/bge-small-en-v1.5 (33MB, runs locally on CPU, no API keys).
+    Only embeds symbols without existing vectors — fast on subsequent runs.
+
+    Requires: pip install tempograph[semantic]
+
+    repo_path: absolute path to repository
+    """
+    start = time.time()
+    p, err = _validate_repo(repo_path)
+    if err:
+        return _error(err, f"Directory not found: {repo_path}", output_format)
+
+    graph = _get_or_build_graph(p, _resolve_excludes(p, exclude_dirs) or None)
+    if isinstance(graph, str):
+        return _error(graph.partition(":")[0], "Graph build failed", output_format)
+
+    if not hasattr(graph, '_db') or graph._db is None:
+        return _error("BUILD_FAILED", "No SQLite DB — rebuild with use_db=True", output_format)
+
+    try:
+        from .embeddings import embed_symbols
+        count = embed_symbols(graph._db)
+        elapsed = time.time() - start
+        output = f"Embedded {count} symbols in {elapsed:.1f}s. Semantic search now active."
+        _log_tool("embed_repo", p, output, elapsed, embedded=count)
+        return _success(output, count_tokens(output), elapsed, output_format)
+    except ImportError:
+        return _error("INVALID_PARAMS", "fastembed not installed. Run: pip install tempograph[semantic]", output_format)
 
 
 # ── Tool 2: Overview ────────────────────────────────────────────────
