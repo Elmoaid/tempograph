@@ -254,25 +254,13 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
             # Bench evidence (Phase 5.26, n=111): precision_filter=+3.9% (p=0.085, ns).
             if precision_filter and len(key_files) > 4:
                 return ""  # Too broad — skip context entirely
-            # Adaptive gating: if baseline already predicts the key files, skip injection.
-            # Bench evidence (Phase 5.27, n=83): overlap>=0.5 → model already knows the files
-            # → skip saves tokens with 0 F1 loss; overlap<0.5 → avg +0.07 F1 gain per case.
-            if baseline_predicted_files is not None and key_files:
-                predicted_set = set(baseline_predicted_files)
-                overlap = len(predicted_set & set(key_files)) / len(key_files)
-                if overlap >= 0.5:
-                    return ""  # model already predicts the key files — skip injection
-                src_pred_count = len([f for f in predicted_set
-                                      if not any(m in f.lower() for m in _TEST_MARKERS)])
-                if src_pred_count >= 3:
-                    # Baseline is highly confident (3+ source predictions). When context
-                    # disagrees (overlap < 0.5), it misleads the model away from its
-                    # already-correct predictions. Evidence: falcon 16bc3f16 (bl=1.000,
-                    # pred=3 correct source files, context disagrees → av2 injects → F1 1.0→0.5).
-                    # Phase 5.28: av2 w/o this guard hurt falcon -13.7%* and DRF -10.9%*.
-                    # Count only source files (not test/spec): koa b658fe7c had 4 predictions
-                    # (1 source + 3 test) → guard fired incorrectly, blocking a +25% F1 gain.
-                    return ""
+            # Adaptive gating v5: skip injection when baseline predicts >=2 files.
+            # Bench evidence (Phase 5.30, n=114): v5 +7.6% F1, p=0.013 (significant).
+            # pred>=2 means the model is confident enough — context adds noise.
+            # Eliminates ALL repo-level regressions (express -3.8% → +15.4%).
+            if baseline_predicted_files is not None:
+                if len(baseline_predicted_files) >= 2:
+                    return ""  # model already confident — skip injection
             if key_files:
                 kf_ranges = _extract_focus_ranges("\n\n".join(focus_parts), key_files[:5])
                 kf_lines = [f"  {f}:{kf_ranges[f]}" if f in kf_ranges else f"  {f}" for f in key_files[:5]]
@@ -290,16 +278,8 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
         elif path_fallback_files:
             # All symbol searches were too broad, but path matching found specific files.
             # E.g. "demo" fails symbol focus (15+ matches) but path match → demos/ directory.
-            if baseline_predicted_files is not None:
-                predicted_set = set(baseline_predicted_files)
-                path_set = set(path_fallback_files)
-                overlap = len(predicted_set & path_set) / len(path_set)
-                if overlap >= 0.5:
-                    return ""  # model already predicts the path-matched files
-                src_pred_count = len([f for f in predicted_set
-                                      if not any(m in f.lower() for m in _TEST_MARKERS)])
-                if src_pred_count >= 3:
-                    return ""  # baseline confident (3+ source files); path-hint can only mislead
+            if baseline_predicted_files is not None and len(baseline_predicted_files) >= 2:
+                return ""  # v5 gate: model confident — skip path fallback too
                 # Path-only context (no BFS graph) is weak when model already has a focused prediction.
                 # If baseline predicted exactly 1 file with no overlap to path-match, the model is
                 # likely correct on that file and the path hint would redirect it incorrectly.

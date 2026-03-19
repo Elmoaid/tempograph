@@ -410,57 +410,47 @@ class TestPrepareContext:
         # Gating triggered: returns "" (model already correct — 0 F1 loss, saves tokens)
         assert gated_r["data"].strip() == ""
 
-    def test_adaptive_gating_low_overlap_injects_context(self):
-        # When baseline_predicted_files don't overlap with KEY FILES, full context is injected.
-        import re
+    def test_adaptive_gating_v5_pred_lt_2_injects(self):
+        # v5 gate: pred<2 → inject. Single baseline prediction = model uncertain.
         task = "Merge pull request #1 from org/fix-render-focused"
         base_r = assert_ok(prepare_context(REPO_PATH, task=task, output_format="json"))
         if "KEY FILES" not in base_r["data"]:
             pytest.skip("Task produces no KEY FILES")
-        # Pass completely unrelated files as baseline → 0% overlap → inject normally
+        # 1 file = pred<2 → inject normally
         gated_r = assert_ok(prepare_context(
             REPO_PATH, task=task,
-            baseline_predicted_files=["unrelated/file.py", "another/unrelated.py"],
+            baseline_predicted_files=["unrelated/file.py"],
             output_format="json",
         ))
         assert "KEY FILES" in gated_r["data"]
 
-    def test_adaptive_gating_pred_ge_3_skips_injection(self):
-        # pred≥3 guard (commits 988960b/d4eb3c8): when baseline has 3+ predicted files
-        # and overlap < 0.5, confident baseline shouldn't be overridden by context.
-        # Bench evidence: falcon -13.7%* and DRF -10.9%* without this guard.
-        import re
+    def test_adaptive_gating_v5_pred_ge_2_skips(self):
+        # v5 gate: pred>=2 → skip injection. Model is confident.
+        # Bench evidence (Phase 5.30, n=114): v5 +7.6% F1, p=0.013.
         task = "Merge pull request #1 from org/fix-render-focused"
         base_r = assert_ok(prepare_context(REPO_PATH, task=task, output_format="json"))
         if "KEY FILES" not in base_r["data"]:
-            pytest.skip("Task produces no KEY FILES — guard path can't trigger")
-        # 3+ files that don't overlap with KEY FILES → pred≥3 + low overlap → skip injection
-        unrelated = [
-            "unrelated/a.py", "unrelated/b.py", "unrelated/c.py",
-        ]
+            pytest.skip("Task produces no KEY FILES — gate path can't trigger")
+        # 2 files → pred>=2 → skip
         gated_r = assert_ok(prepare_context(
             REPO_PATH, task=task,
-            baseline_predicted_files=unrelated,
+            baseline_predicted_files=["a.py", "b.py"],
             output_format="json",
         ))
-        # pred≥3 guard triggered: confident baseline, no injection
         assert gated_r["data"].strip() == ""
 
-    def test_adaptive_gating_pred_lt_3_still_injects(self):
-        # Complement of pred≥3 guard: with only 2 non-overlapping predictions,
-        # context is NOT suppressed (< 3 predictions → no guard, low overlap → inject).
-        import re
+    def test_adaptive_gating_v5_pred_ge_3_also_skips(self):
+        # v5: 3+ predictions also skips (superset of pred>=2).
         task = "Merge pull request #1 from org/fix-render-focused"
         base_r = assert_ok(prepare_context(REPO_PATH, task=task, output_format="json"))
         if "KEY FILES" not in base_r["data"]:
             pytest.skip("Task produces no KEY FILES")
-        # Only 2 unrelated files → pred < 3 → guard doesn't fire → inject normally
         gated_r = assert_ok(prepare_context(
             REPO_PATH, task=task,
-            baseline_predicted_files=["unrelated/a.py", "unrelated/b.py"],
+            baseline_predicted_files=["a.py", "b.py", "c.py"],
             output_format="json",
         ))
-        assert "KEY FILES" in gated_r["data"]
+        assert gated_r["data"].strip() == ""
 
     def test_adaptive_gating_none_baseline_no_change(self):
         # Without baseline_predicted_files (None default), normal flow is unchanged.
@@ -493,15 +483,18 @@ class TestPrepareContext:
             )
 
     def test_json_output_injected_false_on_gating(self):
-        # When gating triggers (high overlap), injected=False and key_files=[].
-        import re
+        # v5 gate: pred>=2 → skip injection. injected=False, key_files=[].
         task = "Merge pull request #1 from org/fix-render-focused"
         base_r = assert_ok(prepare_context(REPO_PATH, task=task, output_format="json"))
         if not base_r.get("key_files"):
             pytest.skip("Task produces no KEY FILES")
+        # Ensure we pass >=2 files to trigger v5 gate
+        baseline_files = base_r["key_files"]
+        if len(baseline_files) < 2:
+            baseline_files = baseline_files + ["extra/padding.py"]
         gated_r = assert_ok(prepare_context(
             REPO_PATH, task=task,
-            baseline_predicted_files=base_r["key_files"],
+            baseline_predicted_files=baseline_files,
             output_format="json",
         ))
         assert gated_r["injected"] is False
