@@ -1,4 +1,4 @@
-"""MCP server — 18 tools for agent codebase understanding.
+"""MCP server — 23 tools for agent codebase understanding.
 
 Each tool returns structured JSON (status/data/tokens/duration) or plain text.
 Standardized error codes: REPO_NOT_FOUND, NOT_GIT_REPO, NO_MATCH, BUILD_FAILED, BUILD_TIMEOUT, RENDER_FAILED.
@@ -922,7 +922,7 @@ def watch_repo(repo_path: str, exclude_dirs: str = "") -> str:
         return err
 
     if p in _watchers and _watchers[p].is_running:
-        return _format_output(f"Already watching {p}", "text")
+        return f"Already watching {p}"
 
     excludes = [d.strip() for d in exclude_dirs.split(",") if d.strip()] if exclude_dirs else []
 
@@ -935,7 +935,7 @@ def watch_repo(repo_path: str, exclude_dirs: str = "") -> str:
     watcher.start()
     _watchers[p] = watcher
 
-    return _format_output(f"Watching {p} for changes (incremental graph updates enabled)", "text")
+    return f"Watching {p} for changes (incremental graph updates enabled)"
 
 
 @mcp.tool()
@@ -951,8 +951,58 @@ def unwatch_repo(repo_path: str) -> str:
     watcher = _watchers.pop(p, None)
     if watcher:
         watcher.stop()
-        return _format_output(f"Stopped watching {p}", "text")
-    return _format_output(f"Not currently watching {p}", "text")
+        return f"Stopped watching {p}"
+    return f"Not currently watching {p}"
+
+
+@mcp.tool()
+def cochange_context(repo_path: str, file_path: str, n_commits: int = 200,
+                     output_format: str = "text") -> str:
+    """Files that historically co-change with a given file (logical coupling).
+
+    Uses git history to find files frequently changed in the same commits.
+    Useful for discovering hidden dependencies: if A and B co-change 80% of
+    the time, a change to A likely requires reviewing B.
+
+    file_path: path relative to repo root (e.g., "tempograph/render.py")
+    n_commits: how many recent commits to analyze (default 200)
+    output_format: "text" (default) or "json"
+    """
+    t0 = time.time()
+    p, err = _validate_repo(repo_path)
+    if err:
+        return err
+    if not _is_git_repo(p):
+        return _error(NOT_GIT_REPO, f"Not a git repository: {repo_path}", output_format)
+
+    from .git import cochange_matrix
+    matrix = cochange_matrix(p, n_commits=n_commits)
+
+    # Normalize: strip leading ./ and try both the given path and as-given
+    fp = file_path.lstrip("./")
+    partners = matrix.get(fp) or matrix.get(file_path)
+    if partners is None:
+        # Suffix match for partial paths (e.g. "render.py" → "tempograph/render.py")
+        for key, val in matrix.items():
+            if key.endswith("/" + fp) or key == fp:
+                fp, partners = key, val
+                break
+
+    if not partners:
+        return _error(NO_MATCH,
+                      f"No co-change data for '{file_path}'. It may not appear in "
+                      f"the last {n_commits} commits or has no co-change partners.",
+                      output_format)
+
+    lines = [f"Co-change partners for {fp} (last {n_commits} commits):"]
+    for coupled_file, freq in partners:
+        pct = int(freq * 100)
+        lines.append(f"  {coupled_file}  {pct}%")
+
+    output = "\n".join(lines)
+    elapsed = time.time() - t0
+    _log_tool("cochange_context", p, output, elapsed)
+    return _success(output, count_tokens(output), elapsed, output_format)
 
 
 def run_server():
