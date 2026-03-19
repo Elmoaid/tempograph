@@ -501,6 +501,36 @@ def _cochange_orbit(
     return sorted(partners.items(), key=lambda x: -x[1])[:n]
 
 
+def _find_orbit_seeds(
+    graph: "Tempo",
+    query_tokens: list[str],
+    orbit_pairs: list[tuple[str, float]],
+) -> list[tuple["Symbol", float]]:
+    """Find the best-matching symbol in each orbit file by query token overlap.
+
+    Returns (symbol, coupling_freq) pairs — up to 1 per orbit file, max 3 total.
+    Only files with at least one symbol matching a query token are included.
+    This is how git-coupled files that aren't in the call graph become BFS seeds."""
+    if not query_tokens:
+        return []
+
+    results: list[tuple["Symbol", float]] = []
+    for fp, freq in orbit_pairs:
+        syms = graph.symbols_in_file(fp)
+        best_sym: "Symbol | None" = None
+        best_score = 0
+        for sym in syms:
+            name_lower = sym.name.lower()
+            score = sum(1 for tok in query_tokens if tok in name_lower)
+            if score > best_score:
+                best_score = score
+                best_sym = sym
+        if best_sym and best_score > 0:
+            results.append((best_sym, freq))
+
+    return results[:3]
+
+
 def _collect_seeds(
     graph: Tempo, query: str
 ) -> tuple[list[Symbol], set[str], list[str]]:
@@ -539,18 +569,29 @@ def _collect_seeds(
 
 
 def _bfs_expand(
-    graph: Tempo, seeds: list[Symbol], seed_files: set[str]
+    graph: Tempo,
+    seeds: list[Symbol],
+    seed_files: set[str],
+    secondary_seeds: list[Symbol] | None = None,
 ) -> tuple[list[tuple[Symbol, int]], set[str]]:
     """BFS from seed symbols following caller/callee/child edges.
 
     Returns (ordered, seen_ids).
     ordered is the BFS traversal sequence with (symbol, depth) pairs.
     seen_ids is the full set of visited symbol IDs — callers use it for
-    file-context deduplication so already-shown symbols are excluded."""
+    file-context deduplication so already-shown symbols are excluded.
+
+    secondary_seeds are orbit-derived symbols injected at depth 1 — they
+    expand the BFS into git-coupled files that aren't reachable via call edges."""
     _hot_seeds = any(s.file_path in graph.hot_files for s in seeds)
     _bfs_max_depth = 4 if _hot_seeds else 3
     seen_ids: set[str] = set()
     queue: list[tuple[Symbol, int]] = [(s, 0) for s in seeds]
+    if secondary_seeds:
+        primary_ids = {s.id for s in seeds}
+        for s in secondary_seeds:
+            if s.id not in primary_ids:
+                queue.append((s, 1))
     ordered: list[tuple[Symbol, int]] = []
 
     def _enqueue(candidate: Symbol, depth: int) -> None:
@@ -619,7 +660,22 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     if not seeds:
         return _suggest_alternatives(graph, query) or f"No symbols matching '{query}'"
 
-    ordered, seen_ids = _bfs_expand(graph, seeds, seed_files)
+    # Orbit-BFS seeding: inject symbols from git-coupled files as depth-1 seeds.
+    # Call graph misses test files (they call INTO src, not tracked as callers).
+    # Git orbit catches those — if tests always change with render.py, seed them too.
+    orbit_seed_meta: dict[str, tuple[str, float]] = {}  # sym.id → (orbit_file, coupling_freq)
+    orbit_secondary: list[Symbol] = []
+    if graph.root:
+        _primary_fps = [s.file_path for s in seeds]
+        _primary_fp_set = {s.file_path for s in seeds}
+        _orbit_pairs = _cochange_orbit(graph.root, _primary_fps, _primary_fp_set, n=3)
+        for sym, freq in _find_orbit_seeds(graph, query_tokens, _orbit_pairs):
+            orbit_secondary.append(sym)
+            orbit_seed_meta[sym.id] = (sym.file_path, freq)
+
+    ordered, seen_ids = _bfs_expand(
+        graph, seeds, seed_files, secondary_seeds=orbit_secondary or None
+    )
 
     def _caller_priority(sym: Symbol) -> int:
         """0 = keyword match in path (show first), 1 = no match (show after)."""
@@ -634,7 +690,11 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
         indent = "  " * depth if depth > 0 else ""
         prefix = ["●", "  →", "    ·", "      "][min(depth, 3)]
         loc = f"{sym.file_path}:{sym.line_start}-{sym.line_end}"
-        block_lines = [f"{prefix} {sym.kind.value} {sym.qualified_name} — {loc}"]
+        orbit_note = ""
+        if sym.id in orbit_seed_meta and depth == 1:
+            _orb_fp, _orb_freq = orbit_seed_meta[sym.id]
+            orbit_note = f"  [orbit {_orb_freq:.0%}]"
+        block_lines = [f"{prefix} {sym.kind.value} {sym.qualified_name} — {loc}{orbit_note}"]
         if sym.signature and depth < 2:
             block_lines.append(f"{indent}  sig: {sym.signature[:150]}")
         if sym.doc and depth == 0:
