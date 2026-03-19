@@ -157,16 +157,14 @@ def main(argv: list[str] | None = None) -> int:
     # Embed: generate embeddings for semantic search
     if args.embed:
         from .embeddings import embed_symbols as _embed_symbols
-        _eg = __import__('tempograph.builder', fromlist=['build_graph']).build_graph
-        _g = _eg(repo, exclude_dirs=args.exclude.split(",") if args.exclude else None)
+        _g = build_graph(repo, exclude_dirs=args.exclude.split(",") if args.exclude else None)
         count = _embed_symbols(_g._db if hasattr(_g, '_db') else None)
         print(f"Embedded {count} symbols for semantic search")
         return 0
 
     # Search: hybrid semantic+structural search
     if args.search:
-        _sg = __import__('tempograph.builder', fromlist=['build_graph']).build_graph
-        _g = _sg(repo, exclude_dirs=args.exclude.split(",") if args.exclude else None)
+        _g = build_graph(repo, exclude_dirs=args.exclude.split(",") if args.exclude else None)
         results = _g.search_symbols_scored(args.search)[:20]
         for score, sym in results:
             print(f"  {score:6.1f}  {sym.kind.value:10s}  {sym.qualified_name:40s}  {sym.file_path}:{sym.line_start}")
