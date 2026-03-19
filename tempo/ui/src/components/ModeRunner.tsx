@@ -1,8 +1,10 @@
-import { useState, useEffect, useRef, useMemo } from "react";
-import { runTempo, saveOutput, reportFeedback } from "./tempo";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { runTempo, saveOutput, reportFeedback, readFile } from "./tempo";
 import { CommandPalette } from "./CommandPalette";
+import { KitBuilder } from "./KitBuilder";
 import { MODES, loadHistory, saveHistory } from "./modes";
-import { ModeList } from "./ModeList";
+import { BUILTIN_KITS, type KitInfo } from "./kits";
+import { SidebarTabs } from "./SidebarTabs";
 import { OutputPanel } from "./OutputPanel";
 
 interface Props {
@@ -12,6 +14,10 @@ interface Props {
 
 export function ModeRunner({ repoPath, excludeDirs }: Props) {
   const [activeMode, setActiveMode] = useState("overview");
+  const [activeKit, setActiveKit] = useState<string | null>(null);
+  const [sidebarTab, setSidebarTab] = useState<"kits" | "modes">("kits");
+  const [customKits, setCustomKits] = useState<KitInfo[]>([]);
+  const [kitBuilderOpen, setKitBuilderOpen] = useState(false);
   const [modeArgs, setModeArgs] = useState("");
   const [modeOutput, setModeOutput] = useState("");
   const [modeRunning, setModeRunning] = useState(false);
@@ -34,7 +40,46 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
   const [runDuration, setRunDuration] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState<number>(0);
 
-  const activeModeInfo = MODES.find(m => m.mode === activeMode);
+  const activeModeInfo = activeKit
+    ? (() => {
+        const kit = [...BUILTIN_KITS, ...customKits].find(k => k.id === activeKit);
+        if (!kit) return undefined;
+        return {
+          mode: `kit:${kit.id}`,
+          label: kit.label,
+          icon: kit.icon,
+          tag: "kit",
+          hint: kit.needsQuery ? "symbol or task to focus on" : undefined,
+          argPrefix: kit.needsQuery ? "--query" : undefined,
+          desc: kit.description,
+        };
+      })()
+    : MODES.find(m => m.mode === activeMode);
+
+  const loadCustomKits = useCallback(() => {
+    if (!repoPath) return;
+    readFile(`${repoPath}/.tempo/kits.json`).then(r => {
+      if (!r.success || !r.output) return;
+      try {
+        const raw = JSON.parse(r.output) as Record<string, { steps?: string[]; description?: string; needsQuery?: boolean }>;
+        const loaded: KitInfo[] = Object.entries(raw)
+          .filter(([, spec]) => spec.steps && spec.steps.length > 0)
+          .map(([id, spec]) => ({
+            id,
+            label: id.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
+            icon: BUILTIN_KITS[0].icon,
+            description: spec.description || `Custom kit: ${spec.steps?.join(" + ")}`,
+            needsQuery: spec.needsQuery,
+          }));
+        setCustomKits(loaded);
+      } catch {
+        // malformed kits.json — silently ignore
+      }
+    });
+  }, [repoPath]);
+
+  // Load custom kits from .tempo/kits.json on repo change
+  useEffect(() => { loadCustomKits(); }, [loadCustomKits]);
 
   const filteredOutput = useMemo(() => {
     if (!outputFilter.trim() || !modeOutput) return modeOutput;
@@ -49,6 +94,7 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
   }, [modeOutput, outputFilter]);
 
   const switchMode = (mode: string) => {
+    setActiveKit(null);
     setActiveMode(mode);
     setModeArgs("");
     setHistoryOpen(false);
@@ -64,11 +110,32 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
     }
   };
 
-  // Keyboard shortcuts: Cmd+K = palette, Cmd+R = run, Cmd+F = filter, Cmd+1-9 = switch mode
+  const switchKit = (kitId: string) => {
+    setActiveKit(kitId);
+    setActiveMode("kit");
+    setModeArgs("");
+    setHistoryOpen(false);
+    setOutputFilter("");
+    setFilterVisible(false);
+    const cacheKey = `kit:${kitId}`;
+    const cached = outputCache.current.get(cacheKey);
+    setModeOutput(cached ?? "");
+    setOutputTs(cached ? (outputTsCache.current.get(cacheKey) ?? null) : null);
+    setRunDuration(runDurationCache.current.get(cacheKey) ?? null);
+    const kit = [...BUILTIN_KITS, ...customKits].find(k => k.id === kitId);
+    if (!cached && !kit?.needsQuery) {
+      setTimeout(() => runModeRef.current?.(), 0);
+    } else if (!cached && kit?.needsQuery) {
+      setTimeout(() => argsInputRef.current?.focus(), 50);
+    }
+  };
+
+  // Keyboard shortcuts: Cmd+K = palette, Cmd+N = new kit, Cmd+R = run, Cmd+F = filter, Cmd+1-9 = switch mode
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (!e.metaKey && !e.ctrlKey) return;
       if (e.key === "k") { e.preventDefault(); setPaletteOpen(true); }
+      if (e.key === "n") { e.preventDefault(); setKitBuilderOpen(true); setSidebarTab("kits"); }
       if (e.key === "r" && !modeRunning) { e.preventDefault(); runModeRef.current?.(); }
       if (e.key === "f" && modeOutput) {
         e.preventDefault();
@@ -98,35 +165,49 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
 
   const runMode = async () => {
     if (!repoPath || modeRunning) return;
+    const cacheKey = activeKit ? `kit:${activeKit}` : activeMode;
     runStart.current = Date.now();
     setElapsed(0);
     setModeRunning(true);
     setModeOutput("");
     try {
-      const args: string[] = [];
-      const raw = modeArgs.trim();
-      if (raw && activeModeInfo?.argPrefix && !raw.startsWith("--")) {
-        args.push(activeModeInfo.argPrefix, raw);
-      } else if (raw) {
-        args.push(...raw.split(/\s+/));
+      let r;
+      if (activeKit) {
+        const args = ["--kit", activeKit];
+        const raw = modeArgs.trim();
+        if (raw) args.push("--query", raw);
+        r = await runTempo(repoPath, "kit", args);
+      } else {
+        const args: string[] = [];
+        const raw = modeArgs.trim();
+        const modeInfo = MODES.find(m => m.mode === activeMode);
+        if (raw && modeInfo?.argPrefix && !raw.startsWith("--")) {
+          args.push(modeInfo.argPrefix, raw);
+        } else if (raw) {
+          args.push(...raw.split(/\s+/));
+        }
+        if (excludeDirs && excludeDirs.length > 0 && !args.includes("--exclude")) {
+          args.push("--exclude", excludeDirs.join(","));
+        }
+        r = await runTempo(repoPath, activeMode, args);
       }
-      if (excludeDirs && excludeDirs.length > 0 && !args.includes("--exclude")) {
-        args.push("--exclude", excludeDirs.join(","));
-      }
-      const r = await runTempo(repoPath, activeMode, args);
       const out = r.output || "No output";
       const now = Date.now();
       const dur = runStart.current ? (now - runStart.current) / 1000 : null;
-      outputCache.current.set(activeMode, out);
-      outputTsCache.current.set(activeMode, now);
-      if (dur !== null) runDurationCache.current.set(activeMode, dur);
+      outputCache.current.set(cacheKey, out);
+      outputTsCache.current.set(cacheKey, now);
+      if (dur !== null) runDurationCache.current.set(cacheKey, dur);
       setModeOutput(out);
       setOutputTs(now);
       if (dur !== null) setRunDuration(dur);
-      setCachedModes(prev => new Set(prev).add(activeMode));
-      if (raw && activeModeInfo?.argPrefix) {
-        saveHistory(activeMode, raw);
-        setHistory(loadHistory(activeMode));
+      setCachedModes(prev => new Set(prev).add(cacheKey));
+      if (!activeKit) {
+        const raw = modeArgs.trim();
+        const modeInfo = MODES.find(m => m.mode === activeMode);
+        if (raw && modeInfo?.argPrefix) {
+          saveHistory(activeMode, raw);
+          setHistory(loadHistory(activeMode));
+        }
       }
     } catch {
       setModeOutput("Failed to run mode. Check that tempo is installed.");
@@ -143,38 +224,57 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
 
   const handleSaveOutput = async () => {
     if (!modeOutput || !repoPath) return;
-    const outPath = `${repoPath}/.tempo/output-${activeMode}-${Date.now()}.txt`;
+    const label = activeKit ? `kit-${activeKit}` : activeMode;
+    const outPath = `${repoPath}/.tempo/output-${label}-${Date.now()}.txt`;
     await saveOutput(outPath, modeOutput);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   };
 
   const submitFeedback = async (helpful: boolean) => {
-    if (feedbackGiven.current.has(activeMode)) return;
-    feedbackGiven.current.set(activeMode, helpful);
-    setFeedbackMode(activeMode);
-    await reportFeedback(repoPath, activeMode, helpful);
+    const feedbackKey = activeKit ? `kit:${activeKit}` : activeMode;
+    if (feedbackGiven.current.has(feedbackKey)) return;
+    feedbackGiven.current.set(feedbackKey, helpful);
+    setFeedbackMode(feedbackKey);
+    const mode = activeKit ? "kit" : activeMode;
+    await reportFeedback(repoPath, mode, helpful);
   };
+
+  const allKits = [...BUILTIN_KITS, ...customKits];
 
   return (
     <>
       {paletteOpen && (
         <CommandPalette
           modes={MODES}
-          onSelect={(mode) => { switchMode(mode); setTimeout(() => argsInputRef.current?.focus(), 50); }}
+          onSelect={(mode) => { switchMode(mode); setSidebarTab("modes"); setTimeout(() => argsInputRef.current?.focus(), 50); }}
           onClose={() => setPaletteOpen(false)}
         />
       )}
+      {kitBuilderOpen && (
+        <KitBuilder
+          repoPath={repoPath}
+          onSave={(kitId) => { setKitBuilderOpen(false); loadCustomKits(); setTimeout(() => switchKit(kitId), 100); }}
+          onClose={() => setKitBuilderOpen(false)}
+        />
+      )}
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        <ModeList
-          modes={MODES}
+        {/* Sidebar: tab switcher + kit/mode list */}
+        <SidebarTabs
+          sidebarTab={sidebarTab}
+          onTabChange={setSidebarTab}
+          allKits={allKits}
+          activeKit={activeKit}
           activeMode={activeMode}
           cachedModes={cachedModes}
-          onSelect={switchMode}
+          onKitSelect={switchKit}
+          onModeSelect={switchMode}
+          onCreateKit={() => setKitBuilderOpen(true)}
         />
+
         <OutputPanel
           activeModeInfo={activeModeInfo}
-          activeMode={activeMode}
+          activeMode={activeKit ? `kit:${activeKit}` : activeMode}
           modeArgs={modeArgs}
           modeRunning={modeRunning}
           modeOutput={modeOutput}
