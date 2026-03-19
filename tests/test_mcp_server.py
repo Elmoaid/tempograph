@@ -1118,10 +1118,21 @@ class TestRenderTokenCaps:
         output = render_map(g, max_tokens=0)
         assert "truncated" not in output
 
-    def test_noise_detection(self):
+    def test_noise_detection(self, tmp_path):
+        # Build a synthetic repo with an 'archive' noise dir so the test is
+        # not coupled to the physical repo's gitignored archive/ directory.
+        import textwrap
+        for mod, count in [("core", 10), ("archive", 10), ("lib", 5)]:
+            d = tmp_path / mod
+            d.mkdir()
+            for i in range(count):
+                (d / f"mod{i}.py").write_text(textwrap.dedent(f"""\
+                    def func_{mod}_{i}():
+                        return {i}
+                """))
         from tempograph.builder import build_graph
         from tempograph.render import render_overview
-        g = build_graph(REPO_PATH, use_config=False)  # bypass .tempo/config.json to test raw noise detection
+        g = build_graph(str(tmp_path), use_config=False)
         ov = render_overview(g)
         assert "SUGGESTED EXCLUDES" in ov
         assert "archive" in ov.lower()
