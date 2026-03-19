@@ -61,6 +61,25 @@ class Language(str, Enum):
     HTML = "html"
     BASH = "bash"
     MARKDOWN = "markdown"
+    # Extended languages (via tree-sitter-language-pack generic handler)
+    PHP = "php"
+    SWIFT = "swift"
+    KOTLIN = "kotlin"
+    DART = "dart"
+    SCALA = "scala"
+    ELIXIR = "elixir"
+    LUA = "lua"
+    PERL = "perl"
+    ZIG = "zig"
+    CPP = "cpp"
+    C = "c"
+    HASKELL = "haskell"
+    OCAML = "ocaml"
+    CLOJURE = "clojure"
+    ERLANG = "erlang"
+    R = "r"
+    JULIA = "julia"
+    OBJC = "objc"
     UNKNOWN = "unknown"
 
 
@@ -84,6 +103,36 @@ EXTENSION_TO_LANGUAGE: dict[str, Language] = {
     ".sh": Language.BASH,
     ".bash": Language.BASH,
     ".md": Language.MARKDOWN,
+    # Extended languages
+    ".php": Language.PHP,
+    ".swift": Language.SWIFT,
+    ".kt": Language.KOTLIN,
+    ".kts": Language.KOTLIN,
+    ".dart": Language.DART,
+    ".scala": Language.SCALA,
+    ".sc": Language.SCALA,
+    ".ex": Language.ELIXIR,
+    ".exs": Language.ELIXIR,
+    ".lua": Language.LUA,
+    ".pl": Language.PERL,
+    ".pm": Language.PERL,
+    ".zig": Language.ZIG,
+    ".cpp": Language.CPP,
+    ".cc": Language.CPP,
+    ".cxx": Language.CPP,
+    ".hpp": Language.CPP,
+    ".c": Language.C,
+    ".h": Language.C,
+    ".hs": Language.HASKELL,
+    ".ml": Language.OCAML,
+    ".mli": Language.OCAML,
+    ".clj": Language.CLOJURE,
+    ".cljs": Language.CLOJURE,
+    ".erl": Language.ERLANG,
+    ".r": Language.R,
+    ".R": Language.R,
+    ".jl": Language.JULIA,
+    ".m": Language.OBJC,
 }
 
 
