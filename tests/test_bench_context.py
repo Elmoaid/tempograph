@@ -1018,14 +1018,14 @@ class TestDefinitionFirstFallback:
 
 
 # ---------------------------------------------------------------------------
-# Parity: context.py _PATH_CAMEL_SKIP == render.py _PATH_CAMEL_SKIP
+# Parity: context.py _PATH_CAMEL_SKIP == prepare.py _PATH_CAMEL_SKIP
 # These sets MUST stay in sync — context.py is the bench harness implementation
-# and render.py is the production implementation. Divergence means bench results
+# and prepare.py is the production implementation. Divergence means bench results
 # no longer reflect production code quality.
 # ---------------------------------------------------------------------------
 
 class TestPathCamelSkipParity:
-    """Verify context.py and render.py _PATH_CAMEL_SKIP sets are identical."""
+    """Verify context.py and prepare.py _PATH_CAMEL_SKIP sets are identical."""
 
     def _extract_camel_skip(self, filepath: str) -> set:
         import re
@@ -1042,33 +1042,33 @@ class TestPathCamelSkipParity:
         return set(vals)
 
     def test_path_camel_skip_identical(self):
-        render_skip = self._extract_camel_skip("tempograph/render.py")
+        render_skip = self._extract_camel_skip("tempograph/prepare.py")
         context_skip = self._extract_camel_skip("bench/changelocal/context.py")
         in_render_not_ctx = render_skip - context_skip
         in_ctx_not_render = context_skip - render_skip
         assert not in_render_not_ctx, (
-            f"render.py has entries missing from context.py: {sorted(in_render_not_ctx)}. "
+            f"prepare.py has entries missing from context.py: {sorted(in_render_not_ctx)}. "
             "Bench harness won't match production behavior for path fallback."
         )
         assert not in_ctx_not_render, (
-            f"context.py has entries missing from render.py: {sorted(in_ctx_not_render)}. "
+            f"context.py has entries missing from prepare.py: {sorted(in_ctx_not_render)}. "
             "Keep both sets in sync."
         )
 
     def test_json_xml_in_skip(self):
         """json/xml must be skipped — 'ExposeDefaultJsonSerializer' → skip 'Json'."""
-        render_skip = self._extract_camel_skip("tempograph/render.py")
+        render_skip = self._extract_camel_skip("tempograph/prepare.py")
         context_skip = self._extract_camel_skip("bench/changelocal/context.py")
         for word in ("json", "xml"):
-            assert word in render_skip, f"'{word}' missing from render.py PATH_CAMEL_SKIP"
+            assert word in render_skip, f"'{word}' missing from prepare.py PATH_CAMEL_SKIP"
             assert word in context_skip, f"'{word}' missing from context.py PATH_CAMEL_SKIP"
 
     def test_http_terms_in_skip(self):
         """host/method/getter/setter must be skipped — 'HostSetter' → skip 'Host'."""
-        render_skip = self._extract_camel_skip("tempograph/render.py")
+        render_skip = self._extract_camel_skip("tempograph/prepare.py")
         context_skip = self._extract_camel_skip("bench/changelocal/context.py")
         for word in ("host", "method", "getter", "setter"):
-            assert word in render_skip, f"'{word}' missing from render.py PATH_CAMEL_SKIP"
+            assert word in render_skip, f"'{word}' missing from prepare.py PATH_CAMEL_SKIP"
             assert word in context_skip, f"'{word}' missing from context.py PATH_CAMEL_SKIP"
 
 
@@ -1141,3 +1141,27 @@ class TestShouldInject:
         # "req" and "api" are 3 chars — filtered before score check
         assert should_inject(["req", "api"], graph, baseline_predicted_count=2) is True
         graph.search_symbols_scored.assert_not_called()
+
+
+class TestShouldInjectV5:
+    """Tests for should_inject_v5() baseline-conditional gating function (v5)."""
+
+    def test_pred0_injects(self):
+        """pred=0 → inject (baseline fully uncertain)."""
+        from bench.changelocal.context import should_inject_v5
+        assert should_inject_v5(0) is True
+
+    def test_pred1_injects(self):
+        """pred=1 → inject (baseline weakly uncertain)."""
+        from bench.changelocal.context import should_inject_v5
+        assert should_inject_v5(1) is True
+
+    def test_pred2_skips(self):
+        """pred=2 → skip (threshold is <2, so exactly 2 skips)."""
+        from bench.changelocal.context import should_inject_v5
+        assert should_inject_v5(2) is False
+
+    def test_pred5_skips(self):
+        """pred=5 → skip (baseline confident, far above threshold)."""
+        from bench.changelocal.context import should_inject_v5
+        assert should_inject_v5(5) is False
