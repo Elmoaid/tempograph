@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import {
   RefreshCw, FolderOpen, Plus, X, GitBranch,
   FileText, Folder, ChevronRight, PenLine, Shield,
+  PanelRightClose, PanelRight,
 } from "lucide-react";
 import {
   runTempo, readConfig, writeConfig, listNotes, readFile, readTelemetry,
@@ -83,6 +84,9 @@ function parseStats(output: string) {
 export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addWorkspace, removeWorkspace }: Props) {
   const [loading, setLoading] = useState(false);
   const [showClaude, setShowClaude] = useState(false);
+  const [rightHidden, setRightHidden] = useState(() =>
+    localStorage.getItem("tempo-right-hidden") === "true"
+  );
   const [addingWs, setAddingWs] = useState(false);
   const [newWsPath, setNewWsPath] = useState("");
   const addInputRef = useRef<HTMLInputElement>(null);
@@ -269,6 +273,18 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
           >
             <Shield size={12} /> Claude
           </button>
+          <button
+            className="btn btn-ghost"
+            onClick={() => {
+              const next = !rightHidden;
+              setRightHidden(next);
+              localStorage.setItem("tempo-right-hidden", String(next));
+            }}
+            style={{ padding: "4px 8px" }}
+            title={rightHidden ? "Show info panel" : "Hide info panel"}
+          >
+            {rightHidden ? <PanelRight size={12} /> : <PanelRightClose size={12} />}
+          </button>
           <button className="btn btn-ghost" onClick={() => loadAll(repoPath, true)} disabled={loading} style={{ padding: "4px 8px" }}>
             <RefreshCw size={12} className={loading ? "spin" : ""} />
           </button>
@@ -318,7 +334,7 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
       {showClaude && <ClaudePanel onClose={() => setShowClaude(false)} workspaces={workspaces} />}
 
       {/* 3-column matrix */}
-      <div className="grid-shell" style={{ display: showClaude ? "none" : undefined }}>
+      <div className={`grid-shell${rightHidden ? " right-hidden" : ""}`} style={{ display: showClaude ? "none" : undefined }}>
         {/* COLUMN 1: Mode runner (self-contained, resets on workspace switch) */}
         <ErrorBoundary label="Modes">
           <ModeRunner
