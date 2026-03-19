@@ -122,8 +122,15 @@ def _run_feedback(argv: list[str]) -> int:
     return 0
 
 
+__version__ = "0.6.0"
+
+
 def main(argv: list[str] | None = None) -> int:
     raw = argv if argv is not None else sys.argv[1:]
+
+    if raw and raw[0] in ("--version", "-V"):
+        print(f"tempograph {__version__}")
+        return 0
 
     # Intercept 'feedback' subcommand before argparse (avoids graph build)
     if raw and raw[0] == "feedback":
