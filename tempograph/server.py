@@ -1,4 +1,4 @@
-"""MCP server — 18 tools for agent codebase understanding.
+"""MCP server — 23 tools for agent codebase understanding.
 
 Each tool returns structured JSON (status/data/tokens/duration) or plain text.
 Standardized error codes: REPO_NOT_FOUND, NOT_GIT_REPO, NO_MATCH, BUILD_FAILED, BUILD_TIMEOUT, RENDER_FAILED.
@@ -12,6 +12,7 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 from .builder import build_graph
+from .prepare import render_prepare
 from .render import (
     count_tokens,
     render_architecture,
@@ -24,7 +25,6 @@ from .render import (
     render_lookup,
     render_map,
     render_overview,
-    render_prepare,
     render_skills,
     render_symbols,
 )
@@ -114,6 +114,9 @@ _build_times: dict[str, float] = {}
 _graph_excludes: dict[str, list[str]] = {}  # repo_path → exclude_dirs used
 _graph_timestamps: dict[str, float] = {}  # repo_path → time.time() when built
 _CACHE_TTL = 30  # seconds — rebuild if graph is older than this
+
+# File watchers — one per repo
+_watchers: dict[str, "GraphWatcher"] = {}
 
 # ── Error codes ───────────────────────────────────────────────────
 
@@ -264,10 +267,54 @@ def index_repo(repo_path: str, exclude_dirs: str = "", output_format: str = "tex
         return _error(code, msg or "Graph build failed", output_format)
 
     elapsed = time.time() - start
-    output = f"Indexed in {elapsed:.1f}s\n\n{render_overview(result)}"
+    # Add storage and embedding status
+    db_status = ""
+    if hasattr(result, '_db') and result._db is not None:
+        db = result._db
+        db_status = f"\nStorage: SQLite ({db.symbol_count()} symbols, {db.file_count()} files)"
+        if getattr(db, '_has_vectors', False):
+            db_status += " + vectors enabled"
+        else:
+            db_status += " | run embed_repo to enable semantic search"
+    output = f"Indexed in {elapsed:.1f}s{db_status}\n\n{render_overview(result)}"
     tokens = count_tokens(output)
     _log_tool("index_repo", p, output, elapsed)
     return _success(output, tokens, elapsed, output_format)
+
+
+@mcp.tool()
+def embed_repo(repo_path: str, exclude_dirs: str = "", output_format: str = "text") -> str:
+    """Generate embeddings for semantic search across all symbols in the codebase.
+
+    Run after index_repo to enable hybrid search (FTS5 + vector similarity).
+    Uses BAAI/bge-small-en-v1.5 (33MB, runs locally on CPU, no API keys).
+    Only embeds symbols without existing vectors — fast on subsequent runs.
+
+    Requires: pip install tempograph[semantic]
+
+    repo_path: absolute path to repository
+    """
+    start = time.time()
+    p, err = _validate_repo(repo_path)
+    if err:
+        return _error(err, f"Directory not found: {repo_path}", output_format)
+
+    graph = _get_or_build_graph(p, _resolve_excludes(p, exclude_dirs) or None)
+    if isinstance(graph, str):
+        return _error(graph.partition(":")[0], "Graph build failed", output_format)
+
+    if not hasattr(graph, '_db') or graph._db is None:
+        return _error("BUILD_FAILED", "No SQLite DB — rebuild with use_db=True", output_format)
+
+    try:
+        from .embeddings import embed_symbols
+        count = embed_symbols(graph._db)
+        elapsed = time.time() - start
+        output = f"Embedded {count} symbols in {elapsed:.1f}s. Semantic search now active."
+        _log_tool("embed_repo", p, output, elapsed, embedded=count)
+        return _success(output, count_tokens(output), elapsed, output_format)
+    except ImportError:
+        return _error("INVALID_PARAMS", "fastembed not installed. Run: pip install tempograph[semantic]", output_format)
 
 
 # ── Tool 2: Overview ────────────────────────────────────────────────
@@ -819,6 +866,143 @@ def run_kit(repo_path: str, kit: str, query: str = "", max_tokens: int = 4000,
     tokens = count_tokens(output)
     _log_tool("run_kit", p, output, elapsed, kit=kit, query=query)
     return _success(output, tokens, elapsed, output_format)
+
+
+@mcp.tool()
+def search_semantic(repo_path: str, query: str, limit: int = 10,
+                    exclude_dirs: str = "", output_format: str = "text") -> str:
+    """Hybrid semantic + structural search across all symbols in a codebase.
+
+    Combines FTS5 keyword matching with vector similarity (if embeddings exist)
+    using Reciprocal Rank Fusion. Finds symbols by meaning, not just exact name match.
+
+    Example: search_semantic(repo, "handle user authentication") finds auth-related
+    functions even if they're named validate_token or check_credentials.
+
+    Run `python3 -m tempograph <repo> --embed` first to enable semantic vectors.
+
+    repo_path: absolute path to repository
+    query: natural language description of what you're looking for
+    limit: max results (default 10)
+    """
+    start = time.time()
+    p, err = _validate_repo(repo_path)
+    if err:
+        return err
+    graph = _get_or_build_graph(p, _resolve_excludes(exclude_dirs))
+    if isinstance(graph, str):
+        return graph
+
+    results = graph.search_symbols_scored(query)[:limit]
+    lines = []
+    for score, sym in results:
+        callers = len(graph.callers_of(sym.id))
+        hot = " [hot]" if graph.hot_files and sym.file_path in graph.hot_files else ""
+        lines.append(f"{score:6.1f}  {sym.kind.value:10s}  {sym.qualified_name:40s}  {sym.file_path}:{sym.line_start}  ({callers} callers){hot}")
+
+    output = "\n".join(lines) if lines else "No matches found."
+    elapsed = time.time() - start
+    tokens = count_tokens(output)
+    _log_tool("search_semantic", p, output, elapsed, query=query)
+    return _success(output, tokens, elapsed, output_format)
+
+
+@mcp.tool()
+def watch_repo(repo_path: str, exclude_dirs: str = "") -> str:
+    """Start watching a repository for file changes. Incrementally updates the graph DB
+    when files are added, modified, or deleted. Uses Rust-backed file watcher for performance.
+
+    repo_path: absolute path to the repository root
+    exclude_dirs: comma-separated directories to ignore (e.g. "node_modules,dist")
+    """
+    from .watcher import GraphWatcher
+
+    p, err = _validate_repo(repo_path)
+    if err:
+        return err
+
+    if p in _watchers and _watchers[p].is_running:
+        return f"Already watching {p}"
+
+    excludes = [d.strip() for d in exclude_dirs.split(",") if d.strip()] if exclude_dirs else []
+
+    def on_update(files: list[str]) -> None:
+        # Invalidate cached graph so next tool call rebuilds from fresh DB
+        _graphs.pop(p, None)
+        _graph_timestamps.pop(p, None)
+
+    watcher = GraphWatcher(p, exclude_dirs=excludes, on_update=on_update)
+    watcher.start()
+    _watchers[p] = watcher
+
+    return f"Watching {p} for changes (incremental graph updates enabled)"
+
+
+@mcp.tool()
+def unwatch_repo(repo_path: str) -> str:
+    """Stop watching a repository for file changes.
+
+    repo_path: absolute path to the repository root
+    """
+    p, err = _validate_repo(repo_path)
+    if err:
+        return err
+
+    watcher = _watchers.pop(p, None)
+    if watcher:
+        watcher.stop()
+        return f"Stopped watching {p}"
+    return f"Not currently watching {p}"
+
+
+@mcp.tool()
+def cochange_context(repo_path: str, file_path: str, n_commits: int = 200,
+                     output_format: str = "text") -> str:
+    """Files that historically co-change with a given file (logical coupling).
+
+    Uses git history to find files frequently changed in the same commits.
+    Useful for discovering hidden dependencies: if A and B co-change 80% of
+    the time, a change to A likely requires reviewing B.
+
+    file_path: path relative to repo root (e.g., "tempograph/render.py")
+    n_commits: how many recent commits to analyze (default 200)
+    output_format: "text" (default) or "json"
+    """
+    t0 = time.time()
+    p, err = _validate_repo(repo_path)
+    if err:
+        return err
+    if not _is_git_repo(p):
+        return _error(NOT_GIT_REPO, f"Not a git repository: {repo_path}", output_format)
+
+    from .git import cochange_matrix
+    matrix = cochange_matrix(p, n_commits=n_commits)
+
+    # Normalize: strip leading ./ and try both the given path and as-given
+    fp = file_path.lstrip("./")
+    partners = matrix.get(fp) or matrix.get(file_path)
+    if partners is None:
+        # Suffix match for partial paths (e.g. "render.py" → "tempograph/render.py")
+        for key, val in matrix.items():
+            if key.endswith("/" + fp) or key == fp:
+                fp, partners = key, val
+                break
+
+    if not partners:
+        return _error(NO_MATCH,
+                      f"No co-change data for '{file_path}'. It may not appear in "
+                      f"the last {n_commits} commits or has no co-change partners.",
+                      output_format)
+
+    lines = [f"Co-change partners for {fp} (last {n_commits} commits):"]
+    for coupled_file, freq in partners:
+        pct = int(freq * 100)
+        lines.append(f"  {coupled_file}  {pct}%")
+
+    output = "\n".join(lines)
+    elapsed = time.time() - t0
+    _log_tool("cochange_context", p, output, elapsed)
+    return _success(output, count_tokens(output), elapsed, output_format)
 
 
 def run_server():

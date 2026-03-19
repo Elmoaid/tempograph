@@ -44,10 +44,25 @@ def _get_ts_language(lang: Language) -> TSLanguage | None:
     }
     factory = mapping.get(lang)
     if factory is None:
-        return None
+        # Fallback: try tree-sitter-language-pack for 170+ languages
+        try:
+            from tree_sitter_language_pack import get_language as get_pack_language
+            pack_name = _LANGUAGE_PACK_NAMES.get(lang, lang.value.lower())
+            ts_lang = get_pack_language(pack_name)  # already returns TSLanguage
+            _LANGUAGES[lang] = ts_lang
+            return ts_lang
+        except (ImportError, Exception):
+            return None
     ts_lang = TSLanguage(factory())
     _LANGUAGES[lang] = ts_lang
     return ts_lang
+
+
+# Mapping from Language enum to tree-sitter-language-pack names
+_LANGUAGE_PACK_NAMES: dict[Language, str] = {
+    Language.CSHARP: "c_sharp",
+    Language.CPP: "cpp",
+}
 
 
 def _node_text(node: Node, source: bytes) -> str:
@@ -1747,9 +1762,130 @@ class FileParser:
 
     # ── Generic fallback ────────────────────────────────────
 
+    # Node types that represent symbol definitions across languages.
+    # Not universal — each grammar uses its own names. This set covers the most common patterns.
+    _GENERIC_FUNCTION_TYPES = frozenset({
+        "function_definition", "function_declaration", "function_item",
+        "method_definition", "method_declaration",
+        "arrow_function", "lambda",
+        "procedure_declaration", "subroutine",
+        # Less common but valid across grammars
+        "func_literal", "anonymous_function",
+    })
+    _GENERIC_CLASS_TYPES = frozenset({
+        "class_definition", "class_declaration",
+        "struct_definition", "struct_item", "struct_declaration",
+        "interface_declaration", "trait_item",
+        "enum_definition", "enum_declaration", "enum_item",
+        "module_definition", "module_declaration",
+        "protocol_declaration", "extension_declaration",
+        "object_declaration",  # Kotlin
+    })
+    # Field names that different grammars use for the symbol name
+    _GENERIC_NAME_FIELDS = ("name", "type_identifier", "simple_identifier", "identifier")
+
+    def _generic_find_name(self, node: Node) -> Node | None:
+        """Try multiple field names to find the name node (grammars differ)."""
+        for field in self._GENERIC_NAME_FIELDS:
+            name_node = node.child_by_field_name(field)
+            if name_node:
+                return name_node
+        # Some grammars put the name as a direct named child without a field
+        for child in node.children:
+            if child.type in ("name", "identifier", "simple_identifier", "type_identifier"):
+                return child
+        return None
+
     def _handle_generic(self, node: Node) -> None:
-        """Fallback: just scan for any recognizable patterns."""
-        pass
+        """Fallback handler for languages without a custom _handle_X.
+
+        Extracts functions, classes, and structs using common tree-sitter node type patterns.
+        Less precise than custom handlers but covers 170+ languages via tree-sitter-language-pack.
+        """
+        if node.type in self._GENERIC_FUNCTION_TYPES:
+            name_node = self._generic_find_name(node)
+            if name_node:
+                name = _node_text(name_node, self.source)
+                if name and not name.startswith("_"):
+                    sym_id = f"{self.file_path}::{name}"
+                    sig = _node_text(node, self.source).split("\n")[0][:200]
+                    sym = Symbol(
+                        id=sym_id, name=name, qualified_name=name,
+                        kind=SymbolKind.FUNCTION, language=self.language,
+                        file_path=self.file_path,
+                        line_start=node.start_point[0] + 1,
+                        line_end=node.end_point[0] + 1,
+                        signature=sig, exported=True,
+                        complexity=self._compute_complexity(node),
+                        byte_size=node.end_byte - node.start_byte,
+                    )
+                    self.symbols.append(sym)
+                    self._scan_calls(node, sym_id)
+        elif node.type in self._GENERIC_CLASS_TYPES:
+            name_node = self._generic_find_name(node)
+            if name_node:
+                name = _node_text(name_node, self.source)
+                if name:
+                    kind = SymbolKind.CLASS
+                    if "struct" in node.type:
+                        kind = SymbolKind.STRUCT
+                    elif "interface" in node.type or "trait" in node.type:
+                        kind = SymbolKind.INTERFACE
+                    elif "enum" in node.type:
+                        kind = SymbolKind.ENUM
+                    sym_id = f"{self.file_path}::{name}"
+                    sym = Symbol(
+                        id=sym_id, name=name, qualified_name=name,
+                        kind=kind, language=self.language,
+                        file_path=self.file_path,
+                        line_start=node.start_point[0] + 1,
+                        line_end=node.end_point[0] + 1,
+                        signature=name, exported=True,
+                        complexity=self._compute_complexity(node),
+                        byte_size=node.end_byte - node.start_byte,
+                    )
+                    self.symbols.append(sym)
+                    # Scan body for methods/calls
+                    # Try field names first, then look for body-like child nodes
+                    body = node.child_by_field_name("body") or node.child_by_field_name("class_body")
+                    if body is None:
+                        body = node.child_by_field_name("declaration_list")
+                    if body is None:
+                        # Fallback: find body-like child node by type name
+                        for child in node.children:
+                            if child.type in ("class_body", "declaration_list", "body",
+                                              "block", "compound_statement", "suite"):
+                                body = child
+                                break
+                    if body:
+                        for child in body.children:
+                            if child.type in self._GENERIC_FUNCTION_TYPES or child.type in ("method_declaration",):
+                                method_name_node = self._generic_find_name(child)
+                                if method_name_node:
+                                    method_name = _node_text(method_name_node, self.source)
+                                    method_id = f"{self.file_path}::{name}.{method_name}"
+                                    method_sig = _node_text(child, self.source).split("\n")[0][:200]
+                                    method_sym = Symbol(
+                                        id=method_id, name=method_name,
+                                        qualified_name=f"{name}.{method_name}",
+                                        kind=SymbolKind.METHOD, language=self.language,
+                                        file_path=self.file_path,
+                                        line_start=child.start_point[0] + 1,
+                                        line_end=child.end_point[0] + 1,
+                                        signature=method_sig, parent_id=sym_id,
+                                        exported=True,
+                                        complexity=self._compute_complexity(child),
+                                        byte_size=child.end_byte - child.start_byte,
+                                    )
+                                    self.symbols.append(method_sym)
+                                    self.edges.append(Edge(EdgeKind.CONTAINS, sym_id, method_id))
+                                    self._scan_calls(child, method_id)
+
+        # Recurse into children — but skip body of classes (already handled methods above)
+        if node.type in self._GENERIC_CLASS_TYPES:
+            return  # class body already processed, don't double-count methods
+        for child in node.children:
+            self._handle_generic(child)
 
     # ── Shared helpers ──────────────────────────────────────
 
