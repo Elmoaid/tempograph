@@ -300,6 +300,41 @@ def _prefetch_next(current_tool: str, repo_path: str, exclude_dirs: list[str] | 
         pass
 
 
+@mcp.tool()
+def suggest_next(repo_path: str, current_tool: str = "", output_format: str = "text") -> str:
+    """Suggest the most useful next tool based on learned session patterns.
+
+    Analyzes 68K+ historical usage events to predict what tool agents typically
+    call next. Helps agents follow optimal workflows without memorizing sequences.
+
+    Example: after calling 'focus', this returns 'hotspots (60%), blast_radius (20%)'
+
+    repo_path: absolute path to repository
+    current_tool: the tool you just called (e.g. 'focus', 'overview')
+    """
+    start = time.time()
+    p, err = _validate_repo(repo_path)
+    if err:
+        return err
+
+    try:
+        from .predict import predict_next as _predict
+        predictions = _predict(p, current_tool, top_k=5)
+        if not predictions:
+            output = f"No predictions for '{current_tool}' — not enough usage data yet."
+        else:
+            lines = [f"After '{current_tool}', agents typically call:"]
+            for mode, prob in predictions:
+                bar = "#" * int(prob * 20)
+                lines.append(f"  {mode:25s} {prob:5.0%}  {bar}")
+            output = "\n".join(lines)
+    except (ImportError, Exception) as e:
+        output = f"Prediction unavailable: {e}"
+
+    elapsed = time.time() - start
+    return _success(output, count_tokens(output), elapsed, output_format)
+
+
 # ── Tool 1: Build + orient ──────────────────────────────────────────
 
 @mcp.tool()
