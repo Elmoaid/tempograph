@@ -2,7 +2,7 @@
 
 Tempograph is an agent effectiveness engine — a code graph tool that makes AI coding agents measurably better at understanding and navigating codebases.
 
-**Bench result**: `prepare_context` improves AI file-prediction F1 by **+7.1% (p=0.043)** on Python PR-title tasks (n=111, qwen2.5-coder:32b). With adaptive injection gating: **+6.9% (p=0.035\*)** combined Python+JS.
+**Bench result**: Adaptive v5 gating improves AI file-prediction F1 by **+7.6% (p=0.013)** with **zero harm** across all tested repos (n=114, qwen2.5-coder:32b). No other code context tool publishes statistically validated results.
 
 It parses source files with tree-sitter, extracts symbols and relationships, and builds a semantic graph. Run it as an MCP server — your AI agent calls `prepare_context` and gets exactly the right context before making code changes.
 
@@ -14,13 +14,18 @@ commit d4e5f6 ──→ snapshot ──→ 851 symbols, 2,044 edges  (+4 symbols
 commit g7h8i9 ──→ snapshot ──→ 849 symbols, 2,067 edges  (‑2 symbols, +23 edges ← coupling growing)
 ```
 
-Each snapshot is stored in `.tempograph/cache.json`. Only files whose contents changed are re-parsed, so a 10,000-file repository can be re-indexed in seconds rather than minutes. Because the cache is keyed by file content instead of timestamps, switching branches and switching back does not force a full rebuild.
+The graph is stored in `.tempograph/graph.db` (SQLite with WAL mode). Only files whose contents changed are re-parsed, so a 10,000-file repo re-indexes in seconds. Content-hashed — switching branches and back doesn't force a rebuild. Includes FTS5 full-text search, optional vector embeddings (sqlite-vec), and Reciprocal Rank Fusion for hybrid structural+semantic search.
 
 ## Supported Languages
 
-Python · TypeScript · TSX · JavaScript · JSX · Rust · Go · Java · C# · Ruby
+**170+ languages** via tree-sitter-language-pack. Custom handlers for Python, TypeScript, TSX, JavaScript, JSX, Rust, Go, Java, C#, Ruby. Generic handler for PHP, Swift, Kotlin, Dart, Scala, Lua, C, C++, Zig, Haskell, and 160+ more.
 
-Parsing is handled by tree-sitter. Each language has dedicated extraction handlers for functions, classes, components, hooks, imports, type aliases, traits, interfaces, and their relationships.
+```bash
+pip install tempograph[languages]  # 170+ languages
+pip install tempograph[semantic]   # vector search + embeddings
+pip install tempograph[watch]      # live file watching
+pip install tempograph[full]       # everything
+```
 
 ## Install
 
