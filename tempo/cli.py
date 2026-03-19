@@ -134,7 +134,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.mode == "prepare":
-        from tempograph.render import render_prepare
+        from tempograph.prepare import render_prepare
         output = render_prepare(graph, args.query or "understand this codebase", args.max_tokens, args.task_type or "")
         print(output)
         return 0
