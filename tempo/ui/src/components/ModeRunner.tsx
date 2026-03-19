@@ -1,6 +1,7 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { runTempo, saveOutput, reportFeedback, readFile } from "./tempo";
 import { CommandPalette } from "./CommandPalette";
+import { KitBuilder } from "./KitBuilder";
 import { MODES, loadHistory, saveHistory } from "./modes";
 import { BUILTIN_KITS, type KitInfo } from "./kits";
 import { SidebarTabs } from "./SidebarTabs";
@@ -16,6 +17,7 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
   const [activeKit, setActiveKit] = useState<string | null>(null);
   const [sidebarTab, setSidebarTab] = useState<"kits" | "modes">("kits");
   const [customKits, setCustomKits] = useState<KitInfo[]>([]);
+  const [kitBuilderOpen, setKitBuilderOpen] = useState(false);
   const [modeArgs, setModeArgs] = useState("");
   const [modeOutput, setModeOutput] = useState("");
   const [modeRunning, setModeRunning] = useState(false);
@@ -54,8 +56,7 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
       })()
     : MODES.find(m => m.mode === activeMode);
 
-  // Load custom kits from .tempo/kits.json on repo change
-  useEffect(() => {
+  const loadCustomKits = useCallback(() => {
     if (!repoPath) return;
     readFile(`${repoPath}/.tempo/kits.json`).then(r => {
       if (!r.success || !r.output) return;
@@ -66,7 +67,7 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
           .map(([id, spec]) => ({
             id,
             label: id.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
-            icon: BUILTIN_KITS[0].icon, // default icon for custom kits
+            icon: BUILTIN_KITS[0].icon,
             description: spec.description || `Custom kit: ${spec.steps?.join(" + ")}`,
             needsQuery: spec.needsQuery,
           }));
@@ -76,6 +77,9 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
       }
     });
   }, [repoPath]);
+
+  // Load custom kits from .tempo/kits.json on repo change
+  useEffect(() => { loadCustomKits(); }, [loadCustomKits]);
 
   const filteredOutput = useMemo(() => {
     if (!outputFilter.trim() || !modeOutput) return modeOutput;
@@ -126,11 +130,12 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
     }
   };
 
-  // Keyboard shortcuts: Cmd+K = palette, Cmd+R = run, Cmd+F = filter, Cmd+1-9 = switch mode
+  // Keyboard shortcuts: Cmd+K = palette, Cmd+N = new kit, Cmd+R = run, Cmd+F = filter, Cmd+1-9 = switch mode
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (!e.metaKey && !e.ctrlKey) return;
       if (e.key === "k") { e.preventDefault(); setPaletteOpen(true); }
+      if (e.key === "n") { e.preventDefault(); setKitBuilderOpen(true); setSidebarTab("kits"); }
       if (e.key === "r" && !modeRunning) { e.preventDefault(); runModeRef.current?.(); }
       if (e.key === "f" && modeOutput) {
         e.preventDefault();
@@ -246,6 +251,13 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
           onClose={() => setPaletteOpen(false)}
         />
       )}
+      {kitBuilderOpen && (
+        <KitBuilder
+          repoPath={repoPath}
+          onSave={(kitId) => { setKitBuilderOpen(false); loadCustomKits(); setTimeout(() => switchKit(kitId), 100); }}
+          onClose={() => setKitBuilderOpen(false)}
+        />
+      )}
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         {/* Sidebar: tab switcher + kit/mode list */}
         <SidebarTabs
@@ -257,6 +269,7 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
           cachedModes={cachedModes}
           onKitSelect={switchKit}
           onModeSelect={switchMode}
+          onCreateKit={() => setKitBuilderOpen(true)}
         />
 
         <OutputPanel
