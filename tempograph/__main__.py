@@ -17,7 +17,7 @@ def _repo_info(repo: str) -> str:
     db_path = rp / ".tempograph" / "graph.db"
     cache_path = rp / ".tempograph" / "cache.json"
     config_path = rp / ".tempo" / "config.json"
-    lines = [f"Tempograph v0.5.0 — {repo}", ""]
+    lines = [f"Tempograph v0.6.0 — {repo}", ""]
 
     if db_path.exists():
         size_mb = db_path.stat().st_size / (1024 * 1024)
@@ -67,6 +67,17 @@ def _repo_info(repo: str) -> str:
     except Exception:
         pass
 
+    try:
+        from .predict import build_transition_matrix
+        matrix = build_transition_matrix(repo, min_count=5)
+        if matrix:
+            top_pred = max(matrix.items(), key=lambda x: x[1][0][1] if x[1] else 0)
+            lines.append(f"Prediction: {len(matrix)} mode transitions learned")
+        else:
+            lines.append(f"Prediction: no usage data yet")
+    except Exception:
+        pass
+
     return "\n".join(lines)
 
 from .builder import build_graph
@@ -111,8 +122,15 @@ def _run_feedback(argv: list[str]) -> int:
     return 0
 
 
+__version__ = "0.6.0"
+
+
 def main(argv: list[str] | None = None) -> int:
     raw = argv if argv is not None else sys.argv[1:]
+
+    if raw and raw[0] in ("--version", "-V"):
+        print(f"tempograph {__version__}")
+        return 0
 
     # Intercept 'feedback' subcommand before argparse (avoids graph build)
     if raw and raw[0] == "feedback":
@@ -157,16 +175,14 @@ def main(argv: list[str] | None = None) -> int:
     # Embed: generate embeddings for semantic search
     if args.embed:
         from .embeddings import embed_symbols as _embed_symbols
-        _eg = __import__('tempograph.builder', fromlist=['build_graph']).build_graph
-        _g = _eg(repo, exclude_dirs=args.exclude.split(",") if args.exclude else None)
+        _g = build_graph(repo, exclude_dirs=args.exclude.split(",") if args.exclude else None)
         count = _embed_symbols(_g._db if hasattr(_g, '_db') else None)
         print(f"Embedded {count} symbols for semantic search")
         return 0
 
     # Search: hybrid semantic+structural search
     if args.search:
-        _sg = __import__('tempograph.builder', fromlist=['build_graph']).build_graph
-        _g = _sg(repo, exclude_dirs=args.exclude.split(",") if args.exclude else None)
+        _g = build_graph(repo, exclude_dirs=args.exclude.split(",") if args.exclude else None)
         results = _g.search_symbols_scored(args.search)[:20]
         for score, sym in results:
             print(f"  {score:6.1f}  {sym.kind.value:10s}  {sym.qualified_name:40s}  {sym.file_path}:{sym.line_start}")

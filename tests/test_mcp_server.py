@@ -58,7 +58,7 @@ from tempograph.server import (
 
 def test_tool_count():
     from tempograph.server import mcp
-    assert len(mcp._tool_manager._tools) == 23
+    assert len(mcp._tool_manager._tools) == 24
 
 
 def test_agent_guide_bench_numbers():
@@ -1656,6 +1656,70 @@ class TestDeadSeedWarning:
         )
 
 
+class TestOrbitBFSSeeding:
+    """Tests for orbit-driven BFS seeding: git co-change files injected as depth-1 seeds."""
+
+    def test_find_orbit_seeds_returns_best_matching_symbol(self, tmp_path):
+        """_find_orbit_seeds finds the symbol in an orbit file whose name best matches query tokens."""
+        from tempograph.builder import build_graph
+        from tempograph.render import _find_orbit_seeds
+
+        (tmp_path / "main.py").write_text("def process_data(): pass\n")
+        (tmp_path / "utils.py").write_text(
+            "def process_input(): pass\ndef helper(): pass\n"
+        )
+        g = build_graph(tmp_path, use_cache=False)
+
+        orbit_pairs = [("utils.py", 0.9)]
+        results = _find_orbit_seeds(g, ["process"], orbit_pairs)
+        assert len(results) == 1, "Must find one matching symbol"
+        sym, freq = results[0]
+        assert "process" in sym.name.lower(), "Returned symbol must match query token"
+        assert freq == 0.9, "Coupling freq must be preserved"
+
+    def test_find_orbit_seeds_skips_file_with_no_matching_symbol(self, tmp_path):
+        """_find_orbit_seeds returns [] when orbit file has no symbols matching query tokens."""
+        from tempograph.builder import build_graph
+        from tempograph.render import _find_orbit_seeds
+
+        (tmp_path / "core.py").write_text("def render_focused(): pass\n")
+        (tmp_path / "docs.py").write_text("def intro(): pass\ndef outro(): pass\n")
+        g = build_graph(tmp_path, use_cache=False)
+
+        orbit_pairs = [("docs.py", 0.7)]
+        results = _find_orbit_seeds(g, ["render", "focused"], orbit_pairs)
+        assert results == [], "No symbols matching 'render' or 'focused' in docs.py — must return []"
+
+    def test_orbit_seed_annotation_appears_in_render_focused(self, tmp_path):
+        """render_focused adds [orbit X%] annotation for symbols injected via orbit seeding.
+
+        Key: search_symbols_scored uses the FULL query as one token ("core_transform").
+        So "monitoring_transform" scores 0 in primary search — it's NOT a primary seed.
+        But _find_orbit_seeds splits query tokens ("transform") and finds it via substring
+        match. This tests the additive nature: orbit seeding surfaces what primary search misses."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        from unittest.mock import patch
+
+        (tmp_path / "core.py").write_text("def core_transform(): pass\n")
+        # monitoring.py has no import/call to core_transform → zero call-graph connection
+        (tmp_path / "monitoring.py").write_text("def monitor_transform_output(): pass\n")
+        g = build_graph(tmp_path, use_cache=False)
+
+        # monitoring.py co-changes with core.py at 80%
+        mock_matrix = {"core.py": [("monitoring.py", 0.8)]}
+        with patch("tempograph.git.cochange_matrix", return_value=mock_matrix), \
+             patch("tempograph.git.is_git_repo", return_value=True):
+            out = render_focused(g, "core_transform", max_tokens=4000)
+
+        # "transform" (split token) is in "monitor_transform_output" → orbit seed injected
+        assert "[orbit 80%]" in out, (
+            "render_focused must annotate orbit-seeded symbols with [orbit X%]. "
+            "Orbit seeding uses split tokens so 'transform' matches 'monitor_transform_output' "
+            "even when the full query 'core_transform' doesn't match via symbol search."
+        )
+
+
 class TestBuilderUseConfig:
     """Tests for build_graph use_config parameter (reads .tempo/config.json exclude_dirs)."""
 
@@ -1764,3 +1828,62 @@ class TestCochangeContext:
         result = cochange_context(REPO_PATH, "tempograph/render.py")
         assert isinstance(result, str)
         assert len(result) > 0
+
+
+# ---------------------------------------------------------------------------
+# Hotspot unique-caller-file dedup
+# ---------------------------------------------------------------------------
+
+class TestHotspotUniqueCallerFiles:
+    def test_hotspot_counts_unique_files_not_raw_callers(self):
+        """Hotspot score uses unique caller files, not raw caller count.
+
+        A symbol called by 10 functions in 2 files should rank as if it has
+        2 callers (file-level coupling), not 10 (symbol-level noise).
+        """
+        from tempograph.render import render_hotspots
+        from tempograph.types import (
+            Edge, EdgeKind, FileInfo, Language, Symbol, SymbolKind, Tempo,
+        )
+
+        def _sym(fpath, name, line=1):
+            return Symbol(
+                id=f"{fpath}::{name}", name=name, qualified_name=name,
+                kind=SymbolKind.FUNCTION, language=Language.PYTHON,
+                file_path=fpath, line_start=line, line_end=line + 5,
+                signature=f"def {name}()", exported=True, complexity=2,
+                byte_size=50,
+            )
+
+        target = _sym("lib.py", "core_fn")
+        # 5 callers each from 2 different test files = 10 raw callers, 2 unique files
+        callers_a = [_sym("test_a.py", f"test_{i}") for i in range(5)]
+        callers_b = [_sym("test_b.py", f"test_{i}") for i in range(5)]
+
+        all_syms = {s.id: s for s in [target] + callers_a + callers_b}
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=c.id, target_id=target.id, line=1)
+            for c in callers_a + callers_b
+        ]
+        files = {
+            "lib.py": FileInfo(path="lib.py", language=Language.PYTHON,
+                               line_count=10, byte_size=200, symbols=[target.id]),
+            "test_a.py": FileInfo(path="test_a.py", language=Language.PYTHON,
+                                  line_count=50, byte_size=1000,
+                                  symbols=[c.id for c in callers_a]),
+            "test_b.py": FileInfo(path="test_b.py", language=Language.PYTHON,
+                                  line_count=50, byte_size=1000,
+                                  symbols=[c.id for c in callers_b]),
+        }
+        graph = Tempo(root="/tmp/fake", files=files, symbols=all_syms, edges=edges)
+        graph.build_indexes()
+
+        output = render_hotspots(graph, top_n=5)
+
+        # Display should report 2 caller files, not 10 raw callers
+        assert "2 caller files" in output, (
+            f"Expected '2 caller files' in hotspot output, got:\n{output}"
+        )
+        assert "10 caller" not in output, (
+            f"Expected raw caller count (10) not to appear in output, got:\n{output}"
+        )
