@@ -550,7 +550,9 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
             seed_files.add(s.file_path)
 
     # BFS: expand from seed symbols following edges
-    # Wider expansion: depth 3, more callers/callees at depth 0-1
+    # Wider expansion: depth 3 (or 4 when seed is hot), more callers/callees at depth 0-1
+    _hot_seeds = any(s.file_path in graph.hot_files for s in seeds)
+    _bfs_max_depth = 4 if _hot_seeds else 3
     seen_ids: set[str] = set()
     queue: list[tuple[Symbol, int]] = [(s, 0) for s in seeds]
     ordered: list[tuple[Symbol, int]] = []
@@ -571,7 +573,7 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
         seen_ids.add(sym.id)
         ordered.append((sym, depth))
 
-        if depth < 3:
+        if depth < _bfs_max_depth:
             # More context at shallow depths, less at deeper
             caller_limit = 8 if depth == 0 else 5 if depth == 1 else 3
             callee_limit = 8 if depth == 0 else 5 if depth == 1 else 3
