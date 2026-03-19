@@ -645,6 +645,9 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                 warnings.append(f"LARGE ({sym.line_count} lines — use grep, don't read)")
             if sym.complexity > 50:
                 warnings.append(f"HIGH COMPLEXITY (cx={sym.complexity})")
+            if depth == 0 and not sym.exported and not graph.callers_of(sym.id):
+                if _dead_code_confidence(sym, graph) >= 40:
+                    warnings.append("POSSIBLY DEAD — 0 callers, not exported (run dead_code mode to confirm)")
             if warnings:
                 block_lines.append(f"{indent}  ⚠ {', '.join(warnings)}")
             callers = graph.callers_of(sym.id)
