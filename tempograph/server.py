@@ -115,6 +115,9 @@ _graph_excludes: dict[str, list[str]] = {}  # repo_path → exclude_dirs used
 _graph_timestamps: dict[str, float] = {}  # repo_path → time.time() when built
 _CACHE_TTL = 30  # seconds — rebuild if graph is older than this
 
+# File watchers — one per repo
+_watchers: dict[str, "GraphWatcher"] = {}
+
 # ── Error codes ───────────────────────────────────────────────────
 
 REPO_NOT_FOUND = "REPO_NOT_FOUND"
@@ -819,6 +822,54 @@ def run_kit(repo_path: str, kit: str, query: str = "", max_tokens: int = 4000,
     tokens = count_tokens(output)
     _log_tool("run_kit", p, output, elapsed, kit=kit, query=query)
     return _success(output, tokens, elapsed, output_format)
+
+
+@mcp.tool()
+def watch_repo(repo_path: str, exclude_dirs: str = "") -> str:
+    """Start watching a repository for file changes. Incrementally updates the graph DB
+    when files are added, modified, or deleted. Uses Rust-backed file watcher for performance.
+
+    repo_path: absolute path to the repository root
+    exclude_dirs: comma-separated directories to ignore (e.g. "node_modules,dist")
+    """
+    from .watcher import GraphWatcher
+
+    p, err = _validate_repo(repo_path)
+    if err:
+        return err
+
+    if p in _watchers and _watchers[p].is_running:
+        return _format_output(f"Already watching {p}", "text")
+
+    excludes = [d.strip() for d in exclude_dirs.split(",") if d.strip()] if exclude_dirs else []
+
+    def on_update(files: list[str]) -> None:
+        # Invalidate cached graph so next tool call rebuilds from fresh DB
+        _graphs.pop(p, None)
+        _graph_timestamps.pop(p, None)
+
+    watcher = GraphWatcher(p, exclude_dirs=excludes, on_update=on_update)
+    watcher.start()
+    _watchers[p] = watcher
+
+    return _format_output(f"Watching {p} for changes (incremental graph updates enabled)", "text")
+
+
+@mcp.tool()
+def unwatch_repo(repo_path: str) -> str:
+    """Stop watching a repository for file changes.
+
+    repo_path: absolute path to the repository root
+    """
+    p, err = _validate_repo(repo_path)
+    if err:
+        return err
+
+    watcher = _watchers.pop(p, None)
+    if watcher:
+        watcher.stop()
+        return _format_output(f"Stopped watching {p}", "text")
+    return _format_output(f"Not currently watching {p}", "text")
 
 
 def run_server():

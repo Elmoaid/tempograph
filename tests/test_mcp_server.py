@@ -58,7 +58,7 @@ from tempograph.server import (
 
 def test_tool_count():
     from tempograph.server import mcp
-    assert len(mcp._tool_manager._tools) == 18
+    assert len(mcp._tool_manager._tools) == 20
 
 
 def test_agent_guide_bench_numbers():
