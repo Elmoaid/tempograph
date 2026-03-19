@@ -1656,6 +1656,70 @@ class TestDeadSeedWarning:
         )
 
 
+class TestOrbitBFSSeeding:
+    """Tests for orbit-driven BFS seeding: git co-change files injected as depth-1 seeds."""
+
+    def test_find_orbit_seeds_returns_best_matching_symbol(self, tmp_path):
+        """_find_orbit_seeds finds the symbol in an orbit file whose name best matches query tokens."""
+        from tempograph.builder import build_graph
+        from tempograph.render import _find_orbit_seeds
+
+        (tmp_path / "main.py").write_text("def process_data(): pass\n")
+        (tmp_path / "utils.py").write_text(
+            "def process_input(): pass\ndef helper(): pass\n"
+        )
+        g = build_graph(tmp_path, use_cache=False)
+
+        orbit_pairs = [("utils.py", 0.9)]
+        results = _find_orbit_seeds(g, ["process"], orbit_pairs)
+        assert len(results) == 1, "Must find one matching symbol"
+        sym, freq = results[0]
+        assert "process" in sym.name.lower(), "Returned symbol must match query token"
+        assert freq == 0.9, "Coupling freq must be preserved"
+
+    def test_find_orbit_seeds_skips_file_with_no_matching_symbol(self, tmp_path):
+        """_find_orbit_seeds returns [] when orbit file has no symbols matching query tokens."""
+        from tempograph.builder import build_graph
+        from tempograph.render import _find_orbit_seeds
+
+        (tmp_path / "core.py").write_text("def render_focused(): pass\n")
+        (tmp_path / "docs.py").write_text("def intro(): pass\ndef outro(): pass\n")
+        g = build_graph(tmp_path, use_cache=False)
+
+        orbit_pairs = [("docs.py", 0.7)]
+        results = _find_orbit_seeds(g, ["render", "focused"], orbit_pairs)
+        assert results == [], "No symbols matching 'render' or 'focused' in docs.py — must return []"
+
+    def test_orbit_seed_annotation_appears_in_render_focused(self, tmp_path):
+        """render_focused adds [orbit X%] annotation for symbols injected via orbit seeding.
+
+        Key: search_symbols_scored uses the FULL query as one token ("core_transform").
+        So "monitoring_transform" scores 0 in primary search — it's NOT a primary seed.
+        But _find_orbit_seeds splits query tokens ("transform") and finds it via substring
+        match. This tests the additive nature: orbit seeding surfaces what primary search misses."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        from unittest.mock import patch
+
+        (tmp_path / "core.py").write_text("def core_transform(): pass\n")
+        # monitoring.py has no import/call to core_transform → zero call-graph connection
+        (tmp_path / "monitoring.py").write_text("def monitor_transform_output(): pass\n")
+        g = build_graph(tmp_path, use_cache=False)
+
+        # monitoring.py co-changes with core.py at 80%
+        mock_matrix = {"core.py": [("monitoring.py", 0.8)]}
+        with patch("tempograph.git.cochange_matrix", return_value=mock_matrix), \
+             patch("tempograph.git.is_git_repo", return_value=True):
+            out = render_focused(g, "core_transform", max_tokens=4000)
+
+        # "transform" (split token) is in "monitor_transform_output" → orbit seed injected
+        assert "[orbit 80%]" in out, (
+            "render_focused must annotate orbit-seeded symbols with [orbit X%]. "
+            "Orbit seeding uses split tokens so 'transform' matches 'monitor_transform_output' "
+            "even when the full query 'core_transform' doesn't match via symbol search."
+        )
+
+
 class TestBuilderUseConfig:
     """Tests for build_graph use_config parameter (reads .tempo/config.json exclude_dirs)."""
 
