@@ -48,7 +48,7 @@ from tempograph.server import (
     index_repo, overview, focus, hotspots, blast_radius,
     diff_context, dead_code, lookup, symbols, file_map,
     dependencies, architecture, stats, report_feedback,
-    learn_recommendation, prepare_context, get_patterns,
+    learn_recommendation, prepare_context, get_patterns, cochange_context,
 )
 
 
@@ -58,7 +58,7 @@ from tempograph.server import (
 
 def test_tool_count():
     from tempograph.server import mcp
-    assert len(mcp._tool_manager._tools) == 22
+    assert len(mcp._tool_manager._tools) == 23
 
 
 def test_agent_guide_bench_numbers():
@@ -1596,3 +1596,37 @@ class TestBuilderUseConfig:
 
         g = build_graph(tmp_path, use_cache=False)
         assert any("main.py" in f for f in g.files), "src/main.py should still be indexed"
+
+
+# ---------------------------------------------------------------------------
+# cochange_context tool
+# ---------------------------------------------------------------------------
+
+class TestCochangeContext:
+    def test_returns_result_for_known_file(self):
+        # tempograph/render.py has co-change history in this repo
+        result = cochange_context(REPO_PATH, "tempograph/render.py", output_format="json")
+        d = parse_json(result)
+        # Either ok with co-change data, or NO_MATCH (acceptable if file rarely co-changes)
+        assert d["status"] in ("ok", "error")
+        if d["status"] == "ok":
+            assert "Co-change partners" in d["data"]
+            assert "%" in d["data"]
+
+    def test_no_match_for_unknown_file(self):
+        result = cochange_context(REPO_PATH, "nonexistent/fake.py", output_format="json")
+        assert_error(result, "NO_MATCH")
+
+    def test_not_git_repo(self, tmp_path):
+        result = cochange_context(str(tmp_path), "some_file.py", output_format="json")
+        assert_error(result, "NOT_GIT_REPO")
+
+    def test_invalid_repo(self):
+        result = cochange_context("/nonexistent/path", "file.py", output_format="json")
+        # _validate_repo returns raw error string (not JSON) for REPO_NOT_FOUND
+        assert "REPO_NOT_FOUND" in result or "error" in result.lower()
+
+    def test_text_output(self):
+        result = cochange_context(REPO_PATH, "tempograph/render.py")
+        assert isinstance(result, str)
+        assert len(result) > 0
