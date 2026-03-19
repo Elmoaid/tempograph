@@ -475,52 +475,48 @@ def _suggest_alternatives(graph: Tempo, query: str, max_suggestions: int = 5) ->
     return "\n".join(lines)
 
 
-def _collect_seeds(
-    graph: Tempo, query: str
-) -> tuple[list[Symbol], set[str], list[str]]:
-    """Tokenize query, search for seed symbols, apply quality gate.
+def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
+    """Task-focused rendering with BFS graph traversal.
+    Starts from search results, then follows call/render/import edges
+    to build a connected subgraph relevant to the query.
 
-    Returns (seeds, seed_files, query_tokens).
-    seeds is empty when there are no matches (caller should return early).
-    seed_files contains paths of monolith-sized files (>= _MONOLITH_THRESHOLD lines)
-    that host at least one seed symbol — used to bias BFS toward cross-file edges."""
+    For monolith files (>1000 lines), adds intra-file neighborhood context
+    and biases BFS toward cross-file edges to avoid getting trapped in one file."""
     import re as _re
-    # Split query tokens and expand CamelCase: "ReplyNotFound" → ["reply", "not", "found"]
-    # so "reply" matches "test/internals/reply.test.js" even when query is CamelCase.
+    # Extract query tokens for caller relevance sorting (len > 3 to avoid generic words).
+    # Also split CamelCase: "ReplyNotFound" → ["Reply", "Not", "Found"] so that
+    # "reply" matches "test/internals/reply.test.js" even when query is CamelCase.
     _raw_tokens = _re.split(r'[^a-zA-Z0-9]+', query)
-    _camel_tokens: list[str] = []
+    _camel_tokens = []
     for tok in _raw_tokens:
+        # Split CamelCase into components (e.g. ReplyNotFound → Reply, Not, Found)
         parts = _re.sub(r'([A-Z][a-z]+)', r' \1', _re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1 \2', tok)).split()
         _camel_tokens.extend(parts if len(parts) > 1 else [tok])
-    query_tokens = [t.lower() for t in _camel_tokens if len(t) >= 3]
+    _query_tokens = [t.lower() for t in _camel_tokens if len(t) >= 3]
+
+    def _caller_priority(sym: "Symbol") -> int:
+        """0 = keyword match in path (show first), 1 = no match (show after)."""
+        path_lower = sym.file_path.lower()
+        return 0 if _query_tokens and any(tok in path_lower for tok in _query_tokens) else 1
 
     scored = graph.search_symbols_scored(query)
     if not scored:
-        return [], set(), query_tokens
+        return _suggest_alternatives(graph, query) or f"No symbols matching '{query}'"
 
     # Quality gate: drop seeds with much lower scores than the best match
     top_score = scored[0][0]
     threshold = max(top_score * 0.3, 2.0)  # at least 30% of best, minimum 2.0
     seeds = [sym for score, sym in scored if score >= threshold][:10]
 
+    # Determine seed files to detect monolith bias
     seed_files: set[str] = set()
     for s in seeds:
         fi = graph.files.get(s.file_path)
         if fi and fi.line_count >= _MONOLITH_THRESHOLD:
             seed_files.add(s.file_path)
 
-    return seeds, seed_files, query_tokens
-
-
-def _bfs_expand(
-    graph: Tempo, seeds: list[Symbol], seed_files: set[str]
-) -> tuple[list[tuple[Symbol, int]], set[str]]:
-    """BFS from seed symbols following caller/callee/child edges.
-
-    Returns (ordered, seen_ids).
-    ordered is the BFS traversal sequence with (symbol, depth) pairs.
-    seen_ids is the full set of visited symbol IDs — callers use it for
-    file-context deduplication so already-shown symbols are excluded."""
+    # BFS: expand from seed symbols following edges
+    # Wider expansion: depth 3 (or 4 when seed is hot), more callers/callees at depth 0-1
     _hot_seeds = any(s.file_path in graph.hot_files for s in seeds)
     _bfs_max_depth = 4 if _hot_seeds else 3
     seen_ids: set[str] = set()
@@ -547,8 +543,9 @@ def _bfs_expand(
             # More context at shallow depths, less at deeper
             caller_limit = 8 if depth == 0 else 5 if depth == 1 else 3
             callee_limit = 8 if depth == 0 else 5 if depth == 1 else 3
-            # Hot-first traversal: prefer recently-modified symbols when the
-            # 50-node cap forces truncation, so hot-file nodes win the slots.
+            # Hot-first traversal: when the 50-node cap forces truncation, prefer
+            # recently-modified symbols. Sort hot-file symbols first so they're
+            # selected within the per-step limit before cold stragglers.
             _hot_key = lambda s: s.file_path not in graph.hot_files  # False(0)=hot first
             for caller in sorted(graph.callers_of(sym.id), key=_hot_key)[:caller_limit]:
                 _enqueue(caller, depth + 1)
@@ -558,48 +555,6 @@ def _bfs_expand(
                 for child in graph.children_of(sym.id)[:5]:
                     _enqueue(child, depth + 1)
 
-    return ordered, seen_ids
-
-
-def _handle_overflow(
-    lines: list[str],
-    ordered: list[tuple[Symbol, int]],
-    block: str,
-    token_count: int,
-    max_tokens: int,
-) -> tuple[bool, int]:
-    """Check whether adding block would exceed the token budget.
-
-    Returns (should_break, block_tokens).
-    When should_break is True a truncation message has already been appended
-    to lines — the caller should stop the rendering loop immediately."""
-    block_tokens = count_tokens(block)
-    if token_count + block_tokens > max_tokens:
-        remaining = len(ordered) - len([l for l in lines if l and not l.startswith("...")])
-        if remaining > 0:
-            lines.append(f"... truncated ({remaining} more symbols)")
-        return True, block_tokens
-    return False, block_tokens
-
-
-def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
-    """Task-focused rendering with BFS graph traversal.
-    Starts from search results, then follows call/render/import edges
-    to build a connected subgraph relevant to the query.
-
-    For monolith files (>1000 lines), adds intra-file neighborhood context
-    and biases BFS toward cross-file edges to avoid getting trapped in one file."""
-    seeds, seed_files, query_tokens = _collect_seeds(graph, query)
-    if not seeds:
-        return _suggest_alternatives(graph, query) or f"No symbols matching '{query}'"
-
-    ordered, seen_ids = _bfs_expand(graph, seeds, seed_files)
-
-    def _caller_priority(sym: Symbol) -> int:
-        """0 = keyword match in path (show first), 1 = no match (show after)."""
-        path_lower = sym.file_path.lower()
-        return 0 if query_tokens and any(tok in path_lower for tok in query_tokens) else 1
-
     lines = [f"Focus: {query}", ""]
     seen_files: set[str] = set()
     token_count = 0
@@ -607,12 +562,14 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     for sym, depth in ordered:
         indent = "  " * depth if depth > 0 else ""
         prefix = ["●", "  →", "    ·", "      "][min(depth, 3)]
+        # Core info
         loc = f"{sym.file_path}:{sym.line_start}-{sym.line_end}"
         block_lines = [f"{prefix} {sym.kind.value} {sym.qualified_name} — {loc}"]
         if sym.signature and depth < 2:
             block_lines.append(f"{indent}  sig: {sym.signature[:150]}")
         if sym.doc and depth == 0:
             block_lines.append(f"{indent}  doc: {sym.doc}")
+        # Detail at depth 0 and 1 (not just 0)
         if depth <= 1:
             warnings = []
             if sym.line_count > 500:
@@ -623,12 +580,16 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                 block_lines.append(f"{indent}  ⚠ {', '.join(warnings)}")
             callers = graph.callers_of(sym.id)
             if callers:
+                # Keyword-matching callers first (e.g. test/reply.test.js before lib/logger.js)
                 callers_sorted = sorted(callers, key=_caller_priority)
                 kw_callers = [c for c in callers_sorted if _caller_priority(c) == 0]
                 other_callers = [c for c in callers_sorted if _caller_priority(c) != 0]
+                # Hot callers (recently-modified files) bubble up within other_callers.
+                # This surfaces the caller most likely relevant to the current task.
                 hot_other = [c for c in other_callers if c.file_path in graph.hot_files]
                 cold_other = [c for c in other_callers if c.file_path not in graph.hot_files]
-                # Keyword callers exist → cap other callers at 3; else show up to 8.
+                # When keyword callers exist: cap other callers at 3 to reduce noise.
+                # Without keyword matches: show up to 8 (all callers equally relevant).
                 max_other = 3 if kw_callers else (8 if depth == 0 else 5)
                 shown_other = (hot_other + cold_other)[:max_other]
                 shown_callers = kw_callers + shown_other
@@ -643,6 +604,7 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
             callees = graph.callees_of(sym.id)
             if callees:
                 shown = 8 if depth == 0 else 5
+                # Hot callees (recently-modified files) bubble up — changed callee = likely suspect.
                 hot_callees = [c for c in callees if c.file_path in graph.hot_files]
                 cold_callees = [c for c in callees if c.file_path not in graph.hot_files]
                 ordered_callees = (hot_callees + cold_callees)[:shown]
@@ -659,8 +621,11 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                     block_lines.append(f"{indent}  contains: {', '.join(f'{c.kind.value[:4]} {c.name}' for c in children[:10])}")
 
         block = "\n".join(block_lines)
-        should_break, block_tokens = _handle_overflow(lines, ordered, block, token_count, max_tokens)
-        if should_break:
+        block_tokens = count_tokens(block)
+        if token_count + block_tokens > max_tokens:
+            remaining = len(ordered) - len([l for l in lines if l and not l.startswith("...")])
+            if remaining > 0:
+                lines.append(f"... truncated ({remaining} more symbols)")
             break
         lines.append(block)
         token_count += block_tokens
@@ -673,6 +638,7 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
         if not fi or len(fi.symbols) < 3:
             continue
         file_syms = [graph.symbols[sid] for sid in fi.symbols if sid in graph.symbols and sid not in seen_ids]
+        # Show exported symbols the agent might need
         important = [s for s in file_syms if s.exported and s.kind in (
             SymbolKind.FUNCTION, SymbolKind.CLASS, SymbolKind.COMPONENT, SymbolKind.HOOK
         )][:5]
@@ -719,6 +685,7 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                    and len(graph.callers_of(s.id)) >= 3
                    and any(c.file_path != s.file_path for c in graph.callers_of(s.id))]
     if high_impact and token_count < max_tokens - 50:
+        names = ", ".join(s.qualified_name for s in high_impact[:3])
         lines.append(f"\nBefore modifying: run blast_radius(query=\"{high_impact[0].qualified_name}\") to check downstream impact.")
 
     return "\n".join(lines)
