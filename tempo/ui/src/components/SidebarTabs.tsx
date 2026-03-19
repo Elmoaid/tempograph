@@ -11,6 +11,7 @@ interface Props {
   cachedModes: Set<string>;
   onKitSelect: (kitId: string) => void;
   onModeSelect: (mode: string) => void;
+  onCreateKit?: () => void;
 }
 
 export function SidebarTabs({
@@ -22,6 +23,7 @@ export function SidebarTabs({
   cachedModes,
   onKitSelect,
   onModeSelect,
+  onCreateKit,
 }: Props) {
   return (
     <div className="cell" style={{ flex: "0 0 auto", maxHeight: "45%" }}>
@@ -46,6 +48,26 @@ export function SidebarTabs({
         >
           Kits
         </button>
+        {sidebarTab === "kits" && onCreateKit && (
+          <button
+            onClick={onCreateKit}
+            title="Create Kit (⌘N)"
+            aria-label="Create new kit"
+            style={{
+              padding: "8px 10px",
+              border: "none",
+              background: "var(--bg-secondary)",
+              color: "var(--text-tertiary)",
+              fontSize: 16,
+              lineHeight: 1,
+              cursor: "pointer",
+              borderBottom: "1px solid var(--accent)",
+              transition: "color 0.1s",
+            }}
+            onMouseEnter={e => (e.currentTarget.style.color = "var(--accent-hover)")}
+            onMouseLeave={e => (e.currentTarget.style.color = "var(--text-tertiary)")}
+          >+</button>
+        )}
         <button
           onClick={() => onTabChange("modes")}
           style={{
