@@ -1,6 +1,7 @@
 """Git integration for tempograph — auto-detect changed files, branches, diffs."""
 from __future__ import annotations
 
+import functools
 import subprocess
 from pathlib import Path
 
@@ -58,6 +59,7 @@ def current_branch(repo: str) -> str | None:
     return _run_git(repo, "rev-parse", "--abbrev-ref", "HEAD")
 
 
+@functools.lru_cache(maxsize=4)
 def cochange_matrix(repo: str, n_commits: int = 200) -> dict[str, list[tuple[str, float]]]:
     """Build a co-change matrix from git history.
 
