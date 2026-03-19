@@ -17,7 +17,7 @@ def _repo_info(repo: str) -> str:
     db_path = rp / ".tempograph" / "graph.db"
     cache_path = rp / ".tempograph" / "cache.json"
     config_path = rp / ".tempo" / "config.json"
-    lines = [f"Tempograph v0.5.0 — {repo}", ""]
+    lines = [f"Tempograph v0.6.0 — {repo}", ""]
 
     if db_path.exists():
         size_mb = db_path.stat().st_size / (1024 * 1024)
@@ -67,6 +67,17 @@ def _repo_info(repo: str) -> str:
     except Exception:
         pass
 
+    try:
+        from .predict import build_transition_matrix
+        matrix = build_transition_matrix(repo, min_count=5)
+        if matrix:
+            top_pred = max(matrix.items(), key=lambda x: x[1][0][1] if x[1] else 0)
+            lines.append(f"Prediction: {len(matrix)} mode transitions learned")
+        else:
+            lines.append(f"Prediction: no usage data yet")
+    except Exception:
+        pass
+
     return "\n".join(lines)
 
 from .builder import build_graph
@@ -111,8 +122,15 @@ def _run_feedback(argv: list[str]) -> int:
     return 0
 
 
+__version__ = "0.6.0"
+
+
 def main(argv: list[str] | None = None) -> int:
     raw = argv if argv is not None else sys.argv[1:]
+
+    if raw and raw[0] in ("--version", "-V"):
+        print(f"tempograph {__version__}")
+        return 0
 
     # Intercept 'feedback' subcommand before argparse (avoids graph build)
     if raw and raw[0] == "feedback":
