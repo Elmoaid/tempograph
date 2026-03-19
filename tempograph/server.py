@@ -458,16 +458,18 @@ def diff_context(repo_path: str, changed_files: str = "", scope: str = "unstaged
 # ── Tool 7: Dead code ───────────────────────────────────────────────
 
 @mcp.tool()
-def dead_code(repo_path: str, max_tokens: int = 8000, exclude_dirs: str = "", output_format: str = "text") -> str:
+def dead_code(repo_path: str, max_tokens: int = 8000, exclude_dirs: str = "", output_format: str = "text", include_low: bool = False) -> str:
     """Find exported symbols never referenced by other files.
     Potential cleanup targets — unused exports, orphaned functions,
     dead interfaces. Respects Python __all__ for precise export tracking.
 
     max_tokens: cap output size (default 8000) to prevent context overflow
     exclude_dirs: comma-separated directory prefixes to skip
-    output_format: "text" (default) or "json" for structured response"""
+    output_format: "text" (default) or "json" for structured response
+    include_low: include low-confidence (likely false positive) symbols (default False,
+        saves ~47% tokens — ~1,300 tokens on a typical repo)"""
     return _run_tool("dead_code", repo_path, output_format,
-                     lambda g: render_dead_code(g, max_tokens=max_tokens),
+                     lambda g: render_dead_code(g, max_tokens=max_tokens, include_low=include_low),
                      exclude_dirs=exclude_dirs)
 
 

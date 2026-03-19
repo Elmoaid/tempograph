@@ -1413,8 +1413,12 @@ def _dead_code_confidence(sym: Symbol, graph: Tempo) -> int:
     return max(0, min(100, score))
 
 
-def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8000) -> str:
-    """Find exported symbols that appear to be unused (never referenced externally)."""
+def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8000, include_low: bool = False) -> str:
+    """Find exported symbols that appear to be unused (never referenced externally).
+
+    include_low: include low-confidence (likely false positive) symbols. Off by default
+        to reduce token output (~47% savings). Pass include_low=True to see all tiers.
+    """
     dead = graph.find_dead_code()
     if not dead:
         return "No dead code detected — all exported symbols are referenced."
@@ -1430,9 +1434,12 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
     lines = [f"Potential dead code ({len(dead)} symbols):", ""]
     total_lines = 0
 
-    for label, tier in [("HIGH CONFIDENCE (safe to remove)", high),
-                        ("MEDIUM CONFIDENCE (review before removing)", medium),
-                        ("LOW CONFIDENCE (likely false positives)", low)]:
+    tiers = [("HIGH CONFIDENCE (safe to remove)", high),
+             ("MEDIUM CONFIDENCE (review before removing)", medium)]
+    if include_low:
+        tiers.append(("LOW CONFIDENCE (likely false positives)", low))
+
+    for label, tier in tiers:
         if not tier:
             continue
         shown = tier[:max_symbols]
@@ -1450,7 +1457,10 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             lines.append("")
 
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
-    lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
+    if include_low:
+        lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
+    else:
+        lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence (low hidden — pass include_low=True to show)")
 
     result = "\n".join(lines)
     if max_tokens and count_tokens(result) > max_tokens:
