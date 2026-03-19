@@ -1627,6 +1627,48 @@ class TestTemporalSymbolWeighting:
         assert result == [], "Must return [] for non-git repo, not raise"
 
 
+class TestDeadSeedWarning:
+    """Tests for the 'POSSIBLY DEAD' warning in render_focused for zero-caller unexported seeds."""
+
+    def test_dead_seed_warning_appears_for_isolated_function(self, tmp_path):
+        """render_focused warns POSSIBLY DEAD when seed has 0 callers, not exported, high confidence."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        # Isolated function: no callers, not exported, not a dispatch pattern
+        (tmp_path / "orphan.py").write_text("def _compute_nothing():\n    return 42\n")
+        g = build_graph(tmp_path, use_cache=False)
+        out = render_focused(g, "_compute_nothing", max_tokens=4000)
+        assert "POSSIBLY DEAD" in out, (
+            "render_focused must warn when seed has 0 callers and is not exported"
+        )
+
+    def test_dead_seed_warning_absent_for_called_function(self, tmp_path):
+        """render_focused does NOT warn when seed has callers."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        # _helper is called by main — not dead
+        (tmp_path / "mod.py").write_text(
+            "def _helper():\n    return 1\n\ndef main():\n    return _helper()\n"
+        )
+        g = build_graph(tmp_path, use_cache=False)
+        out = render_focused(g, "_helper", max_tokens=4000)
+        assert "POSSIBLY DEAD" not in out, (
+            "render_focused must NOT warn when seed has callers"
+        )
+
+    def test_dead_seed_warning_absent_for_handler_pattern(self, tmp_path):
+        """render_focused does NOT warn for dispatch-pattern names (on_*, handle_*) even with 0 callers."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        # Dispatch-pattern name suppresses dead-code confidence (score -= 20)
+        (tmp_path / "handlers.py").write_text("def handle_request():\n    pass\n")
+        g = build_graph(tmp_path, use_cache=False)
+        out = render_focused(g, "handle_request", max_tokens=4000)
+        assert "POSSIBLY DEAD" not in out, (
+            "render_focused must NOT warn for handler-pattern functions (dynamic dispatch)"
+        )
+
+
 class TestBuilderUseConfig:
     """Tests for build_graph use_config parameter (reads .tempo/config.json exclude_dirs)."""
 
