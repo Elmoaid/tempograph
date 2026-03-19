@@ -17,7 +17,7 @@ def _repo_info(repo: str) -> str:
     db_path = rp / ".tempograph" / "graph.db"
     cache_path = rp / ".tempograph" / "cache.json"
     config_path = rp / ".tempo" / "config.json"
-    lines = [f"Tempograph v0.5.0 — {repo}", ""]
+    lines = [f"Tempograph v0.6.0 — {repo}", ""]
 
     if db_path.exists():
         size_mb = db_path.stat().st_size / (1024 * 1024)
@@ -64,6 +64,17 @@ def _repo_info(repo: str) -> str:
         from .kits import get_all_kits as _gak
         _k = _gak(repo)
         lines.append(f"Kits:       {len(_k)} ({', '.join(sorted(_k.keys()))})")
+    except Exception:
+        pass
+
+    try:
+        from .predict import build_transition_matrix
+        matrix = build_transition_matrix(repo, min_count=5)
+        if matrix:
+            top_pred = max(matrix.items(), key=lambda x: x[1][0][1] if x[1] else 0)
+            lines.append(f"Prediction: {len(matrix)} mode transitions learned")
+        else:
+            lines.append(f"Prediction: no usage data yet")
     except Exception:
         pass
 
