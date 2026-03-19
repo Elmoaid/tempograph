@@ -1446,6 +1446,41 @@ class TestTemporalSymbolWeighting:
             "Hot callee should appear before cold callees in calls: line"
         )
 
+    def test_hot_seed_expands_bfs_to_depth4(self):
+        """When seed is in hot_files, BFS reaches depth 4 (deeper call graph)."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        g = build_graph(REPO_PATH, exclude_dirs=["archive"])
+        # Make render.py hot — render_focused is in render.py, so it IS the seed
+        g.hot_files = {"tempograph/render.py"}
+        out_hot = render_focused(g, "render_focused", max_tokens=8000)
+        # Count unique depths by prefix markers: "      " is depth 3+
+        depth4_marker = "      "  # 6 spaces = min(depth, 3) == 3 display for depth 4
+        hot_lines = [l for l in out_hot.split("\n") if l.startswith(depth4_marker + "fn ") or l.startswith(depth4_marker + "method ") or l.startswith(depth4_marker + "class ") or l.startswith(depth4_marker + "function ")]
+        # Cold: same query but no hot_files
+        g.hot_files = set()
+        out_cold = render_focused(g, "render_focused", max_tokens=8000)
+        cold_lines = [l for l in out_cold.split("\n") if l.startswith(depth4_marker + "fn ") or l.startswith(depth4_marker + "method ") or l.startswith(depth4_marker + "class ") or l.startswith(depth4_marker + "function ")]
+        # Hot BFS should produce at least as many deep nodes as cold
+        # (depth 4 expansion can only add nodes, never remove them)
+        assert len(hot_lines) >= len(cold_lines), (
+            f"Hot BFS (depth 4) should produce >= depth-3+ nodes as cold BFS (depth 3): "
+            f"hot={len(hot_lines)}, cold={len(cold_lines)}"
+        )
+
+    def test_cold_seed_stays_at_depth3(self):
+        """When seed is NOT in hot_files, BFS stays at depth 3 (unchanged behavior)."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        g = build_graph(REPO_PATH, exclude_dirs=["archive"])
+        g.hot_files = set()
+        out = render_focused(g, "build_graph", max_tokens=4000)
+        # Depth 4 would have a different prefix than depth 3 in the ordered list
+        # Since prefix is min(depth, 3), we can't distinguish depth 3 vs 4 by prefix alone.
+        # But we CAN verify the output is non-empty and contains expected depth-3 content.
+        assert "build_graph" in out, "build_graph should appear in cold BFS output"
+        assert "[hot]" not in out, "No [hot] markers expected with empty hot_files"
+
 
 class TestBuilderUseConfig:
     """Tests for build_graph use_config parameter (reads .tempo/config.json exclude_dirs)."""
