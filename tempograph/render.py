@@ -475,6 +475,32 @@ def _suggest_alternatives(graph: Tempo, query: str, max_suggestions: int = 5) ->
     return "\n".join(lines)
 
 
+def _cochange_orbit(
+    repo_root: str, seed_files: list[str], seen_files: set[str], n: int = 3
+) -> list[tuple[str, float]]:
+    """Return top N co-change partners for seed_files not already in seen_files.
+
+    These are files that historically change together with the seeds in git commits.
+    Empty list if repo has no git history or no meaningful coupling.
+    """
+    try:
+        from .git import cochange_matrix, is_git_repo
+        if not repo_root or not is_git_repo(repo_root):
+            return []
+        matrix = cochange_matrix(repo_root, n_commits=200)
+    except Exception:
+        return []
+
+    seed_set = set(seed_files)
+    partners: dict[str, float] = {}
+    for sf in seed_files:
+        for partner, freq in matrix.get(sf, []):
+            if partner not in seed_set and partner not in seen_files:
+                partners[partner] = max(partners.get(partner, 0.0), freq)
+
+    return sorted(partners.items(), key=lambda x: -x[1])[:n]
+
+
 def _collect_seeds(
     graph: Tempo, query: str
 ) -> tuple[list[Symbol], set[str], list[str]]:
@@ -720,6 +746,16 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                    and any(c.file_path != s.file_path for c in graph.callers_of(s.id))]
     if high_impact and token_count < max_tokens - 50:
         lines.append(f"\nBefore modifying: run blast_radius(query=\"{high_impact[0].qualified_name}\") to check downstream impact.")
+
+    # Co-change orbit: git history reveals which files change together with seed files.
+    # Structural call graph = what's connected. Co-change orbit = what historically moves together.
+    # These are different signals. A file with 50 callers might co-change with only 2 partners.
+    seed_file_paths = [s.file_path for s, d in ordered if d == 0]
+    orbit = _cochange_orbit(graph.root, seed_file_paths, seen_files)
+    if orbit and token_count < max_tokens - 80:
+        orbit_parts = [f"{fp} ({freq:.0%})" for fp, freq in orbit]
+        lines.append(f"\nCo-change orbit: {', '.join(orbit_parts)}")
+        lines.append("  (files that historically change with these — check if your change affects them)")
 
     return "\n".join(lines)
 
