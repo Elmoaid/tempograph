@@ -265,7 +265,14 @@ class Tempo:
     def search_symbols(self, query: str) -> list[Symbol]:
         return [sym for _, sym in self.search_symbols_scored(query)]
 
-    def search_symbols_scored(self, query: str) -> list[tuple[float, Symbol]]:
+    def search_symbols_scored(self, query: str, use_hybrid: bool = True) -> list[tuple[float, Symbol]]:
+        # Try hybrid search (FTS5 + vector) if DB is attached, in sync, and has vectors
+        if (use_hybrid and hasattr(self, '_db') and self._db is not None
+                and getattr(self._db, '_has_vectors', False)):
+            result = self._search_hybrid(query)
+            if result:
+                return result
+
         import re as _re
         query_lower = query.lower()
         # Split on whitespace AND common separators (/, -, #, @) to handle paths/refs
@@ -320,6 +327,46 @@ class Tempo:
                 if self.hot_files and sym.file_path in self.hot_files:
                     score += 2.5
                 results.append((score, sym))
+        results.sort(key=lambda x: (-x[0], x[1].file_path, x[1].line_start))
+        return results
+
+    def _search_hybrid(self, query: str) -> list[tuple[float, Symbol]]:
+        """Search using hybrid FTS5 + vector with RRF, then apply structural bonuses."""
+        try:
+            from .embeddings import embed_query
+            query_emb = embed_query(query)
+        except (ImportError, Exception):
+            query_emb = None
+
+        try:
+            hybrid_results = self._db.search_hybrid(query, query_emb, limit=50)
+        except Exception:
+            hybrid_results = []
+        if not hybrid_results:
+            # Fallback to linear scan
+            return self.search_symbols_scored(query, use_hybrid=False)
+
+        results: list[tuple[float, Symbol]] = []
+        for rrf_score, sym_id in hybrid_results:
+            sym = self.symbols.get(sym_id)
+            if sym is None:
+                continue
+            # Start with RRF score scaled up (RRF scores are small ~0.01-0.03)
+            score = rrf_score * 100.0
+            # Apply structural bonuses (same as linear scan path)
+            if sym.exported:
+                score += 2.0
+            callers = self.callers_of(sym.id)
+            cross_file = sum(1 for c in callers if c.file_path != sym.file_path)
+            score += min(cross_file, 5) * 0.5
+            if sym.kind in (SymbolKind.COMPONENT, SymbolKind.HOOK):
+                score += 1.5
+            elif sym.kind == SymbolKind.CLASS:
+                score += 1.0
+            if self.hot_files and sym.file_path in self.hot_files:
+                score += 2.5
+            results.append((score, sym))
+
         results.sort(key=lambda x: (-x[0], x[1].file_path, x[1].line_start))
         return results
 
