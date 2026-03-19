@@ -12,6 +12,7 @@ from pathlib import Path
 from mcp.server.fastmcp import FastMCP
 
 from .builder import build_graph
+from .prepare import render_prepare
 from .render import (
     count_tokens,
     render_architecture,
@@ -24,7 +25,6 @@ from .render import (
     render_lookup,
     render_map,
     render_overview,
-    render_prepare,
     render_skills,
     render_symbols,
 )
