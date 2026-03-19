@@ -253,6 +253,102 @@ class GraphDB:
         except sqlite3.OperationalError:
             return []
 
+    # ── Vector search (sqlite-vec) ──────────────────────────────
+
+    def init_vectors(self, dimensions: int = 384) -> bool:
+        """Initialize vector search table. Returns True if sqlite-vec is available."""
+        try:
+            import sqlite_vec
+            self._conn.enable_load_extension(True)
+            sqlite_vec.load(self._conn)
+            self._conn.enable_load_extension(False)
+            self._conn.execute(f"""
+                CREATE VIRTUAL TABLE IF NOT EXISTS symbol_vectors
+                USING vec0(embedding float[{dimensions}], symbol_id text)
+            """)
+            self._conn.commit()
+            self._has_vectors = True
+            self._vec_dimensions = dimensions
+            return True
+        except (ImportError, Exception):
+            self._has_vectors = False
+            return False
+
+    def upsert_vector(self, symbol_id: str, embedding: list[float]) -> None:
+        """Store or update a symbol's embedding vector."""
+        if not getattr(self, '_has_vectors', False):
+            return
+        self._conn.execute(
+            "DELETE FROM symbol_vectors WHERE symbol_id = ?", (symbol_id,)
+        )
+        self._conn.execute(
+            "INSERT INTO symbol_vectors (embedding, symbol_id) VALUES (?, ?)",
+            (json.dumps(embedding), symbol_id),
+        )
+        self._conn.commit()
+
+    def upsert_vectors_batch(self, items: list[tuple[str, list[float]]]) -> None:
+        """Batch upsert symbol embeddings. items = [(symbol_id, embedding), ...]"""
+        if not getattr(self, '_has_vectors', False) or not items:
+            return
+        ids = [i[0] for i in items]
+        placeholders = ",".join("?" * len(ids))
+        self._conn.execute(
+            f"DELETE FROM symbol_vectors WHERE symbol_id IN ({placeholders})", ids
+        )
+        self._conn.executemany(
+            "INSERT INTO symbol_vectors (embedding, symbol_id) VALUES (?, ?)",
+            [(json.dumps(emb), sid) for sid, emb in items],
+        )
+        self._conn.commit()
+
+    def search_vectors(self, query_embedding: list[float], limit: int = 20) -> list[tuple[float, str]]:
+        """Vector similarity search. Returns (distance, symbol_id) pairs."""
+        if not getattr(self, '_has_vectors', False):
+            return []
+        try:
+            rows = self._conn.execute(
+                "SELECT distance, symbol_id FROM symbol_vectors "
+                "WHERE embedding MATCH ? ORDER BY distance LIMIT ?",
+                (json.dumps(query_embedding), limit),
+            ).fetchall()
+            return [(row[0], row[1]) for row in rows]
+        except (sqlite3.OperationalError, Exception):
+            return []
+
+    def search_hybrid(
+        self, query: str, query_embedding: list[float] | None = None,
+        limit: int = 20, k: int = 60,
+    ) -> list[tuple[float, str]]:
+        """Hybrid search: FTS5 + vector similarity merged via Reciprocal Rank Fusion.
+
+        k=60 is the RRF constant from Cormack et al. (SIGIR 2009).
+        Returns (rrf_score, symbol_id) pairs sorted by score descending.
+        """
+        # FTS5 results
+        fts_results = self.search_fts(query, limit=limit * 2)
+
+        # Vector results (if available)
+        vec_results = []
+        if query_embedding and getattr(self, '_has_vectors', False):
+            vec_results = self.search_vectors(query_embedding, limit=limit * 2)
+
+        if not fts_results and not vec_results:
+            return []
+
+        # Reciprocal Rank Fusion
+        scores: dict[str, float] = {}
+
+        for rank, (_, sym_id) in enumerate(fts_results):
+            scores[sym_id] = scores.get(sym_id, 0) + 1.0 / (k + rank + 1)
+
+        for rank, (_, sym_id) in enumerate(vec_results):
+            scores[sym_id] = scores.get(sym_id, 0) + 1.0 / (k + rank + 1)
+
+        # Sort by RRF score descending
+        ranked = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+        return [(score, sym_id) for sym_id, score in ranked[:limit]]
+
     def symbol_count(self) -> int:
         row = self._conn.execute("SELECT COUNT(*) as c FROM symbols").fetchone()
         return row["c"] if row else 0
