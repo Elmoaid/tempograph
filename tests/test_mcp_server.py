@@ -1085,6 +1085,36 @@ class TestRubyParser:
 
 
 # ---------------------------------------------------------------------------
+# Call chain deduplication
+# ---------------------------------------------------------------------------
+
+class TestCallChainDedup:
+    def test_fluent_chain_counts_as_one_edge(self):
+        """a.fetchData().transform().paginate() should register 1 call edge, not 3."""
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        # JS fluent chain with non-builtin user-defined methods
+        code = b'function run() { return a.fetchData().transform().paginate(); }'
+        p = FileParser('a.js', Language.JAVASCRIPT, code)
+        _, edges, _ = p.parse()
+        call_targets = [e.target_id for e in edges if e.kind.value == "calls"]
+        # Only the outermost call in the chain should be recorded (not all 3)
+        assert len(call_targets) == 1, f"Expected 1 edge, got {len(call_targets)}: {call_targets}"
+        assert call_targets[0] == "paginate", f"Expected 'paginate', got {call_targets}"
+
+    def test_argument_calls_still_tracked(self):
+        """foo(bar()) should record both foo and bar (argument call, not receiver chain)."""
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b'function run() { return foo(bar()); }'
+        p = FileParser('a.js', Language.JAVASCRIPT, code)
+        _, edges, _ = p.parse()
+        call_targets = {e.target_id for e in edges if e.kind.value == "calls"}
+        assert "foo" in call_targets, f"Expected 'foo' in {call_targets}"
+        assert "bar" in call_targets, f"Expected 'bar' in {call_targets}"
+
+
+# ---------------------------------------------------------------------------
 # Render module — token caps and noise detection
 # ---------------------------------------------------------------------------
 
@@ -1118,10 +1148,21 @@ class TestRenderTokenCaps:
         output = render_map(g, max_tokens=0)
         assert "truncated" not in output
 
-    def test_noise_detection(self):
+    def test_noise_detection(self, tmp_path):
+        # Build a synthetic repo with an 'archive' noise dir so the test is
+        # not coupled to the physical repo's gitignored archive/ directory.
+        import textwrap
+        for mod, count in [("core", 10), ("archive", 10), ("lib", 5)]:
+            d = tmp_path / mod
+            d.mkdir()
+            for i in range(count):
+                (d / f"mod{i}.py").write_text(textwrap.dedent(f"""\
+                    def func_{mod}_{i}():
+                        return {i}
+                """))
         from tempograph.builder import build_graph
         from tempograph.render import render_overview
-        g = build_graph(REPO_PATH, use_config=False)  # bypass .tempo/config.json to test raw noise detection
+        g = build_graph(str(tmp_path), use_config=False)
         ov = render_overview(g)
         assert "SUGGESTED EXCLUDES" in ov
         assert "archive" in ov.lower()
