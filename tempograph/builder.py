@@ -175,8 +175,7 @@ def build_graph(
         graph.files = files
         graph.symbols = symbols
         graph.edges = edges
-        graph._db = db  # type: ignore[attr-defined]
-        db.close()
+        graph._db = db  # type: ignore[attr-defined]  — kept open for hybrid search
 
     if use_cache and not use_db and new_cache:
         save_cache(root, new_cache)
