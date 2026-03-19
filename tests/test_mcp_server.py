@@ -561,7 +561,8 @@ class TestPrepareContext:
         # Evidence: fastify "path-alias" → "path" matches 8+ files → KEY FILES = noise.
         # Fix: len(unique_paths) <= 5 threshold on direct keyword path fallback.
         # CamelCase/snake_case parts already had this threshold — now made consistent.
-        from tempograph.render import _extract_cl_keywords, render_prepare
+        from tempograph.prepare import render_prepare
+        from tempograph.render import _extract_cl_keywords
         from tempograph.builder import build_graph
         graph = build_graph(REPO_PATH)
         # This repo has many files with "path" in their path (build.py, server.py, etc.)
@@ -656,7 +657,7 @@ class TestPrepareContext:
 
     def test_definition_first_default_false_matches_plain(self):
         # definition_first=False (default) must produce identical output to omitting the param.
-        from tempograph.render import render_prepare
+        from tempograph.prepare import render_prepare
         from tempograph.builder import build_graph
         graph = build_graph(REPO_PATH)
         task = "Merge pull request #1 from org/add-render-focused\nAdd render_focused function"
