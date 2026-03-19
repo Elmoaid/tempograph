@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Sequence
 
 from .cache import check_cache, load_cache, make_cache_entry, save_cache
+from .storage import GraphDB, content_hash
 from .types import Tempo, Edge, EdgeKind, FileInfo, Language, Symbol, SymbolKind, EXTENSION_TO_LANGUAGE
 from .parser import FileParser
 from .git import is_git_repo, recently_modified_files, changed_files_staged, changed_files_unstaged
@@ -24,10 +25,34 @@ DEFAULT_IGNORE_FILES = frozenset({
     "poetry.lock", "Pipfile.lock", "composer.lock",
 })
 
-PARSEABLE_LANGUAGES = frozenset({
+# Languages with custom handlers (high-quality parsing)
+CUSTOM_HANDLER_LANGUAGES = frozenset({
     Language.PYTHON, Language.TYPESCRIPT, Language.TSX,
     Language.JAVASCRIPT, Language.JSX, Language.RUST, Language.GO,
+    Language.JAVA, Language.CSHARP, Language.RUBY,
 })
+
+# Non-code languages that should never be parsed for symbols
+_NON_CODE_LANGUAGES = frozenset({
+    Language.JSON, Language.TOML, Language.YAML, Language.CSS,
+    Language.HTML, Language.BASH, Language.MARKDOWN, Language.UNKNOWN,
+})
+
+def _is_parseable(lang: Language) -> bool:
+    """Check if a language can be parsed for symbols (custom handler or generic via language pack)."""
+    if lang in _NON_CODE_LANGUAGES:
+        return False
+    if lang in CUSTOM_HANDLER_LANGUAGES:
+        return True
+    # Try language pack for extended languages
+    try:
+        from tempograph.parser import _get_ts_language
+        return _get_ts_language(lang) is not None
+    except Exception:
+        return False
+
+# Backward compat alias
+PARSEABLE_LANGUAGES = CUSTOM_HANDLER_LANGUAGES
 
 MAX_FILE_SIZE = 2 * 1024 * 1024  # 2MB — skip huge generated files
 
@@ -42,6 +67,7 @@ def build_graph(
     exclude_dirs: Sequence[str] | None = None,
     use_cache: bool = True,
     use_config: bool = True,
+    use_db: bool = True,
 ) -> Tempo:
     root = Path(root).resolve()
     # Normalize exclude_dirs: "a,b" string → ["a", "b"] list (str is Sequence[str] in Python,
@@ -67,9 +93,12 @@ def build_graph(
     # Detect Tauri project: has src-tauri/ or tauri.conf.json
     is_tauri = (root / "src-tauri").is_dir() or (root / "tauri.conf.json").exists()
 
-    cache = load_cache(root) if use_cache else {}
+    # Open SQLite DB for persistent storage (preferred) or fall back to JSON cache
+    db = GraphDB(root) if use_db else None
+    cache = load_cache(root) if (use_cache and not use_db) else {}
     new_cache: dict = {}
     cache_hits = 0
+    current_files: set[str] = set()
 
     for file_path in _walk_files(root, ignore_dirs, ignore_files, include_patterns, exclude_patterns, exclude_dirs):
         rel_path = str(file_path.relative_to(root))
@@ -84,54 +113,71 @@ def build_graph(
         except (OSError, PermissionError):
             continue
 
+        current_files.add(rel_path)
         line_count = source.count(b"\n") + (1 if source and not source.endswith(b"\n") else 0)
+        file_hash = content_hash(source)
 
-        if language in PARSEABLE_LANGUAGES:
-            # Check cache first
-            cached = check_cache(cache, rel_path, source) if use_cache else None
-            if cached:
+        if _is_parseable(language):
+            # Check DB or JSON cache for unchanged files
+            if db and db.file_hash_matches(rel_path, file_hash):
                 cache_hits += 1
-                symbols = [_sym_from_dict(d) for d in cached["symbols"]]
-                edges = [_edge_from_dict(d) for d in cached["edges"]]
-                imports = cached["imports"]
-                new_cache[rel_path] = cached
+                symbols, edges, imports = [], [], []  # will load from DB later
+            elif not db:
+                cached = check_cache(cache, rel_path, source) if use_cache else None
+                if cached:
+                    cache_hits += 1
+                    symbols = [_sym_from_dict(d) for d in cached["symbols"]]
+                    edges = [_edge_from_dict(d) for d in cached["edges"]]
+                    imports = cached["imports"]
+                    new_cache[rel_path] = cached
+                else:
+                    cached = None
+                    symbols, edges, imports = _parse_file(rel_path, language, source, is_tauri)
+                    if use_cache:
+                        new_cache[rel_path] = make_cache_entry(
+                            source,
+                            [_sym_to_dict(s) for s in symbols],
+                            [_edge_to_dict(e) for e in edges],
+                            imports,
+                        )
             else:
-                try:
-                    parser = FileParser(rel_path, language, source, is_tauri=is_tauri)
-                    symbols, edges, imports = parser.parse()
-                except Exception:
-                    # Skip files that fail to parse (syntax errors, unsupported constructs)
-                    symbols, edges, imports = [], [], []
-                if use_cache:
-                    new_cache[rel_path] = make_cache_entry(
-                        source,
-                        [_sym_to_dict(s) for s in symbols],
-                        [_edge_to_dict(e) for e in edges],
-                        imports,
-                    )
+                # DB miss — parse and store
+                symbols, edges, imports = _parse_file(rel_path, language, source, is_tauri)
+                db.update_file(rel_path, file_hash, language.value, line_count,
+                               len(source), symbols, edges, imports)
 
-            file_info = FileInfo(
-                path=rel_path,
-                language=language,
-                line_count=line_count,
-                byte_size=len(source),
-                symbols=[s.id for s in symbols],
-                imports=imports,
-            )
-            for sym in symbols:
-                graph.symbols[sym.id] = sym
-            graph.edges.extend(edges)
+            # For DB path, skip per-file graph building — load_all() handles it
+            if not db:
+                file_info = FileInfo(
+                    path=rel_path, language=language, line_count=line_count,
+                    byte_size=len(source), symbols=[s.id for s in symbols], imports=imports,
+                )
+                for sym in symbols:
+                    graph.symbols[sym.id] = sym
+                graph.edges.extend(edges)
+                graph.files[rel_path] = file_info
         else:
-            file_info = FileInfo(
-                path=rel_path,
-                language=language,
-                line_count=line_count,
-                byte_size=len(source),
-            )
+            if not db:
+                file_info = FileInfo(
+                    path=rel_path, language=language, line_count=line_count,
+                    byte_size=len(source),
+                )
+                graph.files[rel_path] = file_info
+            else:
+                # Store non-parseable files in DB too (for file map/overview)
+                db.update_file(rel_path, file_hash, language.value, line_count,
+                               len(source), [], [], [])
 
-        graph.files[rel_path] = file_info
+    # Load entire graph from DB in one shot
+    if db:
+        db.remove_stale_files(current_files)
+        files, symbols, edges = db.load_all()
+        graph.files = files
+        graph.symbols = symbols
+        graph.edges = edges
+        graph._db = db  # type: ignore[attr-defined]  — kept open for hybrid search
 
-    if use_cache and new_cache:
+    if use_cache and not use_db and new_cache:
         save_cache(root, new_cache)
 
     graph._cache_hits = cache_hits  # type: ignore[attr-defined]
@@ -150,6 +196,15 @@ def build_graph(
         graph.hot_files = {f for f in all_hot if _is_hot_source_file(f)}
 
     return graph
+
+
+def _parse_file(rel_path: str, language: Language, source: bytes, is_tauri: bool) -> tuple:
+    """Parse a file with tree-sitter. Returns (symbols, edges, imports)."""
+    try:
+        parser = FileParser(rel_path, language, source, is_tauri=is_tauri)
+        return parser.parse()
+    except Exception:
+        return [], [], []
 
 
 # Path patterns that identify test and documentation files.

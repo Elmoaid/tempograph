@@ -373,20 +373,6 @@ def _extract_focus_files(focus_output: str, task_keywords: list[str] | None = No
     return sorted(freq.keys(), key=_sort_key)[:15]
 
 
-def _extract_focus_ranges(focus_output: str, key_files: list[str]) -> dict[str, str]:
-    """Map key file paths to their first line range from focus output.
-
-    Returns dict of filepath → "start-end" (e.g., {"render.py": "1496-1745"}).
-    Parses '— filepath:start-end' patterns; first occurrence wins (depth 0 = most relevant).
-    """
-    import re
-    ranges: dict[str, str] = {}
-    for m in re.finditer(r'— (\S+):(\d+-\d+)', focus_output):
-        fp = m.group(1)
-        if fp not in ranges:
-            ranges[fp] = m.group(2)
-    return {kf: ranges[kf] for kf in key_files if kf in ranges}
-
 
 from .keywords import _extract_cl_keywords  # noqa: F401 (re-exported for backward compat)
 
@@ -460,26 +446,6 @@ def _is_docs_branch_task(task: str) -> bool:
     return False
 
 
-def _is_change_localization(task: str, task_type: str) -> bool:
-    """Detect if a task is a change-localization task (PR title, commit message, issue ref).
-
-    Change-localization tasks benefit from the per-keyword focus algorithm.
-    General coding tasks ("add login feature") should use the default multi-token approach.
-    """
-    import re
-    if task_type in ("changelocal", "debug", "bugfix"):
-        return True
-    lower = task.lower()
-    if "merge pull request" in lower or re.match(r"merge branch '", lower):
-        return True
-    # Conventional commit prefix
-    if re.match(r'^(fix|feat|refactor|chore|perf|style|build|ci|docs|test)(\(.+\))?:', lower):
-        return True
-    # PR title with issue reference: "Fix #1234" or "Fix teardown (#5928)"
-    if re.search(r'\(#\d+\)\s*$', task) or re.search(r'^\w.*#\d+', task):
-        return True
-    return False
-
 
 def _suggest_alternatives(graph: Tempo, query: str, max_suggestions: int = 5) -> str:
     """Build a 'did you mean?' hint when a focus query has no matches.
@@ -509,48 +475,80 @@ def _suggest_alternatives(graph: Tempo, query: str, max_suggestions: int = 5) ->
     return "\n".join(lines)
 
 
-def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
-    """Task-focused rendering with BFS graph traversal.
-    Starts from search results, then follows call/render/import edges
-    to build a connected subgraph relevant to the query.
+def _cochange_orbit(
+    repo_root: str, seed_files: list[str], seen_files: set[str], n: int = 3
+) -> list[tuple[str, float]]:
+    """Return top N co-change partners for seed_files not already in seen_files.
 
-    For monolith files (>1000 lines), adds intra-file neighborhood context
-    and biases BFS toward cross-file edges to avoid getting trapped in one file."""
+    These are files that historically change together with the seeds in git commits.
+    Empty list if repo has no git history or no meaningful coupling.
+    """
+    try:
+        from .git import cochange_matrix, is_git_repo
+        if not repo_root or not is_git_repo(repo_root):
+            return []
+        matrix = cochange_matrix(repo_root, n_commits=200)
+    except Exception:
+        return []
+
+    seed_set = set(seed_files)
+    partners: dict[str, float] = {}
+    for sf in seed_files:
+        for partner, freq in matrix.get(sf, []):
+            if partner not in seed_set and partner not in seen_files:
+                partners[partner] = max(partners.get(partner, 0.0), freq)
+
+    return sorted(partners.items(), key=lambda x: -x[1])[:n]
+
+
+def _collect_seeds(
+    graph: Tempo, query: str
+) -> tuple[list[Symbol], set[str], list[str]]:
+    """Tokenize query, search for seed symbols, apply quality gate.
+
+    Returns (seeds, seed_files, query_tokens).
+    seeds is empty when there are no matches (caller should return early).
+    seed_files contains paths of monolith-sized files (>= _MONOLITH_THRESHOLD lines)
+    that host at least one seed symbol — used to bias BFS toward cross-file edges."""
     import re as _re
-    # Extract query tokens for caller relevance sorting (len > 3 to avoid generic words).
-    # Also split CamelCase: "ReplyNotFound" → ["Reply", "Not", "Found"] so that
-    # "reply" matches "test/internals/reply.test.js" even when query is CamelCase.
+    # Split query tokens and expand CamelCase: "ReplyNotFound" → ["reply", "not", "found"]
+    # so "reply" matches "test/internals/reply.test.js" even when query is CamelCase.
     _raw_tokens = _re.split(r'[^a-zA-Z0-9]+', query)
-    _camel_tokens = []
+    _camel_tokens: list[str] = []
     for tok in _raw_tokens:
-        # Split CamelCase into components (e.g. ReplyNotFound → Reply, Not, Found)
         parts = _re.sub(r'([A-Z][a-z]+)', r' \1', _re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1 \2', tok)).split()
         _camel_tokens.extend(parts if len(parts) > 1 else [tok])
-    _query_tokens = [t.lower() for t in _camel_tokens if len(t) >= 3]
-
-    def _caller_priority(sym: "Symbol") -> int:
-        """0 = keyword match in path (show first), 1 = no match (show after)."""
-        path_lower = sym.file_path.lower()
-        return 0 if _query_tokens and any(tok in path_lower for tok in _query_tokens) else 1
+    query_tokens = [t.lower() for t in _camel_tokens if len(t) >= 3]
 
     scored = graph.search_symbols_scored(query)
     if not scored:
-        return _suggest_alternatives(graph, query) or f"No symbols matching '{query}'"
+        return [], set(), query_tokens
 
     # Quality gate: drop seeds with much lower scores than the best match
     top_score = scored[0][0]
     threshold = max(top_score * 0.3, 2.0)  # at least 30% of best, minimum 2.0
     seeds = [sym for score, sym in scored if score >= threshold][:10]
 
-    # Determine seed files to detect monolith bias
     seed_files: set[str] = set()
     for s in seeds:
         fi = graph.files.get(s.file_path)
         if fi and fi.line_count >= _MONOLITH_THRESHOLD:
             seed_files.add(s.file_path)
 
-    # BFS: expand from seed symbols following edges
-    # Wider expansion: depth 3, more callers/callees at depth 0-1
+    return seeds, seed_files, query_tokens
+
+
+def _bfs_expand(
+    graph: Tempo, seeds: list[Symbol], seed_files: set[str]
+) -> tuple[list[tuple[Symbol, int]], set[str]]:
+    """BFS from seed symbols following caller/callee/child edges.
+
+    Returns (ordered, seen_ids).
+    ordered is the BFS traversal sequence with (symbol, depth) pairs.
+    seen_ids is the full set of visited symbol IDs — callers use it for
+    file-context deduplication so already-shown symbols are excluded."""
+    _hot_seeds = any(s.file_path in graph.hot_files for s in seeds)
+    _bfs_max_depth = 4 if _hot_seeds else 3
     seen_ids: set[str] = set()
     queue: list[tuple[Symbol, int]] = [(s, 0) for s in seeds]
     ordered: list[tuple[Symbol, int]] = []
@@ -571,17 +569,62 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
         seen_ids.add(sym.id)
         ordered.append((sym, depth))
 
-        if depth < 3:
+        if depth < _bfs_max_depth:
             # More context at shallow depths, less at deeper
             caller_limit = 8 if depth == 0 else 5 if depth == 1 else 3
             callee_limit = 8 if depth == 0 else 5 if depth == 1 else 3
-            for caller in graph.callers_of(sym.id)[:caller_limit]:
+            # Hot-first traversal: prefer recently-modified symbols when the
+            # 50-node cap forces truncation, so hot-file nodes win the slots.
+            _hot_key = lambda s: s.file_path not in graph.hot_files  # False(0)=hot first
+            for caller in sorted(graph.callers_of(sym.id), key=_hot_key)[:caller_limit]:
                 _enqueue(caller, depth + 1)
-            for callee in graph.callees_of(sym.id)[:callee_limit]:
+            for callee in sorted(graph.callees_of(sym.id), key=_hot_key)[:callee_limit]:
                 _enqueue(callee, depth + 1)
             if depth < 2:
                 for child in graph.children_of(sym.id)[:5]:
                     _enqueue(child, depth + 1)
+
+    return ordered, seen_ids
+
+
+def _handle_overflow(
+    lines: list[str],
+    ordered: list[tuple[Symbol, int]],
+    block: str,
+    token_count: int,
+    max_tokens: int,
+) -> tuple[bool, int]:
+    """Check whether adding block would exceed the token budget.
+
+    Returns (should_break, block_tokens).
+    When should_break is True a truncation message has already been appended
+    to lines — the caller should stop the rendering loop immediately."""
+    block_tokens = count_tokens(block)
+    if token_count + block_tokens > max_tokens:
+        remaining = len(ordered) - len([l for l in lines if l and not l.startswith("...")])
+        if remaining > 0:
+            lines.append(f"... truncated ({remaining} more symbols)")
+        return True, block_tokens
+    return False, block_tokens
+
+
+def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
+    """Task-focused rendering with BFS graph traversal.
+    Starts from search results, then follows call/render/import edges
+    to build a connected subgraph relevant to the query.
+
+    For monolith files (>1000 lines), adds intra-file neighborhood context
+    and biases BFS toward cross-file edges to avoid getting trapped in one file."""
+    seeds, seed_files, query_tokens = _collect_seeds(graph, query)
+    if not seeds:
+        return _suggest_alternatives(graph, query) or f"No symbols matching '{query}'"
+
+    ordered, seen_ids = _bfs_expand(graph, seeds, seed_files)
+
+    def _caller_priority(sym: Symbol) -> int:
+        """0 = keyword match in path (show first), 1 = no match (show after)."""
+        path_lower = sym.file_path.lower()
+        return 0 if query_tokens and any(tok in path_lower for tok in query_tokens) else 1
 
     lines = [f"Focus: {query}", ""]
     seen_files: set[str] = set()
@@ -590,34 +633,31 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     for sym, depth in ordered:
         indent = "  " * depth if depth > 0 else ""
         prefix = ["●", "  →", "    ·", "      "][min(depth, 3)]
-        # Core info
         loc = f"{sym.file_path}:{sym.line_start}-{sym.line_end}"
         block_lines = [f"{prefix} {sym.kind.value} {sym.qualified_name} — {loc}"]
         if sym.signature and depth < 2:
             block_lines.append(f"{indent}  sig: {sym.signature[:150]}")
         if sym.doc and depth == 0:
             block_lines.append(f"{indent}  doc: {sym.doc}")
-        # Detail at depth 0 and 1 (not just 0)
         if depth <= 1:
             warnings = []
             if sym.line_count > 500:
                 warnings.append(f"LARGE ({sym.line_count} lines — use grep, don't read)")
             if sym.complexity > 50:
                 warnings.append(f"HIGH COMPLEXITY (cx={sym.complexity})")
+            if depth == 0 and not sym.exported and not graph.callers_of(sym.id):
+                if _dead_code_confidence(sym, graph) >= 40:
+                    warnings.append("POSSIBLY DEAD — 0 callers, not exported (run dead_code mode to confirm)")
             if warnings:
                 block_lines.append(f"{indent}  ⚠ {', '.join(warnings)}")
             callers = graph.callers_of(sym.id)
             if callers:
-                # Keyword-matching callers first (e.g. test/reply.test.js before lib/logger.js)
                 callers_sorted = sorted(callers, key=_caller_priority)
                 kw_callers = [c for c in callers_sorted if _caller_priority(c) == 0]
                 other_callers = [c for c in callers_sorted if _caller_priority(c) != 0]
-                # Hot callers (recently-modified files) bubble up within other_callers.
-                # This surfaces the caller most likely relevant to the current task.
                 hot_other = [c for c in other_callers if c.file_path in graph.hot_files]
                 cold_other = [c for c in other_callers if c.file_path not in graph.hot_files]
-                # When keyword callers exist: cap other callers at 3 to reduce noise.
-                # Without keyword matches: show up to 8 (all callers equally relevant).
+                # Keyword callers exist → cap other callers at 3; else show up to 8.
                 max_other = 3 if kw_callers else (8 if depth == 0 else 5)
                 shown_other = (hot_other + cold_other)[:max_other]
                 shown_callers = kw_callers + shown_other
@@ -632,7 +672,6 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
             callees = graph.callees_of(sym.id)
             if callees:
                 shown = 8 if depth == 0 else 5
-                # Hot callees (recently-modified files) bubble up — changed callee = likely suspect.
                 hot_callees = [c for c in callees if c.file_path in graph.hot_files]
                 cold_callees = [c for c in callees if c.file_path not in graph.hot_files]
                 ordered_callees = (hot_callees + cold_callees)[:shown]
@@ -649,11 +688,8 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                     block_lines.append(f"{indent}  contains: {', '.join(f'{c.kind.value[:4]} {c.name}' for c in children[:10])}")
 
         block = "\n".join(block_lines)
-        block_tokens = count_tokens(block)
-        if token_count + block_tokens > max_tokens:
-            remaining = len(ordered) - len([l for l in lines if l and not l.startswith("...")])
-            if remaining > 0:
-                lines.append(f"... truncated ({remaining} more symbols)")
+        should_break, block_tokens = _handle_overflow(lines, ordered, block, token_count, max_tokens)
+        if should_break:
             break
         lines.append(block)
         token_count += block_tokens
@@ -666,7 +702,6 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
         if not fi or len(fi.symbols) < 3:
             continue
         file_syms = [graph.symbols[sid] for sid in fi.symbols if sid in graph.symbols and sid not in seen_ids]
-        # Show exported symbols the agent might need
         important = [s for s in file_syms if s.exported and s.kind in (
             SymbolKind.FUNCTION, SymbolKind.CLASS, SymbolKind.COMPONENT, SymbolKind.HOOK
         )][:5]
@@ -713,8 +748,17 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                    and len(graph.callers_of(s.id)) >= 3
                    and any(c.file_path != s.file_path for c in graph.callers_of(s.id))]
     if high_impact and token_count < max_tokens - 50:
-        names = ", ".join(s.qualified_name for s in high_impact[:3])
         lines.append(f"\nBefore modifying: run blast_radius(query=\"{high_impact[0].qualified_name}\") to check downstream impact.")
+
+    # Co-change orbit: git history reveals which files change together with seed files.
+    # Structural call graph = what's connected. Co-change orbit = what historically moves together.
+    # These are different signals. A file with 50 callers might co-change with only 2 partners.
+    seed_file_paths = [s.file_path for s, d in ordered if d == 0]
+    orbit = _cochange_orbit(graph.root, seed_file_paths, seen_files)
+    if orbit and token_count < max_tokens - 80:
+        orbit_parts = [f"{fp} ({freq:.0%})" for fp, freq in orbit]
+        lines.append(f"\nCo-change orbit: {', '.join(orbit_parts)}")
+        lines.append("  (files that historically change with these — check if your change affects them)")
 
     return "\n".join(lines)
 
@@ -1451,338 +1495,8 @@ def _extract_name_from_question(question: str) -> str:
 
 
 
-_TEST_MARKERS = ("test", "spec", "fixture", "example", "tutorial", "demo", "sample")
-_ASSET_DIRS = ("/templates/", "/static/")
-
-
-def _cl_path_fallback(graph: "Tempo", kw: str) -> list[str]:
-    """Return path-matched files for a keyword that failed symbol focus.
-
-    Tries three strategies in order, returning the first that yields <=5 source files:
-    1. Plain substring match on file paths.
-    2. Snake_case decomposition: "config_from_object" → try "config", "object", etc.
-    3. CamelCase decomposition: "RequestStreamingSupport" → try "Streaming", "Support", etc.
-
-    Returns an empty list when no strategy finds a tight match (<=5 non-test files).
-    """
-    def _source_files(paths: list[str]) -> list[str]:
-        return [p for p in paths if not any(x in p.lower() for x in _TEST_MARKERS)]
-
-    def _path_hits(token: str) -> list[str]:
-        t = token.lower()
-        hits = sorted(set(
-            sym.file_path for sym in graph.symbols.values()
-            if t in sym.file_path.lower()
-            and not any(d in sym.file_path for d in _ASSET_DIRS)
-            and not sym.file_path.startswith(("templates/", "static/"))
-        ))
-        return _source_files(hits)
-
-    # Strategy 1: plain keyword
-    plain = _path_hits(kw)
-    if plain and len(plain) <= 5:
-        return plain[:5]
-
-    if "_" in kw:
-        # Strategy 2: snake_case components
-        _PATH_SNAKE_SKIP = frozenset({
-            "response", "request", "error", "errors", "option", "options",
-            "handler", "handlers", "helper", "helpers", "server", "client", "router",
-            "static", "analysis", "middleware", "security",
-        })
-        for part in kw.split("_"):
-            if len(part) >= 4 and part.lower() not in _PATH_SNAKE_SKIP:
-                hits = _path_hits(part)
-                if hits and len(hits) <= 5:
-                    return hits
-    else:
-        # Strategy 3: CamelCase parts
-        _PATH_CAMEL_SKIP = frozenset({
-            "import", "test", "tests", "type", "types", "base", "core", "util",
-            "utils", "data", "form", "list", "dict", "object", "class", "model",
-            "models", "view", "views", "helper", "helpers", "mixin", "mixins",
-            "return", "raise", "yield", "async", "await", "error", "errors",
-            "init", "main", "common", "factory", "manager",
-            "field", "fields", "exception", "exceptions",
-            "json", "xml",
-            "host", "method", "setter", "getter",
-        })
-        parts: list[str] = []
-        cur: list[str] = []
-        for ch in kw:
-            if ch.isupper() and cur:
-                parts.append("".join(cur))
-                cur = [ch]
-            else:
-                cur.append(ch)
-        if cur:
-            parts.append("".join(cur))
-        for part in parts:
-            if len(part) >= 4 and part.lower() not in _PATH_CAMEL_SKIP:
-                hits = _path_hits(part)
-                if hits and len(hits) <= 5:
-                    return hits
-
-    return []
-
-
-def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: str = "",
-                   baseline_predicted_files: list[str] | None = None,
-                   precision_filter: bool = False,
-                   definition_first: bool = False) -> str:
-    """Batch context preparation: overview + focus + hotspots + diff in one token-budgeted output.
-
-    If L2 learned insights exist for task_type, includes extra modes (dead code, quality)
-    that the data shows are helpful for that task category.
-    """
-    from .git import changed_files_unstaged, is_git_repo
-    sections: list[str] = []
-    token_count = 0
-
-    # Load L2 insights to customize which supplemental modes to include
-    l2_best_modes: set[str] = set()
-    try:
-        from tempo.plugins.learn import TaskMemory
-        mem = TaskMemory(str(Path(graph.root).resolve()))
-        if task_type:
-            rec = mem.get_recommendation(task_type)
-            if rec and rec.get("sample_size", 0) >= 2:
-                l2_best_modes = set(rec["best_modes"])
-    except Exception:
-        pass
-
-    s = graph.stats
-    sections.append(f"## Repo: {s['files']} files, {s['symbols']} symbols, {s['total_lines']:,} lines")
-    token_count += 20
-
-    if _is_change_localization(task, task_type):
-        # Change-localization path: per-keyword focus + breadth filter + selective overview.
-        # Bench evidence (n=111, Phase 5.26): +9-12% F1 improvement vs raw task passthrough.
-        # Key differences from general path:
-        #   - Extract code-symbol keywords from PR title/branch name (not raw task string)
-        #   - Run separate focus per keyword (up to 3) → better symbol targeting
-        #   - Breadth filter: skip keyword if focus returns >10 files (too generic)
-        #   - Selective overview: only inject when keywords=[] (vague task, no code signal)
-        #   - "Keywords found but focus failed" → inject nothing (model uses training knowledge)
-        keywords = _extract_cl_keywords(task)
-        focus_budget = max_tokens // 2
-        focus_parts: list[str] = []
-        path_fallback_files: list[str] = []  # collected when symbol focus is too broad
-        # Skip keywords shorter than 4 chars before taking the top-3 cap.
-        # Short tokens can't trigger path fallback (which requires len>=4) and rarely match
-        # specific symbols. This prevents "req" (len=3) from blocking "resp" (len=4).
-        effective_keywords = [kw for kw in keywords if len(kw) >= 4][:3]
-        for kw in effective_keywords:
-            focused = render_focused(graph, kw, max_tokens=focus_budget)
-            no_match = not focused or "No symbols matching" in focused or "No exact match" in focused
-            if not no_match:
-                kw_files = _extract_focus_files(focused)
-            too_broad = not no_match and len(kw_files) > 10
-            if no_match or too_broad:
-                # No symbol match OR too broad — try path-based fallback.
-                # Handles: (a) directory/module keywords (e.g. "demo" → demos/),
-                # (b) keyword is a module name but not a symbol (e.g. "config" → sanic/config.py).
-                if len(kw) >= 4 and not path_fallback_files:
-                    path_fallback_files = _cl_path_fallback(graph, kw)
-                # Definition-first fallback: when focus is too_broad and all path matching found nothing,
-                # return just the DEFINING file(s) of the top-ranked symbol.
-                # Handles: "redirect" → flask/helpers.py (where redirect() lives) rather than all callers.
-                # Gated behind definition_first=True (bench evidence required before enabling by default).
-                if definition_first and too_broad and not path_fallback_files:
-                    scored = graph.search_symbols_scored(kw)
-                    if scored:
-                        top_score = scored[0][0]
-                        if top_score >= 10.0:
-                            threshold = top_score * 0.6
-                            def_hits = sorted(set(
-                                sym.file_path for score, sym in scored
-                                if score >= threshold
-                                and not any(x in sym.file_path.lower() for x in _TEST_MARKERS)
-                                and "/templates/" not in sym.file_path
-                                and not sym.file_path.startswith("templates/")
-                                and "/static/" not in sym.file_path
-                                and not sym.file_path.startswith("static/")
-                            ))
-                            if 1 <= len(def_hits) <= 2:
-                                path_fallback_files = def_hits
-                continue
-            focus_parts.append(focused)
-
-        if focus_parts:
-            for fp in focus_parts:
-                sections.append(fp)
-                token_count += count_tokens(fp)
-            key_files = _extract_focus_files("\n\n".join(focus_parts), task_keywords=keywords)
-            # Precision gate: >4 key files → topic too broad → skip injection.
-            # Bench evidence (Phase 5.26, n=111): precision_filter=+3.9% (p=0.085, ns).
-            if precision_filter and len(key_files) > 4:
-                return ""  # Too broad — skip context entirely
-            # Adaptive gating: if baseline already predicts the key files, skip injection.
-            # Bench evidence (Phase 5.27, n=83): overlap>=0.5 → model already knows the files
-            # → skip saves tokens with 0 F1 loss; overlap<0.5 → avg +0.07 F1 gain per case.
-            if baseline_predicted_files is not None and key_files:
-                predicted_set = set(baseline_predicted_files)
-                overlap = len(predicted_set & set(key_files)) / len(key_files)
-                if overlap >= 0.5:
-                    return ""  # model already predicts the key files — skip injection
-                src_pred_count = len([f for f in predicted_set
-                                      if not any(m in f.lower() for m in _TEST_MARKERS)])
-                if src_pred_count >= 3:
-                    # Baseline is highly confident (3+ source predictions). When context
-                    # disagrees (overlap < 0.5), it misleads the model away from its
-                    # already-correct predictions. Evidence: falcon 16bc3f16 (bl=1.000,
-                    # pred=3 correct source files, context disagrees → av2 injects → F1 1.0→0.5).
-                    # Phase 5.28: av2 w/o this guard hurt falcon -13.7%* and DRF -10.9%*.
-                    # Count only source files (not test/spec): koa b658fe7c had 4 predictions
-                    # (1 source + 3 test) → guard fired incorrectly, blocking a +25% F1 gain.
-                    return ""
-            if key_files:
-                kf_ranges = _extract_focus_ranges("\n\n".join(focus_parts), key_files[:5])
-                kf_lines = [f"  {f}:{kf_ranges[f]}" if f in kf_ranges else f"  {f}" for f in key_files[:5]]
-                kf_section = "KEY FILES REFERENCED ABOVE:\n" + "\n".join(kf_lines)
-                sections.append(kf_section)
-                token_count += count_tokens(kf_section)
-        elif path_fallback_files:
-            # All symbol searches were too broad, but path matching found specific files.
-            # E.g. "demo" fails symbol focus (15+ matches) but path match → demos/ directory.
-            if baseline_predicted_files is not None:
-                predicted_set = set(baseline_predicted_files)
-                path_set = set(path_fallback_files)
-                overlap = len(predicted_set & path_set) / len(path_set)
-                if overlap >= 0.5:
-                    return ""  # model already predicts the path-matched files
-                src_pred_count = len([f for f in predicted_set
-                                      if not any(m in f.lower() for m in _TEST_MARKERS)])
-                if src_pred_count >= 3:
-                    return ""  # baseline confident (3+ source files); path-hint can only mislead
-                # Path-only context (no BFS graph) is weak when model already has a focused prediction.
-                # If baseline predicted exactly 1 file with no overlap to path-match, the model is
-                # likely correct on that file and the path hint would redirect it incorrectly.
-                # Evidence (DRF authtoken-import): baseline=0.5 (auth.py, pred=1, correct),
-                # path=authtoken/models.py (non-overlapping) → injection drops F1 to 0.
-                if overlap == 0 and len(predicted_set) == 1:
-                    return ""  # single focused prediction doesn't align with path hint → risky
-            if precision_filter and len(path_fallback_files) > 4:
-                return ""  # Too broad (path match) — skip context entirely
-            kf_section = "KEY FILES (path match):\n" + "\n".join(f"  {f}" for f in path_fallback_files[:5])
-            sections.append(kf_section)
-            token_count += count_tokens(kf_section)
-        elif not keywords:
-            # Truly vague task (no keywords extracted) — overview provides structure, UNLESS the
-            # task is a docs-named branch (docs-javascript, docs/#4574, readme-fix, etc.).
-            # Docs branches often change both docs AND code; overview focuses the model on generic
-            # structure (conf.py, README) instead of the actual code paths changed.
-            # Evidence: flask "docs-javascript" overview → F1 0.556→0.154 (-0.402 delta).
-            # Without overview, model uses training knowledge → ties (~0 delta, not regression).
-            # Low-baseline repos (requests, django) use trunk-branch tasks for overview, not doc branches.
-            if not _is_docs_branch_task(task):
-                overview_fallback = render_overview(graph)
-                sections.append(overview_fallback)
-                token_count += count_tokens(overview_fallback)
-        # else: keywords exist but focus found nothing → inject nothing; model uses training knowledge.
-        # Evidence: overview hurts high-baseline repos (pydantic -40%, starlette -11%) when
-        # focus fails on non-empty keywords.
-
-    else:
-        # General coding task path: multi-token fuzzy search + always-overview fallback.
-        # Suitable for: "add login feature", "fix broken test", "explain this function".
-        focus_output = render_focused(graph, task, max_tokens=int(max_tokens * 0.6))
-
-        # Large-scope heuristic: bench data shows focused context hurts for 8+ file tasks.
-        _BROAD_SCOPE_MARKERS = {"all", "every", "entire", "throughout", "global", "across",
-                                "everywhere", "whole", "each"}
-        _BROAD_ACTION_MARKERS = {"refactor", "migrate", "update", "port", "convert", "rename",
-                                 "replace", "remove", "delete", "rewrite"}
-        _task_set = set(task.lower().split())
-        _is_large_scope = bool(
-            _task_set & _BROAD_SCOPE_MARKERS
-            and _task_set & _BROAD_ACTION_MARKERS
-        )
-        if _is_large_scope:
-            sections.append(
-                "⚠ LARGE SCOPE: task appears to span many files. "
-                "Bench data shows focused context hurts F1 for 8+ file changes. "
-                "Use `overview` for orientation; skip focused context injection."
-            )
-            token_count += 25
-
-        _no_match = not focus_output or "No symbols matching" in focus_output or "No exact match" in focus_output
-        if _no_match and not _is_large_scope:
-            overview_fallback = render_overview(graph)
-            sections.append(overview_fallback)
-            token_count += count_tokens(overview_fallback)
-        else:
-            sections.append(focus_output)
-            token_count += count_tokens(focus_output)
-
-            if not _no_match:
-                key_files = _extract_focus_files(focus_output)
-                if key_files:
-                    if len(key_files) > 10:
-                        sections.append(
-                            "⚠ BROAD MATCH: query matched many files — results may include "
-                            "loosely related code. Consider re-querying with a more specific "
-                            "symbol name or function for a tighter focus."
-                        )
-                        token_count += 20
-                    kf_ranges = _extract_focus_ranges(focus_output, key_files[:5])
-                    kf_lines = [f"  {f}:{kf_ranges[f]}" if f in kf_ranges else f"  {f}" for f in key_files[:5]]
-                    kf_section = "KEY FILES REFERENCED ABOVE:\n" + "\n".join(kf_lines)
-                    sections.append(kf_section)
-                    token_count += count_tokens(kf_section)
-
-    hotspot_budget = int(max_tokens * 0.15)
-    if token_count < max_tokens - 100:
-        hotspot_output = render_hotspots(graph, top_n=5)
-        ht = count_tokens(hotspot_output)
-        if ht <= hotspot_budget:
-            sections.append("\n## Hotspots (top 5 riskiest)")
-            sections.append(hotspot_output)
-            token_count += ht + 10
-
-    # L2-guided: include dead code analysis if learned to be useful for this task_type
-    if token_count < max_tokens - 200 and "dead" in l2_best_modes:
-        dead_budget = min(1500, max_tokens - token_count - 100)
-        dead_output = render_dead_code(graph, max_symbols=10, max_tokens=dead_budget)
-        dt = count_tokens(dead_output)
-        if dt <= dead_budget:
-            sections.append("\n## Dead Code (L2: relevant for this task type)")
-            sections.append(dead_output)
-            token_count += dt + 10
-
-    # Skills: include coding conventions for feature/refactor tasks so agents write convention-native code
-    if token_count < max_tokens - 200 and task_type in ("feature", "refactor"):
-        skills_budget = min(800, max_tokens - token_count - 100)
-        skills_output = render_skills(graph, max_tokens=skills_budget)
-        st = count_tokens(skills_output)
-        if st <= skills_budget + 50:
-            sections.append("\n## Coding Conventions (follow these when writing new code)")
-            sections.append(skills_output)
-            token_count += st + 10
-
-    if token_count < max_tokens - 100:
-        is_change = any(w in task.lower() for w in (
-            "fix", "bug", "change", "modify", "update", "refactor", "add", "remove",
-            "delete", "rename", "move", "migrate",
-        ))
-        if is_change or task_type in ("debug", "refactor", "feature"):
-            repo_path = str(Path(graph.root).resolve())
-            if is_git_repo(repo_path):
-                try:
-                    changed = changed_files_unstaged(repo_path)
-                    if changed:
-                        diff_budget = max_tokens - token_count
-                        diff_output = render_diff_context(graph, changed, max_tokens=diff_budget)
-                        dt = count_tokens(diff_output)
-                        if dt <= diff_budget + 100:  # allow small overflow
-                            sections.append(f"\n## Uncommitted changes ({len(changed)} files)")
-                            sections.append(diff_output)
-                            token_count += dt + 10
-                except Exception:
-                    pass
-
-    sections.append("---\nCall report_feedback after using this context to improve future recommendations.")
-    return "\n\n".join(sections)
+# _TEST_MARKERS, _ASSET_DIRS, _cl_path_fallback, _is_change_localization,
+# _get_cochange_related, _extract_focus_ranges, render_prepare extracted to tempograph/prepare.py
 
 
 def render_skills(graph: Tempo, query: str = "", *, max_tokens: int = 4000) -> str:
