@@ -1,6 +1,7 @@
-"""Tests for change-localization helpers in render.py."""
+"""Tests for change-localization helpers in render.py and prepare.py."""
 import pytest
-from tempograph.render import _extract_cl_keywords, _is_change_localization, _extract_focus_files, _is_docs_branch_task, render_prepare
+from tempograph.prepare import _is_change_localization, render_prepare
+from tempograph.render import _extract_cl_keywords, _extract_focus_files, _is_docs_branch_task
 
 
 class TestExtractClKeywords:
