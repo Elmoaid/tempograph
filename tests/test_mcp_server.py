@@ -1887,3 +1887,100 @@ class TestHotspotUniqueCallerFiles:
         assert "10 caller" not in output, (
             f"Expected raw caller count (10) not to appear in output, got:\n{output}"
         )
+
+
+class TestAdaptiveBFSDepth:
+    """Sparse-neighborhood adaptive depth expansion in render_focused."""
+
+    @staticmethod
+    def _make_sym(name, line, fpath="src/chain.py"):
+        from tempograph.types import Symbol, SymbolKind, Language
+        return Symbol(
+            id=name, name=name, qualified_name=name,
+            kind=SymbolKind.FUNCTION, language=Language.PYTHON,
+            file_path=fpath, line_start=line, line_end=line + 1,
+            signature=f"def {name}()", exported=False,
+            complexity=1, byte_size=30,
+        )
+
+    @staticmethod
+    def _make_fileinfo(fpath, n_lines, sym_ids):
+        from tempograph.types import FileInfo, Language
+        return FileInfo(path=fpath, language=Language.PYTHON,
+                        line_count=n_lines, byte_size=n_lines * 20,
+                        symbols=list(sym_ids))
+
+    def test_sparse_result_gets_depth_extension(self, tmp_path):
+        """When BFS yields < 20 nodes, render_focused re-runs with depth+1."""
+        from tempograph.types import Edge, EdgeKind, Tempo
+        from tempograph.render import render_focused
+
+        # Build a chain: parse_token → lex_input → scan_bytes → read_chunk → emit_char
+        # Query for parse_token: depth 3 reaches lex_input, scan_bytes, read_chunk.
+        # depth 4 additionally pulls in emit_char.
+        names = ["parse_token", "lex_input", "scan_bytes", "read_chunk", "emit_char"]
+        syms = [self._make_sym(n, i * 4 + 1) for i, n in enumerate(names)]
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id="parse_token", target_id="lex_input", line=2),
+            Edge(kind=EdgeKind.CALLS, source_id="lex_input", target_id="scan_bytes", line=6),
+            Edge(kind=EdgeKind.CALLS, source_id="scan_bytes", target_id="read_chunk", line=10),
+            Edge(kind=EdgeKind.CALLS, source_id="read_chunk", target_id="emit_char", line=14),
+        ]
+        fi = self._make_fileinfo("src/chain.py", 20, [s.id for s in syms])
+        graph = Tempo(root=str(tmp_path), files={"src/chain.py": fi},
+                      symbols={s.id: s for s in syms}, edges=edges)
+        graph.build_indexes()
+        graph.hot_files = set()
+
+        out = render_focused(graph, "parse_token", max_tokens=4000)
+        # Adaptive extension should fire (chain of 5 is < 20 threshold)
+        # and the annotation should appear
+        assert "[depth +1" in out, (
+            f"Expected adaptive depth annotation in sparse output, got:\n{out}"
+        )
+        # emit_char should appear — reachable only at depth 4
+        assert "emit_char" in out, f"Expected emit_char to appear at depth 4, got:\n{out}"
+
+    def test_dense_result_skips_extension(self, tmp_path):
+        """When BFS yields >= 20 nodes, no adaptive extension fires."""
+        from tempograph.types import Edge, EdgeKind, Tempo
+        from tempograph.render import render_focused
+
+        # Build a star: center calls 25 leaves → 26 nodes at depth 1, no extension needed
+        center = self._make_sym("center", 1, "src/star.py")
+        leaves = [self._make_sym(f"leaf{i}", 5 + i * 2, "src/star.py") for i in range(25)]
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id="center", target_id=f"leaf{i}", line=2)
+            for i in range(25)
+        ]
+        all_syms = [center] + leaves
+        fi = self._make_fileinfo("src/star.py", 60, [s.id for s in all_syms])
+        graph = Tempo(root=str(tmp_path), files={"src/star.py": fi},
+                      symbols={s.id: s for s in all_syms}, edges=edges)
+        graph.build_indexes()
+        graph.hot_files = set()
+
+        out = render_focused(graph, "center", max_tokens=4000)
+        # Dense result: >= 20 threshold, no extension
+        assert "[depth +1" not in out, (
+            f"Adaptive depth should NOT fire for dense neighborhoods, got:\n{out}"
+        )
+
+    def test_no_extension_when_extension_adds_no_nodes(self, tmp_path):
+        """If depth+1 doesn't expand the result, no annotation is added."""
+        from tempograph.types import Tempo
+        from tempograph.render import render_focused
+
+        # Isolated symbol: no edges at all
+        isolated = self._make_sym("alone", 1, "src/alone.py")
+        fi = self._make_fileinfo("src/alone.py", 2, [isolated.id])
+        graph = Tempo(root=str(tmp_path), files={"src/alone.py": fi},
+                      symbols={isolated.id: isolated}, edges=[])
+        graph.build_indexes()
+        graph.hot_files = set()
+
+        out = render_focused(graph, "alone", max_tokens=4000)
+        # BFS gives 1 node at depth 3 and also 1 node at depth 4 — no increase
+        assert "[depth +1" not in out, (
+            f"No annotation when depth extension adds 0 nodes, got:\n{out}"
+        )
