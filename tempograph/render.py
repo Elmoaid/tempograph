@@ -573,6 +573,7 @@ def _bfs_expand(
     seeds: list[Symbol],
     seed_files: set[str],
     secondary_seeds: list[Symbol] | None = None,
+    max_depth: int | None = None,
 ) -> tuple[list[tuple[Symbol, int]], set[str]]:
     """BFS from seed symbols following caller/callee/child edges.
 
@@ -582,9 +583,12 @@ def _bfs_expand(
     file-context deduplication so already-shown symbols are excluded.
 
     secondary_seeds are orbit-derived symbols injected at depth 1 — they
-    expand the BFS into git-coupled files that aren't reachable via call edges."""
+    expand the BFS into git-coupled files that aren't reachable via call edges.
+
+    max_depth overrides the hot-seeds heuristic when provided (used by adaptive
+    sparse-neighborhood expansion in render_focused)."""
     _hot_seeds = any(s.file_path in graph.hot_files for s in seeds)
-    _bfs_max_depth = 4 if _hot_seeds else 3
+    _bfs_max_depth = max_depth if max_depth is not None else (4 if _hot_seeds else 3)
     seen_ids: set[str] = set()
     queue: list[tuple[Symbol, int]] = [(s, 0) for s in seeds]
     if secondary_seeds:
@@ -673,16 +677,39 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
             orbit_secondary.append(sym)
             orbit_seed_meta[sym.id] = (sym.file_path, freq)
 
+    # Determine initial BFS depth: 4 for hot seeds, 3 otherwise.
+    _hot_seeds = any(s.file_path in graph.hot_files for s in seeds)
+    _initial_depth = 4 if _hot_seeds else 3
     ordered, seen_ids = _bfs_expand(
-        graph, seeds, seed_files, secondary_seeds=orbit_secondary or None
+        graph, seeds, seed_files, secondary_seeds=orbit_secondary or None,
+        max_depth=_initial_depth,
     )
+
+    # Sparse-neighborhood adaptive expansion: if BFS returned fewer than 20 nodes
+    # and didn't saturate the 50-node cap, the neighborhood is small enough that
+    # going one level deeper costs little and gives agents genuine extra context.
+    _depth_extended = False
+    _SPARSE_THRESHOLD = 20
+    _MAX_ADAPTIVE_DEPTH = 5
+    if len(ordered) < _SPARSE_THRESHOLD and _initial_depth < _MAX_ADAPTIVE_DEPTH:
+        _ext_depth = _initial_depth + 1
+        _ext_ordered, _ext_seen = _bfs_expand(
+            graph, seeds, seed_files, secondary_seeds=orbit_secondary or None,
+            max_depth=_ext_depth,
+        )
+        if len(_ext_ordered) > len(ordered):
+            ordered, seen_ids = _ext_ordered, _ext_seen
+            _depth_extended = True
 
     def _caller_priority(sym: Symbol) -> int:
         """0 = keyword match in path (show first), 1 = no match (show after)."""
         path_lower = sym.file_path.lower()
         return 0 if query_tokens and any(tok in path_lower for tok in query_tokens) else 1
 
-    lines = [f"Focus: {query}", ""]
+    _focus_header = f"Focus: {query}"
+    if _depth_extended:
+        _focus_header += f"  [depth +1 — sparse ({len(ordered)} nodes)]"
+    lines = [_focus_header, ""]
     seen_files: set[str] = set()
     token_count = 0
 

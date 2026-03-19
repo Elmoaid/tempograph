@@ -165,8 +165,9 @@ def build_graph(
                 graph.files[rel_path] = file_info
             else:
                 # Store non-parseable files in DB too (for file map/overview)
-                db.update_file(rel_path, file_hash, language.value, line_count,
-                               len(source), [], [], [])
+                if not db.file_hash_matches(rel_path, file_hash):
+                    db.update_file(rel_path, file_hash, language.value, line_count,
+                                   len(source), [], [], [])
 
     # Load entire graph from DB in one shot
     if db:
