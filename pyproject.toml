@@ -45,6 +45,19 @@ bench = [
     "datasets>=3.0",
     "httpx>=0.27",
 ]
+semantic = [
+    "sqlite-vec>=0.1",
+    "fastembed>=0.3",
+]
+watch = [
+    "watchfiles>=0.20",
+]
+languages = [
+    "tree-sitter-language-pack>=0.10",
+]
+full = [
+    "tempograph[semantic,watch,languages]",
+]
 
 [project.scripts]
 tempograph = "tempograph.__main__:main"
