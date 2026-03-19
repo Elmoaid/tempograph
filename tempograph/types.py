@@ -266,6 +266,8 @@ class Tempo:
         return [sym for _, sym in self.search_symbols_scored(query)]
 
     def search_symbols_scored(self, query: str, use_hybrid: bool = True) -> list[tuple[float, Symbol]]:
+        import re as _re
+
         # Try hybrid search (FTS5 + vector) if DB is attached, in sync, and has vectors
         if (use_hybrid and hasattr(self, '_db') and self._db is not None
                 and getattr(self._db, '_has_vectors', False)):
@@ -273,11 +275,19 @@ class Tempo:
             if result:
                 return result
 
-        import re as _re
         query_lower = query.lower()
         # Split on whitespace AND common separators (/, -, #, @) to handle paths/refs
         raw_tokens = _re.split(r'[\s/\-#@]+', query_lower)
-        tokens = [t for t in raw_tokens
+        # For CamelCase tokens, inject split parts as ADDITIONAL tokens alongside the literal.
+        # "buildGraph" keeps "buildgraph" (for substring matching, e.g. "testbuildgraph")
+        # and adds "build" + "graph" (so snake_case `build_graph` matches via conjunction).
+        camel_parts: list[str] = []
+        for part in _re.split(r'[\s/\-#@]+', query):
+            if _re.search(r'[a-z][A-Z]', part):  # has CamelCase boundary
+                for sub in _re.sub(r'([a-z])([A-Z])', r'\1 \2', part).split():
+                    camel_parts.append(sub.lower())
+        all_raw = list(dict.fromkeys(raw_tokens + camel_parts))
+        tokens = [t for t in all_raw
                   if t not in self._STOP_WORDS and len(t) > 1
                   and _re.match(r'^[a-z][a-z0-9_]*$', t)]  # valid identifier chars only
         if not tokens:
