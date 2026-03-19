@@ -362,15 +362,23 @@ def index_repo(repo_path: str, exclude_dirs: str = "", output_format: str = "tex
         return _error(code, msg or "Graph build failed", output_format)
 
     elapsed = time.time() - start
-    # Add storage and embedding status
+    # Add storage and embedding status via graph_stats
     db_status = ""
     if hasattr(result, '_db') and result._db is not None:
         db = result._db
-        db_status = f"\nStorage: SQLite ({db.symbol_count()} symbols, {db.file_count()} files)"
-        if getattr(db, '_has_vectors', False):
-            db_status += " + vectors enabled"
-        else:
-            db_status += " | run embed_repo to enable semantic search"
+        try:
+            db.init_vectors()
+            stats = db.graph_stats()
+            db_mb = stats["db_size_bytes"] / (1024 * 1024)
+            db_status = f"\nStorage: SQLite ({db_mb:.1f}MB) | {stats['symbols']} symbols, {stats['edges']} edges, {stats['files']} files"
+            if stats["vectors"] > 0:
+                db_status += f" | {stats['vectors']} vectors (semantic search active)"
+            else:
+                db_status += " | run embed_repo to enable semantic search"
+            top_langs = ", ".join(f"{k}({v})" for k, v in list(stats["languages"].items())[:4])
+            db_status += f"\nLanguages: {top_langs}"
+        except Exception:
+            db_status = f"\nStorage: SQLite ({db.symbol_count()} symbols, {db.file_count()} files)"
     output = f"Indexed in {elapsed:.1f}s{db_status}\n\n{render_overview(result)}"
     tokens = count_tokens(output)
     _log_tool("index_repo", p, output, elapsed)
