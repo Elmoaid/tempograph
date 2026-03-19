@@ -90,10 +90,53 @@
   padding: 12px 16px;
   height: calc(100vh - 80px);
   overflow: hidden;
+  transition: grid-template-columns 0.2s ease;
 }
 .grid-shell > * {
   overflow-y: auto;
   min-height: 0;
+}
+
+/* Collapsible right panel */
+.grid-shell.right-hidden {
+  grid-template-columns: 1fr 1fr;
+}
+.grid-shell.right-hidden > *:nth-child(3) {
+  display: none;
+}
+
+/* Responsive breakpoints */
+@media (max-width: 1100px) {
+  .grid-shell {
+    grid-template-columns: 1.2fr 0.9fr 0.9fr;
+  }
+}
+@media (max-width: 900px) {
+  .grid-shell {
+    grid-template-columns: 1fr 1fr;
+    height: auto;
+    min-height: calc(100vh - 80px);
+    overflow: visible;
+  }
+  .grid-shell > *:nth-child(3) {
+    display: none;
+  }
+  .grid-shell.right-hidden {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+@media (max-width: 680px) {
+  .grid-shell {
+    grid-template-columns: 1fr;
+    height: auto;
+    overflow: visible;
+  }
+  .grid-shell.right-hidden {
+    grid-template-columns: 1fr;
+  }
+  .grid-shell > *:nth-child(3) {
+    display: block;
+  }
 }
 
 /* Cell */
