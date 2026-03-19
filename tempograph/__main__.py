@@ -7,6 +7,68 @@ import sys
 import time
 from pathlib import Path
 
+
+def _repo_info(repo: str) -> str:
+    """Generate a status dashboard for a repo's tempograph state."""
+    from .storage import GraphDB
+    from .git import is_git_repo, cochange_matrix
+
+    rp = Path(repo)
+    db_path = rp / ".tempograph" / "graph.db"
+    cache_path = rp / ".tempograph" / "cache.json"
+    config_path = rp / ".tempo" / "config.json"
+    lines = [f"Tempograph v0.5.0 — {repo}", ""]
+
+    if db_path.exists():
+        size_mb = db_path.stat().st_size / (1024 * 1024)
+        db = GraphDB(repo)
+        lines.append(f"Storage:    SQLite ({size_mb:.1f} MB)")
+        lines.append(f"Symbols:    {db.symbol_count()}")
+        lines.append(f"Files:      {db.file_count()}")
+        has_vec = db.init_vectors()
+        if has_vec:
+            try:
+                vc = db._conn.execute("SELECT COUNT(*) FROM symbol_vectors").fetchone()[0]
+            except Exception:
+                vc = 0
+            if vc > 0:
+                lines.append(f"Vectors:    {vc} embeddings (semantic search active)")
+            else:
+                lines.append(f"Vectors:    none (run --embed to enable)")
+        else:
+            lines.append(f"Vectors:    sqlite-vec not installed (pip install tempograph[semantic])")
+        db.close()
+    elif cache_path.exists():
+        size_kb = cache_path.stat().st_size / 1024
+        lines.append(f"Storage:    JSON cache ({size_kb:.0f} KB)")
+    else:
+        lines.append(f"Storage:    not indexed")
+
+    if config_path.exists():
+        try:
+            cfg = json.loads(config_path.read_text())
+            exc = cfg.get("exclude_dirs", [])
+            lines.append(f"Config:     .tempo/config.json (exclude: {', '.join(exc) if exc else 'none'})")
+        except Exception:
+            lines.append(f"Config:     .tempo/config.json (parse error)")
+    else:
+        lines.append(f"Config:     defaults")
+
+    if is_git_repo(repo):
+        matrix = cochange_matrix(repo, n_commits=100)
+        lines.append(f"Co-change:  {len(matrix)} files with coupling data")
+    else:
+        lines.append(f"Co-change:  not a git repo")
+
+    try:
+        from .kits import get_all_kits as _gak
+        _k = _gak(repo)
+        lines.append(f"Kits:       {len(_k)} ({', '.join(sorted(_k.keys()))})")
+    except Exception:
+        pass
+
+    return "\n".join(lines)
+
 from .builder import build_graph
 from .render import (
     count_tokens,
@@ -77,9 +139,38 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--task-type", help="Explicit task type for L2 learning (e.g. refactor, debug, feature, review)")
     parser.add_argument("--kit", "-k", metavar="KIT",
                         help="Run a composable kit workflow. Use --kit list to show all kits.")
+    parser.add_argument("--embed", action="store_true",
+                        help="Generate embeddings for semantic search (requires fastembed)")
+    parser.add_argument("--search", metavar="QUERY",
+                        help="Hybrid semantic+structural search for symbols")
+    parser.add_argument("--info", action="store_true",
+                        help="Show tempograph status dashboard for this repo")
 
     args = parser.parse_args(raw)
     repo = str(Path(args.repo).resolve())
+
+    # Info: show repo tempograph status dashboard
+    if args.info:
+        print(_repo_info(repo))
+        return 0
+
+    # Embed: generate embeddings for semantic search
+    if args.embed:
+        from .embeddings import embed_symbols as _embed_symbols
+        _eg = __import__('tempograph.builder', fromlist=['build_graph']).build_graph
+        _g = _eg(repo, exclude_dirs=args.exclude.split(",") if args.exclude else None)
+        count = _embed_symbols(_g._db if hasattr(_g, '_db') else None)
+        print(f"Embedded {count} symbols for semantic search")
+        return 0
+
+    # Search: hybrid semantic+structural search
+    if args.search:
+        _sg = __import__('tempograph.builder', fromlist=['build_graph']).build_graph
+        _g = _sg(repo, exclude_dirs=args.exclude.split(",") if args.exclude else None)
+        results = _g.search_symbols_scored(args.search)[:20]
+        for score, sym in results:
+            print(f"  {score:6.1f}  {sym.kind.value:10s}  {sym.qualified_name:40s}  {sym.file_path}:{sym.line_start}")
+        return 0
 
     # Kit list: no graph needed
     if args.kit == "list":

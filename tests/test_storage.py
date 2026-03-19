@@ -1,0 +1,147 @@
+"""Tests for SQLite persistent graph storage."""
+import json
+import pytest
+from pathlib import Path
+
+from tempograph.storage import GraphDB, content_hash
+from tempograph.types import Edge, EdgeKind, Language, Symbol, SymbolKind
+
+
+@pytest.fixture
+def db(tmp_path):
+    """Create a fresh GraphDB in a temp directory."""
+    d = tmp_path / "repo"
+    d.mkdir()
+    db = GraphDB(d)
+    yield db
+    db.close()
+
+
+def _make_symbol(file_path: str, name: str, kind=SymbolKind.FUNCTION, line=1) -> Symbol:
+    return Symbol(
+        id=f"{file_path}::{name}", name=name, qualified_name=name,
+        kind=kind, language=Language.PYTHON, file_path=file_path,
+        line_start=line, line_end=line + 5, signature=f"def {name}()",
+        exported=True, complexity=3, byte_size=100,
+    )
+
+
+def _make_edge(source: str, target: str, kind=EdgeKind.CALLS) -> Edge:
+    return Edge(kind=kind, source_id=source, target_id=target, line=10)
+
+
+class TestGraphDB:
+    def test_create_db(self, db):
+        assert db.db_path.exists()
+        assert db.symbol_count() == 0
+        assert db.file_count() == 0
+
+    def test_update_file_and_load(self, db):
+        sym = _make_symbol("main.py", "main")
+        edge = _make_edge("main.py::main", "utils.py::helper")
+        db.update_file("main.py", "abc123", "python", 50, 1000, [sym], [edge], ["import utils"])
+
+        assert db.file_count() == 1
+        assert db.symbol_count() == 1
+
+        files, symbols, edges = db.load_all()
+        assert "main.py" in files
+        assert files["main.py"].line_count == 50
+        assert "main.py::main" in symbols
+        assert symbols["main.py::main"].name == "main"
+        assert len(edges) == 1
+        assert edges[0].kind == EdgeKind.CALLS
+
+    def test_hash_check(self, db):
+        db.update_file("main.py", "hash1", "python", 10, 100, [], [], [])
+        assert db.file_hash_matches("main.py", "hash1")
+        assert not db.file_hash_matches("main.py", "hash2")
+        assert not db.file_hash_matches("other.py", "hash1")
+
+    def test_incremental_update(self, db):
+        sym1 = _make_symbol("main.py", "old_func")
+        db.update_file("main.py", "hash1", "python", 10, 100, [sym1], [], [])
+        assert db.symbol_count() == 1
+
+        # Update same file with different content
+        sym2 = _make_symbol("main.py", "new_func")
+        sym3 = _make_symbol("main.py", "another_func")
+        db.update_file("main.py", "hash2", "python", 20, 200, [sym2, sym3], [], [])
+        assert db.symbol_count() == 2  # old_func replaced by new_func + another_func
+
+        _, symbols, _ = db.load_all()
+        assert "main.py::old_func" not in symbols
+        assert "main.py::new_func" in symbols
+        assert "main.py::another_func" in symbols
+
+    def test_remove_stale_files(self, db):
+        db.update_file("keep.py", "h1", "python", 10, 100, [_make_symbol("keep.py", "f1")], [], [])
+        db.update_file("stale.py", "h2", "python", 10, 100, [_make_symbol("stale.py", "f2")], [], [])
+        assert db.file_count() == 2
+        assert db.symbol_count() == 2
+
+        removed = db.remove_stale_files({"keep.py"})
+        assert removed == 1
+        assert db.file_count() == 1
+        assert db.symbol_count() == 1
+
+    def test_fts_search(self, db):
+        db.update_file("main.py", "h1", "python", 10, 100,
+                       [_make_symbol("main.py", "build_graph"),
+                        _make_symbol("main.py", "render_output")], [], [])
+        results = db.search_fts("build_graph")
+        assert len(results) > 0
+        assert any("build_graph" in sid for _, sid in results)
+
+    def test_fts_no_match(self, db):
+        db.update_file("main.py", "h1", "python", 10, 100,
+                       [_make_symbol("main.py", "process")], [], [])
+        results = db.search_fts("nonexistent_xyz")
+        assert len(results) == 0
+
+    def test_multiple_files(self, db):
+        for i in range(5):
+            db.update_file(f"mod{i}.py", f"h{i}", "python", 10, 100,
+                           [_make_symbol(f"mod{i}.py", f"func{i}")], [], [])
+        assert db.file_count() == 5
+        assert db.symbol_count() == 5
+
+    def test_content_hash(self):
+        h1 = content_hash(b"hello world")
+        h2 = content_hash(b"hello world")
+        h3 = content_hash(b"different")
+        assert h1 == h2
+        assert h1 != h3
+
+    def test_imports_preserved(self, db):
+        db.update_file("main.py", "h1", "python", 10, 100, [],
+                       [], ["import os", "from pathlib import Path"])
+        files, _, _ = db.load_all()
+        assert files["main.py"].imports == ["import os", "from pathlib import Path"]
+
+    def test_symbol_kinds(self, db):
+        syms = [
+            _make_symbol("main.py", "MyClass", SymbolKind.CLASS),
+            _make_symbol("main.py", "my_func", SymbolKind.FUNCTION),
+            _make_symbol("main.py", "my_method", SymbolKind.METHOD),
+        ]
+        db.update_file("main.py", "h1", "python", 30, 300, syms, [], [])
+        _, symbols, _ = db.load_all()
+        assert symbols["main.py::MyClass"].kind == SymbolKind.CLASS
+        assert symbols["main.py::my_func"].kind == SymbolKind.FUNCTION
+        assert symbols["main.py::my_method"].kind == SymbolKind.METHOD
+
+
+class TestVectorSearch:
+    def test_init_vectors(self, db):
+        result = db.init_vectors(dimensions=384)
+        # May or may not work depending on sqlite-vec availability
+        assert isinstance(result, bool)
+
+    def test_hybrid_search_fts_only(self, db):
+        """Hybrid search works with FTS only (no vectors)."""
+        db.update_file("main.py", "h1", "python", 10, 100,
+                       [_make_symbol("main.py", "process_data")], [], [])
+        results = db.search_hybrid("process_data", query_embedding=None)
+        assert len(results) > 0
+        assert any("process_data" in sid for _, sid in results)

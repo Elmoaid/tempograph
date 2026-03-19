@@ -373,6 +373,31 @@ def _extract_focus_files(focus_output: str, task_keywords: list[str] | None = No
     return sorted(freq.keys(), key=_sort_key)[:15]
 
 
+def _get_cochange_related(repo_root: str, key_files: list[str], repo_files: set[str]) -> list[tuple[str, float]]:
+    """Get files that frequently co-change with the given key files.
+
+    Returns [(file_path, max_frequency), ...] sorted by frequency desc.
+    Only includes files that exist in the current repo graph.
+    Deduplicates against key_files themselves.
+    """
+    try:
+        from .git import cochange_matrix, is_git_repo
+        if not is_git_repo(repo_root):
+            return []
+        matrix = cochange_matrix(repo_root, n_commits=100)
+    except Exception:
+        return []
+
+    key_set = set(key_files)
+    related: dict[str, float] = {}
+    for kf in key_files:
+        for partner, freq in matrix.get(kf, []):
+            if partner not in key_set and partner in repo_files:
+                related[partner] = max(related.get(partner, 0), freq)
+
+    return sorted(related.items(), key=lambda x: -x[1])
+
+
 def _extract_focus_ranges(focus_output: str, key_files: list[str]) -> dict[str, str]:
     """Map key file paths to their first line range from focus output.
 
@@ -550,7 +575,9 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
             seed_files.add(s.file_path)
 
     # BFS: expand from seed symbols following edges
-    # Wider expansion: depth 3, more callers/callees at depth 0-1
+    # Wider expansion: depth 3 (or 4 when seed is hot), more callers/callees at depth 0-1
+    _hot_seeds = any(s.file_path in graph.hot_files for s in seeds)
+    _bfs_max_depth = 4 if _hot_seeds else 3
     seen_ids: set[str] = set()
     queue: list[tuple[Symbol, int]] = [(s, 0) for s in seeds]
     ordered: list[tuple[Symbol, int]] = []
@@ -571,7 +598,7 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
         seen_ids.add(sym.id)
         ordered.append((sym, depth))
 
-        if depth < 3:
+        if depth < _bfs_max_depth:
             # More context at shallow depths, less at deeper
             caller_limit = 8 if depth == 0 else 5 if depth == 1 else 3
             callee_limit = 8 if depth == 0 else 5 if depth == 1 else 3
@@ -1642,6 +1669,14 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                 kf_section = "KEY FILES REFERENCED ABOVE:\n" + "\n".join(kf_lines)
                 sections.append(kf_section)
                 token_count += count_tokens(kf_section)
+
+                # Co-change prediction: files that frequently change alongside key files
+                cochange = _get_cochange_related(graph.root, key_files[:5], set(graph.files.keys()))
+                if cochange and token_count + 50 < max_tokens:
+                    cc_lines = [f"  {f} ({freq:.0%} co-change)" for f, freq in cochange[:5]]
+                    cc_section = "RELATED FILES (frequently change together):\n" + "\n".join(cc_lines)
+                    sections.append(cc_section)
+                    token_count += count_tokens(cc_section)
         elif path_fallback_files:
             # All symbol searches were too broad, but path matching found specific files.
             # E.g. "demo" fails symbol focus (15+ matches) but path match → demos/ directory.
@@ -1730,6 +1765,14 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                     kf_section = "KEY FILES REFERENCED ABOVE:\n" + "\n".join(kf_lines)
                     sections.append(kf_section)
                     token_count += count_tokens(kf_section)
+
+                    # Co-change prediction for general task path too
+                    cochange = _get_cochange_related(graph.root, key_files[:5], set(graph.files.keys()))
+                    if cochange and token_count + 50 < max_tokens:
+                        cc_lines = [f"  {f} ({freq:.0%} co-change)" for f, freq in cochange[:5]]
+                        cc_section = "RELATED FILES (frequently change together):\n" + "\n".join(cc_lines)
+                        sections.append(cc_section)
+                        token_count += count_tokens(cc_section)
 
     hotspot_budget = int(max_tokens * 0.15)
     if token_count < max_tokens - 100:
