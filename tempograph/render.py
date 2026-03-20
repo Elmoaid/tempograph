@@ -858,6 +858,22 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
         lines.append(f"\nCo-change orbit: {', '.join(orbit_parts)}")
         lines.append("  (files that historically change with these — check if your change affects them)")
 
+    # File volatility: flag seed files that are actively changing.
+    # Volatile files mean context may lag behind recent edits — agents should re-read before modifying.
+    # Only fires for files with high churn (≥10/200 commits). No annotation for normal/stable files.
+    if graph.root and seed_file_paths and token_count < max_tokens - 60:
+        try:
+            from .git import file_commit_counts
+            churn = file_commit_counts(graph.root)
+            _VOLATILE_THRESHOLD = 10
+            volatile = [(fp, churn.get(fp, 0)) for fp in seed_file_paths
+                        if churn.get(fp, 0) >= _VOLATILE_THRESHOLD]
+            if volatile:
+                parts = [f"{fp} ({count}/200 commits)" for fp, count in volatile]
+                lines.append(f"\nVolatile: {', '.join(parts)} — high-churn file(s), re-read before editing")
+        except Exception:
+            pass
+
     return "\n".join(lines)
 
 
