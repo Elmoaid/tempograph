@@ -127,11 +127,20 @@ export function OutputPanel(props: OutputPanelProps) {
               <button className="btn btn-ghost" onClick={onSave} style={{ padding: "2px 6px", fontSize: 10 }} title="Save to .tempo/" aria-label="Save output to .tempo/">
                 <Save size={10} aria-hidden="true" />
               </button>
-              <button className="btn btn-ghost" onClick={onCopy} style={{ padding: "2px 6px", fontSize: 10 }} aria-label={copied ? "Copied" : "Copy output"}>
-                {copied ? <Check size={10} aria-hidden="true" /> : <Copy size={10} aria-hidden="true" />}
-              </button>
             </>
           )}
+          <button
+            className="btn btn-ghost"
+            onClick={onCopy}
+            disabled={!modeOutput}
+            title={!modeOutput ? "Run a mode first" : "Copy output"}
+            aria-label={copied ? "Copied" : "Copy output"}
+            style={{ padding: "2px 6px", fontSize: 10, opacity: !modeOutput ? 0.35 : 1 }}
+          >
+            {copied
+              ? <><Check size={10} aria-hidden="true" /><span style={{ marginLeft: 3 }}>Copied!</span></>
+              : <Copy size={10} aria-hidden="true" />}
+          </button>
         </div>
       </div>
       <div className="cell-body">
