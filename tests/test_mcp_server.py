@@ -2445,3 +2445,59 @@ struct MyStruct;
         # No function symbols from forward declarations (no bodies)
         fn_syms = [s for s in syms if s.kind.value == "function"]
         assert len(fn_syms) == 0
+
+
+class TestBlastRiskBadge:
+    """Tests for the blast risk badge in render_focused.
+
+    When a seed symbol is called from >5 unique external files, focus mode emits
+    a concrete file count badge so agents know to run blast mode before editing.
+    """
+
+    def _make_blast_repo(self, tmp_path, n_callers: int) -> tuple:
+        """Build a minimal repo with n_callers files each importing core.shared_util."""
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def shared_util():\n    pass\n")
+        for i in range(n_callers):
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from core import shared_util\n\ndef caller_{i}():\n    shared_util()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        return g
+
+    def test_badge_fires_when_over_threshold(self, tmp_path):
+        """render_focused emits 'High impact: N files' when >5 unique external files call seed."""
+        from tempograph.render import render_focused
+
+        g = self._make_blast_repo(tmp_path, n_callers=7)
+        out = render_focused(g, "shared_util", max_tokens=4000)
+
+        assert "High impact:" in out, f"badge must fire for 7 callers; got:\n{out}"
+        assert "files depend on" in out, "must include file count phrasing"
+        assert "blast mode" in out, "must suggest blast mode"
+
+    def test_badge_silent_when_below_threshold(self, tmp_path):
+        """render_focused does NOT emit 'High impact:' when ≤5 unique external files call seed."""
+        from tempograph.render import render_focused
+
+        g = self._make_blast_repo(tmp_path, n_callers=4)
+        out = render_focused(g, "shared_util", max_tokens=4000)
+
+        assert "High impact:" not in out, f"badge must NOT fire for 4 callers; got:\n{out}"
+
+    def test_badge_shows_correct_count(self, tmp_path):
+        """render_focused badge reports the exact number of unique external files."""
+        from tempograph.render import render_focused
+
+        g = self._make_blast_repo(tmp_path, n_callers=8)
+        out = render_focused(g, "shared_util", max_tokens=4000)
+
+        assert "High impact:" in out, "badge must fire for 8 callers"
+        # Extract the N from "High impact: N files depend on..."
+        import re
+        m = re.search(r"High impact: (\d+) files", out)
+        assert m is not None, f"badge must have numeric count; got:\n{out}"
+        count = int(m.group(1))
+        # 8 unique external files calling shared_util
+        assert count == 8, f"expected count=8, got {count}"
