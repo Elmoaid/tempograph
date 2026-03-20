@@ -11,7 +11,7 @@ from .cache import check_cache, load_cache, make_cache_entry, save_cache
 from .storage import GraphDB, content_hash
 from .types import Tempo, Edge, EdgeKind, FileInfo, Language, Symbol, SymbolKind, EXTENSION_TO_LANGUAGE
 from .parser import FileParser
-from .git import is_git_repo, recently_modified_files, changed_files_staged, changed_files_unstaged
+from .git import is_git_repo, recently_modified_files, changed_files_vs_head
 
 DEFAULT_IGNORE_DIRS = frozenset({
     "node_modules", ".git", "__pycache__", "target", "dist", "build",
@@ -262,8 +262,11 @@ def _get_hot_files(repo: str) -> set[str]:
 
     Using working-tree changes prevents stale commits (e.g., UI work from yesterday)
     from injecting false temporal bonuses during unrelated Python queries.
+
+    Uses git diff HEAD (one subprocess) to cover both staged and unstaged changes,
+    replacing the prior two-subprocess approach (staged + unstaged separately).
     """
-    working = set(changed_files_staged(repo) + changed_files_unstaged(repo))
+    working = set(changed_files_vs_head(repo))
     if working:
         return working
     return recently_modified_files(repo, n_commits=2)

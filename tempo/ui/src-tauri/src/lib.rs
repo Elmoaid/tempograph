@@ -385,6 +385,12 @@ fn get_home_dir() -> TempoResult {
     TempoResult { success: true, output: home, mode: "home".into() }
 }
 
+/// Check whether a path exists on disk.
+#[tauri::command]
+fn path_exists(path: String) -> bool {
+    Path::new(&path).exists()
+}
+
 /// Write content to a file path (restricted to home dir for safety).
 #[tauri::command]
 fn write_file(path: String, content: String) -> TempoResult {
@@ -487,6 +493,7 @@ pub fn run() {
             write_note,
             save_output,
             get_home_dir,
+            path_exists,
             write_file,
             report_feedback,
         ])
