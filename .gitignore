@@ -21,3 +21,5 @@ notes/agent-log/*.jsonl
 notes/agent-locks.json
 # Old-style notes (keep agent state files tracked)
 Master Plan/
+# Agent worktrees
+.worktrees/
