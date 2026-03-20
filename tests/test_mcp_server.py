@@ -228,11 +228,15 @@ class TestParameters:
         assert "server.py" in r["data"]
 
     def test_blast_radius_unindexed_existing_file(self, tmp_path):
-        """File exists on disk but isn't in the graph → actionable message."""
+        """File exists on disk but isn't in the graph → exclusion hint with directory name."""
         unindexed = tmp_path / "orphan.py"
         unindexed.write_text("def foo(): pass\n")
         raw = blast_radius(REPO_PATH, file_path=str(unindexed))
-        assert "not indexed" in raw
+        assert "not in the graph" in raw
+        assert "--exclude" in raw
+        assert "overview" in raw
+        # Should name the parent directory in the hint
+        assert tmp_path.name in raw
 
     def test_diff_context_explicit_files_no_git(self):
         """Passing changed_files explicitly should not require git."""
@@ -2871,3 +2875,125 @@ class TestBlastRiskBadge:
         count = int(m.group(1))
         # 8 unique external files calling shared_util
         assert count == 8, f"expected count=8, got {count}"
+
+
+class TestChangeVelocityRanking:
+    """Tests for change velocity ranking in render_hotspots.
+
+    Symbols in files with high recent git churn get a score multiplier so
+    they rank higher — actively changing files carry coordination hazard.
+    """
+
+    def _make_hotspot_repo(self, tmp_path) -> object:
+        """Build a minimal repo with two hotspot candidates."""
+        from tempograph.builder import build_graph
+
+        # hub.py: many callers (static coupling)
+        (tmp_path / "hub.py").write_text(
+            "def central_func():\n    pass\n"
+        )
+        # callers: 6 files import hub.central_func
+        for i in range(6):
+            (tmp_path / f"user_{i}.py").write_text(
+                f"from hub import central_func\n\ndef task_{i}():\n    central_func()\n"
+            )
+        # quiet.py: few callers but exists
+        (tmp_path / "quiet.py").write_text(
+            "def stable_func():\n    pass\n"
+        )
+        (tmp_path / "user_quiet.py").write_text(
+            "from quiet import stable_func\n\ndef run():\n    stable_func()\n"
+        )
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_velocity_annotation_fires_for_hot_file(self, tmp_path, monkeypatch):
+        """render_hotspots annotates active-churn files with commits/week."""
+        from tempograph.render import render_hotspots
+        import tempograph.render as render_mod
+
+        g = self._make_hotspot_repo(tmp_path)
+        # Simulate hub.py with 20 commits/week
+        monkeypatch.setattr(
+            render_mod,
+            "render_hotspots",
+            render_hotspots,
+        )
+        # Patch file_change_velocity at the import site in render.py
+        import tempograph.git as git_mod
+        monkeypatch.setattr(
+            git_mod,
+            "file_change_velocity",
+            lambda repo, recent_days=7: {"hub.py": 20.0, "quiet.py": 0.0},
+        )
+
+        out = render_hotspots(g, top_n=10)
+        assert "active churn" in out, f"must annotate hub.py as active churn; got:\n{out}"
+        assert "commits/week" in out, "must include commits/week"
+        assert "re-read before editing" in out
+
+    def test_velocity_annotation_silent_below_threshold(self, tmp_path, monkeypatch):
+        """render_hotspots does NOT annotate files below 5 commits/week."""
+        from tempograph.render import render_hotspots
+        import tempograph.git as git_mod
+
+        g = self._make_hotspot_repo(tmp_path)
+        monkeypatch.setattr(
+            git_mod,
+            "file_change_velocity",
+            lambda repo, recent_days=7: {"hub.py": 2.0},
+        )
+
+        out = render_hotspots(g, top_n=10)
+        assert "active churn" not in out, f"should NOT fire at 2 commits/week; got:\n{out}"
+
+    def test_velocity_boosts_score(self, tmp_path, monkeypatch):
+        """A symbol in a churning file should rank above one with equivalent static score."""
+        from tempograph.render import render_hotspots
+        import tempograph.git as git_mod
+
+        # Two files with equivalent static coupling: 3 callers each
+        (tmp_path / "hot_file.py").write_text("def hot_func():\n    pass\n")
+        (tmp_path / "cold_file.py").write_text("def cold_func():\n    pass\n")
+        for i in range(3):
+            (tmp_path / f"hot_caller_{i}.py").write_text(
+                f"from hot_file import hot_func\n\ndef t{i}():\n    hot_func()\n"
+            )
+            (tmp_path / f"cold_caller_{i}.py").write_text(
+                f"from cold_file import cold_func\n\ndef t{i}():\n    cold_func()\n"
+            )
+        from tempograph.builder import build_graph
+        g = build_graph(str(tmp_path), use_cache=False)
+
+        # hot_file.py has 30 commits/week, cold_file.py has 0
+        monkeypatch.setattr(
+            git_mod,
+            "file_change_velocity",
+            lambda repo, recent_days=7: {"hot_file.py": 30.0, "cold_file.py": 0.0},
+        )
+
+        out = render_hotspots(g, top_n=10)
+        hot_pos = out.find("hot_func")
+        cold_pos = out.find("cold_func")
+        assert hot_pos != -1, "hot_func must appear in hotspots"
+        assert cold_pos != -1, "cold_func must appear in hotspots"
+        assert hot_pos < cold_pos, (
+            f"hot_func (churning file) must rank above cold_func (stable); "
+            f"got hot_pos={hot_pos} cold_pos={cold_pos}"
+        )
+
+    def test_velocity_absent_no_error(self, tmp_path, monkeypatch):
+        """render_hotspots works normally when git velocity unavailable."""
+        from tempograph.render import render_hotspots
+        import tempograph.git as git_mod
+
+        g = self._make_hotspot_repo(tmp_path)
+        # Simulate git failure returning empty dict
+        monkeypatch.setattr(
+            git_mod,
+            "file_change_velocity",
+            lambda repo, recent_days=7: {},
+        )
+
+        out = render_hotspots(g, top_n=10)
+        assert "hotspot" in out.lower()
+        assert "active churn" not in out
