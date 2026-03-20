@@ -71,6 +71,16 @@ def _extract_cl_keywords(task: str) -> list[str]:
             _is_ticket = True  # remaining "patch-N-..." → mine body for actual keywords
         task = branch + ('\n' + body if (_is_ticket or not _branch_has_compound or _is_fork_master) and body else '')
     else:
+        # Detect trunk merges: "Merge branch 'stable'", "Merge branch '2.2.x'"
+        # Only skip when the task has NO useful branch info (pure trunk-to-trunk)
+        _trunk_m = re.match(r"^Merge branch '([^']+)'(?:\s+into\s+(\S+))?", task, re.IGNORECASE)
+        if _trunk_m:
+            source = _trunk_m.group(1).lower().strip()
+            target = (_trunk_m.group(2) or "").lower().strip()
+            _is_generic = lambda b: (b in _TRUNK_BRANCHES or re.match(r'^\d+\.\d+', b)
+                                     or b in ("hotfix", "bugfix", "staging", "production") or not b)
+            if _is_generic(source) and _is_generic(target):
+                return []  # pure trunk merge — no useful keywords
         task = re.sub(r'^Merge (?:branch|pull request)[^\n]*\n?', '', task, flags=re.IGNORECASE)
         # Extract conventional commit scopes BEFORE stripping them.
         # `feat(StreamMiddleware):`, `perf(Response):` → scope names the changed component.

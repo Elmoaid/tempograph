@@ -17,7 +17,7 @@ def _repo_info(repo: str) -> str:
     db_path = rp / ".tempograph" / "graph.db"
     cache_path = rp / ".tempograph" / "cache.json"
     config_path = rp / ".tempo" / "config.json"
-    lines = [f"Tempograph v0.5.0 — {repo}", ""]
+    lines = [f"Tempograph v0.6.0 — {repo}", ""]
 
     if db_path.exists():
         size_mb = db_path.stat().st_size / (1024 * 1024)
@@ -67,6 +67,17 @@ def _repo_info(repo: str) -> str:
     except Exception:
         pass
 
+    try:
+        from .predict import build_transition_matrix
+        matrix = build_transition_matrix(repo, min_count=5)
+        if matrix:
+            top_pred = max(matrix.items(), key=lambda x: x[1][0][1] if x[1] else 0)
+            lines.append(f"Prediction: {len(matrix)} mode transitions learned")
+        else:
+            lines.append(f"Prediction: no usage data yet")
+    except Exception:
+        pass
+
     return "\n".join(lines)
 
 from .builder import build_graph
@@ -111,12 +122,47 @@ def _run_feedback(argv: list[str]) -> int:
     return 0
 
 
+def _run_snapshot(argv: list[str]) -> int:
+    """Handle: python3 -m tempograph snapshot [--list | --repo ORG/REPO]"""
+    parser = argparse.ArgumentParser(
+        prog="tempograph snapshot",
+        description="Manage pre-built graph snapshots for popular OSS repos.",
+    )
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--list", action="store_true", help="List available snapshots")
+    group.add_argument("--repo", metavar="ORG/REPO", help="Download snapshot for this repo")
+    args = parser.parse_args(argv)
+
+    from .snapshots import list_snapshots, download_snapshot, is_downloaded
+
+    if args.list:
+        repos = list_snapshots()
+        print("Available snapshots:")
+        for repo in repos:
+            status = "downloaded" if is_downloaded(repo) else "not downloaded"
+            print(f"  {repo} ({status})")
+        return 0
+
+    return 0 if download_snapshot(args.repo) else 1
+
+
+__version__ = "0.6.0"
+
+
 def main(argv: list[str] | None = None) -> int:
     raw = argv if argv is not None else sys.argv[1:]
+
+    if raw and raw[0] in ("--version", "-V"):
+        print(f"tempograph {__version__}")
+        return 0
 
     # Intercept 'feedback' subcommand before argparse (avoids graph build)
     if raw and raw[0] == "feedback":
         return _run_feedback(raw[1:])
+
+    # Intercept 'snapshot' subcommand before argparse (no repo needed)
+    if raw and raw[0] == "snapshot":
+        return _run_snapshot(raw[1:])
 
     parser = argparse.ArgumentParser(
         prog="tempograph",
@@ -145,6 +191,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="Hybrid semantic+structural search for symbols")
     parser.add_argument("--info", action="store_true",
                         help="Show tempograph status dashboard for this repo")
+    parser.add_argument("--from-snapshot", metavar="ORG/REPO",
+                        help="Load a pre-built snapshot instead of indexing. "
+                             "Use 'python3 -m tempograph snapshot --list' to see available snapshots.")
 
     args = parser.parse_args(raw)
     repo = str(Path(args.repo).resolve())
@@ -157,16 +206,14 @@ def main(argv: list[str] | None = None) -> int:
     # Embed: generate embeddings for semantic search
     if args.embed:
         from .embeddings import embed_symbols as _embed_symbols
-        _eg = __import__('tempograph.builder', fromlist=['build_graph']).build_graph
-        _g = _eg(repo, exclude_dirs=args.exclude.split(",") if args.exclude else None)
+        _g = build_graph(repo, exclude_dirs=args.exclude.split(",") if args.exclude else None)
         count = _embed_symbols(_g._db if hasattr(_g, '_db') else None)
         print(f"Embedded {count} symbols for semantic search")
         return 0
 
     # Search: hybrid semantic+structural search
     if args.search:
-        _sg = __import__('tempograph.builder', fromlist=['build_graph']).build_graph
-        _g = _sg(repo, exclude_dirs=args.exclude.split(",") if args.exclude else None)
+        _g = build_graph(repo, exclude_dirs=args.exclude.split(",") if args.exclude else None)
         results = _g.search_symbols_scored(args.search)[:20]
         for score, sym in results:
             print(f"  {score:6.1f}  {sym.kind.value:10s}  {sym.qualified_name:40s}  {sym.file_path}:{sym.line_start}")
@@ -188,27 +235,48 @@ def main(argv: list[str] | None = None) -> int:
         print(generate_report(repo))
         return 0
 
-    # Merge CLI --exclude with config-file exclude_dirs
-    cli_exclude = [p.strip() for p in args.exclude.split(",")] if args.exclude else []
-    cfg_path = Path(repo) / ".tempo" / "config.json"
-    cfg_exclude: list[str] = []
-    if cfg_path.exists():
+    # From-snapshot: load a pre-built graph.db instead of indexing
+    if getattr(args, "from_snapshot", None):
+        from .builder import load_from_snapshot
         try:
-            cfg_exclude = json.loads(cfg_path.read_text()).get("exclude_dirs", [])
-        except (json.JSONDecodeError, OSError):
-            pass
-    exclude_dirs = list(dict.fromkeys(cfg_exclude + cli_exclude)) or None
+            print(f"Loading snapshot for {args.from_snapshot}...", file=sys.stderr)
+            start = time.time()
+            graph = load_from_snapshot(args.from_snapshot)
+            elapsed = time.time() - start
+            stats = graph.stats
+            print(
+                f"Done in {elapsed:.1f}s — {stats['files']} files, "
+                f"{stats['symbols']} symbols, {stats['edges']} edges",
+                file=sys.stderr,
+            )
+        except FileNotFoundError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 1
+        except Exception as exc:
+            print(f"error loading snapshot: {exc}", file=sys.stderr)
+            return 1
+    else:
+        # Merge CLI --exclude with config-file exclude_dirs
+        cli_exclude = [p.strip() for p in args.exclude.split(",")] if args.exclude else []
+        cfg_path = Path(repo) / ".tempo" / "config.json"
+        cfg_exclude: list[str] = []
+        if cfg_path.exists():
+            try:
+                cfg_exclude = json.loads(cfg_path.read_text()).get("exclude_dirs", [])
+            except (json.JSONDecodeError, OSError):
+                pass
+        exclude_dirs = list(dict.fromkeys(cfg_exclude + cli_exclude)) or None
 
-    print(f"Building graph for {repo}...", file=sys.stderr)
-    start = time.time()
-    graph = build_graph(repo, exclude_dirs=exclude_dirs)
-    elapsed = time.time() - start
-    stats = graph.stats
-    print(
-        f"Done in {elapsed:.1f}s — {stats['files']} files, "
-        f"{stats['symbols']} symbols, {stats['edges']} edges",
-        file=sys.stderr,
-    )
+        print(f"Building graph for {repo}...", file=sys.stderr)
+        start = time.time()
+        graph = build_graph(repo, exclude_dirs=exclude_dirs)
+        elapsed = time.time() - start
+        stats = graph.stats
+        print(
+            f"Done in {elapsed:.1f}s — {stats['files']} files, "
+            f"{stats['symbols']} symbols, {stats['edges']} edges",
+            file=sys.stderr,
+        )
 
     if args.json:
         data = {

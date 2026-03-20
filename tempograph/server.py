@@ -221,6 +221,17 @@ def _run_tool(tool_name: str, repo_path: str, output_format: str, render_fn,
     if err:
         return _error(err, f"Directory not found: {repo_path}", output_format)
 
+    # Check prefetch cache first
+    cache_key = f"{p}:{tool_name}"
+    if cache_key in _prefetch_cache:
+        output = _prefetch_cache.pop(cache_key)
+        start = time.time()
+        elapsed = 0.001  # ~instant from cache
+        tokens = count_tokens(output)
+        _log_tool(tool_name, p, output, elapsed, prefetch_hit=True, **log_extra)
+        _prefetch_next(tool_name, p, _resolve_excludes(p, exclude_dirs))
+        return _success(output, tokens, elapsed, output_format)
+
     excludes = _resolve_excludes(p, exclude_dirs)
     start = time.time()
     result = _get_or_build_graph(p, exclude_dirs=excludes or None)
@@ -237,7 +248,91 @@ def _run_tool(tool_name: str, repo_path: str, output_format: str, render_fn,
     elapsed = time.time() - start
     tokens = count_tokens(output)
     _log_tool(tool_name, p, output, elapsed, **log_extra)
+
+    # Speculative prefetch: pre-warm the predicted next mode in background
+    _prefetch_next(tool_name, p, excludes)
+
     return _success(output, tokens, elapsed, output_format)
+
+
+# Prefetch cache: store pre-computed results for predicted next modes
+_prefetch_cache: dict[str, str] = {}  # key = f"{repo}:{mode}", value = rendered output
+
+
+def _prefetch_next(current_tool: str, repo_path: str, exclude_dirs: list[str] | None) -> None:
+    """Pre-warm the most likely next mode based on session prediction."""
+    import threading
+    try:
+        from .predict import suggest_prefetch
+        suggestions = suggest_prefetch(repo_path, current_tool, threshold=0.4)
+        if not suggestions:
+            return
+        # Only prefetch the single most likely mode
+        next_mode = suggestions[0]
+        cache_key = f"{repo_path}:{next_mode}"
+        if cache_key in _prefetch_cache:
+            return  # already cached
+
+        def _do_prefetch():
+            try:
+                graph = _get_or_build_graph(repo_path, exclude_dirs=exclude_dirs)
+                if isinstance(graph, str):
+                    return
+                _prefetch_renderers = {
+                    "overview": lambda g: render_overview(g),
+                    "hotspots": lambda g: render_hotspots(g),
+                    "focus": None,  # needs query, can't prefetch
+                    "dead_code": lambda g: render_dead_code(g),
+                    "stats": None,  # cheap enough, skip
+                    "architecture": lambda g: render_architecture(g),
+                    "file_map": lambda g: render_map(g),
+                    "dependencies": lambda g: render_dependencies(g),
+                }
+                fn = _prefetch_renderers.get(next_mode)
+                if fn:
+                    _prefetch_cache[cache_key] = fn(graph)
+            except Exception:
+                pass
+
+        t = threading.Thread(target=_do_prefetch, daemon=True)
+        t.start()
+    except (ImportError, Exception):
+        pass
+
+
+@mcp.tool()
+def suggest_next(repo_path: str, current_tool: str = "", output_format: str = "text") -> str:
+    """Suggest the most useful next tool based on learned session patterns.
+
+    Analyzes 68K+ historical usage events to predict what tool agents typically
+    call next. Helps agents follow optimal workflows without memorizing sequences.
+
+    Example: after calling 'focus', this returns 'hotspots (60%), blast_radius (20%)'
+
+    repo_path: absolute path to repository
+    current_tool: the tool you just called (e.g. 'focus', 'overview')
+    """
+    start = time.time()
+    p, err = _validate_repo(repo_path)
+    if err:
+        return err
+
+    try:
+        from .predict import predict_next as _predict
+        predictions = _predict(p, current_tool, top_k=5)
+        if not predictions:
+            output = f"No predictions for '{current_tool}' — not enough usage data yet."
+        else:
+            lines = [f"After '{current_tool}', agents typically call:"]
+            for mode, prob in predictions:
+                bar = "#" * int(prob * 20)
+                lines.append(f"  {mode:25s} {prob:5.0%}  {bar}")
+            output = "\n".join(lines)
+    except (ImportError, Exception) as e:
+        output = f"Prediction unavailable: {e}"
+
+    elapsed = time.time() - start
+    return _success(output, count_tokens(output), elapsed, output_format)
 
 
 # ── Tool 1: Build + orient ──────────────────────────────────────────
@@ -267,15 +362,23 @@ def index_repo(repo_path: str, exclude_dirs: str = "", output_format: str = "tex
         return _error(code, msg or "Graph build failed", output_format)
 
     elapsed = time.time() - start
-    # Add storage and embedding status
+    # Add storage and embedding status via graph_stats
     db_status = ""
     if hasattr(result, '_db') and result._db is not None:
         db = result._db
-        db_status = f"\nStorage: SQLite ({db.symbol_count()} symbols, {db.file_count()} files)"
-        if getattr(db, '_has_vectors', False):
-            db_status += " + vectors enabled"
-        else:
-            db_status += " | run embed_repo to enable semantic search"
+        try:
+            db.init_vectors()
+            stats = db.graph_stats()
+            db_mb = stats["db_size_bytes"] / (1024 * 1024)
+            db_status = f"\nStorage: SQLite ({db_mb:.1f}MB) | {stats['symbols']} symbols, {stats['edges']} edges, {stats['files']} files"
+            if stats["vectors"] > 0:
+                db_status += f" | {stats['vectors']} vectors (semantic search active)"
+            else:
+                db_status += " | run embed_repo to enable semantic search"
+            top_langs = ", ".join(f"{k}({v})" for k, v in list(stats["languages"].items())[:4])
+            db_status += f"\nLanguages: {top_langs}"
+        except Exception:
+            db_status = f"\nStorage: SQLite ({db.symbol_count()} symbols, {db.file_count()} files)"
     output = f"Indexed in {elapsed:.1f}s{db_status}\n\n{render_overview(result)}"
     tokens = count_tokens(output)
     _log_tool("index_repo", p, output, elapsed)
@@ -458,16 +561,18 @@ def diff_context(repo_path: str, changed_files: str = "", scope: str = "unstaged
 # ── Tool 7: Dead code ───────────────────────────────────────────────
 
 @mcp.tool()
-def dead_code(repo_path: str, max_tokens: int = 8000, exclude_dirs: str = "", output_format: str = "text") -> str:
+def dead_code(repo_path: str, max_tokens: int = 8000, exclude_dirs: str = "", output_format: str = "text", include_low: bool = False) -> str:
     """Find exported symbols never referenced by other files.
     Potential cleanup targets — unused exports, orphaned functions,
     dead interfaces. Respects Python __all__ for precise export tracking.
 
     max_tokens: cap output size (default 8000) to prevent context overflow
     exclude_dirs: comma-separated directory prefixes to skip
-    output_format: "text" (default) or "json" for structured response"""
+    output_format: "text" (default) or "json" for structured response
+    include_low: include low-confidence (likely false positive) symbols (default False,
+        saves ~47% tokens — ~1,300 tokens on a typical repo)"""
     return _run_tool("dead_code", repo_path, output_format,
-                     lambda g: render_dead_code(g, max_tokens=max_tokens),
+                     lambda g: render_dead_code(g, max_tokens=max_tokens, include_low=include_low),
                      exclude_dirs=exclude_dirs)
 
 
