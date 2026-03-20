@@ -6,6 +6,7 @@ interface ModeInfo {
   label: string;
   icon: ComponentType<{ size?: number }>;
   tag: string;
+  desc?: string;
 }
 
 interface Props {
@@ -102,8 +103,21 @@ export function CommandPalette({ modes, onSelect, onClose }: Props) {
             <div style={{ padding: "16px 12px", color: "var(--text-tertiary)", fontSize: 12 }}>No modes match "{query}"</div>
           )}
         </div>
-        <div style={{ padding: "6px 12px", borderTop: "1px solid var(--border)", fontSize: 10, color: "var(--text-tertiary)", display: "flex", gap: 12 }}>
-          <span>↑↓ navigate</span><span>↵ select</span><span>Esc close</span>
+        <div style={{ borderTop: "1px solid var(--border)" }}>
+          {filtered[selected]?.desc && (
+            <div style={{
+              padding: "6px 12px",
+              fontSize: 11,
+              color: "var(--text-secondary)",
+              lineHeight: 1.5,
+              borderBottom: "1px solid var(--border-subtle)",
+            }}>
+              {filtered[selected].desc}
+            </div>
+          )}
+          <div style={{ padding: "5px 12px", fontSize: 10, color: "var(--text-tertiary)", display: "flex", gap: 12 }}>
+            <span>↑↓ navigate</span><span>↵ select</span><span>Esc close</span>
+          </div>
         </div>
       </div>
     </div>
