@@ -2132,3 +2132,176 @@ class TestFileVolatilityWarning:
             out = render_focused(g, "helper", max_tokens=4000)
 
         assert "Volatile:" not in out, "must NOT emit Volatile: for low-churn seed file"
+
+
+class TestKotlinParser:
+    def test_class_and_methods(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+class Greeter(private val name: String) {
+    fun greet(): String = "Hello"
+    fun farewell(): String = "Bye"
+}
+"""
+        p = FileParser("Greeter.kt", Language.KOTLIN, code)
+        syms, edges, _ = p.parse()
+        names = {s.qualified_name for s in syms}
+        assert "Greeter" in names
+        assert "Greeter.greet" in names or any("greet" in n for n in names)
+
+    def test_object_declaration(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+object Singleton {
+    val instance: String = "singleton"
+    fun getInstance(): String = instance
+}
+"""
+        p = FileParser("Singleton.kt", Language.KOTLIN, code)
+        syms, _, _ = p.parse()
+        names = {s.name for s in syms}
+        assert "Singleton" in names
+
+    def test_companion_object(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+class MyClass {
+    companion object {
+        fun create(): MyClass = MyClass()
+    }
+}
+"""
+        p = FileParser("MyClass.kt", Language.KOTLIN, code)
+        syms, _, _ = p.parse()
+        # companion object should be detected as a class-like symbol
+        kinds = {s.kind.value for s in syms}
+        assert any(k in kinds for k in ("class", "struct", "interface"))
+
+
+class TestScalaParser:
+    def test_class_and_methods(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+class Animal(val name: String) {
+  def speak(): String = s"I am $name"
+  def breathe(): Unit = {}
+}
+"""
+        p = FileParser("Animal.scala", Language.SCALA, code)
+        syms, edges, _ = p.parse()
+        names = {s.qualified_name for s in syms}
+        assert "Animal" in names
+        animal = next(s for s in syms if s.name == "Animal")
+        assert animal.kind.value == "class"
+        assert any("speak" in n for n in names)
+
+    def test_object_definition(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+object MyApp {
+  def main(args: Array[String]): Unit = {}
+}
+"""
+        p = FileParser("MyApp.scala", Language.SCALA, code)
+        syms, _, _ = p.parse()
+        names = {s.name for s in syms}
+        assert "MyApp" in names
+
+    def test_trait_definition(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+trait Flyable {
+  def fly(): Unit
+}
+"""
+        p = FileParser("Flyable.scala", Language.SCALA, code)
+        syms, _, _ = p.parse()
+        names = {s.name for s in syms}
+        assert "Flyable" in names
+        flyable = next(s for s in syms if s.name == "Flyable")
+        assert flyable.kind.value == "interface"
+
+    def test_enum_definition(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+enum Color { case Red, Green, Blue }
+"""
+        p = FileParser("Color.scala", Language.SCALA, code)
+        syms, _, _ = p.parse()
+        assert any(s.name == "Color" for s in syms)
+
+    def test_top_level_function(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+def topLevel(x: Int): Int = x + 1
+"""
+        p = FileParser("utils.scala", Language.SCALA, code)
+        syms, _, _ = p.parse()
+        assert any(s.name == "topLevel" for s in syms)
+
+
+class TestZigParser:
+    def test_pub_function(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+pub fn main() !void {}
+fn helper(x: i32) i32 { return x; }
+"""
+        p = FileParser("main.zig", Language.ZIG, code)
+        syms, _, _ = p.parse()
+        names = {s.name for s in syms}
+        assert "main" in names
+        assert "helper" in names
+        main_sym = next(s for s in syms if s.name == "main")
+        assert main_sym.exported is True
+        helper_sym = next(s for s in syms if s.name == "helper")
+        assert helper_sym.exported is False
+
+    def test_struct_with_methods(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+pub const Point = struct {
+    x: f32,
+    y: f32,
+    pub fn distance(self: Point, other: Point) f32 { return self.x - other.x; }
+    fn private_fn(self: Point) f32 { return self.x; }
+};
+"""
+        p = FileParser("point.zig", Language.ZIG, code)
+        syms, edges, _ = p.parse()
+        names = {s.name for s in syms}
+        assert "Point" in names
+        assert "distance" in names
+        assert "private_fn" in names
+        point = next(s for s in syms if s.name == "Point")
+        assert point.kind.value == "struct"
+        assert point.exported is True
+        distance = next(s for s in syms if s.name == "distance")
+        assert distance.exported is True
+        private_fn = next(s for s in syms if s.name == "private_fn")
+        assert private_fn.exported is False
+        # methods should have CONTAINS edges
+        contains_edges = [e for e in edges if e.kind.value == "contains"]
+        assert len(contains_edges) >= 1
+
+    def test_enum(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+pub const Color = enum { Red, Green, Blue };
+"""
+        p = FileParser("color.zig", Language.ZIG, code)
+        syms, _, _ = p.parse()
+        assert any(s.name == "Color" for s in syms)
+        color = next(s for s in syms if s.name == "Color")
+        assert color.kind.value == "enum"
