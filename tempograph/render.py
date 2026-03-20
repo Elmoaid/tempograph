@@ -858,6 +858,22 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
         lines.append(f"\nCo-change orbit: {', '.join(orbit_parts)}")
         lines.append("  (files that historically change with these — check if your change affects them)")
 
+    # File volatility: flag seed files that are actively changing.
+    # Volatile files mean context may lag behind recent edits — agents should re-read before modifying.
+    # Only fires for files with high churn (≥10/200 commits). No annotation for normal/stable files.
+    if graph.root and seed_file_paths and token_count < max_tokens - 60:
+        try:
+            from .git import file_commit_counts
+            churn = file_commit_counts(graph.root)
+            _VOLATILE_THRESHOLD = 10
+            volatile = [(fp, churn.get(fp, 0)) for fp in seed_file_paths
+                        if churn.get(fp, 0) >= _VOLATILE_THRESHOLD]
+            if volatile:
+                parts = [f"{fp} ({count}/200 commits)" for fp, count in volatile]
+                lines.append(f"\nVolatile: {', '.join(parts)} — high-churn file(s), re-read before editing")
+        except Exception:
+            pass
+
     return "\n".join(lines)
 
 
@@ -1465,9 +1481,26 @@ def render_architecture(graph: Tempo) -> str:
 _DISPATCH_PATTERNS = ("handle_", "on_", "test_", "route", "command", "hook", "middleware", "plugin")
 
 
+_TEST_FILE_SUFFIXES = (".test.ts", ".test.tsx", ".test.js", ".spec.ts", ".spec.tsx", ".spec.js")
+
+
+def _is_test_file(file_path: str) -> bool:
+    """Return True if file_path looks like a test/spec file."""
+    name = Path(file_path).name
+    return (
+        (name.startswith("test_") and name.endswith(".py"))
+        or name.endswith("_test.py")
+        or any(name.endswith(sfx) for sfx in _TEST_FILE_SUFFIXES)
+    )
+
+
 def _dead_code_confidence(sym: Symbol, graph: Tempo) -> int:
     """Score 0-100: how confident we are this symbol is truly dead."""
     score = 0
+
+    # Test files: symbols are test infrastructure discovered by runners, not dead code
+    if _is_test_file(sym.file_path):
+        score -= 50
 
     # No callers at all (even same-file) — strong signal
     if not graph.callers_of(sym.id):
