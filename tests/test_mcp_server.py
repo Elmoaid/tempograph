@@ -2305,3 +2305,199 @@ pub const Color = enum { Red, Green, Blue };
         assert any(s.name == "Color" for s in syms)
         color = next(s for s in syms if s.name == "Color")
         assert color.kind.value == "enum"
+
+
+class TestCCppParser:
+    def test_c_function_with_calls(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+int compute(int a, int b) {
+    return a + b;
+}
+
+static void helper(void) {
+    compute(1, 2);
+}
+"""
+        p = FileParser("math.c", Language.C, code)
+        syms, edges, _ = p.parse()
+        names = {s.name for s in syms}
+        assert "compute" in names
+        assert "helper" in names
+        compute_sym = next(s for s in syms if s.name == "compute")
+        assert compute_sym.exported is True
+        helper_sym = next(s for s in syms if s.name == "helper")
+        assert helper_sym.exported is False
+        # CALLS edge from helper → compute
+        calls_edges = [e for e in edges if e.kind.value == "calls"]
+        assert any(e.target_id == "compute" for e in calls_edges)
+
+    def test_c_struct_with_fields(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+struct Point {
+    int x;
+    int y;
+};
+
+typedef struct {
+    float width;
+    float height;
+} Rect;
+"""
+        p = FileParser("geo.c", Language.C, code)
+        syms, _, _ = p.parse()
+        names = {s.name for s in syms}
+        assert "Point" in names
+        assert "Rect" in names
+        point = next(s for s in syms if s.name == "Point")
+        assert point.kind.value == "struct"
+        rect = next(s for s in syms if s.name == "Rect")
+        assert rect.kind.value == "struct"
+
+    def test_c_enum(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+enum Color { RED, GREEN, BLUE };
+typedef enum { LOW, MED, HIGH } Priority;
+"""
+        p = FileParser("defs.h", Language.C, code)
+        syms, _, _ = p.parse()
+        names = {s.name for s in syms}
+        assert "Color" in names
+        color = next(s for s in syms if s.name == "Color")
+        assert color.kind.value == "enum"
+        assert "Priority" in names
+        priority = next(s for s in syms if s.name == "Priority")
+        assert priority.kind.value == "enum"
+
+    def test_cpp_class_with_methods(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+class Counter {
+public:
+    Counter();
+    int get() const;
+    void increment() {
+        count_++;
+        notify();
+    }
+private:
+    int count_;
+};
+"""
+        p = FileParser("counter.cpp", Language.CPP, code)
+        syms, edges, _ = p.parse()
+        names = {s.name for s in syms}
+        assert "Counter" in names
+        assert "increment" in names
+        counter = next(s for s in syms if s.name == "Counter")
+        assert counter.kind.value == "class"
+        increment = next(s for s in syms if s.name == "increment")
+        assert increment.kind.value == "method"
+        # CONTAINS edge: Counter → increment
+        contains_edges = [e for e in edges if e.kind.value == "contains"]
+        assert any(e.target_id.endswith("::Counter.increment") for e in contains_edges)
+
+    def test_cpp_namespace_transparent(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+namespace MyNS {
+    int compute(int x) {
+        return x * 2;
+    }
+
+    struct Config {
+        int timeout;
+    };
+}
+"""
+        p = FileParser("ns.cpp", Language.CPP, code)
+        syms, _, _ = p.parse()
+        names = {s.name for s in syms}
+        # Symbols inside namespace are extracted
+        assert "compute" in names
+        assert "Config" in names
+        # Namespace itself is not emitted as a symbol
+        assert "MyNS" not in names
+
+    def test_header_forward_declarations_no_crash(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+#ifndef MYLIB_H
+#define MYLIB_H
+
+int add(int a, int b);
+void process(const char* data, int len);
+struct MyStruct;
+
+#endif
+"""
+        p = FileParser("mylib.h", Language.C, code)
+        # Must not crash; forward declarations are skipped
+        syms, edges, _ = p.parse()
+        # No function symbols from forward declarations (no bodies)
+        fn_syms = [s for s in syms if s.kind.value == "function"]
+        assert len(fn_syms) == 0
+
+
+class TestBlastRiskBadge:
+    """Tests for the blast risk badge in render_focused.
+
+    When a seed symbol is called from >5 unique external files, focus mode emits
+    a concrete file count badge so agents know to run blast mode before editing.
+    """
+
+    def _make_blast_repo(self, tmp_path, n_callers: int) -> tuple:
+        """Build a minimal repo with n_callers files each importing core.shared_util."""
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def shared_util():\n    pass\n")
+        for i in range(n_callers):
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from core import shared_util\n\ndef caller_{i}():\n    shared_util()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        return g
+
+    def test_badge_fires_when_over_threshold(self, tmp_path):
+        """render_focused emits 'High impact: N files' when >5 unique external files call seed."""
+        from tempograph.render import render_focused
+
+        g = self._make_blast_repo(tmp_path, n_callers=7)
+        out = render_focused(g, "shared_util", max_tokens=4000)
+
+        assert "High impact:" in out, f"badge must fire for 7 callers; got:\n{out}"
+        assert "files depend on" in out, "must include file count phrasing"
+        assert "blast mode" in out, "must suggest blast mode"
+
+    def test_badge_silent_when_below_threshold(self, tmp_path):
+        """render_focused does NOT emit 'High impact:' when ≤5 unique external files call seed."""
+        from tempograph.render import render_focused
+
+        g = self._make_blast_repo(tmp_path, n_callers=4)
+        out = render_focused(g, "shared_util", max_tokens=4000)
+
+        assert "High impact:" not in out, f"badge must NOT fire for 4 callers; got:\n{out}"
+
+    def test_badge_shows_correct_count(self, tmp_path):
+        """render_focused badge reports the exact number of unique external files."""
+        from tempograph.render import render_focused
+
+        g = self._make_blast_repo(tmp_path, n_callers=8)
+        out = render_focused(g, "shared_util", max_tokens=4000)
+
+        assert "High impact:" in out, "badge must fire for 8 callers"
+        # Extract the N from "High impact: N files depend on..."
+        import re
+        m = re.search(r"High impact: (\d+) files", out)
+        assert m is not None, f"badge must have numeric count; got:\n{out}"
+        count = int(m.group(1))
+        # 8 unique external files calling shared_util
+        assert count == 8, f"expected count=8, got {count}"

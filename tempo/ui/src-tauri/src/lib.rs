@@ -475,6 +475,30 @@ fn report_feedback(repo_path: String, mode: String, helpful: bool, note: String)
     }
 }
 
+/// Download a pre-indexed snapshot via `python3 -m tempograph snapshot --repo <slug>`.
+#[tauri::command]
+fn download_snapshot(slug: String) -> TempoResult {
+    let mut cmd = Command::new("python3");
+    cmd.arg("-m").arg("tempograph").arg("snapshot").arg("--repo").arg(&slug);
+    match cmd.output() {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let out = if output.status.success() {
+                if stdout.trim().is_empty() { stderr } else { stdout }
+            } else {
+                if stderr.trim().is_empty() { stdout } else { stderr }
+            };
+            TempoResult { success: output.status.success(), output: out, mode: "snapshot_download".into() }
+        }
+        Err(e) => TempoResult {
+            success: false,
+            output: format!("Failed to download snapshot: {}", e),
+            mode: "snapshot_download".into(),
+        },
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -496,6 +520,7 @@ pub fn run() {
             path_exists,
             write_file,
             report_feedback,
+            download_snapshot,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
