@@ -2651,6 +2651,172 @@ mod tests {
         assert test_sym.kind.value == "test"
 
 
+class TestSwiftParser:
+    def test_free_function(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+func compute(a: Int, b: Int) -> Int {
+    return a + b
+}
+"""
+        p = FileParser("math.swift", Language.SWIFT, code)
+        syms, _, _ = p.parse()
+        assert any(s.name == "compute" for s in syms)
+        fn_sym = next(s for s in syms if s.name == "compute")
+        assert fn_sym.kind.value == "function"
+
+    def test_class_with_method(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+class Foo {
+    func bar() -> Int { return 1 }
+}
+"""
+        p = FileParser("foo.swift", Language.SWIFT, code)
+        syms, edges, _ = p.parse()
+        names = {s.name for s in syms}
+        assert "Foo" in names
+        assert "bar" in names
+        foo_sym = next(s for s in syms if s.name == "Foo")
+        assert foo_sym.kind.value == "class"
+        bar_sym = next(s for s in syms if s.name == "bar")
+        assert bar_sym.kind.value == "method"
+        contains = [e for e in edges if e.kind.value == "contains"]
+        assert any(e.source_id == foo_sym.id and e.target_id == bar_sym.id for e in contains)
+
+    def test_struct(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+struct Point {
+    var x: Double
+    var y: Double
+}
+"""
+        p = FileParser("geo.swift", Language.SWIFT, code)
+        syms, _, _ = p.parse()
+        assert any(s.name == "Point" for s in syms)
+        pt = next(s for s in syms if s.name == "Point")
+        assert pt.kind.value == "struct"
+
+    def test_enum(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+enum Direction {
+    case north
+    case south
+    case east
+    case west
+}
+"""
+        p = FileParser("dir.swift", Language.SWIFT, code)
+        syms, _, _ = p.parse()
+        assert any(s.name == "Direction" for s in syms)
+        d = next(s for s in syms if s.name == "Direction")
+        assert d.kind.value == "enum"
+
+    def test_protocol(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+protocol Drawable {
+    func draw()
+    func bounds() -> (Double, Double)
+}
+"""
+        p = FileParser("proto.swift", Language.SWIFT, code)
+        syms, edges, _ = p.parse()
+        names = {s.name for s in syms}
+        assert "Drawable" in names
+        d = next(s for s in syms if s.name == "Drawable")
+        assert d.kind.value == "interface"
+        assert "draw" in names
+        assert "bounds" in names
+        contains = [e for e in edges if e.kind.value == "contains"]
+        draw_sym = next(s for s in syms if s.name == "draw")
+        assert any(e.source_id == d.id and e.target_id == draw_sym.id for e in contains)
+
+    def test_extension(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+class Foo {
+    func base() {}
+}
+
+extension Foo {
+    func baz() {}
+}
+"""
+        p = FileParser("ext.swift", Language.SWIFT, code)
+        syms, edges, _ = p.parse()
+        names = {s.name for s in syms}
+        assert "Foo" in names
+        assert "baz" in names
+        foo_sym = next(s for s in syms if s.name == "Foo")
+        baz_sym = next(s for s in syms if s.name == "baz")
+        assert baz_sym.kind.value == "method"
+        contains = [e for e in edges if e.kind.value == "contains"]
+        assert any(e.source_id == foo_sym.id and e.target_id == baz_sym.id for e in contains)
+
+    def test_init_declaration(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+class Widget {
+    var value: Int
+    init(value: Int) {
+        self.value = value
+    }
+}
+"""
+        p = FileParser("widget.swift", Language.SWIFT, code)
+        syms, edges, _ = p.parse()
+        widget = next(s for s in syms if s.name == "Widget")
+        init_sym = next((s for s in syms if s.name == "init"), None)
+        assert init_sym is not None
+        assert init_sym.kind.value == "method"
+        contains = [e for e in edges if e.kind.value == "contains"]
+        assert any(e.source_id == widget.id and e.target_id == init_sym.id for e in contains)
+
+    def test_pub_visibility_exported(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+public func exported() {}
+internal func notExported() {}
+private func alsoPrivate() {}
+func defaultInternal() {}
+"""
+        p = FileParser("vis.swift", Language.SWIFT, code)
+        syms, _, _ = p.parse()
+        exp = next(s for s in syms if s.name == "exported")
+        assert exp.exported is True
+        # internal/private/default are not marked as exported by the handler
+        not_exp = next(s for s in syms if s.name == "notExported")
+        assert not_exp.exported is False
+        also_priv = next(s for s in syms if s.name == "alsoPrivate")
+        assert also_priv.exported is False
+
+    def test_calls_edge(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+func doWork() {
+    helper()
+}
+
+func helper() {}
+"""
+        p = FileParser("work.swift", Language.SWIFT, code)
+        syms, edges, _ = p.parse()
+        calls = [e for e in edges if e.kind.value == "calls"]
+        assert any("helper" in e.target_id for e in calls)
+
+
 class TestBlastRiskBadge:
     """Tests for the blast risk badge in render_focused.
 
