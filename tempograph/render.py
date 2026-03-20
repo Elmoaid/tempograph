@@ -1074,9 +1074,14 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
     fi = graph.files.get(file_path)
     if not fi:
         if file_path and Path(file_path).exists():
+            parent_dir = Path(file_path).parent.name
+            exclude_hint = (
+                f" (e.g. '{parent_dir}' may be in your --exclude list)" if parent_dir else ""
+            )
             return (
-                f"File '{file_path}' exists but is not indexed — "
-                "run tempograph on its source directory to index it."
+                f"⚠  '{file_path}' exists on disk but is not in the graph{exclude_hint}.\n"
+                "   Re-run without --exclude to index it, or run "
+                "`tempograph . --mode overview` to see what is currently indexed."
             )
         return f"File '{file_path}' not found."
 
@@ -1299,6 +1304,14 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         if edge.kind == EdgeKind.RENDERS:
             renders_from[edge.source_id] = renders_from.get(edge.source_id, 0) + 1
 
+    # Load change velocity: files in active churn carry coordination risk
+    velocity: dict[str, float] = {}
+    try:
+        from .git import file_change_velocity
+        velocity = file_change_velocity(graph.root)
+    except Exception:
+        pass
+
     scores: list[tuple[float, Symbol]] = []
 
     for sym in graph.symbols.values():
@@ -1323,6 +1336,14 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         # Cyclomatic complexity: log scale to avoid dominating
         if sym.complexity > 1:
             score += math.log2(sym.complexity) * 3.0
+
+        # Change velocity multiplier: log-scale boost for actively churning files
+        # A symbol in a file with 10 commits/week gets ~1.72x score boost
+        if velocity and sym.file_path:
+            rel = sym.file_path
+            cpw = velocity.get(rel, 0.0)
+            if cpw > 0:
+                score *= 1.0 + math.log2(1.0 + cpw) * 0.2
 
         if score > 0:
             scores.append((score, sym))
@@ -1363,6 +1384,13 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             warnings.append("refactor candidate — extreme complexity")
         elif sym.complexity > 50 and sym.line_count > 200:
             warnings.append("consider splitting — complex and large")
+        # Change velocity warning: active churn = coordination hazard
+        if velocity and sym.file_path:
+            cpw = velocity.get(sym.file_path, 0.0)
+            if cpw >= 5.0:
+                warnings.append(
+                    f"active churn: {cpw:.0f} commits/week — re-read before editing"
+                )
         if warnings:
             lines.append(f"    → {'; '.join(warnings)}")
 
