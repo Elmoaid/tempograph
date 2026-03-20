@@ -82,6 +82,71 @@
   align-items: center;
 }
 
+/* Recent repos strip */
+.recent-repos-strip {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 3px 16px;
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  flex-shrink: 0;
+}
+.recent-repos-label {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-right: 6px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.recent-repo-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.12s;
+  max-width: 260px;
+}
+.recent-repo-item:hover {
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  border-color: var(--border);
+}
+.recent-repo-name {
+  font-weight: 500;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.recent-repo-path {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+}
+.recent-repo-remove {
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  border-radius: 3px;
+  opacity: 0;
+  transition: opacity 0.1s;
+  flex-shrink: 0;
+}
+.recent-repo-item:hover .recent-repo-remove { opacity: 0.5; }
+.recent-repo-remove:hover { opacity: 1 !important; background: var(--bg-hover); }
+
 /* Grid shell */
 .grid-shell {
   display: grid;
