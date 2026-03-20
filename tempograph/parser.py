@@ -23,7 +23,7 @@ from .types import (
     EXTENSION_TO_LANGUAGE,
 )
 from .lang._utils import _node_text, _first_comment_above, _extract_signature
-from .lang import PythonHandlerMixin, JSHandlerMixin, GoHandlerMixin, JavaHandlerMixin, CsharpHandlerMixin, RubyHandlerMixin
+from .lang import PythonHandlerMixin, JSHandlerMixin, GoHandlerMixin, JavaHandlerMixin, CsharpHandlerMixin, RubyHandlerMixin, ZigHandlerMixin, CHandlerMixin
 
 # Build tree-sitter languages
 _LANGUAGES: dict[Language, TSLanguage] = {}
@@ -67,7 +67,7 @@ _LANGUAGE_PACK_NAMES: dict[Language, str] = {
 }
 
 
-class FileParser(PythonHandlerMixin, JSHandlerMixin, GoHandlerMixin, JavaHandlerMixin, CsharpHandlerMixin, RubyHandlerMixin):
+class FileParser(PythonHandlerMixin, JSHandlerMixin, GoHandlerMixin, JavaHandlerMixin, CsharpHandlerMixin, RubyHandlerMixin, ZigHandlerMixin, CHandlerMixin):
     """Parse a single source file and extract symbols + edges."""
 
     def __init__(self, file_path: str, language: Language, source: bytes, *, is_tauri: bool = False):
@@ -405,6 +405,8 @@ class FileParser(PythonHandlerMixin, JSHandlerMixin, GoHandlerMixin, JavaHandler
         "module_definition", "module_declaration",
         "protocol_declaration", "extension_declaration",
         "object_declaration",  # Kotlin
+        "companion_object",  # Kotlin companion objects
+        "object_definition", "trait_definition",  # Scala
     })
     # Field names that different grammars use for the symbol name
     _GENERIC_NAME_FIELDS = ("name", "type_identifier", "simple_identifier", "identifier")

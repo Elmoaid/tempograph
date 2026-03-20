@@ -835,12 +835,21 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                 tag = " [grep-only]" if fi.line_count > 500 else ""
                 lines.append(f"  {fp} ({fi.line_count} lines){tag}")
 
-    # Blast radius hint for high-impact seed symbols
-    high_impact = [s for s, d in ordered[:5] if d == 0
-                   and len(graph.callers_of(s.id)) >= 3
-                   and any(c.file_path != s.file_path for c in graph.callers_of(s.id))]
-    if high_impact and token_count < max_tokens - 50:
-        lines.append(f"\nBefore modifying: run blast_radius(query=\"{high_impact[0].qualified_name}\") to check downstream impact.")
+    # Blast risk badge: count unique downstream files for seed symbols.
+    # Concrete file counts ("12 files depend on this") change agent behavior at the right moment.
+    # Vague "check downstream impact" hints get ignored. Specific numbers don't.
+    _BLAST_FILE_THRESHOLD = 5
+    _blast_hits: list[tuple[Symbol, int]] = []
+    for _bs, _bd in ordered[:5]:
+        if _bd != 0:
+            continue
+        _ext_files = {c.file_path for c in graph.callers_of(_bs.id) if c.file_path != _bs.file_path}
+        if len(_ext_files) > _BLAST_FILE_THRESHOLD:
+            _blast_hits.append((_bs, len(_ext_files)))
+    if _blast_hits and token_count < max_tokens - 60:
+        _blast_hits.sort(key=lambda x: -x[1])
+        _top_sym, _top_count = _blast_hits[0]
+        lines.append(f"\nHigh impact: {_top_count} files depend on {_top_sym.qualified_name} — run blast mode before editing")
 
     # Co-change orbit: git history reveals which files change together with seed files.
     # Structural call graph = what's connected. Co-change orbit = what historically moves together.
@@ -857,6 +866,22 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
         orbit_parts = [f"{fp} ({score:.0%} {_recency_label(days)})" for fp, score, days in orbit]
         lines.append(f"\nCo-change orbit: {', '.join(orbit_parts)}")
         lines.append("  (files that historically change with these — check if your change affects them)")
+
+    # File volatility: flag seed files that are actively changing.
+    # Volatile files mean context may lag behind recent edits — agents should re-read before modifying.
+    # Only fires for files with high churn (≥10/200 commits). No annotation for normal/stable files.
+    if graph.root and seed_file_paths and token_count < max_tokens - 60:
+        try:
+            from .git import file_commit_counts
+            churn = file_commit_counts(graph.root)
+            _VOLATILE_THRESHOLD = 10
+            volatile = [(fp, churn.get(fp, 0)) for fp in seed_file_paths
+                        if churn.get(fp, 0) >= _VOLATILE_THRESHOLD]
+            if volatile:
+                parts = [f"{fp} ({count}/200 commits)" for fp, count in volatile]
+                lines.append(f"\nVolatile: {', '.join(parts)} — high-churn file(s), re-read before editing")
+        except Exception:
+            pass
 
     return "\n".join(lines)
 
@@ -1465,9 +1490,26 @@ def render_architecture(graph: Tempo) -> str:
 _DISPATCH_PATTERNS = ("handle_", "on_", "test_", "route", "command", "hook", "middleware", "plugin")
 
 
+_TEST_FILE_SUFFIXES = (".test.ts", ".test.tsx", ".test.js", ".spec.ts", ".spec.tsx", ".spec.js")
+
+
+def _is_test_file(file_path: str) -> bool:
+    """Return True if file_path looks like a test/spec file."""
+    name = Path(file_path).name
+    return (
+        (name.startswith("test_") and name.endswith(".py"))
+        or name.endswith("_test.py")
+        or any(name.endswith(sfx) for sfx in _TEST_FILE_SUFFIXES)
+    )
+
+
 def _dead_code_confidence(sym: Symbol, graph: Tempo) -> int:
     """Score 0-100: how confident we are this symbol is truly dead."""
     score = 0
+
+    # Test files: symbols are test infrastructure discovered by runners, not dead code
+    if _is_test_file(sym.file_path):
+        score -= 50
 
     # No callers at all (even same-file) — strong signal
     if not graph.callers_of(sym.id):
