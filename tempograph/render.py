@@ -269,8 +269,10 @@ def render_map(graph: Tempo, *, max_symbols_per_file: int = 8, max_tokens: int =
     return "\n".join(lines)
 
 
-def render_symbols(graph: Tempo, *, max_tokens: int = 0) -> str:
-    """Full symbol index — signatures, locations, relationships."""
+def render_symbols(graph: Tempo, *, max_tokens: int = 8000) -> str:
+    """Full symbol index — signatures, locations, relationships.
+
+    max_tokens: cap output to prevent context overflow (default 8000; 0 = no limit)"""
     lines = []
     token_count = 0
     by_file: dict[str, list[Symbol]] = defaultdict(list)
@@ -477,34 +479,37 @@ def _suggest_alternatives(graph: Tempo, query: str, max_suggestions: int = 5) ->
 
 def _cochange_orbit(
     repo_root: str, seed_files: list[str], seen_files: set[str], n: int = 3
-) -> list[tuple[str, float]]:
+) -> list[tuple[str, float, int]]:
     """Return top N co-change partners for seed_files not already in seen_files.
 
-    These are files that historically change together with the seeds in git commits.
+    Returns (file_path, decayed_score, days_since_last_cochange).
+    Uses recency-weighted scoring: recent co-changes outrank stale ones.
     Empty list if repo has no git history or no meaningful coupling.
     """
     try:
-        from .git import cochange_matrix, is_git_repo
+        from .git import cochange_matrix_recency, is_git_repo
         if not repo_root or not is_git_repo(repo_root):
             return []
-        matrix = cochange_matrix(repo_root, n_commits=200)
+        matrix = cochange_matrix_recency(repo_root, n_commits=200)
     except Exception:
         return []
 
     seed_set = set(seed_files)
-    partners: dict[str, float] = {}
+    partners: dict[str, tuple[float, int]] = {}
     for sf in seed_files:
-        for partner, freq in matrix.get(sf, []):
+        for partner, score, days in matrix.get(sf, []):
             if partner not in seed_set and partner not in seen_files:
-                partners[partner] = max(partners.get(partner, 0.0), freq)
+                if partner not in partners or score > partners[partner][0]:
+                    partners[partner] = (score, days)
 
-    return sorted(partners.items(), key=lambda x: -x[1])[:n]
+    return [(fp, score, days) for fp, (score, days) in
+            sorted(partners.items(), key=lambda x: -x[1][0])[:n]]
 
 
 def _find_orbit_seeds(
     graph: "Tempo",
     query_tokens: list[str],
-    orbit_pairs: list[tuple[str, float]],
+    orbit_pairs: list[tuple[str, float, int]],
 ) -> list[tuple["Symbol", float]]:
     """Find the best-matching symbol in each orbit file by query token overlap.
 
@@ -515,7 +520,7 @@ def _find_orbit_seeds(
         return []
 
     results: list[tuple["Symbol", float]] = []
-    for fp, freq in orbit_pairs:
+    for fp, freq, _days in orbit_pairs:
         syms = graph.symbols_in_file(fp)
         best_sym: "Symbol | None" = None
         best_score = 0
@@ -843,7 +848,13 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     seed_file_paths = [s.file_path for s, d in ordered if d == 0]
     orbit = _cochange_orbit(graph.root, seed_file_paths, seen_files)
     if orbit and token_count < max_tokens - 80:
-        orbit_parts = [f"{fp} ({freq:.0%})" for fp, freq in orbit]
+        def _recency_label(days: int) -> str:
+            if days < 45:
+                return "recent"
+            elif days < 120:
+                return "aging"
+            return "stale"
+        orbit_parts = [f"{fp} ({score:.0%} {_recency_label(days)})" for fp, score, days in orbit]
         lines.append(f"\nCo-change orbit: {', '.join(orbit_parts)}")
         lines.append("  (files that historically change with these — check if your change affects them)")
 
@@ -1037,6 +1048,11 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
 
     fi = graph.files.get(file_path)
     if not fi:
+        if file_path and Path(file_path).exists():
+            return (
+                f"File '{file_path}' exists but is not indexed — "
+                "run tempograph on its source directory to index it."
+            )
         return f"File '{file_path}' not found."
 
     lines = [f"Blast radius for {file_path}:", ""]
