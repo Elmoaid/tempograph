@@ -3074,3 +3074,115 @@ class TestChangeVelocityRanking:
         out = render_hotspots(g, top_n=10)
         assert "hotspot" in out.lower()
         assert "active churn" not in out
+
+
+class TestFileBlastCountRanking:
+    """Tests for file blast count ranking in render_hotspots.
+
+    The blast count is the number of external files that depend on a hotspot
+    file (importers + external callers). Files with high blast counts are
+    riskier than per-symbol cross_file alone suggests — a module with 10
+    small helpers each called from a different file has blast_count=10 but
+    low per-symbol cross_file. The multiplier surfaces this.
+    """
+
+    def _build(self, tmp_path, files: dict) -> object:
+        from tempograph.builder import build_graph
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_blast_count_helper(self, tmp_path):
+        """_file_blast_count returns correct count of external dependent files."""
+        from tempograph.render import _file_blast_count
+
+        g = self._build(tmp_path, {
+            "core.py": "def a():\n    pass\ndef b():\n    pass\n",
+            "user_a.py": "from core import a\ndef run():\n    a()\n",
+            "user_b.py": "from core import b\ndef run():\n    b()\n",
+            "user_c.py": "from core import a\ndef run():\n    a()\n",  # dup caller file for a
+        })
+        bc = _file_blast_count(g, "core.py")
+        # user_a, user_b, user_c all depend on core.py — at least 3 unique files
+        assert bc >= 3, f"Expected ≥3 dependent files, got {bc}"
+
+    def test_blast_count_isolated_file_is_zero(self, tmp_path):
+        """A file with no callers/importers gets blast_count=0."""
+        from tempograph.render import _file_blast_count
+
+        g = self._build(tmp_path, {
+            "island.py": "def lonely():\n    pass\n",
+            "other.py": "def unrelated():\n    pass\n",
+        })
+        bc = _file_blast_count(g, "island.py")
+        assert bc == 0, f"Isolated file should have blast_count=0, got {bc}"
+
+    def test_blast_count_boosts_score(self, tmp_path, monkeypatch):
+        """A file with many dependents ranks above one with same symbol-level coupling but fewer dependents."""
+        import tempograph.git as git_mod
+        monkeypatch.setattr(
+            git_mod,
+            "file_change_velocity",
+            lambda repo, recent_days=7: {},  # disable velocity to isolate blast effect
+        )
+
+        # hub.py: single function called from 10 files (high file blast)
+        # spoke.py: single function called from 3 files (low file blast)
+        files = {
+            "hub.py": "def hub_func():\n    pass\n",
+            "spoke.py": "def spoke_func():\n    pass\n",
+        }
+        for i in range(10):
+            files[f"hub_user_{i}.py"] = f"from hub import hub_func\ndef t{i}():\n    hub_func()\n"
+        for i in range(3):
+            files[f"spoke_user_{i}.py"] = f"from spoke import spoke_func\ndef t{i}():\n    spoke_func()\n"
+
+        from tempograph.render import render_hotspots
+        g = self._build(tmp_path, files)
+        out = render_hotspots(g, top_n=10)
+
+        hub_pos = out.find("hub_func")
+        spoke_pos = out.find("spoke_func")
+        assert hub_pos != -1, "hub_func must appear in hotspots"
+        assert spoke_pos != -1, "spoke_func must appear in hotspots"
+        assert hub_pos < spoke_pos, (
+            f"hub_func (10 dependents) must rank above spoke_func (3 dependents); "
+            f"hub_pos={hub_pos}, spoke_pos={spoke_pos}\n{out}"
+        )
+
+    def test_blast_annotation_fires_at_threshold(self, tmp_path, monkeypatch):
+        """render_hotspots annotates files with ≥20 external dependents."""
+        import tempograph.git as git_mod
+        monkeypatch.setattr(
+            git_mod,
+            "file_change_velocity",
+            lambda repo, recent_days=7: {},
+        )
+
+        files = {"hub.py": "def hub_func():\n    pass\n"}
+        for i in range(22):
+            files[f"user_{i}.py"] = f"from hub import hub_func\ndef t{i}():\n    hub_func()\n"
+
+        from tempograph.render import render_hotspots
+        g = self._build(tmp_path, files)
+        out = render_hotspots(g, top_n=5)
+        assert "blast:" in out, f"Should annotate file with 22 dependents; got:\n{out}"
+        assert "files depend on this" in out
+
+    def test_blast_annotation_silent_below_threshold(self, tmp_path, monkeypatch):
+        """render_hotspots does NOT annotate files with <20 external dependents."""
+        import tempograph.git as git_mod
+        monkeypatch.setattr(
+            git_mod,
+            "file_change_velocity",
+            lambda repo, recent_days=7: {},
+        )
+
+        files = {"small.py": "def small_func():\n    pass\n"}
+        for i in range(5):
+            files[f"user_{i}.py"] = f"from small import small_func\ndef t{i}():\n    small_func()\n"
+
+        from tempograph.render import render_hotspots
+        g = self._build(tmp_path, files)
+        out = render_hotspots(g, top_n=5)
+        assert "blast:" not in out, f"Should NOT annotate file with only 5 dependents; got:\n{out}"
