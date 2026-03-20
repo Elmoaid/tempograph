@@ -181,6 +181,15 @@ export async function writeFile(
   }
 }
 
+export async function pathExists(path: string): Promise<boolean> {
+  const fn = await getInvoke();
+  try {
+    return await fn("path_exists", { path });
+  } catch {
+    return false;
+  }
+}
+
 export async function reportFeedback(
   repoPath: string,
   mode: string,
