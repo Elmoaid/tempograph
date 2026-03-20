@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import functools
 import subprocess
+import time
 from pathlib import Path
 
 
@@ -240,5 +241,23 @@ def recently_modified_files(repo: str, n_commits: int = 5) -> set[str]:
     if not out:
         return set()
     return {line for line in out.splitlines() if line.strip()}
+
+
+def file_last_modified_days(repo: str, file_path: str) -> int | None:
+    """Return the number of days since `file_path` was last committed.
+
+    Uses ``git log -1 --format=%ct`` for the file.  Returns None if the file
+    has no git history or git is unavailable.  Callers should cache the result
+    per file_path to avoid repeated subprocess invocations within a single
+    render call.
+    """
+    out = _run_git(repo, "log", "-1", "--format=%ct", "--", file_path)
+    if not out:
+        return None
+    try:
+        ct = int(out.strip())
+    except ValueError:
+        return None
+    return int((time.time() - ct) / 86400)
 
 

@@ -718,6 +718,20 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     seen_files: set[str] = set()
     token_count = 0
 
+    # Staleness annotations for caller files: cache git lookups per file_path.
+    from .git import file_last_modified_days as _file_last_modified_days  # noqa: PLC0415
+    _staleness_cache: dict[str, int | None] = {}
+
+    def _stale_annotation(file_path: str) -> str:
+        if file_path not in _staleness_cache:
+            _staleness_cache[file_path] = _file_last_modified_days(graph.root, file_path)
+        days = _staleness_cache[file_path]
+        if days is None or days <= 30:
+            return ""
+        if days > 180:
+            return " [stale: 6m+]"
+        return f" [stale: {days}d]"
+
     for sym, depth in ordered:
         indent = "  " * depth if depth > 0 else ""
         prefix = ["●", "  →", "    ·", "      "][min(depth, 3)]
@@ -754,10 +768,12 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                 shown_other = (hot_other + cold_other)[:max_other]
                 shown_callers = kw_callers + shown_other
                 shown_count = len(kw_callers) + max_other
-                caller_strs = [
-                    f"{c.qualified_name} [hot]" if c.file_path in graph.hot_files else c.qualified_name
-                    for c in shown_callers
-                ]
+                caller_strs = []
+                for c in shown_callers:
+                    if c.file_path in graph.hot_files:
+                        caller_strs.append(f"{c.qualified_name} [hot]")
+                    else:
+                        caller_strs.append(c.qualified_name + _stale_annotation(c.file_path))
                 block_lines.append(f"{indent}  called by: {', '.join(caller_strs)}")
                 if len(callers) > shown_count:
                     block_lines[-1] += f" (+{len(callers) - shown_count} more)"
@@ -1296,6 +1312,32 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
     return "\n".join(lines)
 
 
+def _file_blast_count(graph: Tempo, file_path: str) -> int:
+    """Count unique external files that depend on this file (importers + external callers).
+
+    This is the file-level blast radius: if file_path changes, how many other
+    files are directly affected? Captures both import-level and call-level coupling
+    that per-symbol cross_file misses (a file with 10 small helpers each called
+    once from different files has high file-blast but low per-symbol cross_file).
+    """
+    fi = graph.files.get(file_path)
+    if not fi:
+        return 0
+    dependent_files: set[str] = set()
+    # Direct importers
+    for imp in graph.importers_of(file_path):
+        if imp != file_path:
+            dependent_files.add(imp)
+    # Files that call symbols in this file from outside
+    for sym_id in fi.symbols:
+        if sym_id not in graph.symbols:
+            continue
+        for caller in graph.callers_of(sym_id):
+            if caller.file_path and caller.file_path != file_path:
+                dependent_files.add(caller.file_path)
+    return len(dependent_files)
+
+
 def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
     """Find the most interconnected, complex, high-risk symbols."""
     # Pre-build renders-from index to avoid O(symbols*edges) scan
@@ -1311,6 +1353,10 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         velocity = file_change_velocity(graph.root)
     except Exception:
         pass
+
+    # Blast count cache: file_path → number of external dependent files
+    # Computed once per file, not per symbol, to avoid redundant traversal
+    blast_cache: dict[str, int] = {}
 
     scores: list[tuple[float, Symbol]] = []
 
@@ -1344,6 +1390,16 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             cpw = velocity.get(rel, 0.0)
             if cpw > 0:
                 score *= 1.0 + math.log2(1.0 + cpw) * 0.2
+
+        # File blast count multiplier: files with many external dependents are riskier.
+        # A file with 50 dependents gets ~1.56x; 10 dependents → ~1.35x; 5 → ~1.26x
+        # Cached per file since many symbols share the same file_path.
+        if sym.file_path:
+            if sym.file_path not in blast_cache:
+                blast_cache[sym.file_path] = _file_blast_count(graph, sym.file_path)
+            bc = blast_cache[sym.file_path]
+            if bc > 0:
+                score *= 1.0 + math.log2(1.0 + bc) * 0.1
 
         if score > 0:
             scores.append((score, sym))
@@ -1391,6 +1447,11 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 warnings.append(
                     f"active churn: {cpw:.0f} commits/week — re-read before editing"
                 )
+        # File blast count warning: many external dependents = high coordination cost
+        if sym.file_path and sym.file_path in blast_cache:
+            bc = blast_cache[sym.file_path]
+            if bc >= 20:
+                warnings.append(f"blast: {bc} files depend on this — changes need broad review")
         if warnings:
             lines.append(f"    → {'; '.join(warnings)}")
 
