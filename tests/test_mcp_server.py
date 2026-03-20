@@ -1210,6 +1210,83 @@ class TestRenderTokenCaps:
 
 
 # ---------------------------------------------------------------------------
+# Focus mode: staleness annotations for caller files
+# ---------------------------------------------------------------------------
+
+class TestFocusStalenessAnnotations:
+    """Verify that focus output annotates stale caller files with [stale: ...] tags."""
+
+    def _build_callee_caller(self, tmp_path):
+        """Create a minimal two-file repo and return build_graph result."""
+        (tmp_path / "callee.py").write_text("def target_func():\n    pass\n")
+        (tmp_path / "caller.py").write_text(
+            "from callee import target_func\n\ndef wrapper():\n    target_func()\n"
+        )
+        from tempograph.builder import build_graph
+        return build_graph(str(tmp_path), use_config=False)
+
+    def test_stale_6m_annotation(self, tmp_path):
+        """Caller last touched 200 days ago → [stale: 6m+] in focus output."""
+        from unittest.mock import patch
+        from tempograph.render import render_focused
+
+        g = self._build_callee_caller(tmp_path)
+
+        def mock_days(repo, file_path):
+            return 200 if "caller.py" in file_path else 5
+
+        with patch("tempograph.git.file_last_modified_days", side_effect=mock_days):
+            output = render_focused(g, "target_func")
+
+        assert "[stale: 6m+]" in output
+
+    def test_mid_stale_annotation(self, tmp_path):
+        """Caller last touched 60 days ago → [stale: 60d] in focus output."""
+        from unittest.mock import patch
+        from tempograph.render import render_focused
+
+        g = self._build_callee_caller(tmp_path)
+
+        def mock_days(repo, file_path):
+            return 60 if "caller.py" in file_path else 5
+
+        with patch("tempograph.git.file_last_modified_days", side_effect=mock_days):
+            output = render_focused(g, "target_func")
+
+        assert "[stale: 60d]" in output
+
+    def test_fresh_caller_no_annotation(self, tmp_path):
+        """Caller last touched 10 days ago → no [stale:] annotation."""
+        from unittest.mock import patch
+        from tempograph.render import render_focused
+
+        g = self._build_callee_caller(tmp_path)
+
+        def mock_days(repo, file_path):
+            return 10
+
+        with patch("tempograph.git.file_last_modified_days", side_effect=mock_days):
+            output = render_focused(g, "target_func")
+
+        assert "[stale:" not in output
+
+    def test_none_git_history_no_annotation(self, tmp_path):
+        """git_last_modified returns None (no history) → no annotation appended."""
+        from unittest.mock import patch
+        from tempograph.render import render_focused
+
+        g = self._build_callee_caller(tmp_path)
+
+        def mock_days(repo, file_path):
+            return None
+
+        with patch("tempograph.git.file_last_modified_days", side_effect=mock_days):
+            output = render_focused(g, "target_func")
+
+        assert "[stale:" not in output
+
+
+# ---------------------------------------------------------------------------
 # CommonJS export detection
 # ---------------------------------------------------------------------------
 
