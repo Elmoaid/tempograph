@@ -1132,14 +1132,18 @@ class TestRenderTokenCaps:
         from tempograph.builder import build_graph
         from tempograph.render import render_symbols, count_tokens
         g = build_graph(REPO_PATH, exclude_dirs=["archive"])
-        # Capped
+        # Capped explicitly
         output = render_symbols(g, max_tokens=2000)
         tokens = count_tokens(output)
         assert tokens <= 2500  # allow some overhead
         assert "truncated" in output
-        # Unlimited
+        # Unlimited (max_tokens=0 means no limit)
         full = render_symbols(g, max_tokens=0)
         assert count_tokens(full) > tokens
+        # Default (8000 cap) — safe by default for programmatic API users
+        default_output = render_symbols(g)
+        default_tokens = count_tokens(default_output)
+        assert default_tokens <= 9000  # 8000 cap + some overhead
 
     def test_map_max_tokens(self):
         from tempograph.builder import build_graph

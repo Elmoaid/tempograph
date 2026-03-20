@@ -269,8 +269,10 @@ def render_map(graph: Tempo, *, max_symbols_per_file: int = 8, max_tokens: int =
     return "\n".join(lines)
 
 
-def render_symbols(graph: Tempo, *, max_tokens: int = 0) -> str:
-    """Full symbol index — signatures, locations, relationships."""
+def render_symbols(graph: Tempo, *, max_tokens: int = 8000) -> str:
+    """Full symbol index — signatures, locations, relationships.
+
+    max_tokens: cap output to prevent context overflow (default 8000; 0 = no limit)"""
     lines = []
     token_count = 0
     by_file: dict[str, list[Symbol]] = defaultdict(list)
