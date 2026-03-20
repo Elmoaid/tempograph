@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { FolderOpen, Plus, X, RefreshCw } from "lucide-react";
+import { useRecentRepos } from "../hooks/useRecentRepos";
+import { RecentRepos } from "./RecentRepos";
 
 interface WorkspaceTabsProps {
   workspaces: string[];
@@ -18,6 +20,7 @@ export function WorkspaceTabs({ workspaces, activeIdx, loading, onSelect, onRemo
   const [addingWs, setAddingWs] = useState(false);
   const [newWsPath, setNewWsPath] = useState("");
   const addInputRef = useRef<HTMLInputElement>(null);
+  const { recentRepos, addRecentRepo, removeRecentRepo } = useRecentRepos();
 
   useEffect(() => {
     if (addingWs) addInputRef.current?.focus();
@@ -25,13 +28,21 @@ export function WorkspaceTabs({ workspaces, activeIdx, loading, onSelect, onRemo
 
   const handleAdd = () => {
     if (newWsPath.trim()) {
-      onAdd(newWsPath.trim());
+      const path = newWsPath.trim();
+      addRecentRepo(path);
+      onAdd(path);
       setNewWsPath("");
       setAddingWs(false);
     }
   };
 
+  const handleSelectRecent = (path: string) => {
+    addRecentRepo(path);
+    onAdd(path);
+  };
+
   return (
+    <>
     <div className="ws-strip">
       {workspaces.map((w, i) => (
         <button
@@ -70,5 +81,12 @@ export function WorkspaceTabs({ workspaces, activeIdx, loading, onSelect, onRemo
         </button>
       )}
     </div>
+    <RecentRepos
+      repos={recentRepos}
+      activeWorkspaces={workspaces}
+      onSelect={handleSelectRecent}
+      onRemove={removeRecentRepo}
+    />
+    </>
   );
 }
