@@ -1074,9 +1074,14 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
     fi = graph.files.get(file_path)
     if not fi:
         if file_path and Path(file_path).exists():
+            parent_dir = Path(file_path).parent.name
+            exclude_hint = (
+                f" (e.g. '{parent_dir}' may be in your --exclude list)" if parent_dir else ""
+            )
             return (
-                f"File '{file_path}' exists but is not indexed — "
-                "run tempograph on its source directory to index it."
+                f"⚠  '{file_path}' exists on disk but is not in the graph{exclude_hint}.\n"
+                "   Re-run without --exclude to index it, or run "
+                "`tempograph . --mode overview` to see what is currently indexed."
             )
         return f"File '{file_path}' not found."
 
