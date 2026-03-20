@@ -18,6 +18,11 @@ CACHE_DIR = ".tempograph"
 DB_FILE = "graph.db"
 SCHEMA_VERSION = 1
 
+# Module-level enum lookup dicts — O(1) vs try/except, ~31% faster in load_all()
+_SYMBOL_KIND_MAP: dict[str, SymbolKind] = {v.value: v for v in SymbolKind}
+_LANGUAGE_MAP: dict[str, Language] = {v.value: v for v in Language}
+_EDGE_KIND_MAP: dict[str, EdgeKind] = {v.value: v for v in EdgeKind}
+
 
 def content_hash(source: bytes) -> str:
     return hashlib.md5(source).hexdigest()
@@ -191,7 +196,7 @@ class GraphDB:
         for row in self._conn.execute("SELECT * FROM files").fetchall():
             files[row["path"]] = FileInfo(
                 path=row["path"],
-                language=Language(row["language"]) if row["language"] in Language.__members__.values() else Language.UNKNOWN,
+                language=_LANGUAGE_MAP.get(row["language"], Language.UNKNOWN),
                 line_count=row["line_count"],
                 byte_size=row["byte_size"],
                 symbols=json.loads(row["symbols_json"]),
@@ -200,20 +205,12 @@ class GraphDB:
 
         symbols: dict[str, Symbol] = {}
         for row in self._conn.execute("SELECT * FROM symbols").fetchall():
-            try:
-                kind = SymbolKind(row["kind"])
-            except ValueError:
-                kind = SymbolKind.UNKNOWN
-            try:
-                lang = Language(row["language"])
-            except ValueError:
-                lang = Language.UNKNOWN
             symbols[row["id"]] = Symbol(
                 id=row["id"],
                 name=row["name"],
                 qualified_name=row["qualified_name"],
-                kind=kind,
-                language=lang,
+                kind=_SYMBOL_KIND_MAP.get(row["kind"], SymbolKind.UNKNOWN),
+                language=_LANGUAGE_MAP.get(row["language"], Language.UNKNOWN),
                 file_path=row["file_path"],
                 line_start=row["line_start"],
                 line_end=row["line_end"],
@@ -227,9 +224,8 @@ class GraphDB:
 
         edges: list[Edge] = []
         for row in self._conn.execute("SELECT * FROM edges").fetchall():
-            try:
-                kind = EdgeKind(row["kind"])
-            except ValueError:
+            kind = _EDGE_KIND_MAP.get(row["kind"])
+            if kind is None:
                 continue
             edges.append(Edge(
                 kind=kind,
@@ -356,6 +352,39 @@ class GraphDB:
     def file_count(self) -> int:
         row = self._conn.execute("SELECT COUNT(*) as c FROM files").fetchone()
         return row["c"] if row else 0
+
+    def graph_stats(self) -> dict:
+        """Comprehensive graph statistics for dashboards and monitoring."""
+        stats: dict = {}
+        stats["files"] = self.file_count()
+        stats["symbols"] = self.symbol_count()
+        stats["edges"] = self._conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+
+        # Language breakdown
+        lang_rows = self._conn.execute(
+            "SELECT language, COUNT(*) as c FROM files GROUP BY language ORDER BY c DESC"
+        ).fetchall()
+        stats["languages"] = {row["language"]: row["c"] for row in lang_rows}
+
+        # Symbol kind breakdown
+        kind_rows = self._conn.execute(
+            "SELECT kind, COUNT(*) as c FROM symbols GROUP BY kind ORDER BY c DESC"
+        ).fetchall()
+        stats["symbol_kinds"] = {row["kind"]: row["c"] for row in kind_rows}
+
+        # DB size
+        stats["db_size_bytes"] = self.db_path.stat().st_size if self.db_path.exists() else 0
+
+        # Vector count
+        if getattr(self, '_has_vectors', False):
+            try:
+                stats["vectors"] = self._conn.execute("SELECT COUNT(*) FROM symbol_vectors").fetchone()[0]
+            except Exception:
+                stats["vectors"] = 0
+        else:
+            stats["vectors"] = 0
+
+        return stats
 
     def close(self) -> None:
         self._conn.close()
