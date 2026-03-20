@@ -186,6 +186,26 @@ def cochange_matrix_recency(repo: str, n_commits: int = 200) -> dict[str, list[t
     return result
 
 
+@functools.lru_cache(maxsize=4)
+def file_commit_counts(repo: str, n_commits: int = 200) -> dict[str, int]:
+    """Count how many of the last n_commits touched each file.
+
+    Returns {filepath: count} for any file that appeared at least once.
+    Files not in the result have never appeared in those commits (count = 0).
+    Cached — cheap after first call per session.
+    """
+    from collections import Counter
+    out = _run_git(repo, "log", f"--max-count={n_commits}", "--name-only", "--format=")
+    if not out:
+        return {}
+    counts: Counter[str] = Counter()
+    for line in out.splitlines():
+        line = line.strip()
+        if line:
+            counts[line] += 1
+    return dict(counts)
+
+
 def recently_modified_files(repo: str, n_commits: int = 5) -> set[str]:
     """Return set of file paths (relative to repo root) touched in the last n_commits.
 
