@@ -2063,3 +2063,385 @@ class TestDeadCodeTestFileFilter:
         assert "orphan_function" in out, (
             "Symbols from non-test files must still appear in dead code output"
         )
+
+
+class TestFileVolatilityWarning:
+    """Tests for file volatility annotation in render_focused.
+
+    Volatile files (≥10 commits in last 200) get a warning so agents know
+    context may lag behind recent edits.
+    """
+
+    def test_file_commit_counts_returns_dict_for_git_repo(self):
+        """file_commit_counts returns a non-empty dict for an active git repo."""
+        from tempograph.git import file_commit_counts
+        file_commit_counts.cache_clear()
+        result = file_commit_counts(REPO_PATH)
+        assert isinstance(result, dict), "must return dict"
+        assert len(result) > 0, "tempograph is active — must have file history"
+        # render.py is frequently edited — must appear
+        assert "tempograph/render.py" in result, "render.py must appear in commit history"
+        assert result["tempograph/render.py"] >= 1
+
+    def test_file_commit_counts_empty_for_non_git_dir(self, tmp_path):
+        """file_commit_counts returns empty dict gracefully for non-git directories."""
+        from tempograph.git import file_commit_counts
+        file_commit_counts.cache_clear()
+        result = file_commit_counts(str(tmp_path))
+        assert result == {}, "non-git dir must return empty dict, not raise"
+
+    def test_volatility_annotation_fires_for_high_churn_file(self):
+        """render_focused emits 'Volatile:' when seed file has ≥10 commits in 200."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        from unittest.mock import patch
+        from tempograph.git import file_commit_counts
+
+        g = build_graph(REPO_PATH, exclude_dirs=["archive"])
+        # Inject a high-churn count for render.py (15 commits > threshold of 10)
+        mock_counts = {"tempograph/render.py": 15}
+        file_commit_counts.cache_clear()
+        with patch("tempograph.git.file_commit_counts", return_value=mock_counts):
+            out = render_focused(g, "render_focused", max_tokens=4000)
+
+        assert "Volatile:" in out, "render_focused must emit Volatile: for high-churn seed"
+        assert "15/200 commits" in out, "must include commit count in annotation"
+        assert "re-read before editing" in out, "must include actionable note"
+
+    def test_volatility_annotation_silent_for_low_churn_file(self, tmp_path):
+        """render_focused does NOT emit 'Volatile:' when seed file has < 10 commits."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        from unittest.mock import patch
+        from tempograph.git import file_commit_counts
+
+        # Create a minimal git repo with a source file
+        import subprocess
+        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True)
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True)
+
+        g = build_graph(str(tmp_path), use_cache=False)
+        # Low churn: 3 commits (below threshold of 10)
+        mock_counts = {"utils.py": 3}
+        file_commit_counts.cache_clear()
+        with patch("tempograph.git.file_commit_counts", return_value=mock_counts):
+            out = render_focused(g, "helper", max_tokens=4000)
+
+        assert "Volatile:" not in out, "must NOT emit Volatile: for low-churn seed file"
+
+
+class TestKotlinParser:
+    def test_class_and_methods(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+class Greeter(private val name: String) {
+    fun greet(): String = "Hello"
+    fun farewell(): String = "Bye"
+}
+"""
+        p = FileParser("Greeter.kt", Language.KOTLIN, code)
+        syms, edges, _ = p.parse()
+        names = {s.qualified_name for s in syms}
+        assert "Greeter" in names
+        assert "Greeter.greet" in names or any("greet" in n for n in names)
+
+    def test_object_declaration(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+object Singleton {
+    val instance: String = "singleton"
+    fun getInstance(): String = instance
+}
+"""
+        p = FileParser("Singleton.kt", Language.KOTLIN, code)
+        syms, _, _ = p.parse()
+        names = {s.name for s in syms}
+        assert "Singleton" in names
+
+    def test_companion_object(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+class MyClass {
+    companion object {
+        fun create(): MyClass = MyClass()
+    }
+}
+"""
+        p = FileParser("MyClass.kt", Language.KOTLIN, code)
+        syms, _, _ = p.parse()
+        # companion object should be detected as a class-like symbol
+        kinds = {s.kind.value for s in syms}
+        assert any(k in kinds for k in ("class", "struct", "interface"))
+
+
+class TestScalaParser:
+    def test_class_and_methods(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+class Animal(val name: String) {
+  def speak(): String = s"I am $name"
+  def breathe(): Unit = {}
+}
+"""
+        p = FileParser("Animal.scala", Language.SCALA, code)
+        syms, edges, _ = p.parse()
+        names = {s.qualified_name for s in syms}
+        assert "Animal" in names
+        animal = next(s for s in syms if s.name == "Animal")
+        assert animal.kind.value == "class"
+        assert any("speak" in n for n in names)
+
+    def test_object_definition(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+object MyApp {
+  def main(args: Array[String]): Unit = {}
+}
+"""
+        p = FileParser("MyApp.scala", Language.SCALA, code)
+        syms, _, _ = p.parse()
+        names = {s.name for s in syms}
+        assert "MyApp" in names
+
+    def test_trait_definition(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+trait Flyable {
+  def fly(): Unit
+}
+"""
+        p = FileParser("Flyable.scala", Language.SCALA, code)
+        syms, _, _ = p.parse()
+        names = {s.name for s in syms}
+        assert "Flyable" in names
+        flyable = next(s for s in syms if s.name == "Flyable")
+        assert flyable.kind.value == "interface"
+
+    def test_enum_definition(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+enum Color { case Red, Green, Blue }
+"""
+        p = FileParser("Color.scala", Language.SCALA, code)
+        syms, _, _ = p.parse()
+        assert any(s.name == "Color" for s in syms)
+
+    def test_top_level_function(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+def topLevel(x: Int): Int = x + 1
+"""
+        p = FileParser("utils.scala", Language.SCALA, code)
+        syms, _, _ = p.parse()
+        assert any(s.name == "topLevel" for s in syms)
+
+
+class TestZigParser:
+    def test_pub_function(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+pub fn main() !void {}
+fn helper(x: i32) i32 { return x; }
+"""
+        p = FileParser("main.zig", Language.ZIG, code)
+        syms, _, _ = p.parse()
+        names = {s.name for s in syms}
+        assert "main" in names
+        assert "helper" in names
+        main_sym = next(s for s in syms if s.name == "main")
+        assert main_sym.exported is True
+        helper_sym = next(s for s in syms if s.name == "helper")
+        assert helper_sym.exported is False
+
+    def test_struct_with_methods(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+pub const Point = struct {
+    x: f32,
+    y: f32,
+    pub fn distance(self: Point, other: Point) f32 { return self.x - other.x; }
+    fn private_fn(self: Point) f32 { return self.x; }
+};
+"""
+        p = FileParser("point.zig", Language.ZIG, code)
+        syms, edges, _ = p.parse()
+        names = {s.name for s in syms}
+        assert "Point" in names
+        assert "distance" in names
+        assert "private_fn" in names
+        point = next(s for s in syms if s.name == "Point")
+        assert point.kind.value == "struct"
+        assert point.exported is True
+        distance = next(s for s in syms if s.name == "distance")
+        assert distance.exported is True
+        private_fn = next(s for s in syms if s.name == "private_fn")
+        assert private_fn.exported is False
+        # methods should have CONTAINS edges
+        contains_edges = [e for e in edges if e.kind.value == "contains"]
+        assert len(contains_edges) >= 1
+
+    def test_enum(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+pub const Color = enum { Red, Green, Blue };
+"""
+        p = FileParser("color.zig", Language.ZIG, code)
+        syms, _, _ = p.parse()
+        assert any(s.name == "Color" for s in syms)
+        color = next(s for s in syms if s.name == "Color")
+        assert color.kind.value == "enum"
+
+
+class TestCCppParser:
+    def test_c_function_with_calls(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+int compute(int a, int b) {
+    return a + b;
+}
+
+static void helper(void) {
+    compute(1, 2);
+}
+"""
+        p = FileParser("math.c", Language.C, code)
+        syms, edges, _ = p.parse()
+        names = {s.name for s in syms}
+        assert "compute" in names
+        assert "helper" in names
+        compute_sym = next(s for s in syms if s.name == "compute")
+        assert compute_sym.exported is True
+        helper_sym = next(s for s in syms if s.name == "helper")
+        assert helper_sym.exported is False
+        # CALLS edge from helper → compute
+        calls_edges = [e for e in edges if e.kind.value == "calls"]
+        assert any(e.target_id == "compute" for e in calls_edges)
+
+    def test_c_struct_with_fields(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+struct Point {
+    int x;
+    int y;
+};
+
+typedef struct {
+    float width;
+    float height;
+} Rect;
+"""
+        p = FileParser("geo.c", Language.C, code)
+        syms, _, _ = p.parse()
+        names = {s.name for s in syms}
+        assert "Point" in names
+        assert "Rect" in names
+        point = next(s for s in syms if s.name == "Point")
+        assert point.kind.value == "struct"
+        rect = next(s for s in syms if s.name == "Rect")
+        assert rect.kind.value == "struct"
+
+    def test_c_enum(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+enum Color { RED, GREEN, BLUE };
+typedef enum { LOW, MED, HIGH } Priority;
+"""
+        p = FileParser("defs.h", Language.C, code)
+        syms, _, _ = p.parse()
+        names = {s.name for s in syms}
+        assert "Color" in names
+        color = next(s for s in syms if s.name == "Color")
+        assert color.kind.value == "enum"
+        assert "Priority" in names
+        priority = next(s for s in syms if s.name == "Priority")
+        assert priority.kind.value == "enum"
+
+    def test_cpp_class_with_methods(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+class Counter {
+public:
+    Counter();
+    int get() const;
+    void increment() {
+        count_++;
+        notify();
+    }
+private:
+    int count_;
+};
+"""
+        p = FileParser("counter.cpp", Language.CPP, code)
+        syms, edges, _ = p.parse()
+        names = {s.name for s in syms}
+        assert "Counter" in names
+        assert "increment" in names
+        counter = next(s for s in syms if s.name == "Counter")
+        assert counter.kind.value == "class"
+        increment = next(s for s in syms if s.name == "increment")
+        assert increment.kind.value == "method"
+        # CONTAINS edge: Counter → increment
+        contains_edges = [e for e in edges if e.kind.value == "contains"]
+        assert any(e.target_id.endswith("::Counter.increment") for e in contains_edges)
+
+    def test_cpp_namespace_transparent(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+namespace MyNS {
+    int compute(int x) {
+        return x * 2;
+    }
+
+    struct Config {
+        int timeout;
+    };
+}
+"""
+        p = FileParser("ns.cpp", Language.CPP, code)
+        syms, _, _ = p.parse()
+        names = {s.name for s in syms}
+        # Symbols inside namespace are extracted
+        assert "compute" in names
+        assert "Config" in names
+        # Namespace itself is not emitted as a symbol
+        assert "MyNS" not in names
+
+    def test_header_forward_declarations_no_crash(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+#ifndef MYLIB_H
+#define MYLIB_H
+
+int add(int a, int b);
+void process(const char* data, int len);
+struct MyStruct;
+
+#endif
+"""
+        p = FileParser("mylib.h", Language.C, code)
+        # Must not crash; forward declarations are skipped
+        syms, edges, _ = p.parse()
+        # No function symbols from forward declarations (no bodies)
+        fn_syms = [s for s in syms if s.kind.value == "function"]
+        assert len(fn_syms) == 0
