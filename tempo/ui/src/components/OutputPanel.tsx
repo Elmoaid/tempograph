@@ -1,5 +1,5 @@
-import { type RefObject } from "react";
-import { Play, Copy, Check, Save, Search, ThumbsUp, ThumbsDown, X } from "lucide-react";
+import { useState, useEffect, type RefObject } from "react";
+import { Play, Copy, Check, Save, Search, ThumbsUp, ThumbsDown, X, ChevronDown, ChevronRight } from "lucide-react";
 import type { ModeInfo } from "./modes";
 import { formatAge } from "./modes";
 
@@ -35,6 +35,37 @@ interface OutputPanelProps {
   onFeedback: (helpful: boolean) => void;
 }
 
+interface KitSection {
+  mode: string;
+  content: string;
+}
+
+function parseKitSections(output: string): KitSection[] {
+  // Kit output format: "── MODE ──\ncontent\n\n── MODE2 ──\ncontent2"
+  const parts = output.split(/^──\s+\w+\s+──$/m);
+  const headers = [...output.matchAll(/^──\s+(\w+)\s+──$/mg)].map(m => m[1]);
+  return headers.map((mode, i) => ({
+    mode,
+    content: (parts[i + 1] || "").trim(),
+  })).filter(s => s.content.length > 0);
+}
+
+const EXPANDED_KEY = (activeMode: string) => `tempo-kit-expanded-${activeMode}`;
+
+function loadExpanded(activeMode: string, modes: string[]): Set<string> {
+  try {
+    const raw = localStorage.getItem(EXPANDED_KEY(activeMode));
+    if (raw) return new Set(JSON.parse(raw) as string[]);
+  } catch { /* ignore */ }
+  return new Set(modes); // default: all expanded
+}
+
+function saveExpanded(activeMode: string, expanded: Set<string>) {
+  try {
+    localStorage.setItem(EXPANDED_KEY(activeMode), JSON.stringify([...expanded]));
+  } catch { /* ignore */ }
+}
+
 export function OutputPanel(props: OutputPanelProps) {
   const {
     activeModeInfo, activeMode, modeArgs, modeRunning, modeOutput,
@@ -45,10 +76,47 @@ export function OutputPanel(props: OutputPanelProps) {
     onFilterToggle, onFilterChange, onFilterClose, onFeedback,
   } = props;
 
+  const isKitMode = activeMode.startsWith("kit:");
+  const kitSections = isKitMode && filteredOutput ? parseKitSections(filteredOutput) : [];
+  const hasKitSections = isKitMode && kitSections.length > 0;
+
+  const [expandedModes, setExpandedModes] = useState<Set<string>>(new Set());
+
+  // Load expanded state from localStorage when kit mode or sections change
+  useEffect(() => {
+    if (!hasKitSections) return;
+    setExpandedModes(loadExpanded(activeMode, kitSections.map(s => s.mode)));
+  }, [activeMode, hasKitSections]);
+
+  const toggleSection = (mode: string) => {
+    setExpandedModes(prev => {
+      const next = new Set(prev);
+      if (next.has(mode)) next.delete(mode);
+      else next.add(mode);
+      saveExpanded(activeMode, next);
+      return next;
+    });
+  };
+
+  const label = activeModeInfo?.label ?? activeMode;
+
   return (
     <div className="cell" style={{ flex: 1 }}>
       <div className="cell-head">
-        {activeModeInfo?.label ?? activeMode}
+        <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          {label}
+          {isKitMode && (
+            <span style={{
+              fontSize: 8, fontWeight: 700, letterSpacing: "0.08em",
+              padding: "1px 5px", borderRadius: 3,
+              background: "var(--accent-dim, rgba(99,102,241,0.18))",
+              color: "var(--accent, #818cf8)",
+              textTransform: "uppercase",
+            }}>
+              KIT
+            </span>
+          )}
+        </span>
         <div style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
           {modeOutput && (
             <>
@@ -162,7 +230,51 @@ export function OutputPanel(props: OutputPanelProps) {
                 </button>
               </div>
             )}
-            <pre className="output" role="region" aria-label="Mode output" aria-live="polite" style={{ maxHeight: activeMode === "prepare" ? "calc(100% - 96px)" : "calc(100% - 64px)", overflow: "auto" }}>{filteredOutput}</pre>
+            {hasKitSections ? (
+              <div
+                role="region"
+                aria-label="Kit mode output"
+                style={{ overflow: "auto", maxHeight: "calc(100% - 64px)", display: "flex", flexDirection: "column", gap: 4 }}
+              >
+                {kitSections.map(({ mode, content }) => {
+                  const expanded = expandedModes.has(mode);
+                  return (
+                    <div key={mode} style={{ border: "1px solid var(--border)", borderRadius: 4, overflow: "hidden" }}>
+                      <button
+                        onClick={() => toggleSection(mode)}
+                        aria-expanded={expanded}
+                        style={{
+                          width: "100%", display: "flex", alignItems: "center", gap: 6,
+                          padding: "4px 8px", background: "var(--bg-secondary)",
+                          border: "none", cursor: "pointer", textAlign: "left",
+                          color: "var(--text-secondary)", fontSize: 10, fontWeight: 600,
+                          letterSpacing: "0.06em", textTransform: "uppercase",
+                          fontFamily: "var(--font-mono)",
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-hover)")}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = "var(--bg-secondary)")}
+                      >
+                        {expanded
+                          ? <ChevronDown size={10} aria-hidden="true" />
+                          : <ChevronRight size={10} aria-hidden="true" />
+                        }
+                        {mode}
+                        <span style={{ marginLeft: "auto", fontSize: 8, opacity: 0.5, fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
+                          ~{Math.round(content.length / 4).toLocaleString()} tok
+                        </span>
+                      </button>
+                      {expanded && (
+                        <pre className="output" style={{ margin: 0, borderRadius: 0, maxHeight: 300, overflow: "auto" }}>
+                          {content}
+                        </pre>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <pre className="output" role="region" aria-label="Mode output" aria-live="polite" style={{ maxHeight: activeMode === "prepare" ? "calc(100% - 96px)" : "calc(100% - 64px)", overflow: "auto" }}>{filteredOutput}</pre>
+            )}
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>
               <span style={{ fontSize: 9, color: "var(--text-tertiary)", marginRight: 2 }}>Helpful?</span>
               {feedbackGiven.current.has(activeMode) ? (
