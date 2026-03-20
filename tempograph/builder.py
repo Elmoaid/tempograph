@@ -199,6 +199,37 @@ def build_graph(
     return graph
 
 
+def load_from_snapshot(repo_slug: str) -> Tempo:
+    """Load a Tempo graph from a pre-built snapshot (no file parsing).
+
+    The snapshot must have been downloaded first:
+        python3 -m tempograph snapshot --repo <org/repo>
+
+    Raises FileNotFoundError if the snapshot db does not exist.
+    """
+    from .snapshots import snapshot_path, snapshot_db_path
+
+    db_path = snapshot_db_path(repo_slug)
+    if not db_path.exists():
+        snap_root = snapshot_path(repo_slug)
+        raise FileNotFoundError(
+            f"Snapshot not found: {db_path}\n"
+            f"Run: python3 -m tempograph snapshot --repo {repo_slug}"
+        )
+
+    snap_root = snapshot_path(repo_slug)
+    db = GraphDB(snap_root)
+    graph = Tempo(root=str(snap_root))
+    files, symbols, edges = db.load_all()
+    graph.files = files
+    graph.symbols = symbols
+    graph.edges = edges
+    graph._db = db  # type: ignore[attr-defined]
+    _resolve_edges(graph)
+    graph.build_indexes()
+    return graph
+
+
 def _parse_file(rel_path: str, language: Language, source: bytes, is_tauri: bool) -> tuple:
     """Parse a file with tree-sitter. Returns (symbols, edges, imports)."""
     try:
