@@ -835,12 +835,21 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                 tag = " [grep-only]" if fi.line_count > 500 else ""
                 lines.append(f"  {fp} ({fi.line_count} lines){tag}")
 
-    # Blast radius hint for high-impact seed symbols
-    high_impact = [s for s, d in ordered[:5] if d == 0
-                   and len(graph.callers_of(s.id)) >= 3
-                   and any(c.file_path != s.file_path for c in graph.callers_of(s.id))]
-    if high_impact and token_count < max_tokens - 50:
-        lines.append(f"\nBefore modifying: run blast_radius(query=\"{high_impact[0].qualified_name}\") to check downstream impact.")
+    # Blast risk badge: count unique downstream files for seed symbols.
+    # Concrete file counts ("12 files depend on this") change agent behavior at the right moment.
+    # Vague "check downstream impact" hints get ignored. Specific numbers don't.
+    _BLAST_FILE_THRESHOLD = 5
+    _blast_hits: list[tuple[Symbol, int]] = []
+    for _bs, _bd in ordered[:5]:
+        if _bd != 0:
+            continue
+        _ext_files = {c.file_path for c in graph.callers_of(_bs.id) if c.file_path != _bs.file_path}
+        if len(_ext_files) > _BLAST_FILE_THRESHOLD:
+            _blast_hits.append((_bs, len(_ext_files)))
+    if _blast_hits and token_count < max_tokens - 60:
+        _blast_hits.sort(key=lambda x: -x[1])
+        _top_sym, _top_count = _blast_hits[0]
+        lines.append(f"\nHigh impact: {_top_count} files depend on {_top_sym.qualified_name} — run blast mode before editing")
 
     # Co-change orbit: git history reveals which files change together with seed files.
     # Structural call graph = what's connected. Co-change orbit = what historically moves together.
