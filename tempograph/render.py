@@ -1048,6 +1048,11 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
 
     fi = graph.files.get(file_path)
     if not fi:
+        if file_path and Path(file_path).exists():
+            return (
+                f"File '{file_path}' exists but is not indexed — "
+                "run tempograph on its source directory to index it."
+            )
         return f"File '{file_path}' not found."
 
     lines = [f"Blast radius for {file_path}:", ""]

@@ -227,6 +227,13 @@ class TestParameters:
                                    output_format="json"))
         assert "server.py" in r["data"]
 
+    def test_blast_radius_unindexed_existing_file(self, tmp_path):
+        """File exists on disk but isn't in the graph → actionable message."""
+        unindexed = tmp_path / "orphan.py"
+        unindexed.write_text("def foo(): pass\n")
+        raw = blast_radius(REPO_PATH, file_path=str(unindexed))
+        assert "not indexed" in raw
+
     def test_diff_context_explicit_files_no_git(self):
         """Passing changed_files explicitly should not require git."""
         with tempfile.TemporaryDirectory() as tmp:
