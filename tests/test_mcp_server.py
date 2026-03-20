@@ -2017,3 +2017,49 @@ class TestAdaptiveBFSDepth:
         assert "[depth +1" not in out, (
             f"No annotation when depth extension adds 0 nodes, got:\n{out}"
         )
+
+
+class TestDeadCodeTestFileFilter:
+    """Test that symbols in test files get reduced dead-code confidence (false positive suppression)."""
+
+    def test_test_file_symbols_have_low_confidence(self, tmp_path):
+        """Classes in test_*.py files should not appear in HIGH/MEDIUM tiers (score -= 50)."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        (tmp_path / "test_helpers.py").write_text(
+            "class TestMyClass:\n    def test_something(self): pass\n"
+            "def assert_equal(a, b): pass\n"
+        )
+        g = build_graph(tmp_path, use_cache=False)
+        out = render_dead_code(g)
+        # Default output hides LOW confidence — test file symbols should be in LOW tier
+        assert "test_helpers.py" not in out, (
+            "Symbols from test_*.py must be in LOW confidence tier (hidden by default)"
+        )
+
+    def test_spec_file_symbols_have_low_confidence(self, tmp_path):
+        """Classes in *.spec.ts files should not appear in HIGH/MEDIUM tiers."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        (tmp_path / "auth.spec.ts").write_text(
+            "export class AuthSpec { testLogin() {} }\n"
+        )
+        g = build_graph(tmp_path, use_cache=False)
+        out = render_dead_code(g)
+        assert "auth.spec.ts" not in out, (
+            "Symbols from *.spec.ts must be in LOW confidence tier (hidden by default)"
+        )
+
+    def test_non_test_file_symbols_still_appear(self, tmp_path):
+        """Symbols in regular source files still show up normally."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        (tmp_path / "utils.py").write_text("def orphan_function(): pass\n")
+        g = build_graph(tmp_path, use_cache=False)
+        out = render_dead_code(g, include_low=True)
+        assert "orphan_function" in out, (
+            "Symbols from non-test files must still appear in dead code output"
+        )

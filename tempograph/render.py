@@ -1465,9 +1465,26 @@ def render_architecture(graph: Tempo) -> str:
 _DISPATCH_PATTERNS = ("handle_", "on_", "test_", "route", "command", "hook", "middleware", "plugin")
 
 
+_TEST_FILE_SUFFIXES = (".test.ts", ".test.tsx", ".test.js", ".spec.ts", ".spec.tsx", ".spec.js")
+
+
+def _is_test_file(file_path: str) -> bool:
+    """Return True if file_path looks like a test/spec file."""
+    name = Path(file_path).name
+    return (
+        (name.startswith("test_") and name.endswith(".py"))
+        or name.endswith("_test.py")
+        or any(name.endswith(sfx) for sfx in _TEST_FILE_SUFFIXES)
+    )
+
+
 def _dead_code_confidence(sym: Symbol, graph: Tempo) -> int:
     """Score 0-100: how confident we are this symbol is truly dead."""
     score = 0
+
+    # Test files: symbols are test infrastructure discovered by runners, not dead code
+    if _is_test_file(sym.file_path):
+        score -= 50
 
     # No callers at all (even same-file) — strong signal
     if not graph.callers_of(sym.id):
