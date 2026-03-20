@@ -39,6 +39,16 @@ def changed_files_staged(repo: str) -> list[str]:
     return out.split("\n") if out else []
 
 
+def changed_files_vs_head(repo: str) -> list[str]:
+    """Get all files that differ from HEAD (staged + unstaged, one subprocess).
+
+    Equivalent to union of changed_files_staged() and changed_files_unstaged()
+    but uses a single git call instead of two.
+    """
+    out = _run_git(repo, "diff", "HEAD", "--name-only")
+    return out.split("\n") if out else []
+
+
 def changed_files_since(repo: str, ref: str = "HEAD~1") -> list[str]:
     """Get files changed since a git ref (default: last commit)."""
     out = _run_git(repo, "diff", "--name-only", ref)
