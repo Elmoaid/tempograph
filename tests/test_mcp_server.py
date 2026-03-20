@@ -228,11 +228,15 @@ class TestParameters:
         assert "server.py" in r["data"]
 
     def test_blast_radius_unindexed_existing_file(self, tmp_path):
-        """File exists on disk but isn't in the graph → actionable message."""
+        """File exists on disk but isn't in the graph → exclusion hint with directory name."""
         unindexed = tmp_path / "orphan.py"
         unindexed.write_text("def foo(): pass\n")
         raw = blast_radius(REPO_PATH, file_path=str(unindexed))
-        assert "not indexed" in raw
+        assert "not in the graph" in raw
+        assert "--exclude" in raw
+        assert "overview" in raw
+        # Should name the parent directory in the hint
+        assert tmp_path.name in raw
 
     def test_diff_context_explicit_files_no_git(self):
         """Passing changed_files explicitly should not require git."""
@@ -2447,6 +2451,376 @@ struct MyStruct;
         assert len(fn_syms) == 0
 
 
+class TestRustParser:
+    def test_free_function(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+fn compute(a: i32, b: i32) -> i32 {
+    a + b
+}
+"""
+        p = FileParser("math.rs", Language.RUST, code)
+        syms, _, _ = p.parse()
+        assert any(s.name == "compute" for s in syms)
+        fn_sym = next(s for s in syms if s.name == "compute")
+        assert fn_sym.kind.value == "function"
+
+    def test_pub_function_exported(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+pub fn exported_fn() -> bool {
+    true
+}
+
+fn private_fn() {}
+"""
+        p = FileParser("lib.rs", Language.RUST, code)
+        syms, _, _ = p.parse()
+        # Both are extracted; pub is exported
+        names = {s.name for s in syms}
+        assert "exported_fn" in names
+        assert "private_fn" in names
+
+    def test_struct_item(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+pub struct Point {
+    pub x: f64,
+    pub y: f64,
+}
+"""
+        p = FileParser("geo.rs", Language.RUST, code)
+        syms, _, _ = p.parse()
+        assert any(s.name == "Point" for s in syms)
+        point = next(s for s in syms if s.name == "Point")
+        assert point.kind.value == "struct"
+
+    def test_enum_item(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+pub enum Direction {
+    North,
+    South,
+    East,
+    West,
+}
+"""
+        p = FileParser("dir.rs", Language.RUST, code)
+        syms, _, _ = p.parse()
+        assert any(s.name == "Direction" for s in syms)
+        direction = next(s for s in syms if s.name == "Direction")
+        assert direction.kind.value == "enum"
+
+    def test_impl_block_methods_linked_to_struct(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+pub struct Counter {
+    count: u32,
+}
+
+impl Counter {
+    pub fn new() -> Self {
+        Counter { count: 0 }
+    }
+
+    pub fn increment(&mut self) {
+        self.count += 1;
+    }
+
+    pub fn get(&self) -> u32 {
+        self.count
+    }
+}
+"""
+        p = FileParser("counter.rs", Language.RUST, code)
+        syms, edges, _ = p.parse()
+        names = {s.name for s in syms}
+        assert "Counter" in names
+        assert "new" in names
+        assert "increment" in names
+        assert "get" in names
+        # Methods should be METHOD kind
+        new_sym = next(s for s in syms if s.name == "new")
+        assert new_sym.kind.value == "method"
+        # CONTAINS edges: Counter → methods
+        contains_edges = [e for e in edges if e.kind.value == "contains"]
+        counter_sym = next(s for s in syms if s.name == "Counter")
+        method_ids = {s.id for s in syms if s.name in ("new", "increment", "get")}
+        assert any(e.source_id == counter_sym.id and e.target_id in method_ids for e in contains_edges)
+
+    def test_trait_definition(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+pub trait Drawable {
+    fn draw(&self);
+    fn bounds(&self) -> (f64, f64);
+}
+"""
+        p = FileParser("traits.rs", Language.RUST, code)
+        syms, edges, _ = p.parse()
+        assert any(s.name == "Drawable" for s in syms)
+        trait_sym = next(s for s in syms if s.name == "Drawable")
+        assert trait_sym.kind.value == "trait"
+        # Trait methods extracted as methods with CONTAINS edges
+        names = {s.name for s in syms}
+        assert "draw" in names
+        assert "bounds" in names
+
+    def test_impl_trait_for_type_implements_edge(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+pub struct Circle {
+    radius: f64,
+}
+
+pub trait Shape {
+    fn area(&self) -> f64;
+}
+
+impl Shape for Circle {
+    fn area(&self) -> f64 {
+        3.14159 * self.radius * self.radius
+    }
+}
+"""
+        p = FileParser("shapes.rs", Language.RUST, code)
+        syms, edges, _ = p.parse()
+        # IMPLEMENTS edge: Circle → Shape
+        impl_edges = [e for e in edges if e.kind.value == "implements"]
+        assert len(impl_edges) >= 1
+        circle_sym = next(s for s in syms if s.name == "Circle")
+        assert any(e.source_id == circle_sym.id for e in impl_edges)
+
+    def test_nested_mod(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+mod inner {
+    pub fn helper() -> i32 {
+        42
+    }
+
+    pub struct Config {
+        pub timeout: u32,
+    }
+}
+"""
+        p = FileParser("lib.rs", Language.RUST, code)
+        syms, _, _ = p.parse()
+        names = {s.name for s in syms}
+        # Symbols inside mod are extracted
+        assert "helper" in names
+        assert "Config" in names
+        # Module itself is emitted
+        assert "inner" in names
+
+    def test_calls_edge(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+fn do_work() {
+    helper();
+}
+
+fn helper() {}
+"""
+        p = FileParser("work.rs", Language.RUST, code)
+        syms, edges, _ = p.parse()
+        calls_edges = [e for e in edges if e.kind.value == "calls"]
+        assert any("helper" in e.target_id for e in calls_edges)
+
+    def test_test_function_kind(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_addition() {
+        assert_eq!(2 + 2, 4);
+    }
+}
+"""
+        p = FileParser("lib.rs", Language.RUST, code)
+        syms, _, _ = p.parse()
+        test_sym = next((s for s in syms if s.name == "test_addition"), None)
+        assert test_sym is not None
+        assert test_sym.kind.value == "test"
+
+
+class TestSwiftParser:
+    def test_free_function(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+func compute(a: Int, b: Int) -> Int {
+    return a + b
+}
+"""
+        p = FileParser("math.swift", Language.SWIFT, code)
+        syms, _, _ = p.parse()
+        assert any(s.name == "compute" for s in syms)
+        fn_sym = next(s for s in syms if s.name == "compute")
+        assert fn_sym.kind.value == "function"
+
+    def test_class_with_method(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+class Foo {
+    func bar() -> Int { return 1 }
+}
+"""
+        p = FileParser("foo.swift", Language.SWIFT, code)
+        syms, edges, _ = p.parse()
+        names = {s.name for s in syms}
+        assert "Foo" in names
+        assert "bar" in names
+        foo_sym = next(s for s in syms if s.name == "Foo")
+        assert foo_sym.kind.value == "class"
+        bar_sym = next(s for s in syms if s.name == "bar")
+        assert bar_sym.kind.value == "method"
+        contains = [e for e in edges if e.kind.value == "contains"]
+        assert any(e.source_id == foo_sym.id and e.target_id == bar_sym.id for e in contains)
+
+    def test_struct(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+struct Point {
+    var x: Double
+    var y: Double
+}
+"""
+        p = FileParser("geo.swift", Language.SWIFT, code)
+        syms, _, _ = p.parse()
+        assert any(s.name == "Point" for s in syms)
+        pt = next(s for s in syms if s.name == "Point")
+        assert pt.kind.value == "struct"
+
+    def test_enum(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+enum Direction {
+    case north
+    case south
+    case east
+    case west
+}
+"""
+        p = FileParser("dir.swift", Language.SWIFT, code)
+        syms, _, _ = p.parse()
+        assert any(s.name == "Direction" for s in syms)
+        d = next(s for s in syms if s.name == "Direction")
+        assert d.kind.value == "enum"
+
+    def test_protocol(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+protocol Drawable {
+    func draw()
+    func bounds() -> (Double, Double)
+}
+"""
+        p = FileParser("proto.swift", Language.SWIFT, code)
+        syms, edges, _ = p.parse()
+        names = {s.name for s in syms}
+        assert "Drawable" in names
+        d = next(s for s in syms if s.name == "Drawable")
+        assert d.kind.value == "interface"
+        assert "draw" in names
+        assert "bounds" in names
+        contains = [e for e in edges if e.kind.value == "contains"]
+        draw_sym = next(s for s in syms if s.name == "draw")
+        assert any(e.source_id == d.id and e.target_id == draw_sym.id for e in contains)
+
+    def test_extension(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+class Foo {
+    func base() {}
+}
+
+extension Foo {
+    func baz() {}
+}
+"""
+        p = FileParser("ext.swift", Language.SWIFT, code)
+        syms, edges, _ = p.parse()
+        names = {s.name for s in syms}
+        assert "Foo" in names
+        assert "baz" in names
+        foo_sym = next(s for s in syms if s.name == "Foo")
+        baz_sym = next(s for s in syms if s.name == "baz")
+        assert baz_sym.kind.value == "method"
+        contains = [e for e in edges if e.kind.value == "contains"]
+        assert any(e.source_id == foo_sym.id and e.target_id == baz_sym.id for e in contains)
+
+    def test_init_declaration(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+class Widget {
+    var value: Int
+    init(value: Int) {
+        self.value = value
+    }
+}
+"""
+        p = FileParser("widget.swift", Language.SWIFT, code)
+        syms, edges, _ = p.parse()
+        widget = next(s for s in syms if s.name == "Widget")
+        init_sym = next((s for s in syms if s.name == "init"), None)
+        assert init_sym is not None
+        assert init_sym.kind.value == "method"
+        contains = [e for e in edges if e.kind.value == "contains"]
+        assert any(e.source_id == widget.id and e.target_id == init_sym.id for e in contains)
+
+    def test_pub_visibility_exported(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+public func exported() {}
+internal func notExported() {}
+private func alsoPrivate() {}
+func defaultInternal() {}
+"""
+        p = FileParser("vis.swift", Language.SWIFT, code)
+        syms, _, _ = p.parse()
+        exp = next(s for s in syms if s.name == "exported")
+        assert exp.exported is True
+        # internal/private/default are not marked as exported by the handler
+        not_exp = next(s for s in syms if s.name == "notExported")
+        assert not_exp.exported is False
+        also_priv = next(s for s in syms if s.name == "alsoPrivate")
+        assert also_priv.exported is False
+
+    def test_calls_edge(self):
+        from tempograph.parser import FileParser
+        from tempograph.types import Language
+        code = b"""
+func doWork() {
+    helper()
+}
+
+func helper() {}
+"""
+        p = FileParser("work.swift", Language.SWIFT, code)
+        syms, edges, _ = p.parse()
+        calls = [e for e in edges if e.kind.value == "calls"]
+        assert any("helper" in e.target_id for e in calls)
+
+
 class TestBlastRiskBadge:
     """Tests for the blast risk badge in render_focused.
 
@@ -2501,3 +2875,125 @@ class TestBlastRiskBadge:
         count = int(m.group(1))
         # 8 unique external files calling shared_util
         assert count == 8, f"expected count=8, got {count}"
+
+
+class TestChangeVelocityRanking:
+    """Tests for change velocity ranking in render_hotspots.
+
+    Symbols in files with high recent git churn get a score multiplier so
+    they rank higher — actively changing files carry coordination hazard.
+    """
+
+    def _make_hotspot_repo(self, tmp_path) -> object:
+        """Build a minimal repo with two hotspot candidates."""
+        from tempograph.builder import build_graph
+
+        # hub.py: many callers (static coupling)
+        (tmp_path / "hub.py").write_text(
+            "def central_func():\n    pass\n"
+        )
+        # callers: 6 files import hub.central_func
+        for i in range(6):
+            (tmp_path / f"user_{i}.py").write_text(
+                f"from hub import central_func\n\ndef task_{i}():\n    central_func()\n"
+            )
+        # quiet.py: few callers but exists
+        (tmp_path / "quiet.py").write_text(
+            "def stable_func():\n    pass\n"
+        )
+        (tmp_path / "user_quiet.py").write_text(
+            "from quiet import stable_func\n\ndef run():\n    stable_func()\n"
+        )
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_velocity_annotation_fires_for_hot_file(self, tmp_path, monkeypatch):
+        """render_hotspots annotates active-churn files with commits/week."""
+        from tempograph.render import render_hotspots
+        import tempograph.render as render_mod
+
+        g = self._make_hotspot_repo(tmp_path)
+        # Simulate hub.py with 20 commits/week
+        monkeypatch.setattr(
+            render_mod,
+            "render_hotspots",
+            render_hotspots,
+        )
+        # Patch file_change_velocity at the import site in render.py
+        import tempograph.git as git_mod
+        monkeypatch.setattr(
+            git_mod,
+            "file_change_velocity",
+            lambda repo, recent_days=7: {"hub.py": 20.0, "quiet.py": 0.0},
+        )
+
+        out = render_hotspots(g, top_n=10)
+        assert "active churn" in out, f"must annotate hub.py as active churn; got:\n{out}"
+        assert "commits/week" in out, "must include commits/week"
+        assert "re-read before editing" in out
+
+    def test_velocity_annotation_silent_below_threshold(self, tmp_path, monkeypatch):
+        """render_hotspots does NOT annotate files below 5 commits/week."""
+        from tempograph.render import render_hotspots
+        import tempograph.git as git_mod
+
+        g = self._make_hotspot_repo(tmp_path)
+        monkeypatch.setattr(
+            git_mod,
+            "file_change_velocity",
+            lambda repo, recent_days=7: {"hub.py": 2.0},
+        )
+
+        out = render_hotspots(g, top_n=10)
+        assert "active churn" not in out, f"should NOT fire at 2 commits/week; got:\n{out}"
+
+    def test_velocity_boosts_score(self, tmp_path, monkeypatch):
+        """A symbol in a churning file should rank above one with equivalent static score."""
+        from tempograph.render import render_hotspots
+        import tempograph.git as git_mod
+
+        # Two files with equivalent static coupling: 3 callers each
+        (tmp_path / "hot_file.py").write_text("def hot_func():\n    pass\n")
+        (tmp_path / "cold_file.py").write_text("def cold_func():\n    pass\n")
+        for i in range(3):
+            (tmp_path / f"hot_caller_{i}.py").write_text(
+                f"from hot_file import hot_func\n\ndef t{i}():\n    hot_func()\n"
+            )
+            (tmp_path / f"cold_caller_{i}.py").write_text(
+                f"from cold_file import cold_func\n\ndef t{i}():\n    cold_func()\n"
+            )
+        from tempograph.builder import build_graph
+        g = build_graph(str(tmp_path), use_cache=False)
+
+        # hot_file.py has 30 commits/week, cold_file.py has 0
+        monkeypatch.setattr(
+            git_mod,
+            "file_change_velocity",
+            lambda repo, recent_days=7: {"hot_file.py": 30.0, "cold_file.py": 0.0},
+        )
+
+        out = render_hotspots(g, top_n=10)
+        hot_pos = out.find("hot_func")
+        cold_pos = out.find("cold_func")
+        assert hot_pos != -1, "hot_func must appear in hotspots"
+        assert cold_pos != -1, "cold_func must appear in hotspots"
+        assert hot_pos < cold_pos, (
+            f"hot_func (churning file) must rank above cold_func (stable); "
+            f"got hot_pos={hot_pos} cold_pos={cold_pos}"
+        )
+
+    def test_velocity_absent_no_error(self, tmp_path, monkeypatch):
+        """render_hotspots works normally when git velocity unavailable."""
+        from tempograph.render import render_hotspots
+        import tempograph.git as git_mod
+
+        g = self._make_hotspot_repo(tmp_path)
+        # Simulate git failure returning empty dict
+        monkeypatch.setattr(
+            git_mod,
+            "file_change_velocity",
+            lambda repo, recent_days=7: {},
+        )
+
+        out = render_hotspots(g, top_n=10)
+        assert "hotspot" in out.lower()
+        assert "active churn" not in out
