@@ -108,6 +108,74 @@ def cochange_matrix(repo: str, n_commits: int = 200) -> dict[str, list[tuple[str
     return result
 
 
+@functools.lru_cache(maxsize=4)
+def cochange_matrix_recency(repo: str, n_commits: int = 200) -> dict[str, list[tuple[str, float, int]]]:
+    """Like cochange_matrix but with recency-weighted scores.
+
+    Returns {file_path: [(coupled_file, decayed_score, days_since_last_cochange), ...]}
+    sorted by decayed_score desc.
+
+    Decay: score = jaccard_freq * exp(-0.01 * days)
+    Half-life ~69 days — coupling from 2 years ago weighs ~7% of today's coupling.
+    This surfaces files that are CURRENTLY moving together, not just historically.
+    """
+    import math
+    import time
+    from collections import Counter
+
+    now = time.time()
+    # Include unix timestamp per commit: "COMMIT_SEP <ts>"
+    out = _run_git(repo, "log", f"--max-count={n_commits}", "--name-only", "--pretty=format:COMMIT_SEP %ct")
+    if not out:
+        return {}
+
+    pair_counts: Counter[tuple[str, str]] = Counter()
+    file_counts: Counter[str] = Counter()
+    pair_last_ts: dict[tuple[str, str], float] = {}
+
+    for commit_block in out.split("COMMIT_SEP "):
+        commit_block = commit_block.strip()
+        if not commit_block:
+            continue
+        lines = commit_block.splitlines()
+        if not lines:
+            continue
+        try:
+            ts = float(lines[0].strip())
+        except (ValueError, IndexError):
+            continue
+        files = [f.strip() for f in lines[1:] if f.strip()]
+        if len(files) < 2 or len(files) > 50:
+            continue
+        for f in files:
+            file_counts[f] += 1
+        for i, f1 in enumerate(files):
+            for f2 in files[i + 1:]:
+                key = tuple(sorted([f1, f2]))
+                pair_counts[key] += 1
+                if key not in pair_last_ts or ts > pair_last_ts[key]:
+                    pair_last_ts[key] = ts
+
+    LAMBDA = 0.01  # decay constant; half-life = ln(2)/0.01 ≈ 69 days
+
+    result: dict[str, list[tuple[str, float, int]]] = {}
+    for (f1, f2), count in pair_counts.items():
+        if count < 2:
+            continue
+        freq = count / max(min(file_counts[f1], file_counts[f2]), 1)
+        last_ts = pair_last_ts.get((f1, f2), now)
+        days_since = max(0.0, (now - last_ts) / 86400.0)
+        decayed = freq * math.exp(-LAMBDA * days_since)
+        days_int = int(days_since)
+        result.setdefault(f1, []).append((f2, decayed, days_int))
+        result.setdefault(f2, []).append((f1, decayed, days_int))
+
+    for f in result:
+        result[f] = sorted(result[f], key=lambda x: -x[1])[:10]
+
+    return result
+
+
 def recently_modified_files(repo: str, n_commits: int = 5) -> set[str]:
     """Return set of file paths (relative to repo root) touched in the last n_commits.
 

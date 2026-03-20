@@ -1588,14 +1588,15 @@ class TestTemporalSymbolWeighting:
         """_cochange_orbit never returns files already in seen_files."""
         from tempograph.render import _cochange_orbit
         # Mock: builder.py co-changes with parser.py (already seen) and types.py (not seen)
+        # cochange_matrix_recency returns (partner, decayed_score, days_since)
         from unittest.mock import patch
         mock_matrix = {
             "tempograph/builder.py": [
-                ("tempograph/parser.py", 0.8),  # already seen — must be excluded
-                ("tempograph/types.py", 0.6),   # not seen — must be included
+                ("tempograph/parser.py", 0.8, 10),  # already seen — must be excluded
+                ("tempograph/types.py", 0.6, 30),   # not seen — must be included
             ]
         }
-        with patch("tempograph.git.cochange_matrix", return_value=mock_matrix), \
+        with patch("tempograph.git.cochange_matrix_recency", return_value=mock_matrix), \
              patch("tempograph.git.is_git_repo", return_value=True):
             result = _cochange_orbit(
                 REPO_PATH,
@@ -1603,9 +1604,30 @@ class TestTemporalSymbolWeighting:
                 {"tempograph/parser.py"},  # seen_files
                 n=3,
             )
-        fps = [fp for fp, _ in result]
+        fps = [fp for fp, _score, _days in result]
         assert "tempograph/parser.py" not in fps, "seen_files must be excluded from orbit"
         assert "tempograph/types.py" in fps, "unseen co-change partner must be included"
+
+    def test_cochange_orbit_recency_labels(self):
+        """render_focused includes recency labels (recent/aging/stale) in Co-change orbit."""
+        from tempograph.render import _cochange_orbit
+        from unittest.mock import patch
+        # Inject three partners with different staleness
+        mock_matrix = {
+            "tempograph/builder.py": [
+                ("tempograph/types.py", 0.9, 10),    # recent (<45 days)
+                ("tempograph/cache.py", 0.7, 80),    # aging (45-120 days)
+                ("tempograph/storage.py", 0.5, 200), # stale (>120 days)
+            ]
+        }
+        with patch("tempograph.git.cochange_matrix_recency", return_value=mock_matrix), \
+             patch("tempograph.git.is_git_repo", return_value=True):
+            result = _cochange_orbit(REPO_PATH, ["tempograph/builder.py"], set(), n=3)
+        assert len(result) == 3
+        days_vals = [days for _, _, days in result]
+        assert 10 in days_vals
+        assert 80 in days_vals
+        assert 200 in days_vals
 
     def test_cochange_orbit_empty_for_non_git_repo(self, tmp_path):
         """_cochange_orbit returns [] gracefully for non-git directories."""
