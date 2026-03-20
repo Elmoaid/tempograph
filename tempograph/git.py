@@ -261,3 +261,30 @@ def file_last_modified_days(repo: str, file_path: str) -> int | None:
     return int((time.time() - ct) / 86400)
 
 
+def recent_file_commits(repo: str, file_path: str, n: int = 3) -> list[dict]:
+    """Return the last n commits that touched file_path.
+
+    Each entry: {"days_ago": int, "message": str} (newest first).
+    Returns [] on error, empty output, or no git history.
+    """
+    out = _run_git(repo, "log", f"-n", str(n), "--format=%ct|%s", "--", file_path)
+    if not out:
+        return []
+    results = []
+    for line in out.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split("|", 1)
+        if len(parts) != 2:
+            continue
+        try:
+            ct = int(parts[0])
+        except ValueError:
+            continue
+        days_ago = int((time.time() - ct) / 86400)
+        message = parts[1][:60]
+        results.append({"days_ago": days_ago, "message": message})
+    return results
+
+
