@@ -206,6 +206,29 @@ def file_commit_counts(repo: str, n_commits: int = 200) -> dict[str, int]:
     return dict(counts)
 
 
+@functools.lru_cache(maxsize=4)
+def file_change_velocity(repo: str, recent_days: int = 7) -> dict[str, float]:
+    """Return {filepath: commits_per_week} for files touched in the last recent_days.
+
+    Counts raw commit frequency — how many commits touched each file in the
+    recent window, normalized to commits-per-week. Files not in the result had
+    zero recent activity (implicit 0.0).
+    Cached — single git call per session.
+    """
+    from collections import Counter
+    out = _run_git(repo, "log", f"--since={recent_days} days ago", "--name-only", "--format=")
+    if not out:
+        return {}
+    counts: Counter[str] = Counter()
+    for line in out.splitlines():
+        line = line.strip()
+        if line:
+            counts[line] += 1
+    # Normalize to commits/week
+    scale = 7.0 / max(recent_days, 1)
+    return {fp: count * scale for fp, count in counts.items()}
+
+
 def recently_modified_files(repo: str, n_commits: int = 5) -> set[str]:
     """Return set of file paths (relative to repo root) touched in the last n_commits.
 
