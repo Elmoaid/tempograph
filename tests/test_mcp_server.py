@@ -2063,3 +2063,72 @@ class TestDeadCodeTestFileFilter:
         assert "orphan_function" in out, (
             "Symbols from non-test files must still appear in dead code output"
         )
+
+
+class TestFileVolatilityWarning:
+    """Tests for file volatility annotation in render_focused.
+
+    Volatile files (≥10 commits in last 200) get a warning so agents know
+    context may lag behind recent edits.
+    """
+
+    def test_file_commit_counts_returns_dict_for_git_repo(self):
+        """file_commit_counts returns a non-empty dict for an active git repo."""
+        from tempograph.git import file_commit_counts
+        file_commit_counts.cache_clear()
+        result = file_commit_counts(REPO_PATH)
+        assert isinstance(result, dict), "must return dict"
+        assert len(result) > 0, "tempograph is active — must have file history"
+        # render.py is frequently edited — must appear
+        assert "tempograph/render.py" in result, "render.py must appear in commit history"
+        assert result["tempograph/render.py"] >= 1
+
+    def test_file_commit_counts_empty_for_non_git_dir(self, tmp_path):
+        """file_commit_counts returns empty dict gracefully for non-git directories."""
+        from tempograph.git import file_commit_counts
+        file_commit_counts.cache_clear()
+        result = file_commit_counts(str(tmp_path))
+        assert result == {}, "non-git dir must return empty dict, not raise"
+
+    def test_volatility_annotation_fires_for_high_churn_file(self):
+        """render_focused emits 'Volatile:' when seed file has ≥10 commits in 200."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        from unittest.mock import patch
+        from tempograph.git import file_commit_counts
+
+        g = build_graph(REPO_PATH, exclude_dirs=["archive"])
+        # Inject a high-churn count for render.py (15 commits > threshold of 10)
+        mock_counts = {"tempograph/render.py": 15}
+        file_commit_counts.cache_clear()
+        with patch("tempograph.git.file_commit_counts", return_value=mock_counts):
+            out = render_focused(g, "render_focused", max_tokens=4000)
+
+        assert "Volatile:" in out, "render_focused must emit Volatile: for high-churn seed"
+        assert "15/200 commits" in out, "must include commit count in annotation"
+        assert "re-read before editing" in out, "must include actionable note"
+
+    def test_volatility_annotation_silent_for_low_churn_file(self, tmp_path):
+        """render_focused does NOT emit 'Volatile:' when seed file has < 10 commits."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        from unittest.mock import patch
+        from tempograph.git import file_commit_counts
+
+        # Create a minimal git repo with a source file
+        import subprocess
+        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True)
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True)
+
+        g = build_graph(str(tmp_path), use_cache=False)
+        # Low churn: 3 commits (below threshold of 10)
+        mock_counts = {"utils.py": 3}
+        file_commit_counts.cache_clear()
+        with patch("tempograph.git.file_commit_counts", return_value=mock_counts):
+            out = render_focused(g, "helper", max_tokens=4000)
+
+        assert "Volatile:" not in out, "must NOT emit Volatile: for low-churn seed file"
