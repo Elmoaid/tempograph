@@ -101,6 +101,10 @@ def build_graph(
     cache_hits = 0
     current_files: set[str] = set()
 
+    # Bulk-fetch stored {path: (hash, mtime_ns)} — one query replaces per-file hash lookups.
+    # mtime_ns check (nanosecond precision) skips read_bytes()+md5() for unchanged files.
+    stored_files: dict[str, tuple[str, int]] = db.get_stored_files() if db else {}
+
     for file_path, rel_path in _walk_files(root, ignore_dirs, ignore_files, include_patterns, exclude_patterns, exclude_dirs):
         ext = file_path.suffix.lower()
         language = EXTENSION_TO_LANGUAGE.get(ext, Language.UNKNOWN)
@@ -109,6 +113,17 @@ def build_graph(
             stat = file_path.stat()
             if stat.st_size > MAX_FILE_SIZE:
                 continue
+        except (OSError, PermissionError):
+            continue
+
+        # Fast path: mtime_ns match means file is unchanged — skip read + hash entirely.
+        stored_entry = stored_files.get(rel_path)
+        if stored_entry is not None and stat.st_mtime_ns == stored_entry[1]:
+            current_files.add(rel_path)
+            cache_hits += 1
+            continue
+
+        try:
             source = file_path.read_bytes()
         except (OSError, PermissionError):
             continue
@@ -116,13 +131,11 @@ def build_graph(
         current_files.add(rel_path)
         line_count = source.count(b"\n") + (1 if source and not source.endswith(b"\n") else 0)
         file_hash = content_hash(source)
+        file_mtime_ns = stat.st_mtime_ns
 
         if _is_parseable(language):
-            # Check DB or JSON cache for unchanged files
-            if db and db.file_hash_matches(rel_path, file_hash):
-                cache_hits += 1
-                symbols, edges, imports = [], [], []  # will load from DB later
-            elif not db:
+            # Reach here only when mtime changed; check hash to determine if content changed.
+            if not db:
                 cached = check_cache(cache, rel_path, source) if use_cache else None
                 if cached:
                     cache_hits += 1
@@ -131,7 +144,6 @@ def build_graph(
                     imports = cached["imports"]
                     new_cache[rel_path] = cached
                 else:
-                    cached = None
                     symbols, edges, imports = _parse_file(rel_path, language, source, is_tauri)
                     if use_cache:
                         new_cache[rel_path] = make_cache_entry(
@@ -140,11 +152,16 @@ def build_graph(
                             [_edge_to_dict(e) for e in edges],
                             imports,
                         )
+            elif stored_entry is not None and stored_entry[0] == file_hash:
+                # Mtime changed but hash unchanged (e.g. `touch`): update mtime_ns only.
+                db.update_file_mtime(rel_path, file_mtime_ns)
+                cache_hits += 1
+                symbols, edges, imports = [], [], []
             else:
-                # DB miss — parse and store
+                # New file or content changed — parse and store.
                 symbols, edges, imports = _parse_file(rel_path, language, source, is_tauri)
                 db.update_file(rel_path, file_hash, language.value, line_count,
-                               len(source), symbols, edges, imports)
+                               len(source), symbols, edges, imports, mtime_ns=file_mtime_ns)
 
             # For DB path, skip per-file graph building — load_all() handles it
             if not db:
@@ -164,10 +181,13 @@ def build_graph(
                 )
                 graph.files[rel_path] = file_info
             else:
-                # Store non-parseable files in DB too (for file map/overview)
-                if not db.file_hash_matches(rel_path, file_hash):
+                # Store non-parseable files in DB too (for file map/overview).
+                # Reach here only when mtime changed; check hash to avoid re-storing.
+                if stored_entry is not None and stored_entry[0] == file_hash:
+                    db.update_file_mtime(rel_path, file_mtime_ns)
+                else:
                     db.update_file(rel_path, file_hash, language.value, line_count,
-                                   len(source), [], [], [])
+                                   len(source), [], [], [], mtime_ns=file_mtime_ns)
 
     # Load entire graph from DB in one shot
     if db:

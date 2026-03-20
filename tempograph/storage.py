@@ -16,7 +16,7 @@ from .types import Edge, EdgeKind, FileInfo, Language, Symbol, SymbolKind
 
 CACHE_DIR = ".tempograph"
 DB_FILE = "graph.db"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 # Module-level enum lookup dicts — O(1) vs try/except, ~31% faster in load_all()
 _SYMBOL_KIND_MAP: dict[str, SymbolKind] = {v.value: v for v in SymbolKind}
@@ -57,7 +57,8 @@ class GraphDB:
                 line_count INTEGER NOT NULL,
                 byte_size INTEGER NOT NULL,
                 symbols_json TEXT DEFAULT '[]',
-                imports_json TEXT DEFAULT '[]'
+                imports_json TEXT DEFAULT '[]',
+                mtime_ns INTEGER DEFAULT 0
             );
 
             CREATE TABLE IF NOT EXISTS symbols (
@@ -109,6 +110,36 @@ class GraphDB:
             INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '{SCHEMA_VERSION}');
         """)
         self._conn.commit()
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Apply incremental schema migrations based on stored schema_version."""
+        row = self._conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+        version = int(row["value"]) if row else 1
+        if version < 2:
+            # Add mtime_ns column for mtime-based early-skip optimization
+            try:
+                self._conn.execute("ALTER TABLE files ADD COLUMN mtime_ns INTEGER DEFAULT 0")
+                self._conn.execute("UPDATE meta SET value='2' WHERE key='schema_version'")
+                self._conn.commit()
+            except Exception:
+                pass  # column already exists
+
+    def get_stored_files(self) -> dict[str, tuple[str, int]]:
+        """Bulk-fetch {rel_path: (hash, mtime_ns)} for all stored files in one query.
+
+        Used by build_graph() to check mtime before reading file contents.
+        Avoids 1 DB query per file on the warm-build fast path.
+        """
+        rows = self._conn.execute("SELECT path, hash, mtime_ns FROM files").fetchall()
+        return {row["path"]: (row["hash"], row["mtime_ns"] or 0) for row in rows}
+
+    def update_file_mtime(self, rel_path: str, mtime_ns: int) -> None:
+        """Update only the mtime_ns for an existing file record (e.g. after `touch`)."""
+        self._conn.execute(
+            "UPDATE files SET mtime_ns = ? WHERE path = ?", (mtime_ns, rel_path)
+        )
+        self._conn.commit()
 
     def file_hash_matches(self, rel_path: str, file_hash: str) -> bool:
         row = self._conn.execute(
@@ -126,6 +157,7 @@ class GraphDB:
         symbols: list[Symbol],
         edges: list[Edge],
         imports: list[str],
+        mtime_ns: int = 0,
     ) -> None:
         cur = self._conn.cursor()
         # Remove old data for this file
@@ -141,12 +173,12 @@ class GraphDB:
             (rel_path + "::%",),
         )
 
-        # Insert file record
+        # Insert file record (with mtime_ns for next-build mtime-based early-skip)
         cur.execute(
-            "INSERT OR REPLACE INTO files (path, hash, language, line_count, byte_size, symbols_json, imports_json) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            "INSERT OR REPLACE INTO files (path, hash, language, line_count, byte_size, symbols_json, imports_json, mtime_ns) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (rel_path, file_hash, language, line_count, byte_size,
-             json.dumps([s.id for s in symbols]), json.dumps(imports)),
+             json.dumps([s.id for s in symbols]), json.dumps(imports), mtime_ns),
         )
 
         # Insert symbols
