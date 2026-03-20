@@ -1,4 +1,4 @@
-import { RefreshCw, PanelRightClose, PanelRight, Shield } from "lucide-react";
+import { RefreshCw, PanelRightClose, PanelRight, Shield, Package } from "lucide-react";
 
 interface Stats {
   files: string;
@@ -10,13 +10,15 @@ interface TopBarProps {
   stats: Stats | null;
   showClaude: boolean;
   onToggleClaude: () => void;
+  showSnapshots: boolean;
+  onToggleSnapshots: () => void;
   rightHidden: boolean;
   onToggleRight: () => void;
   loading: boolean;
   onRefresh: () => void;
 }
 
-export function TopBar({ stats, showClaude, onToggleClaude, rightHidden, onToggleRight, loading, onRefresh }: TopBarProps) {
+export function TopBar({ stats, showClaude, onToggleClaude, showSnapshots, onToggleSnapshots, rightHidden, onToggleRight, loading, onRefresh }: TopBarProps) {
   return (
     <div className="topbar">
       <span className="topbar-brand">Tempo</span>
@@ -28,6 +30,14 @@ export function TopBar({ stats, showClaude, onToggleClaude, rightHidden, onToggl
         </div>
       )}
       <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+        <button
+          className={`btn ${showSnapshots ? "" : "btn-ghost"}`}
+          onClick={onToggleSnapshots}
+          style={{ padding: "4px 8px", fontSize: 11 }}
+          title="Pre-indexed snapshots"
+        >
+          <Package size={12} /> Snapshots
+        </button>
         <button
           className={`btn ${showClaude ? "" : "btn-ghost"}`}
           onClick={onToggleClaude}

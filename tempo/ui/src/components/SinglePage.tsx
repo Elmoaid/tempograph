@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { FolderOpen } from "lucide-react";
 import {
   runTempo, readConfig, writeConfig, listNotes, readFile, readTelemetry,
-  gitInfo, listDir,
+  gitInfo, listDir, getHomeDir,
 } from "./tempo";
 import { ClaudePanel } from "./ClaudePanel";
 import { ModeRunner } from "./ModeRunner";
@@ -13,6 +13,7 @@ import { ErrorBoundary } from "./ErrorBoundary";
 import { TopBar } from "./TopBar";
 import { WorkspaceTabs } from "./WorkspaceTabs";
 import { InfoPanel } from "./InfoPanel";
+import { SnapshotPanel } from "./SnapshotPanel";
 import type { PluginInfo } from "./PluginPanel";
 import type { TempoResult } from "../App";
 import type { WorkspaceData, DirEntry, NoteEntry } from "./workspaceTypes";
@@ -42,6 +43,8 @@ function parseStats(output: string) {
 export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addWorkspace, removeWorkspace }: Props) {
   const [loading, setLoading] = useState(false);
   const [showClaude, setShowClaude] = useState(false);
+  const [showSnapshots, setShowSnapshots] = useState(false);
+  const [homeDir, setHomeDir] = useState("");
   const [rightHidden, setRightHidden] = useState(() =>
     localStorage.getItem("tempo-right-hidden") === "true"
   );
@@ -118,6 +121,10 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
     if (repoPath) loadAll(repoPath);
   }, [repoPath, loadAll]);
 
+  useEffect(() => {
+    getHomeDir().then(setHomeDir);
+  }, []);
+
   const ws = getWsData(repoPath);
 
   const togglePlugin = async (name: string, on: boolean) => {
@@ -191,6 +198,8 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
         stats={stats}
         showClaude={showClaude}
         onToggleClaude={() => setShowClaude(!showClaude)}
+        showSnapshots={showSnapshots}
+        onToggleSnapshots={() => setShowSnapshots(!showSnapshots)}
         rightHidden={rightHidden}
         onToggleRight={() => {
           const next = !rightHidden;
@@ -209,6 +218,14 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
         onRemove={removeWorkspace}
         onAdd={addWorkspace}
       />
+
+      {showSnapshots && homeDir && (
+        <SnapshotPanel
+          homeDir={homeDir}
+          onLoad={(path) => { addWorkspace(path); setShowSnapshots(false); }}
+          onClose={() => setShowSnapshots(false)}
+        />
+      )}
 
       {showClaude && <ClaudePanel onClose={() => setShowClaude(false)} workspaces={workspaces} />}
 
