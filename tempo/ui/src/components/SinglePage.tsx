@@ -181,13 +181,31 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
     return (
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", flexDirection: "column", gap: 16 }}>
         <div style={{ fontSize: 20, fontWeight: 700, color: "var(--accent)" }}>Tempo</div>
+        <div style={{ fontSize: 13, color: "var(--text-tertiary)" }}>Get started by indexing a repository or loading a snapshot.</div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
           <FolderOpen size={16} color="var(--text-tertiary)" />
           <input ref={emptyInputRef} className="input" placeholder="/path/to/repo"
             onKeyDown={(e) => { if (e.key === "Enter") { const v = emptyInputRef.current?.value.trim(); if (v) addWorkspace(v); } }}
-            style={{ width: 400 }} autoFocus />
-          <button className="btn" onClick={() => { const v = emptyInputRef.current?.value.trim(); if (v) addWorkspace(v); }}>Add Workspace</button>
+            style={{ width: 360 }} autoFocus />
+          <button className="btn" onClick={() => { const v = emptyInputRef.current?.value.trim(); if (v) addWorkspace(v); }}>Index</button>
         </div>
+        <div style={{ fontSize: 12, color: "var(--text-tertiary)" }}>or</div>
+        <button
+          className="btn-ghost"
+          onClick={() => setShowSnapshots(true)}
+          style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 14px", border: "1px solid var(--border)", borderRadius: 6, fontSize: 12 }}
+        >
+          Load a snapshot
+        </button>
+        {showSnapshots && homeDir && (
+          <div style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 10 }}>
+            <SnapshotPanel
+              homeDir={homeDir}
+              onLoad={(path) => { addWorkspace(path); setShowSnapshots(false); }}
+              onClose={() => setShowSnapshots(false)}
+            />
+          </div>
+        )}
       </div>
     );
   }

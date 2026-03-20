@@ -190,6 +190,15 @@ export async function pathExists(path: string): Promise<boolean> {
   }
 }
 
+export async function downloadSnapshot(slug: string): Promise<TempoResult> {
+  const fn = await getInvoke();
+  try {
+    return await fn("download_snapshot", { slug });
+  } catch (e) {
+    return { success: false, output: String(e), mode: "snapshot_download" };
+  }
+}
+
 export async function reportFeedback(
   repoPath: string,
   mode: string,
