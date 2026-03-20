@@ -1165,3 +1165,30 @@ class TestShouldInjectV5:
         """pred=5 → skip (baseline confident, far above threshold)."""
         from bench.changelocal.context import should_inject_v5
         assert should_inject_v5(5) is False
+
+
+class TestIsPathFallbackOnly:
+    """Tests for _is_path_fallback_only() v6 gate helper."""
+
+    def test_path_fallback_only_detected(self):
+        """Context with only KEY FILES (path match) and no Focus: is path-fallback-only."""
+        from bench.changelocal.context import _is_path_fallback_only
+        ctx = "KEY FILES (path match):\n  tempograph/storage.py\n  tempograph/cache.py"
+        assert _is_path_fallback_only(ctx) is True
+
+    def test_symbol_focus_not_path_fallback(self):
+        """Context with Focus: header is symbol-focus, not path-fallback."""
+        from bench.changelocal.context import _is_path_fallback_only
+        ctx = "Focus: build_graph\n\n● function build_graph (builder.py:45)\n  Callers: ..."
+        assert _is_path_fallback_only(ctx) is False
+
+    def test_mixed_context_not_path_fallback(self):
+        """Context with both Focus: and KEY FILES (path match): is NOT path-fallback-only."""
+        from bench.changelocal.context import _is_path_fallback_only
+        ctx = "Focus: storage\n\n● function build\nKEY FILES (path match):\n  tempograph/storage.py"
+        assert _is_path_fallback_only(ctx) is False
+
+    def test_empty_context_not_path_fallback(self):
+        """Empty context is not path-fallback (gate should not trigger on empty)."""
+        from bench.changelocal.context import _is_path_fallback_only
+        assert _is_path_fallback_only("") is False

@@ -504,6 +504,36 @@ def _cochange_orbit(
             sorted(partners.items(), key=lambda x: -x[1][0])[:n]]
 
 
+def _find_orbit_seeds(
+    graph: "Tempo",
+    query_tokens: list[str],
+    orbit_pairs: list[tuple[str, float]],
+) -> list[tuple["Symbol", float]]:
+    """Find the best-matching symbol in each orbit file by query token overlap.
+
+    Returns (symbol, coupling_freq) pairs — up to 1 per orbit file, max 3 total.
+    Only files with at least one symbol matching a query token are included.
+    This is how git-coupled files that aren't in the call graph become BFS seeds."""
+    if not query_tokens:
+        return []
+
+    results: list[tuple["Symbol", float]] = []
+    for fp, freq in orbit_pairs:
+        syms = graph.symbols_in_file(fp)
+        best_sym: "Symbol | None" = None
+        best_score = 0
+        for sym in syms:
+            name_lower = sym.name.lower()
+            score = sum(1 for tok in query_tokens if tok in name_lower)
+            if score > best_score:
+                best_score = score
+                best_sym = sym
+        if best_sym and best_score > 0:
+            results.append((best_sym, freq))
+
+    return results[:3]
+
+
 def _collect_seeds(
     graph: Tempo, query: str
 ) -> tuple[list[Symbol], set[str], list[str]]:
@@ -542,18 +572,33 @@ def _collect_seeds(
 
 
 def _bfs_expand(
-    graph: Tempo, seeds: list[Symbol], seed_files: set[str]
+    graph: Tempo,
+    seeds: list[Symbol],
+    seed_files: set[str],
+    secondary_seeds: list[Symbol] | None = None,
+    max_depth: int | None = None,
 ) -> tuple[list[tuple[Symbol, int]], set[str]]:
     """BFS from seed symbols following caller/callee/child edges.
 
     Returns (ordered, seen_ids).
     ordered is the BFS traversal sequence with (symbol, depth) pairs.
     seen_ids is the full set of visited symbol IDs — callers use it for
-    file-context deduplication so already-shown symbols are excluded."""
+    file-context deduplication so already-shown symbols are excluded.
+
+    secondary_seeds are orbit-derived symbols injected at depth 1 — they
+    expand the BFS into git-coupled files that aren't reachable via call edges.
+
+    max_depth overrides the hot-seeds heuristic when provided (used by adaptive
+    sparse-neighborhood expansion in render_focused)."""
     _hot_seeds = any(s.file_path in graph.hot_files for s in seeds)
-    _bfs_max_depth = 4 if _hot_seeds else 3
+    _bfs_max_depth = max_depth if max_depth is not None else (4 if _hot_seeds else 3)
     seen_ids: set[str] = set()
     queue: list[tuple[Symbol, int]] = [(s, 0) for s in seeds]
+    if secondary_seeds:
+        primary_ids = {s.id for s in seeds}
+        for s in secondary_seeds:
+            if s.id not in primary_ids:
+                queue.append((s, 1))
     ordered: list[tuple[Symbol, int]] = []
 
     def _enqueue(candidate: Symbol, depth: int) -> None:
@@ -622,14 +667,52 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     if not seeds:
         return _suggest_alternatives(graph, query) or f"No symbols matching '{query}'"
 
-    ordered, seen_ids = _bfs_expand(graph, seeds, seed_files)
+    # Orbit-BFS seeding: inject symbols from git-coupled files as depth-1 seeds.
+    # Call graph misses test files (they call INTO src, not tracked as callers).
+    # Git orbit catches those — if tests always change with render.py, seed them too.
+    orbit_seed_meta: dict[str, tuple[str, float]] = {}  # sym.id → (orbit_file, coupling_freq)
+    orbit_secondary: list[Symbol] = []
+    if graph.root:
+        _primary_fps = [s.file_path for s in seeds]
+        _primary_fp_set = {s.file_path for s in seeds}
+        _orbit_pairs = _cochange_orbit(graph.root, _primary_fps, _primary_fp_set, n=3)
+        for sym, freq in _find_orbit_seeds(graph, query_tokens, _orbit_pairs):
+            orbit_secondary.append(sym)
+            orbit_seed_meta[sym.id] = (sym.file_path, freq)
+
+    # Determine initial BFS depth: 4 for hot seeds, 3 otherwise.
+    _hot_seeds = any(s.file_path in graph.hot_files for s in seeds)
+    _initial_depth = 4 if _hot_seeds else 3
+    ordered, seen_ids = _bfs_expand(
+        graph, seeds, seed_files, secondary_seeds=orbit_secondary or None,
+        max_depth=_initial_depth,
+    )
+
+    # Sparse-neighborhood adaptive expansion: if BFS returned fewer than 20 nodes
+    # and didn't saturate the 50-node cap, the neighborhood is small enough that
+    # going one level deeper costs little and gives agents genuine extra context.
+    _depth_extended = False
+    _SPARSE_THRESHOLD = 20
+    _MAX_ADAPTIVE_DEPTH = 5
+    if len(ordered) < _SPARSE_THRESHOLD and _initial_depth < _MAX_ADAPTIVE_DEPTH:
+        _ext_depth = _initial_depth + 1
+        _ext_ordered, _ext_seen = _bfs_expand(
+            graph, seeds, seed_files, secondary_seeds=orbit_secondary or None,
+            max_depth=_ext_depth,
+        )
+        if len(_ext_ordered) > len(ordered):
+            ordered, seen_ids = _ext_ordered, _ext_seen
+            _depth_extended = True
 
     def _caller_priority(sym: Symbol) -> int:
         """0 = keyword match in path (show first), 1 = no match (show after)."""
         path_lower = sym.file_path.lower()
         return 0 if query_tokens and any(tok in path_lower for tok in query_tokens) else 1
 
-    lines = [f"Focus: {query}", ""]
+    _focus_header = f"Focus: {query}"
+    if _depth_extended:
+        _focus_header += f"  [depth +1 — sparse ({len(ordered)} nodes)]"
+    lines = [_focus_header, ""]
     seen_files: set[str] = set()
     token_count = 0
 
@@ -637,7 +720,11 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
         indent = "  " * depth if depth > 0 else ""
         prefix = ["●", "  →", "    ·", "      "][min(depth, 3)]
         loc = f"{sym.file_path}:{sym.line_start}-{sym.line_end}"
-        block_lines = [f"{prefix} {sym.kind.value} {sym.qualified_name} — {loc}"]
+        orbit_note = ""
+        if sym.id in orbit_seed_meta and depth == 1:
+            _orb_fp, _orb_freq = orbit_seed_meta[sym.id]
+            orbit_note = f"  [orbit {_orb_freq:.0%}]"
+        block_lines = [f"{prefix} {sym.kind.value} {sym.qualified_name} — {loc}{orbit_note}"]
         if sym.signature and depth < 2:
             block_lines.append(f"{indent}  sig: {sym.signature[:150]}")
         if sym.doc and depth == 0:
@@ -1192,11 +1279,12 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         callees = graph.callees_of(sym.id)
         children = graph.children_of(sym.id)
 
-        score += len(callers) * 3.0
+        caller_files = set(c.file_path for c in callers)
+        score += len(caller_files) * 3.0
         score += len(callees) * 1.5
         score += min(sym.line_count / 10, 50)
         score += len(children) * 2.0
-        cross_file = len(set(c.file_path for c in callers) - {sym.file_path})
+        cross_file = len(caller_files - {sym.file_path})
         score += cross_file * 5.0
         render_count = renders_from.get(sym.id, 0)
         score += render_count * 2.0
@@ -1214,7 +1302,8 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         callers = graph.callers_of(sym.id)
         callees = graph.callees_of(sym.id)
         children = graph.children_of(sym.id)
-        cross_files = len(set(c.file_path for c in callers) - {sym.file_path})
+        caller_files_display = set(c.file_path for c in callers)
+        cross_files = len(caller_files_display - {sym.file_path})
 
         lines.append(
             f"{i:2d}. {sym.kind.value} {sym.qualified_name} "
@@ -1222,7 +1311,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         )
         details = []
         if callers:
-            details.append(f"{len(callers)} callers ({cross_files} cross-file)")
+            details.append(f"{len(caller_files_display)} caller files ({cross_files} cross-file)")
         if callees:
             details.append(f"{len(callees)} callees")
         if children:
@@ -1422,8 +1511,12 @@ def _dead_code_confidence(sym: Symbol, graph: Tempo) -> int:
     return max(0, min(100, score))
 
 
-def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8000) -> str:
-    """Find exported symbols that appear to be unused (never referenced externally)."""
+def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8000, include_low: bool = False) -> str:
+    """Find exported symbols that appear to be unused (never referenced externally).
+
+    include_low: include low-confidence (likely false positive) symbols. Off by default
+        to reduce token output (~47% savings). Pass include_low=True to see all tiers.
+    """
     dead = graph.find_dead_code()
     if not dead:
         return "No dead code detected — all exported symbols are referenced."
@@ -1439,9 +1532,12 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
     lines = [f"Potential dead code ({len(dead)} symbols):", ""]
     total_lines = 0
 
-    for label, tier in [("HIGH CONFIDENCE (safe to remove)", high),
-                        ("MEDIUM CONFIDENCE (review before removing)", medium),
-                        ("LOW CONFIDENCE (likely false positives)", low)]:
+    tiers = [("HIGH CONFIDENCE (safe to remove)", high),
+             ("MEDIUM CONFIDENCE (review before removing)", medium)]
+    if include_low:
+        tiers.append(("LOW CONFIDENCE (likely false positives)", low))
+
+    for label, tier in tiers:
         if not tier:
             continue
         shown = tier[:max_symbols]
@@ -1459,7 +1555,10 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             lines.append("")
 
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
-    lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
+    if include_low:
+        lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
+    else:
+        lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence (low hidden — pass include_low=True to show)")
 
     result = "\n".join(lines)
     if max_tokens and count_tokens(result) > max_tokens:

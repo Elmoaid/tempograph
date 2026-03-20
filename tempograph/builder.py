@@ -165,8 +165,9 @@ def build_graph(
                 graph.files[rel_path] = file_info
             else:
                 # Store non-parseable files in DB too (for file map/overview)
-                db.update_file(rel_path, file_hash, language.value, line_count,
-                               len(source), [], [], [])
+                if not db.file_hash_matches(rel_path, file_hash):
+                    db.update_file(rel_path, file_hash, language.value, line_count,
+                                   len(source), [], [], [])
 
     # Load entire graph from DB in one shot
     if db:
@@ -195,6 +196,37 @@ def build_graph(
         all_hot = _get_hot_files(str(root))
         graph.hot_files = {f for f in all_hot if _is_hot_source_file(f)}
 
+    return graph
+
+
+def load_from_snapshot(repo_slug: str) -> Tempo:
+    """Load a Tempo graph from a pre-built snapshot (no file parsing).
+
+    The snapshot must have been downloaded first:
+        python3 -m tempograph snapshot --repo <org/repo>
+
+    Raises FileNotFoundError if the snapshot db does not exist.
+    """
+    from .snapshots import snapshot_path, snapshot_db_path
+
+    db_path = snapshot_db_path(repo_slug)
+    if not db_path.exists():
+        snap_root = snapshot_path(repo_slug)
+        raise FileNotFoundError(
+            f"Snapshot not found: {db_path}\n"
+            f"Run: python3 -m tempograph snapshot --repo {repo_slug}"
+        )
+
+    snap_root = snapshot_path(repo_slug)
+    db = GraphDB(snap_root)
+    graph = Tempo(root=str(snap_root))
+    files, symbols, edges = db.load_all()
+    graph.files = files
+    graph.symbols = symbols
+    graph.edges = edges
+    graph._db = db  # type: ignore[attr-defined]
+    _resolve_edges(graph)
+    graph.build_indexes()
     return graph
 
 
