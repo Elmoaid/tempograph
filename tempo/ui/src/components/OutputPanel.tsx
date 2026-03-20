@@ -1,7 +1,8 @@
 import { useState, useEffect, type RefObject } from "react";
-import { Play, Copy, Check, Save, Search, ThumbsUp, ThumbsDown, X, ChevronDown, ChevronRight } from "lucide-react";
+import { Copy, Check, Save, Search, ThumbsUp, ThumbsDown, X, ChevronDown, ChevronRight } from "lucide-react";
 import type { ModeInfo } from "./modes";
 import { formatAge } from "./modes";
+import { ArgsInput } from "./ArgsInput";
 
 interface OutputPanelProps {
   activeModeInfo: ModeInfo | undefined;
@@ -139,53 +140,18 @@ export function OutputPanel(props: OutputPanelProps) {
             {activeModeInfo.desc}
           </div>
         )}
-        <div style={{ display: "flex", gap: 6, marginBottom: 8, position: "relative" }}>
-          <div style={{ flex: 1, position: "relative" }}>
-            <input
-              ref={argsInputRef}
-              className="input"
-              placeholder={activeModeInfo?.hint || "arguments (optional)"}
-              aria-label="Mode arguments"
-              value={modeArgs}
-              onChange={(e) => onArgsChange(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") { onHistoryOpen(false); onRun(); }
-                if (e.key === "Escape") onHistoryOpen(false);
-              }}
-              onFocus={() => { if (history.length > 0) onHistoryOpen(true); }}
-              onBlur={() => setTimeout(() => onHistoryOpen(false), 150)}
-              style={{ width: "100%" }}
-            />
-            {historyOpen && history.length > 0 && (
-              <div
-                role="listbox"
-                aria-label="Argument history"
-                style={{
-                  position: "absolute", top: "100%", left: 0, right: 0, zIndex: 100,
-                  background: "var(--bg-secondary)", border: "1px solid var(--border)",
-                  borderRadius: 4, marginTop: 2, boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
-                }}
-              >
-                {history.map((q, i) => (
-                  <div
-                    key={i}
-                    role="option"
-                    aria-selected={false}
-                    style={{ padding: "5px 10px", fontSize: 11, cursor: "pointer", color: "var(--text-secondary)" }}
-                    onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-hover)")}
-                    onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-                    onMouseDown={() => onHistorySelect(q)}
-                  >
-                    {q}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-          <button className="btn" onClick={onRun} disabled={modeRunning} style={{ padding: "4px 10px" }} title="Run (⌘R)" aria-label={modeRunning ? "Running…" : "Run mode (⌘R)"}>
-            <Play size={11} aria-hidden="true" /> {modeRunning ? "..." : "Run"}
-          </button>
-        </div>
+        <ArgsInput
+          value={modeArgs}
+          history={history}
+          historyOpen={historyOpen}
+          placeholder={activeModeInfo?.hint || "arguments (optional)"}
+          argsInputRef={argsInputRef}
+          modeRunning={modeRunning}
+          onChange={onArgsChange}
+          onRun={onRun}
+          onHistoryOpen={onHistoryOpen}
+          onHistorySelect={onHistorySelect}
+        />
         {modeRunning ? (
           <div style={{ color: "var(--text-tertiary)", fontSize: 11, padding: 16, textAlign: "center" }}>
             <span style={{ animation: "pulse 1.2s ease-in-out infinite", display: "inline-block" }}>
