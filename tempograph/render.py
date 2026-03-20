@@ -718,6 +718,20 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     seen_files: set[str] = set()
     token_count = 0
 
+    # Staleness annotations for caller files: cache git lookups per file_path.
+    from .git import file_last_modified_days as _file_last_modified_days  # noqa: PLC0415
+    _staleness_cache: dict[str, int | None] = {}
+
+    def _stale_annotation(file_path: str) -> str:
+        if file_path not in _staleness_cache:
+            _staleness_cache[file_path] = _file_last_modified_days(graph.root, file_path)
+        days = _staleness_cache[file_path]
+        if days is None or days <= 30:
+            return ""
+        if days > 180:
+            return " [stale: 6m+]"
+        return f" [stale: {days}d]"
+
     for sym, depth in ordered:
         indent = "  " * depth if depth > 0 else ""
         prefix = ["●", "  →", "    ·", "      "][min(depth, 3)]
@@ -754,10 +768,12 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                 shown_other = (hot_other + cold_other)[:max_other]
                 shown_callers = kw_callers + shown_other
                 shown_count = len(kw_callers) + max_other
-                caller_strs = [
-                    f"{c.qualified_name} [hot]" if c.file_path in graph.hot_files else c.qualified_name
-                    for c in shown_callers
-                ]
+                caller_strs = []
+                for c in shown_callers:
+                    if c.file_path in graph.hot_files:
+                        caller_strs.append(f"{c.qualified_name} [hot]")
+                    else:
+                        caller_strs.append(c.qualified_name + _stale_annotation(c.file_path))
                 block_lines.append(f"{indent}  called by: {', '.join(caller_strs)}")
                 if len(callers) > shown_count:
                     block_lines[-1] += f" (+{len(callers) - shown_count} more)"
