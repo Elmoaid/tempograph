@@ -7,6 +7,7 @@ from .java_handler import JavaHandlerMixin
 from .csharp_handler import CsharpHandlerMixin
 from .ruby_handler import RubyHandlerMixin
 from .zig_handler import ZigHandlerMixin
+from .c_handler import CHandlerMixin
 
 __all__ = [
     "PythonHandlerMixin",
@@ -16,4 +17,5 @@ __all__ = [
     "CsharpHandlerMixin",
     "RubyHandlerMixin",
     "ZigHandlerMixin",
+    "CHandlerMixin",
 ]

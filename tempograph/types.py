@@ -121,6 +121,7 @@ EXTENSION_TO_LANGUAGE: dict[str, Language] = {
     ".cc": Language.CPP,
     ".cxx": Language.CPP,
     ".hpp": Language.CPP,
+    ".hxx": Language.CPP,
     ".c": Language.C,
     ".h": Language.C,
     ".hs": Language.HASKELL,
