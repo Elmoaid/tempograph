@@ -2013,27 +2013,27 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — __enter__/__exit__ never invoked; resource cleanup never happens; remove or wire up"
         )
 
-    # S581: Dead service class — unused class whose name ends with a service-layer suffix
+    # S586: Dead service class — unused class whose name ends with a service-layer suffix
     # (Manager, Service, Controller, Registry, Repository, Handler, Provider, Dispatcher).
     # These heavyweight wiring-layer classes are commonly created but never integrated.
-    _svc_suffixes581 = ("Manager", "Service", "Controller", "Registry",
+    _svc_suffixes586 = ("Manager", "Service", "Controller", "Registry",
                         "Repository", "Handler", "Provider", "Dispatcher")
-    _dead_svc581: list = []
-    for _sym581 in graph.symbols.values():
+    _dead_svc586: list = []
+    for _sym586 in graph.symbols.values():
         if (
-            not _is_test_file(_sym581.file_path)
-            and _sym581.kind.value == "class"
-            and _sym581.name.endswith(_svc_suffixes581)
-            and not graph.callers_of(_sym581.id)
-            and not graph.importers_of(_sym581.file_path)
+            not _is_test_file(_sym586.file_path)
+            and _sym586.kind.value == "class"
+            and _sym586.name.endswith(_svc_suffixes586)
+            and not graph.callers_of(_sym586.id)
+            and not graph.importers_of(_sym586.file_path)
         ):
-            _dead_svc581.append(_sym581)
-    if _dead_svc581:
-        _svc_names581 = ", ".join(s.name for s in _dead_svc581[:3])
-        if len(_dead_svc581) > 3:
-            _svc_names581 += f" +{len(_dead_svc581) - 3} more"
+            _dead_svc586.append(_sym586)
+    if _dead_svc586:
+        _svc_names586 = ", ".join(s.name for s in _dead_svc586[:3])
+        if len(_dead_svc586) > 3:
+            _svc_names586 += f" +{len(_dead_svc586) - 3} more"
         lines.append(
-            f"dead service classes: {len(_dead_svc581)} unused service-layer class(es) ({_svc_names581})"
+            f"dead service classes: {len(_dead_svc586)} unused service-layer class(es) ({_svc_names586})"
             f" — never instantiated or imported; wiring was never completed; remove or integrate"
         )
 

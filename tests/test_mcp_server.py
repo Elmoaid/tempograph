@@ -27608,8 +27608,8 @@ class TestWideFileHotspotS580:
             f"'wide-file hotspot' must not appear when file has fewer than 10 symbols; got:\n{out}"
         )
 
-class TestDeadServiceClassS581:
-    """S581: Dead service-layer class (Manager/Service/Controller/etc.) emits signal."""
+class TestDeadServiceClassS586:
+    """S586: Dead service-layer class (Manager/Service/Controller/etc.) emits signal."""
 
     def test_dead_service_class_shown(self, tmp_path):
         from tempograph.render.dead import render_dead_code
@@ -27642,4 +27642,166 @@ class TestDeadServiceClassS581:
         out = render_dead_code(g)
         assert "dead service classes" not in out, (
             f"'dead service classes' must not appear when service class is imported; got:\n{out}"
+        )
+
+
+class TestManyParametersFocusedS581:
+    """S581: Focused function with 6+ parameters emits many-parameters signal."""
+
+    def test_many_parameters_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "api.py").write_text(
+            "def create_user(name, email, role, org, plan, active, verified=True):\n"
+            "    pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "create_user")
+        assert "many parameters" in out, (
+            f"Expected 'many parameters' for function with 7 params; got:\n{out}"
+        )
+
+    def test_many_parameters_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "api.py").write_text(
+            "def get_user(user_id, db):\n"
+            "    pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "get_user")
+        assert "many parameters" not in out, (
+            f"'many parameters' must not appear for 2-param function; got:\n{out}"
+        )
+
+
+class TestNoCrossFileImportsOverviewS582:
+    """S582: 5+ source files with zero import edges emits no-cross-file-imports signal."""
+
+    def test_no_cross_file_imports_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        for i in range(5):
+            (tmp_path / f"island_{i}.py").write_text(
+                f"def fn_{i}():\n    return {i}\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no cross-file imports" in out, (
+            f"Expected 'no cross-file imports' for 5 isolated files; got:\n{out}"
+        )
+
+    def test_no_cross_file_imports_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        (tmp_path / "main.py").write_text(
+            "from utils import helper\ndef run(): helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no cross-file imports" not in out, (
+            f"'no cross-file imports' must not appear when import edges exist; got:\n{out}"
+        )
+
+
+class TestHighCallerSymbolBlastS583:
+    """S583: Symbol with 10+ callers in blast file emits high-caller-symbol signal."""
+
+    def test_high_caller_symbol_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "shared.py").write_text("def util(): pass\n")
+        for i in range(11):
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from shared import util\ndef fn_{i}(): util()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "shared.py")
+        assert "high-caller symbol" in out, (
+            f"Expected 'high-caller symbol' for util with 11 callers; got:\n{out}"
+        )
+
+    def test_high_caller_symbol_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from utils import helper\ndef run(): helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, str(tmp_path / "utils.py"))
+        assert "high-caller symbol" not in out, (
+            f"'high-caller symbol' must not appear for function with 1 caller; got:\n{out}"
+        )
+
+
+class TestVersionFileDiffS584:
+    """S584: Version file in diff emits version-file-in-diff signal."""
+
+    def test_version_file_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "version.py").write_text('__version__ = "1.2.3"\n')
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "version.py"])
+        assert "version file in diff" in out, (
+            f"Expected 'version file in diff' when version.py is changed; got:\n{out}"
+        )
+
+    def test_version_file_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "utils.py"])
+        assert "version file in diff" not in out, (
+            f"'version file in diff' must not appear for non-version files; got:\n{out}"
+        )
+
+
+class TestLowComplexityHotspotS585:
+    """S585: Top hotspot function with cyclomatic complexity < 3 and 3+ callers."""
+
+    def test_low_complexity_hotspot_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "dispatch.py").write_text(
+            "def route(handler): return handler()\n"
+        )
+        callers = "\n".join(
+            f"from dispatch import route\ndef caller_{i}(): route(lambda: {i})\n"
+            for i in range(4)
+        )
+        (tmp_path / "callers.py").write_text(callers)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "low-complexity hotspot" in out, (
+            f"Expected 'low-complexity hotspot' for simple dispatcher with 4 callers; got:\n{out}"
+        )
+
+    def test_low_complexity_hotspot_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        # Single caller — doesn't meet 3+ caller threshold
+        (tmp_path / "core.py").write_text("def process(x): return x * 2\n")
+        (tmp_path / "main.py").write_text(
+            "from core import process\ndef run(): process(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "low-complexity hotspot" not in out, (
+            f"'low-complexity hotspot' must not appear for function with 1 caller; got:\n{out}"
         )
