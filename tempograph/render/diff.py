@@ -400,6 +400,18 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             _s160_str += f" +{len(_s160_new_syms) - 3} more"
         lines.append(f"new symbols: {len(_s160_new_syms)} exported fns/classes with 0 callers ({_s160_str})")
 
+    # S181: Test-heavy diff — the majority of changed files are test files.
+    # A diff that's mostly tests without paired source changes may indicate speculative tests.
+    # Only shown when >= 4 total files and >= 50% are test files.
+    if len(normalized) >= 4:
+        _s181_test_count = sum(1 for fp in normalized if _is_test_file(fp))
+        _s181_pct = _s181_test_count / len(normalized) * 100
+        if _s181_pct >= 50:
+            lines.append(
+                f"test-heavy diff: {_s181_test_count}/{len(normalized)} files are tests"
+                f" ({_s181_pct:.0f}%) — verify paired source changes exist"
+            )
+
     # S175: Config file change — the diff includes a configuration or settings file.
     # Config changes affect runtime behavior globally; they warrant extra scrutiny.
     # Only shown when 1+ config file is in the diff.

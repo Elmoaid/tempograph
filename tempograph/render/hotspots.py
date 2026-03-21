@@ -650,6 +650,29 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 f" — highest combined velocity+complexity"
             )
 
+    # S182: Hot cluster — 2+ top hotspot files share the same parent directory.
+    # When multiple hot files cluster in one directory, that dir is a change concentration zone.
+    # Only shown when 2+ of the top-20 hotspots are in the same directory.
+    if scores and len(scores) >= 4:
+        _s182_dir_counts: dict[str, list[str]] = {}
+        for _sc182, _sym182 in scores[:20]:
+            _dir182 = _sym182.file_path.rsplit("/", 1)[0] if "/" in _sym182.file_path else "."
+            if _dir182 != ".":
+                _s182_dir_counts.setdefault(_dir182, [])
+                if _sym182.file_path not in _s182_dir_counts[_dir182]:
+                    _s182_dir_counts[_dir182].append(_sym182.file_path)
+        _s182_clusters = sorted(
+            [(len(fps), d) for d, fps in _s182_dir_counts.items() if len(fps) >= 2],
+            reverse=True,
+        )
+        if _s182_clusters:
+            _s182_count, _s182_dir = _s182_clusters[0]
+            _s182_dir_name = _s182_dir.rsplit("/", 1)[-1]
+            lines.append(
+                f"\nhot cluster: {_s182_dir_name}/ — {_s182_count} hotspot files"
+                f" concentrated in one directory"
+            )
+
     # S176: Interface hotspot — the top hotspot file contains an interface or abstract class.
     # Interfaces are contracts; changing them breaks all implementors, amplifying blast radius.
     # Only shown when the top hotspot file contains >= 1 interface/abstract symbol.

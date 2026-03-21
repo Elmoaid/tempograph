@@ -436,6 +436,19 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                 f" — package entry point, changes affect all importers"
             )
 
+    # S183: Large export count — blast target exports >= 10 symbols.
+    # High export count = large public API surface; any change is a potential breaking change.
+    # Only shown when the blast file exports >= 10 fn/method/class/interface symbols.
+    _s183_exported = [
+        s for s in symbols
+        if s.exported and s.kind.value in ("function", "method", "class", "interface")
+    ]
+    if len(_s183_exported) >= 10:
+        lines.append(
+            f"large export count: {len(_s183_exported)} exported symbols"
+            f" — broad public API surface, changes risk breaking callers"
+        )
+
     # S177: Cross-module callers — callers of blast-target symbols span 4+ distinct top-level dirs.
     # When 4+ modules call this file, a change requires coordination across many subsystems.
     # Only shown when callers come from 4+ distinct top-level directories.

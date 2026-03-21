@@ -1743,6 +1743,20 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
             if _inh_depth >= 3:
                 lines.append(f"\ninheritance depth: {_inh_depth} levels — deep hierarchy, high base-class coupling")
 
+    # S180: Complex hub — focused symbol has high cyclomatic complexity AND many callers.
+    # High cx + many callers = cognitive load at a widely-used junction; refactor priority.
+    # Only shown when seed is a fn/method, cx >= 8, and callers >= 5.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim180 = _seed_syms[0]
+        if _prim180.kind.value in ("function", "method"):
+            _cx180 = _prim180.complexity or 0
+            _caller_count180 = len(graph.callers_of(_prim180.id))
+            if _cx180 >= 8 and _caller_count180 >= 5:
+                lines.append(
+                    f"\ncomplex hub: {_prim180.name} — cx={_cx180}, {_caller_count180} callers"
+                    f" — high-complexity function used everywhere, refactor candidate"
+                )
+
     # S174: Test coverage — how many distinct test files call the focused symbol.
     # More test files = better coverage spread; 0 test callers = coverage gap.
     # Only shown when >= 2 test files call the focused symbol (positive signal).
