@@ -1642,6 +1642,18 @@ def _signals_structure(
             )
 
 
+    # S355: Test-only codebase — no source files found outside of test files.
+    # A repo with only test files and no source is likely a test-only slice or
+    # a misconfigured project; signals that the tempograph graph may be incomplete.
+    _s355_all_files = [fp for fp in graph.files if graph.files[fp].language.value in _CODE_LANGS]
+    _s355_test_files = [fp for fp in _s355_all_files if _is_test_file(fp)]
+    if len(_s355_all_files) >= 3 and len(_s355_test_files) == len(_s355_all_files):
+        lines.append(
+            f"test-only: all {len(_s355_all_files)} code files are test files"
+            f" — no source files detected; graph may be missing source root or pointing at test directory"
+        )
+
+
     return lines
 
 
