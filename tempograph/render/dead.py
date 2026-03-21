@@ -2963,6 +2963,23 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — abandoned construction paths; verify the object is constructed elsewhere"
         )
 
+    # S863: Dead singleton accessors — unused get_instance/get_singleton/get_current functions.
+    # Singleton accessors are global state entry points; dead ones indicate removed singleton
+    # patterns where the accessor was not cleaned up alongside the singleton class itself.
+    _singleton_patterns863 = {"get_instance", "get_singleton", "get_registry", "instance", "get_current"}
+    _dead_singletons863 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and s.name.lower() in _singleton_patterns863
+    ]
+    if _dead_singletons863:
+        _singleton_names863 = ", ".join(s.name for s in _dead_singletons863[:3])
+        lines.append(
+            f"dead singletons: {len(_dead_singletons863)} unused singleton accessor(s) ({_singleton_names863})"
+            f" — unused global state accessors; verify no code bypasses through direct attribute access"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

@@ -2608,5 +2608,22 @@ def _collect_hotspots_signals(
                     f" — top hotspot in deprecated module; callers should be migrated to the new path"
                 )
 
+    # S862: Private hotspot — top hotspot function name starts with _ (single underscore).
+    # A private function that has become the top hotspot is being used beyond its intended scope;
+    # callers are coupling to implementation details that should be encapsulated.
+    if scores:
+        _top862 = scores[0][1]
+        if (
+            _top862 is not None
+            and _top862.name.startswith("_")
+            and not _top862.name.startswith("__")
+            and not _is_test_file(_top862.file_path)
+        ):
+            _callers862 = graph.callers_of(_top862.id)
+            out.append(
+                f"\nprivate hotspot: {_top862.name} is a private function but the top hotspot ({len(_callers862)} callers)"
+                f" — private implementation detail with wide usage; consider exposing it as public API"
+            )
+
     return out
 

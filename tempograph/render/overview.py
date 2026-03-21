@@ -3181,6 +3181,28 @@ def _signals_async_oop(
                 f" — over-fragmented; consider consolidating related small modules"
             )
 
+    # S859: Low module cohesion — many source files each have 5+ top-level functions.
+    # When many modules each expose many unrelated functions, the codebase lacks
+    # cohesion; functions should be grouped by shared data or purpose, not by accident.
+    _src_fps859 = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_src_fps859) >= 5:
+        _high_fn_files859 = []
+        for _fp859 in _src_fps859:
+            _fi859 = graph.files[_fp859]
+            _top_fns859 = [
+                graph.symbols[sid] for sid in _fi859.symbols
+                if sid in graph.symbols
+                and graph.symbols[sid].kind.value == "function"
+                and graph.symbols[sid].parent_id is None
+            ]
+            if len(_top_fns859) >= 5:
+                _high_fn_files859.append(_fp859)
+        if len(_high_fn_files859) >= len(_src_fps859) * 0.5:
+            lines.append(
+                f"low cohesion: {len(_high_fn_files859)}/{len(_src_fps859)} files each expose 5+ top-level functions"
+                f" — functions may not be grouped by shared purpose; consider grouping by domain"
+            )
+
     # S853: High dead ratio — over 40% of exported source symbols are unused.
     # A repo where most of its public API is dead is accumulating significant cleanup debt;
     # maintaining dead symbols wastes review time and creates misleading documentation.

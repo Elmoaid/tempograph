@@ -3882,6 +3882,27 @@ def _signals_focused_fn_advanced(
                 f" — callers using operators (+, ==, < etc.) implicitly invoke this method"
             )
 
+    # S858: Abstract method focus — focused method lives in an abstract/base class.
+    # Abstract methods define contracts that all subclasses must implement; changing their
+    # signatures requires updating every concrete implementation in the hierarchy.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim858 = _seed_syms[0]
+        if (
+            _prim858.kind.value == "method"
+            and not _is_test_file(_prim858.file_path)
+            and _prim858.parent_id is not None
+        ):
+            _parent858 = graph.symbols.get(_prim858.parent_id)
+            if _parent858 and (
+                _parent858.name.startswith("Abstract")
+                or _parent858.name.startswith("Base")
+                or "ABC" in _parent858.name
+            ):
+                lines.append(
+                    f"\nabstract method: {_prim858.name} is in abstract class {_parent858.name}"
+                    f" — signature changes require updating all concrete subclass implementations"
+                )
+
     return lines
 
 

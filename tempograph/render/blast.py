@@ -2180,6 +2180,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — changing test helpers invalidates assumptions across the test suite"
         )
 
+    # S860: API file blast — blast target is in an api/views/endpoints/routes directory.
+    # API layer files define external contracts; changes affect all API consumers,
+    # not just the internal callers tracked in the graph.
+    _path_parts860 = _fp589.replace("\\", "/").split("/")
+    _api_kws860 = {"api", "views", "endpoints", "routes", "controllers", "handlers"}
+    if any(part.lower() in _api_kws860 for part in _path_parts860[:-1]):
+        lines.append(
+            f"api layer blast: {_fp589.rsplit('/', 1)[-1]} is in an API layer directory"
+            f" — external contracts; changes affect API consumers beyond the call graph"
+        )
+
     return "\n".join(lines)
 
 
