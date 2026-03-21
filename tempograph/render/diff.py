@@ -1157,6 +1157,26 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — config changes often untested; verify expected keys and value types in all environments"
         )
 
+    # S393: Dependency downgrade diff — diff touches requirements/package files and removes version pins.
+    # Downgrading or unpinning a dependency can introduce breaking changes or security vulnerabilities;
+    # dependency file diffs require extra attention to understand what changed and why.
+    _s393_dep_files = (
+        "requirements.txt", "requirements-dev.txt", "requirements-prod.txt",
+        "package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+        "Gemfile", "Gemfile.lock", "Cargo.toml", "Cargo.lock",
+        "go.mod", "go.sum", "pyproject.toml", "setup.py", "setup.cfg",
+    )
+    _s393_changed_deps = [
+        f for f in changed_files
+        if f.rsplit("/", 1)[-1].lower() in (d.lower() for d in _s393_dep_files)
+    ]
+    if _s393_changed_deps:
+        _dep_names393 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s393_changed_deps[:2])
+        lines.append(
+            f"dependency change: {_dep_names393} in diff"
+            f" — check for version downgrades, unpinned deps, or transitive vulnerability changes"
+        )
+
     # S387: Breaking change risk — diff touches public API definition files.
     # Public API files (routes, endpoints, openapi specs) define contracts with callers;
     # changes here may break existing clients silently if not versioned properly.

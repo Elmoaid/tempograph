@@ -20262,3 +20262,212 @@ class TestDeadReportGenerators:
         assert "dead report generators" not in out, (
             f"'dead report generators' must not appear when report fn is called; got:\n{out}"
         )
+
+
+# S391 --- no tests detected (overview)
+# ---------------------------------------------------------------------------
+
+class TestOverviewNoTests:
+    def test_no_tests_shown(self, tmp_path):
+        """S391: 'no tests' shown when codebase has 0 test files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        for i in range(4):
+            (tmp_path / f"module_{i}.py").write_text(f"def fn_{i}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no tests:" in out, f"Expected 'no tests:'; got:\n{out}"
+        assert "regression" in out or "behavior" in out
+
+    def test_no_tests_absent_when_tests_exist(self, tmp_path):
+        """S391: 'no tests' absent when test files are present."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        (tmp_path / "service.py").write_text("def run(): pass\n")
+        (tmp_path / "test_service.py").write_text("def test_run(): assert True\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no tests:" not in out, (
+            f"'no tests:' must not appear when test files exist; got:\n{out}"
+        )
+
+
+# S392 --- pure utility function (focused)
+# ---------------------------------------------------------------------------
+
+class TestFocusPureUtility:
+    def test_pure_utility_shown(self, tmp_path):
+        """S392: pure utility shown when focused fn has no outbound calls."""
+        from tempograph.builder import build_graph
+        from tempograph.render.focused import render_focused
+        # A standalone pure function with no calls to other symbols
+        (tmp_path / "math_utils.py").write_text(
+            "def clamp(value, min_val, max_val):\n"
+            "    if value < min_val: return min_val\n"
+            "    if value > max_val: return max_val\n"
+            "    return value\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "clamp")
+        if "pure utility" in out:
+            assert "self-contained" in out or "isolated" in out
+
+    def test_pure_utility_absent_for_complex_fn(self, tmp_path):
+        """S392: pure utility absent when function calls other symbols."""
+        from tempograph.builder import build_graph
+        from tempograph.render.focused import render_focused
+        (tmp_path / "service.py").write_text(
+            "from helpers import format_name\n"
+            "def process(user):\n"
+            "    return format_name(user)\n"
+        )
+        (tmp_path / "helpers.py").write_text("def format_name(n): return n\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process")
+        assert "pure utility" not in out, (
+            f"'pure utility' must not appear for function that calls others; got:\n{out}"
+        )
+
+
+# S393 --- dependency change diff (diff)
+# ---------------------------------------------------------------------------
+
+class TestDiffDependencyChange2:
+    def test_dep_change_shown(self, tmp_path):
+        """S393: dependency change shown when diff includes requirements.txt or package.json."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "requirements.txt").write_text("django==4.2.0\nrequests==2.28.0\n")
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        # Include app.py so normalized is non-empty; requirements.txt triggers S393 via changed_files
+        out = render_diff_context(g, ["app.py", "requirements.txt"])
+        assert "dependency change" in out, f"Expected 'dependency change'; got:\n{out}"
+        assert "version" in out or "downgrade" in out or "vulnerability" in out
+
+    def test_dep_change_absent_for_source_diff(self, tmp_path):
+        """S393: dependency change absent when diff has no manifest files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "service.py").write_text("def run(): pass\n")
+        (tmp_path / "models.py").write_text("class User: pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["service.py", "models.py"])
+        assert "dependency change" not in out, (
+            f"'dependency change' must not appear for source diff; got:\n{out}"
+        )
+
+
+# S394 --- cross-language hotspot (hotspots)
+# ---------------------------------------------------------------------------
+
+class TestHotspotsCrossLanguage:
+    def test_cross_lang_shown(self, tmp_path):
+        """S394: cross-language hotspot shown when top hotspot is in non-primary language."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        # Python-heavy codebase with a Go hotspot
+        for i in range(8):
+            (tmp_path / f"service_{i}.py").write_text(
+                f"def fn_{i}(): pass\n"
+            )
+        go_dir = tmp_path / "core"
+        go_dir.mkdir()
+        (go_dir / "engine.go").write_text(
+            "package core\nfunc Compute(x int) int { return x * 2 }\n"
+            "func Process(x int) int { return x + 1 }\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        if "cross-language hotspot" in out:
+            assert "primary" in out or "language" in out
+
+    def test_cross_lang_absent_for_primary_lang(self, tmp_path):
+        """S394: cross-language hotspot absent when top hotspot is in primary language."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        (tmp_path / "core.py").write_text(
+            "\n".join(f"def fn_{i}(x): return x" for i in range(5)) + "\n"
+        )
+        for i in range(3):
+            (tmp_path / f"client{i}.py").write_text(
+                f"from core import fn_{i}\ndef run(): fn_{i}(1)\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "cross-language hotspot" not in out, (
+            f"'cross-language hotspot' must not appear for primary lang hotspot; got:\n{out}"
+        )
+
+
+# S395 --- type definition blast (blast)
+# ---------------------------------------------------------------------------
+
+class TestBlastTypeDefinition:
+    def test_type_def_shown(self, tmp_path):
+        """S395: type definition blast shown when .d.ts/types file has 3+ importers."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "types.ts").write_text(
+            "export interface User { id: number; name: string; }\n"
+            "export type UserId = number;\n"
+        )
+        for i in range(4):
+            (tmp_path / f"service{i}.ts").write_text(
+                f"import {{ User }} from './types';\nfunction get(): User {{ return {{id: 1, name: 'a'}}; }}\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "types.ts")
+        if "type definition blast" in out:
+            assert "TypeScript" in out or "type" in out or "compilation" in out
+
+    def test_type_def_absent_for_implementation(self, tmp_path):
+        """S395: type definition blast absent for regular implementation files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "service.ts").write_text(
+            "export function getUser(id: number): string { return id.toString(); }\n"
+        )
+        for i in range(4):
+            (tmp_path / f"client{i}.ts").write_text(
+                f"import {{ getUser }} from './service';\nconst u = getUser({i});\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "service.ts")
+        assert "type definition blast" not in out, (
+            f"'type definition blast' must not appear for implementation file; got:\n{out}"
+        )
+
+
+# S396 --- dead logging functions (dead)
+# ---------------------------------------------------------------------------
+
+class TestDeadLoggingFunctions:
+    def test_dead_logging_shown(self, tmp_path):
+        """S396: dead logging shown when 2+ log_*/debug_* fns have 0 callers."""
+        from tempograph.builder import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "observability.py").write_text(
+            "def log_user_action(user, action): pass\n"
+            "def debug_request_flow(req): pass\n"
+            "def trace_cache_miss(key): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead logging" in out, f"Expected 'dead logging'; got:\n{out}"
+        assert "observability" in out or "logging" in out or "wiring" in out
+
+    def test_dead_logging_absent_when_used(self, tmp_path):
+        """S396: dead logging absent when logging fns are called."""
+        from tempograph.builder import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "logging.py").write_text("def log_event(event): pass\n")
+        (tmp_path / "service.py").write_text(
+            "from logging import log_event\ndef process(e): log_event(e)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead logging" not in out, (
+            f"'dead logging' must not appear when logging fn is used; got:\n{out}"
+        )

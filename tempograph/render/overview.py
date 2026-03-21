@@ -1773,6 +1773,19 @@ def _signals_structure(
             )
 
 
+    # S391: No tests detected — 0 test files found in the codebase.
+    # A codebase with no tests has no regression protection; any change can silently break
+    # behavior that previously worked. This is a critical quality signal.
+    _s391_all_code = [fp for fp in graph.files if graph.files[fp].language.value in _CODE_LANGS]
+    _s391_tests = [fp for fp in _s391_all_code if _is_test_file(fp)]
+    _s391_src = [fp for fp in _s391_all_code if not _is_test_file(fp)]
+    if len(_s391_src) >= 3 and len(_s391_tests) == 0:
+        lines.append(
+            f"no tests: 0 test files detected across {len(_s391_src)} source files"
+            f" — no regression protection; any change can silently break existing behavior"
+        )
+
+
     return lines
 
 

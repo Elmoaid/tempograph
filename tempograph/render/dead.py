@@ -1248,6 +1248,29 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — abandoned constructor alternatives; safe to remove after confirming no dynamic use"
         )
 
+    # S396: Dead logging functions — log_*/debug_*/trace_* functions with 0 callers.
+    # Custom logging wrappers that are never called may represent observability features
+    # that were added but never integrated; they can be removed to simplify the logging path.
+    _s396_log_prefixes = (
+        "log_", "debug_", "trace_", "emit_log_", "write_log_",
+        "log_event_", "record_event_",
+    )
+    _s396_dead_logs = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s396_log_prefixes)
+    ]
+    if len(_s396_dead_logs) >= 2:
+        _log_names396 = ", ".join(s.name for s in _s396_dead_logs[:3])
+        if len(_s396_dead_logs) > 3:
+            _log_names396 += f" +{len(_s396_dead_logs) - 3} more"
+        lines.append(
+            f"dead logging: {len(_s396_dead_logs)} unused log fn(s) ({_log_names396})"
+            f" — unintegrated observability wrappers; simplify by removing or wiring in"
+        )
+
     # S390: Dead report generators — report_*/generate_*_report/export_* with 0 callers.
     # Dead report generators often represent features that were built but never shipped;
     # they consume test/maintenance attention and mislead about what the system can produce.

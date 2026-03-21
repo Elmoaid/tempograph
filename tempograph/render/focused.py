@@ -2499,6 +2499,24 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                     f" — may be unreachable dead code; verify before modifying"
                 )
 
+    # S392: Pure utility function — focused function calls 0 other symbols.
+    # Pure functions with no outbound calls are easy to test in isolation and safe to refactor;
+    # this is a positive signal worth noting as it indicates well-bounded scope.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim392 = next(
+            (s for s in _seed_syms if s.kind.value in ("function", "method")), None
+        )
+        if _prim392:
+            _callees392 = [
+                e for e in graph.edges
+                if e.kind.value == "calls" and e.source_id == _prim392.id
+            ]
+            if not _callees392 and _prim392.line_count >= 3:
+                lines.append(
+                    f"\npure utility: {_prim392.name} has no outbound calls"
+                    f" — self-contained; easiest to test in isolation and safe to refactor independently"
+                )
+
     # S386: Callback-style function — focused function takes a parameter named fn/callback/handler.
     # Callback-style APIs are harder to type-check and test; the callable contract is implicit
     # and callers must know the expected signature without IDE autocompletion.

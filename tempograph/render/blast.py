@@ -1100,6 +1100,22 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — value/rename changes may silently break consumers that hardcode expected values"
         )
 
+    # S395: Type definition blast — blast target defines TS interfaces/types/enums.
+    # TypeScript type files are imported by many consumers; changes to types cascade
+    # through compilation and may cause type errors across many downstream files.
+    _fp395 = file_path.lower()
+    _is_type_file395 = (
+        (_fp395.endswith(".d.ts") or "types" in _fp395 or "interfaces" in _fp395
+         or "enums" in _fp395 or "typings" in _fp395)
+        and not _is_test_file(file_path)
+    )
+    if _is_type_file395 and len(importers) >= 3:
+        lines.append(
+            f"type definition blast: {file_path.rsplit('/', 1)[-1]} defines shared TypeScript types"
+            f" imported by {len(importers)} files"
+            f" — type changes cascade through compilation; check all consumers for type errors"
+        )
+
     # S389: Database model blast — blast target is a DB model/schema file.
     # Database model files define the data contract between application and database;
     # schema changes require migrations and may break queries throughout the codebase.

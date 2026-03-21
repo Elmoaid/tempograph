@@ -1319,6 +1319,30 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                     f" — large files accumulate accidental complexity; consider splitting by responsibility"
                 )
 
+    # S394: Cross-language hotspot — top hotspot file is not in the primary codebase language.
+    # When the top hotspot is in a non-primary language (e.g., a Go file in a Python repo),
+    # it may lack the same testing and review culture as the main language.
+    if scores:
+        _top394 = scores[0][1]
+        _fp394 = _top394.file_path
+        if _fp394 in graph.files and not _is_test_file(_fp394):
+            _lang394 = graph.files[_fp394].language.value
+            # Find the dominant language among all source files
+            _lang_counts394: dict[str, int] = {}
+            for _fp_c394, _fi_c394 in graph.files.items():
+                if not _is_test_file(_fp_c394):
+                    _lang_counts394[_fi_c394.language.value] = _lang_counts394.get(_fi_c394.language.value, 0) + 1
+            if _lang_counts394:
+                _primary394 = max(_lang_counts394, key=lambda l: _lang_counts394[l])
+                _total394 = sum(_lang_counts394.values())
+                _primary_pct394 = _lang_counts394[_primary394] / _total394
+                if _lang394 != _primary394 and _primary_pct394 >= 0.60:
+                    lines.append(
+                        f"\ncross-language hotspot: {_fp394.rsplit('/', 1)[-1]} ({_lang394})"
+                        f" — hotspot is in non-primary language ({_primary394} is primary);"
+                        f" may have different testing and review standards"
+                    )
+
     # S388: API endpoint hotspot — top hotspot lives in a routes/endpoints/views file.
     # API endpoint hotspots indicate that a route handler or view is accumulating logic;
     # endpoint files should be thin orchestrators, not computation hubs.
