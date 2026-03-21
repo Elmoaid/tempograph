@@ -9121,64 +9121,17 @@ class TestFocusComplexityRelative:
         from tempograph.builder import build_graph
         from tempograph.render import render_focused
 
-        # complex_fn: simulate high cx by having many simple siblings
-        # We can't set cx directly, but we can use content that tree-sitter parses.
-        # Simple workaround: create a file where one function has many branches
+        # complex_fn: 55 branches gives cx=56 > threshold of 50;
+        # 3 simple siblings (cx=1 each) → file avg ≈ 15 → ratio = 56/15 ≈ 3.7x ≥ 1.5
+        branches = "\n".join(f"    elif x == {i}: return {i}" for i in range(2, 57))
         content = (
             "def simple_a(x): return x\n"
             "def simple_b(x): return x\n"
             "def simple_c(x): return x\n"
             "def complex_fn(x):\n"
             "    if x == 1: return 1\n"
-            "    elif x == 2: return 2\n"
-            "    elif x == 3: return 3\n"
-            "    elif x == 4: return 4\n"
-            "    elif x == 5: return 5\n"
-            "    elif x == 6: return 6\n"
-            "    elif x == 7: return 7\n"
-            "    elif x == 8: return 8\n"
-            "    elif x == 9: return 9\n"
-            "    elif x == 10: return 10\n"
-            "    elif x == 11: return 11\n"
-            "    elif x == 12: return 12\n"
-            "    elif x == 13: return 13\n"
-            "    elif x == 14: return 14\n"
-            "    elif x == 15: return 15\n"
-            "    elif x == 16: return 16\n"
-            "    elif x == 17: return 17\n"
-            "    elif x == 18: return 18\n"
-            "    elif x == 19: return 19\n"
-            "    elif x == 20: return 20\n"
-            "    elif x == 21: return 21\n"
-            "    elif x == 22: return 22\n"
-            "    elif x == 23: return 23\n"
-            "    elif x == 24: return 24\n"
-            "    elif x == 25: return 25\n"
-            "    elif x == 26: return 26\n"
-            "    elif x == 27: return 27\n"
-            "    elif x == 28: return 28\n"
-            "    elif x == 29: return 29\n"
-            "    elif x == 30: return 30\n"
-            "    elif x == 31: return 31\n"
-            "    elif x == 32: return 32\n"
-            "    elif x == 33: return 33\n"
-            "    elif x == 34: return 34\n"
-            "    elif x == 35: return 35\n"
-            "    elif x == 36: return 36\n"
-            "    elif x == 37: return 37\n"
-            "    elif x == 38: return 38\n"
-            "    elif x == 39: return 39\n"
-            "    elif x == 40: return 40\n"
-            "    elif x == 41: return 41\n"
-            "    elif x == 42: return 42\n"
-            "    elif x == 43: return 43\n"
-            "    elif x == 44: return 44\n"
-            "    elif x == 45: return 45\n"
-            "    elif x == 46: return 46\n"
-            "    elif x == 47: return 47\n"
-            "    elif x == 48: return 48\n"
-            "    elif x == 49: return 49\n"
-            "    return 50\n"
+            f"{branches}\n"
+            "    return 0\n"
         )
         (tmp_path / "module.py").write_text(content)
         g = build_graph(str(tmp_path), use_cache=False)
