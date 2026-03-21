@@ -1433,4 +1433,16 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                     f" — hotspot files change most often; add tests before the next modification"
                 )
 
+    # S418: Vendor/third-party hotspot — top hotspot file lives in a vendor/ or third_party/ dir.
+    # Hotspots in vendored code are especially dangerous because the code is not authored by
+    # the team; changes to it bypass normal review and will be overwritten on next vendor update.
+    if scores:
+        _top418 = scores[0][1]
+        _vendor_dirs418 = ("vendor/", "third_party/", "vendors/", "node_modules/", "external/")
+        if any(d in _top418.file_path.lower() for d in _vendor_dirs418):
+            lines.append(
+                f"\nvendor hotspot: {_top418.file_path.rsplit('/', 1)[-1]} is in a vendor directory"
+                f" — vendored hotspots will be overwritten on next vendor update; consider wrapping"
+            )
+
     return "\n".join(lines)  # ALWAYS return here — never inside a conditional block

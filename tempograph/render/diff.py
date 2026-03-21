@@ -1254,4 +1254,22 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — schema changes are irreversible in production; verify rollback plan before deploying"
         )
 
+    # S417: Feature flag file in diff — diff touches feature flag or toggle configuration.
+    # Feature flag changes affect runtime behavior without code deployment; a single toggle
+    # can change user-visible behavior instantly across all instances.
+    _s417_ff_patterns = (
+        "feature_flag", "feature_toggle", "flags", "toggles",
+        "feature_config", "rollout", "launch_darkly", "flipper",
+    )
+    _s417_ff_files = [
+        f for f in changed_files
+        if any(w in f.lower().replace("-", "_") for w in _s417_ff_patterns)
+    ]
+    if _s417_ff_files:
+        _ff_names417 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s417_ff_files[:2])
+        lines.append(
+            f"feature flag change: {_ff_names417} in diff"
+            f" — flag changes affect runtime behavior instantly; test with both flag states"
+        )
+
     return "\n".join(lines)
