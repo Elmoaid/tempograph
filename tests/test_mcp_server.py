@@ -17113,44 +17113,40 @@ class TestBlastGeneratedCode:
         )
 
 
-# S297 — dead test helpers (dead)
+# S297 — dead validators (dead)
 # ---------------------------------------------------------------------------
 
-class TestDeadTestHelpers:
-    def test_dead_test_helpers_shown(self, tmp_path):
-        """S297: 'dead test helpers' shown when 3+ unused helper fns in test files."""
+class TestDeadValidators:
+    def test_dead_validators_shown(self, tmp_path):
+        """S297: 'dead validators' shown when 3+ validate_*/check_*/verify_* fns are unused."""
         from tempograph.builder import build_graph
         from tempograph.render.dead import render_dead_code
-        tests_dir = tmp_path / "tests"
-        tests_dir.mkdir()
-        (tests_dir / "helpers.py").write_text(
-            "def setup_database(): pass\n"
-            "def create_user(name): pass\n"
-            "def make_session(token): pass\n"
-            "def build_request(path): pass\n"
+        (tmp_path / "validators.py").write_text(
+            "def validate_email(addr): pass\n"
+            "def check_permissions(user, action): pass\n"
+            "def verify_token(tok): pass\n"
+            "def ensure_unique(name): pass\n"
         )
         (tmp_path / "app.py").write_text("def main(): pass\n")
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_dead_code(g)
-        assert "dead test helpers" in out, f"Expected 'dead test helpers'; got:\n{out}"
-        assert "orphaned test setup" in out
+        assert "dead validators" in out, f"Expected 'dead validators'; got:\n{out}"
+        assert "orphaned guards" in out
 
-    def test_dead_test_helpers_absent_when_called(self, tmp_path):
-        """S297: 'dead test helpers' absent when helper fns are called."""
+    def test_dead_validators_absent_when_called(self, tmp_path):
+        """S297: 'dead validators' absent when validator fns are called."""
         from tempograph.builder import build_graph
         from tempograph.render.dead import render_dead_code
-        tests_dir = tmp_path / "tests"
-        tests_dir.mkdir()
-        (tests_dir / "helpers.py").write_text(
-            "def setup_env(): pass\n"
-            "def create_fixture(): pass\n"
+        (tmp_path / "guards.py").write_text(
+            "def validate_input(data): pass\n"
+            "def check_schema(obj): pass\n"
         )
-        (tests_dir / "test_app.py").write_text(
-            "from helpers import setup_env, create_fixture\n"
-            "def test_main():\n    setup_env()\n    create_fixture()\n"
+        (tmp_path / "service.py").write_text(
+            "from guards import validate_input, check_schema\n"
+            "def process(data):\n    validate_input(data)\n    check_schema(data)\n"
         )
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_dead_code(g)
-        assert "dead test helpers" not in out, (
-            f"'dead test helpers' must not appear when helpers are called; got:\n{out}"
+        assert "dead validators" not in out, (
+            f"'dead validators' must not appear when validators are used; got:\n{out}"
         )

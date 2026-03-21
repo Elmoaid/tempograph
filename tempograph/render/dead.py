@@ -889,28 +889,27 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         )
 
 
-    # S297: Dead test helpers — helper functions in test files with 0 callers.
-    # Dead test helpers inflate test file size and may represent removed test cases
-    # whose setup/teardown was not cleaned up.
+    # S297: Dead validators — validate_*/check_*/verify_*/ensure_* functions with 0 callers.
+    # Validation/guard functions are often added alongside a feature and forgotten when
+    # the feature is removed; leftover validators are misleading — they imply invariants
+    # that nothing actually enforces anymore.
     # Only shown when 3+ such functions found (conf >= 30).
-    _s297_helper_patterns = ("helper", "setup", "teardown", "fixture", "mock", "stub",
-                             "fake", "create_", "make_", "build_", "generate_")
-    _s297_dead_helpers = [
+    _s297_val_prefixes = ("validate_", "check_", "verify_", "ensure_", "assert_", "is_valid_")
+    _s297_dead_vals = [
         sym for sym, conf in scored
         if conf >= 30
-        and _is_test_file(sym.file_path)
+        and not _is_test_file(sym.file_path)
         and sym.kind.value in ("function", "method")
-        and any(pat in sym.name.lower() for pat in _s297_helper_patterns)
-        and not sym.name.startswith("test_")
+        and any(sym.name.lower().startswith(p) for p in _s297_val_prefixes)
     ]
-    if len(_s297_dead_helpers) >= 3:
-        _helper_names = [s.name for s in _s297_dead_helpers[:3]]
-        _helper_str = ", ".join(_helper_names)
-        if len(_s297_dead_helpers) > 3:
-            _helper_str += f" +{len(_s297_dead_helpers) - 3} more"
+    if len(_s297_dead_vals) >= 3:
+        _val_names = [s.name for s in _s297_dead_vals[:3]]
+        _val_str = ", ".join(_val_names)
+        if len(_s297_dead_vals) > 3:
+            _val_str += f" +{len(_s297_dead_vals) - 3} more"
         lines.append(
-            f"dead test helpers: {len(_s297_dead_helpers)} unused helper(s) in test files ({_helper_str})"
-            f" — orphaned test setup; likely from removed test cases"
+            f"dead validators: {len(_s297_dead_vals)} unused validation fn(s) ({_val_str})"
+            f" — removed features leave orphaned guards; misleading if left in codebase"
         )
 
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
