@@ -7593,3 +7593,35 @@ class TestOverviewStableCore:
         assert "stable core:" not in out, (
             f"'stable core:' must not appear without git history; got:\n{out}"
         )
+
+
+class TestFocusParamCountAnnotation:
+    """S71: Focus seed shows [params: N] for functions with >= 5 parameters."""
+
+    def test_param_count_shown_for_many_param_fn(self, tmp_path):
+        """Function with 5 parameters → '[params: 5]' shown in header."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "api.py").write_text(
+            "def process(a, b, c, d, e):\n    return a + b + c + d + e\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process")
+        assert "[params:" in out, (
+            f"Expected '[params:' annotation for 5-param function; got:\n{out}"
+        )
+
+    def test_param_count_absent_for_few_param_fn(self, tmp_path):
+        """Function with 3 parameters → no '[params:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "api.py").write_text(
+            "def simple(a, b, c):\n    return a + b + c\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "simple")
+        assert "[params:" not in out, (
+            f"'[params:' must not appear for function with only 3 params; got:\n{out}"
+        )
