@@ -10,6 +10,7 @@ from .zig_handler import ZigHandlerMixin
 from .c_handler import CHandlerMixin
 from .rust_handler import RustHandlerMixin
 from .swift_handler import SwiftHandlerMixin
+from .php_handler import PHPHandlerMixin
 
 __all__ = [
     "PythonHandlerMixin",
@@ -22,4 +23,5 @@ __all__ = [
     "CHandlerMixin",
     "RustHandlerMixin",
     "SwiftHandlerMixin",
+    "PHPHandlerMixin",
 ]
