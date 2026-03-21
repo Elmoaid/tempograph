@@ -37995,3 +37995,225 @@ class TestDeadAPIEndpointsS797:
         assert "dead API endpoints" not in out, (
             f"'dead API endpoints' must not appear when API function is called; got:\n{out}"
         )
+
+
+# S798 – S803
+# ---------------------------------------------------------------------------
+
+# ── S798: Private but called externally ───────────────────────────────────────
+
+class TestPrivateButCalledExternallyS798:
+    """S798: _-prefixed function called from external files emits private-but-called signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "internal.py").write_text("def _helper(x): return x * 2\n")
+        (tmp_path / "app.py").write_text(
+            "from internal import _helper\ndef run(x): return _helper(x)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "_helper")
+        assert "private but called externally" in out, (
+            f"Expected 'private but called externally' for _ fn with external callers; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def _internal(x): return x\ndef public(x): return _internal(x)\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from utils import public\ndef run(x): public(x)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "_internal")
+        assert "private but called externally" not in out, (
+            f"'private but called externally' must not appear when _ fn is only local; got:\n{out}"
+        )
+
+
+# ── S799: Single entry point ──────────────────────────────────────────────────
+
+class TestSingleEntryPointS799:
+    """S799: Repo has only one 'main' entry point with 5+ source files emits single-entry-point signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        (tmp_path / "main.py").write_text("def main(): pass\n")
+        for name in ("a", "b", "c", "d"):
+            (tmp_path / f"{name}.py").write_text(f"def fn_{name}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "single entry point" in out, (
+            f"Expected 'single entry point' with only one 'main' fn and 5+ files; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # Two entry points or no entry points
+        (tmp_path / "service.py").write_text("def run(): pass\ndef start(): pass\n")
+        for name in ("a", "b", "c", "d"):
+            (tmp_path / f"{name}.py").write_text(f"def fn_{name}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "single entry point" not in out, (
+            f"'single entry point' must not appear with 0 or 2+ entry points; got:\n{out}"
+        )
+
+
+# ── S800: Plugin registry blast ───────────────────────────────────────────────
+
+class TestPluginRegistryBlastS800:
+    """S800: Blast target is a plugin/hooks file emits plugin-registry-blast signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "hooks.py").write_text(
+            "def register_hook(name, fn): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from hooks import register_hook\ndef setup(): register_hook('start', lambda: None)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "hooks.py")
+        assert "plugin registry blast" in out, (
+            f"Expected 'plugin registry blast' for hooks.py; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "database.py").write_text("def connect(url): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from database import connect\ndef start(): connect('db://localhost')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "database.py")
+        assert "plugin registry blast" not in out, (
+            f"'plugin registry blast' must not appear for non-plugin files; got:\n{out}"
+        )
+
+
+# ── S801: Test-only diff ──────────────────────────────────────────────────────
+
+class TestTestOnlyDiffS801:
+    """S801: All changed files are test files emits test-only-diff signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "test_core.py").write_text("def test_fn(): assert True\n")
+        (tmp_path / "test_utils.py").write_text("def test_helper(): assert True\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["test_core.py", "test_utils.py"])
+        assert "test-only diff" in out, (
+            f"Expected 'test-only diff' when all files are test files; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def fn(): pass\n")
+        (tmp_path / "test_core.py").write_text("def test_fn(): assert True\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["core.py", "test_core.py"])
+        assert "test-only diff" not in out, (
+            f"'test-only diff' must not appear when source files are also changed; got:\n{out}"
+        )
+
+
+# ── S802: Thin wrapper hotspot ────────────────────────────────────────────────
+
+class TestThinWrapperHotspotS802:
+    """S802: Top hotspot delegates entirely to one function emits thin-wrapper-hotspot signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "inner.py").write_text("def compute(x): return x * 2\n")
+        # wrapper only calls compute
+        (tmp_path / "wrapper.py").write_text(
+            "from inner import compute\ndef process(x): return compute(x)\n"
+        )
+        for i in range(5):
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from wrapper import process\ndef go_{i}(x): return process(x)\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "thin wrapper hotspot" in out, (
+            f"Expected 'thin wrapper hotspot' for wrapper with 1 callee; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        # Hotspot calls multiple things (not a thin wrapper)
+        (tmp_path / "a.py").write_text("def alpha(): pass\n")
+        (tmp_path / "b.py").write_text("def beta(): pass\n")
+        (tmp_path / "core.py").write_text(
+            "from a import alpha\nfrom b import beta\ndef process(): alpha(); beta()\n"
+        )
+        for i in range(5):
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from core import process\ndef go_{i}(): process()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "thin wrapper hotspot" not in out, (
+            f"'thin wrapper hotspot' must not appear when hotspot has multiple callees; got:\n{out}"
+        )
+
+
+# ── S803: Dead exception classes ──────────────────────────────────────────────
+
+class TestDeadExceptionClassesS803:
+    """S803: Unused exception classes emits dead-exception-classes signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "errors.py").write_text(
+            "class ValidationError(Exception): pass\n"
+            "class DatabaseError(Exception): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead exception classes" in out, (
+            f"Expected 'dead exception classes' for unused Error/Exception classes; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "errors.py").write_text("class ValidationError(Exception): pass\n")
+        (tmp_path / "service.py").write_text(
+            "from errors import ValidationError\n"
+            "def validate(x):\n    if not x: raise ValidationError('bad')\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from service import validate\ndef run(x): validate(x)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead exception classes" not in out, (
+            f"'dead exception classes' must not appear when exception is raised; got:\n{out}"
+        )

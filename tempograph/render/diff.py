@@ -554,6 +554,18 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — large diff scope; higher defect rate; consider breaking into smaller PRs"
             )
 
+    # S801: Test-only diff — all changed files are test files (no source changes).
+    # A diff touching only tests changes coverage without modifying production behavior;
+    # useful for confirming no accidental source changes snuck into a test-only PR.
+    if changed_files:
+        _all_tests801 = all(_is_test_file(f) for f in changed_files)
+        _has_test801 = any(_is_test_file(f) for f in changed_files)
+        if _all_tests801 and _has_test801:
+            lines.append(
+                f"test-only diff: all {len(changed_files)} changed file(s) are test files"
+                f" — no production code modified; verify this is intentional"
+            )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 
