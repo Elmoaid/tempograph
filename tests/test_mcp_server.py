@@ -8893,3 +8893,50 @@ class TestOverviewCoChangePairs:
         assert "co-change pairs:" not in out, (
             f"'co-change pairs:' must not appear without git history; got:\n{out}"
         )
+
+
+class TestBlastUntestedExports:
+    """S91: Blast 'Untested exports (N):' when 2+ exported functions have no test callers."""
+
+    def test_untested_exports_shown_for_two_uncovered_symbols(self, tmp_path):
+        """2 exported functions with no test callers → 'Untested exports' appears."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        (tmp_path / "api.py").write_text(
+            "def create_user(name): return {'name': name}\n"
+            "def delete_user(uid): return True\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from api import create_user, delete_user\n"
+            "def run(): create_user('a'); delete_user(1)\n"
+        )
+        # No test file references api.py symbols
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "api.py")
+        assert "Untested exports" in out, (
+            f"Expected 'Untested exports' for 2 uncovered functions; got:\n{out}"
+        )
+        assert "create_user" in out or "delete_user" in out, (
+            f"Expected symbol name in untested exports; got:\n{out}"
+        )
+
+    def test_untested_exports_absent_when_tests_exist(self, tmp_path):
+        """Exported functions called by test file → no 'Untested exports' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        (tmp_path / "api.py").write_text(
+            "def create_user(name): return {'name': name}\n"
+            "def delete_user(uid): return True\n"
+        )
+        (tmp_path / "test_api.py").write_text(
+            "from api import create_user, delete_user\n"
+            "def test_create(): assert create_user('x')['name'] == 'x'\n"
+            "def test_delete(): assert delete_user(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "api.py")
+        assert "Untested exports" not in out, (
+            f"'Untested exports' must not appear when test callers exist; got:\n{out}"
+        )
