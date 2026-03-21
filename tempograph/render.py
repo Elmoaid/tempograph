@@ -343,8 +343,10 @@ def render_symbols(graph: Tempo, *, max_tokens: int = 8000) -> str:
             block_text = "\n".join(file_block)
             block_tokens = count_tokens(block_text)
             if token_count + block_tokens > max_tokens:
-                remaining = len(by_file) - len([l for l in lines if l.startswith("──")])
-                lines.append(f"... truncated ({remaining} more files, {sum(len(v) for k, v in by_file.items() if k >= file_path)} more symbols)")
+                rendered_files = sum(1 for l in lines if l.startswith("──"))
+                remaining_files = len(by_file) - rendered_files
+                remaining_symbols = sum(len(v) for k, v in by_file.items() if k >= file_path)
+                lines.append(f"... and {remaining_symbols} more symbols in {remaining_files} files (increase max_tokens to see all)")
                 break
             token_count += block_tokens
         lines.extend(file_block)
@@ -721,17 +723,34 @@ def _handle_overflow(
     block: str,
     token_count: int,
     max_tokens: int,
+    *,
+    graph: "Tempo | None" = None,
+    current_idx: int = 0,
 ) -> tuple[bool, int]:
     """Check whether adding block would exceed the token budget.
 
     Returns (should_break, block_tokens).
     When should_break is True a truncation message has already been appended
-    to lines — the caller should stop the rendering loop immediately."""
+    to lines — the caller should stop the rendering loop immediately.
+
+    If graph is provided, lists up to 5 high-importance (score >= 3) dropped
+    symbol names so agents know which hub symbols were truncated."""
     block_tokens = count_tokens(block)
     if token_count + block_tokens > max_tokens:
         remaining = len(ordered) - len([l for l in lines if l and not l.startswith("...")])
         if remaining > 0:
-            lines.append(f"... truncated ({remaining} more symbols)")
+            hi_names: list[tuple[int, str]] = []
+            if graph is not None:
+                for sym_d, _depth in ordered[current_idx:]:
+                    imp = _sym_importance(graph, sym_d)
+                    if imp >= 3:
+                        hi_names.append((imp, sym_d.name))
+                hi_names.sort(key=lambda x: -x[0])
+            if hi_names:
+                names = ", ".join(n for _, n in hi_names[:5])
+                lines.append(f"... ({remaining} more symbols — high-importance: {names})")
+            else:
+                lines.append(f"... truncated ({remaining} more symbols)")
         return True, block_tokens
     return False, block_tokens
 
@@ -970,6 +989,7 @@ def _build_symbol_block_lines(
     graph: "Tempo",
     query_tokens: list[str],
     staleness_cache: dict,
+    callsite_lines: "dict[tuple[str,str], list[int]] | None" = None,
 ) -> list[str]:
     """Render one BFS symbol into display lines (header + annotations).
 
@@ -1023,10 +1043,17 @@ def _build_symbol_block_lines(
             shown_count = len(kw_callers) + max_other
             caller_strs = []
             for c in shown_callers:
-                if c.file_path in graph.hot_files:
-                    caller_strs.append(f"{c.qualified_name} [hot]")
+                _cl = (callsite_lines or {}).get((c.id, sym.id), [])
+                if len(_cl) == 1:
+                    _line_ann = f" [line {_cl[0]}]"
+                elif len(_cl) >= 2:
+                    _line_ann = f" [lines {_cl[0]}, {_cl[1]}]"
                 else:
-                    caller_strs.append(c.qualified_name + _stale_annotation(c.file_path))
+                    _line_ann = ""
+                if c.file_path in graph.hot_files:
+                    caller_strs.append(f"{c.qualified_name}{_line_ann} [hot]")
+                else:
+                    caller_strs.append(c.qualified_name + _line_ann + _stale_annotation(c.file_path))
             block_lines.append(f"{indent}  called by: {', '.join(caller_strs)}")
             if len(callers) > shown_count:
                 block_lines[-1] += f" (+{len(callers) - shown_count} more)"
@@ -1107,16 +1134,25 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     seen_files: set[str] = set()
     token_count = 0
 
+    # Callsite line index: (caller_id, callee_id) → sorted non-zero line numbers.
+    _callsite_lines: dict[tuple[str, str], list[int]] = {}
+    for _edge in graph.edges:
+        if _edge.kind is EdgeKind.CALLS and _edge.line > 0:
+            _key = (_edge.source_id, _edge.target_id)
+            _callsite_lines.setdefault(_key, []).append(_edge.line)
+    for _key in _callsite_lines:
+        _callsite_lines[_key] = sorted(set(_callsite_lines[_key]))
+
     _staleness_cache: dict[str, int | None] = {}
 
-    for sym, depth in ordered:
+    for _sym_idx, (sym, depth) in enumerate(ordered):
         orbit_note = ""
         if sym.id in orbit_seed_meta and depth == 1:
             _orb_fp, _orb_freq = orbit_seed_meta[sym.id]
             orbit_note = f"  [orbit {_orb_freq:.0%}]"
-        block_lines = _build_symbol_block_lines(sym, depth, orbit_note, graph, query_tokens, _staleness_cache)
+        block_lines = _build_symbol_block_lines(sym, depth, orbit_note, graph, query_tokens, _staleness_cache, _callsite_lines)
         block = "\n".join(block_lines)
-        should_break, block_tokens = _handle_overflow(lines, ordered, block, token_count, max_tokens)
+        should_break, block_tokens = _handle_overflow(lines, ordered, block, token_count, max_tokens, graph=graph, current_idx=_sym_idx)
         if should_break:
             break
         lines.append(block)
