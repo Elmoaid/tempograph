@@ -292,6 +292,38 @@ def render_overview(graph: Tempo) -> str:
         _hc_parts = [f"{fp.rsplit('/', 1)[-1]} ({n} imports)" for n, fp in _high_coupling[:3]]
         lines.append(f"high-coupling: {', '.join(_hc_parts)}")
 
+    # Stale tests: test files not in recent commits while their source file IS.
+    # Signals test drift — code changed but tests haven't kept up. Needs git repo.
+    if graph.root:
+        try:
+            from .git import file_change_velocity as _fcv2  # noqa: PLC0415
+            _recent_vel = _fcv2(graph.root)
+            _stale_tests: list[str] = []
+            for _tfp in graph.files:
+                if not _is_test_file(_tfp):
+                    continue
+                # Find likely source file: test_foo.py → foo.py
+                _tname = _tfp.rsplit("/", 1)[-1]
+                _sname = _tname
+                if _sname.startswith("test_"):
+                    _sname = _sname[5:]
+                elif _sname.endswith("_test.py"):
+                    _sname = _sname[:-8] + ".py"
+                # Find source file with matching base name
+                _src_match = next(
+                    (fp for fp in graph.files if not _is_test_file(fp) and fp.rsplit("/", 1)[-1] == _sname),
+                    None,
+                )
+                if _src_match and _src_match in _recent_vel and _tfp not in _recent_vel:
+                    _stale_tests.append(_tfp.rsplit("/", 1)[-1])
+            if len(_stale_tests) >= 2:
+                _st_str = ", ".join(_stale_tests[:3])
+                if len(_stale_tests) > 3:
+                    _st_str += f" +{len(_stale_tests) - 3} more"
+                lines.append(f"stale tests ({len(_stale_tests)}): {_st_str} — source changed, tests didn't")
+        except Exception:
+            pass
+
     # Test coverage ratio: source files with a matching test file (name-pattern match).
     # Signals overall project health — agents use this to identify undertested areas.
     # Only count code files with symbols (excludes docs, config, markdown).

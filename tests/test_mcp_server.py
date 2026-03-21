@@ -6736,3 +6736,94 @@ class TestFocusCalleeDepth:
         assert "callee depth:" not in out, (
             f"'[callee depth:]' must not appear for 1-level chain; got:\n{out}"
         )
+
+
+class TestFocusCallersModuleSpan:
+    """Focus mode — 'span: dir/ (N)' in callers section when callers span 3+ top-level dirs.
+
+    Adds a module distribution line under 'Callers (N in M files):' header so agents
+    immediately see which parts of the codebase depend on a symbol.
+    """
+
+    def _build(self, tmp_path, files: dict):
+        import os
+        from tempograph.builder import build_graph
+        for name, content in files.items():
+            fp = tmp_path / name
+            fp.parent.mkdir(parents=True, exist_ok=True)
+            fp.write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_span_shown_when_callers_in_3_plus_dirs(self, tmp_path):
+        """'span:' line appears when callers come from 3+ distinct top-level dirs."""
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "core/processor.py": "def process(x): return x\n",
+            "auth/login.py": "from core.processor import process\ndef login(): return process(1)\n",
+            "api/handler.py": "from core.processor import process\ndef handle(): return process(2)\n",
+            "utils/helper.py": "from core.processor import process\ndef help_fn(): return process(3)\n",
+        })
+        out = render_focused(g, "process")
+        assert "span:" in out, f"Expected 'span:' when callers in 3+ modules; got:\n{out}"
+
+    def test_span_absent_when_callers_in_fewer_than_3_dirs(self, tmp_path):
+        """'span:' absent when callers come from only 1-2 top-level dirs."""
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "core/processor.py": "def process(x): return x\n",
+            "auth/login.py": "from core.processor import process\ndef login(): return process(1)\n",
+            "auth/signup.py": "from core.processor import process\ndef signup(): return process(2)\n",
+        })
+        out = render_focused(g, "process")
+        assert "span:" not in out, f"'span:' must not appear with only 1-2 caller dirs; got:\n{out}"
+
+
+class TestOverviewStaleTests:
+    """S62: Overview — 'stale tests:' for test files not updated while source files changed.
+
+    When a source file has recent commits (velocity > 0) but its matching test file does not,
+    the test may be drifting from the code. Requires git repo; absent otherwise.
+    """
+
+    def _build(self, tmp_path, files: dict):
+        from tempograph.builder import build_graph
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_stale_tests_absent_without_git(self, tmp_path):
+        """'stale tests:' absent when not in a git repo."""
+        from tempograph.render import render_overview
+
+        g = self._build(tmp_path, {
+            "auth.py": "def login(): pass\n",
+            "test_auth.py": "from auth import login\ndef test_login(): pass\n",
+        })
+        out = render_overview(g)
+        assert "stale tests" not in out, (
+            f"'stale tests' must not appear without git; got:\n{out}"
+        )
+
+    def test_stale_tests_shown_when_source_hot_test_cold(self, tmp_path):
+        """'stale tests:' appears when source files have velocity and test files do not."""
+        from unittest.mock import patch
+        from tempograph.render import render_overview
+
+        g = self._build(tmp_path, {
+            "auth.py": "def login(): pass\n",
+            "utils.py": "def helper(): pass\n",
+            "test_auth.py": "from auth import login\ndef test_login(): pass\n",
+            "test_utils.py": "from utils import helper\ndef test_helper(): pass\n",
+        })
+        g.root = str(tmp_path)
+        # Source files have recent velocity; test files are absent from velocity dict
+        with patch("tempograph.git.file_change_velocity", return_value={"auth.py": 3.0, "utils.py": 2.0}):
+            out = render_overview(g)
+        assert "stale tests" in out, (
+            f"Expected 'stale tests' when source changed but tests did not; got:\n{out}"
+        )
+        assert "source changed, tests didn't" in out, (
+            f"Expected explanation in stale tests output; got:\n{out}"
+        )
