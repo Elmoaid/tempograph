@@ -1244,6 +1244,17 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 f" — package interface is unstable; every importer of the package is affected"
             )
 
+    # S376: Same-file hotspot cluster — top 3 hotspot symbols all live in the same file.
+    # When the top 3 hotspots are all in one file, that file has very concentrated risk;
+    # it is likely a core module that warrants extra scrutiny before any change.
+    if len(scores) >= 3:
+        _files376 = [scores[i][1].file_path for i in range(3)]
+        if len(set(_files376)) == 1 and not _is_test_file(_files376[0]):
+            lines.append(
+                f"\nhotspot cluster: top 3 hotspots all in {_files376[0].rsplit('/', 1)[-1]}"
+                f" — extreme risk concentration; this file is the single most critical stabilization target"
+            )
+
     # S370: Divergent hotspot — top hotspot symbol is in a different file than the 2nd hotspot.
     # When the top 2 hotspots live in different files/modules, risk is distributed rather than
     # concentrated; both files need attention but in separate change operations.
