@@ -14,6 +14,7 @@ from .php_handler import PHPHandlerMixin
 from .kotlin_handler import KotlinHandlerMixin
 from .dart_handler import DartHandlerMixin
 from .elixir_handler import ElixirHandlerMixin
+from .scala_handler import ScalaHandlerMixin
 
 __all__ = [
     "PythonHandlerMixin",
@@ -30,4 +31,5 @@ __all__ = [
     "KotlinHandlerMixin",
     "DartHandlerMixin",
     "ElixirHandlerMixin",
+    "ScalaHandlerMixin",
 ]
