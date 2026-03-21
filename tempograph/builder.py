@@ -69,6 +69,7 @@ def build_graph(
     use_cache: bool = True,
     use_config: bool = True,
     use_db: bool = True,
+    lazy_edges: bool = False,
 ) -> Tempo:
     root = Path(root).resolve()
     # Normalize exclude_dirs: "a,b" string → ["a", "b"] list (str is Sequence[str] in Python,
@@ -192,7 +193,7 @@ def build_graph(
     # Load entire graph from DB in one shot
     if db:
         db.remove_stale_files(current_files)
-        files, symbols, edges = db.load_all()
+        files, symbols, edges = db.load_all(lazy_edges=lazy_edges)
         graph.files = files
         graph.symbols = symbols
         graph.edges = edges
@@ -204,9 +205,10 @@ def build_graph(
     graph._cache_hits = cache_hits  # type: ignore[attr-defined]
 
     # Resolve import edges: match import statements to actual files
-    _resolve_imports(graph, root)
-    # Resolve call edges: match target names to actual symbol IDs
-    _resolve_edges(graph)
+    if not lazy_edges:
+        _resolve_imports(graph, root)
+        # Resolve call edges: match target names to actual symbol IDs
+        _resolve_edges(graph)
     graph.build_indexes()
 
     # Temporal weighting: populate hot_files from working-tree or recent history.
