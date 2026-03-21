@@ -1649,6 +1649,28 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
             if _fn_count132 >= 8:
                 lines.append(f"\nsibling count: {_fn_count132} fns in {_prim132.file_path.rsplit('/', 1)[-1]}")
 
+    # S136: Export ratio — fraction of fn/method symbols in the primary seed's file that are exported.
+    # Low ratio (< 30%) = mostly internal module. High ratio (> 80%) = public API file.
+    # Helps agents know whether changes leak into the public interface or stay internal.
+    # Only shown when the file has 4+ fn/method symbols (too noisy for tiny files).
+    if _seed_syms and token_count < max_tokens - 40:
+        _prim136 = _seed_syms[0]
+        _fi136 = graph.files.get(_prim136.file_path)
+        if _fi136:
+            _fns136 = [
+                graph.symbols[sid] for sid in _fi136.symbols
+                if sid in graph.symbols
+                and graph.symbols[sid].kind.value in ("function", "method")
+            ]
+            if len(_fns136) >= 4:
+                _exp136 = sum(1 for s in _fns136 if s.exported)
+                _pct136 = int(_exp136 / len(_fns136) * 100)
+                _fname136 = _prim136.file_path.rsplit("/", 1)[-1]
+                if _pct136 >= 80:
+                    lines.append(f"\nexport ratio: {_exp136}/{len(_fns136)} fns public in {_fname136} — all-public API file")
+                elif _pct136 <= 25:
+                    lines.append(f"\nexport ratio: {_exp136}/{len(_fns136)} fns public in {_fname136} — mostly internal module")
+
     return "\n".join(lines)
 
 

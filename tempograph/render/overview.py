@@ -994,6 +994,20 @@ def render_overview(graph: Tempo) -> str:
                     f"largest module: {_s134_top}/ ({_s134_fc} files, {_s134_sc} symbols)"
                 )
 
+    # S137: Avg fn size — mean line count of all non-test function/method bodies.
+    # High average (>= 40 lines) = functions doing too much; poor decomposition signal.
+    # Only shown when 10+ source functions exist and avg >= 40.
+    _s137_fns = [
+        sym for sym in graph.symbols.values()
+        if sym.kind.value in ("function", "method")
+        and not _is_test_file(sym.file_path)
+        and sym.line_count >= 3
+    ]
+    if len(_s137_fns) >= 10:
+        _s137_avg = sum(s.line_count for s in _s137_fns) / len(_s137_fns)
+        if _s137_avg >= 40:
+            lines.append(f"avg fn size: {_s137_avg:.0f} lines — functions are large, consider decomposition")
+
     # Suggest directories to exclude — detect likely noise
     noisy = _detect_noisy_dirs(graph, modules)
     if noisy:

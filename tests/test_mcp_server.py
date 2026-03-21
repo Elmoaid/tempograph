@@ -10789,3 +10789,109 @@ class TestOverviewLargestModule:
         assert "largest module" not in out, (
             f"'largest module' must not appear for flat repo (2 dirs); got:\n{out}"
         )
+
+
+class TestDiffChangedFileSize:
+    """S135: Diff — 'changed file size: N lines (file.py)' for large source files."""
+
+    def test_large_changed_file_flagged(self, tmp_path):
+        """Diff with 500+ line source file → 'changed file size:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_diff_context
+
+        # Create a big source file (>= 500 lines)
+        big_code = "\n".join(
+            f"def fn_{i}(x):\n    return x + {i}\n" for i in range(170)
+        )
+        (tmp_path / "bigfile.py").write_text(big_code)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["bigfile.py"])
+        assert "changed file size" in out, (
+            f"Expected 'changed file size' for 500+ line file; got:\n{out}"
+        )
+
+    def test_small_changed_file_not_flagged(self, tmp_path):
+        """Diff with small source file (< 500 lines) → 'changed file size:' NOT shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_diff_context
+
+        (tmp_path / "small.py").write_text(
+            "def fn_a():\n    pass\ndef fn_b():\n    pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["small.py"])
+        assert "changed file size" not in out, (
+            f"'changed file size' must not appear for small file; got:\n{out}"
+        )
+
+
+class TestFocusExportRatio:
+    """S136: Focus — 'export ratio: N/M fns public' for all-public or mostly-internal files."""
+
+    def test_all_public_api_file_flagged(self, tmp_path):
+        """File where all fns are exported → 'all-public API file' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        # 5 exported fns (default exported in Python = all public)
+        fns = "\n".join(f"def api_fn_{i}(x):\n    return x" for i in range(5))
+        (tmp_path / "api.py").write_text(fns + "\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "api_fn_0")
+        assert "export ratio" in out, (
+            f"Expected 'export ratio' for all-public file; got:\n{out}"
+        )
+        assert "all-public" in out, out
+
+    def test_internal_module_flagged(self, tmp_path):
+        """File where most fns are private (_prefix) → 'mostly internal' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        # 1 public fn + 5 private fns (underscore prefix marks private in our parser)
+        fns = "def public_fn(x):\n    return x\n"
+        fns += "\n".join(f"def _private_{i}(x):\n    return x" for i in range(5))
+        (tmp_path / "internals.py").write_text(fns + "\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "public_fn")
+        assert "export ratio" in out, (
+            f"Expected 'export ratio' for mostly-internal file; got:\n{out}"
+        )
+        assert "internal" in out, out
+
+
+class TestOverviewAvgFnSize:
+    """S137: Overview — 'avg fn size: N lines — functions are large' for bloated codebases."""
+
+    def test_large_avg_fn_size_flagged(self, tmp_path):
+        """Codebase with avg fn size >= 40 lines → 'avg fn size:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        # 12 functions each ~50 lines long
+        big_fn_body = "    x = 0\n" + "".join(f"    x += {i}\n" for i in range(47))
+        fns = "\n".join(
+            f"def big_fn_{i}(x):\n{big_fn_body}    return x\n" for i in range(12)
+        )
+        (tmp_path / "monolith.py").write_text(fns)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "avg fn size" in out, (
+            f"Expected 'avg fn size' for codebase with large functions; got:\n{out}"
+        )
+
+    def test_small_avg_fn_size_not_flagged(self, tmp_path):
+        """Codebase with small avg fn size → 'avg fn size:' NOT shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        # 12 tiny functions (2-3 lines each)
+        fns = "\n".join(
+            f"def tiny_fn_{i}(x):\n    return x + {i}\n" for i in range(12)
+        )
+        (tmp_path / "clean.py").write_text(fns)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "avg fn size" not in out, (
+            f"'avg fn size' must not appear for codebase with small functions; got:\n{out}"
+        )

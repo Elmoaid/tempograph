@@ -375,4 +375,18 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             else:
                 lines.append("touched test count: 0 — no test files found for changed files")
 
+    # S135: Changed file size — total line count of all source files in the diff.
+    # Changing large files means more surface area for unintended side effects.
+    # Only shown when total changed source lines >= 500 (non-trivial file sizes).
+    _s135_total_lines = sum(
+        graph.files[fp].line_count for fp in normalized
+        if not _is_test_file(fp) and fp in graph.files
+    )
+    if _s135_total_lines >= 500:
+        _s135_names = [fp.rsplit("/", 1)[-1] for fp in sorted(normalized) if not _is_test_file(fp)]
+        _s135_str = ", ".join(_s135_names[:3])
+        if len(_s135_names) > 3:
+            _s135_str += f" +{len(_s135_names) - 3} more"
+        lines.append(f"changed file size: {_s135_total_lines} lines ({_s135_str})")
+
     return "\n".join(lines)
