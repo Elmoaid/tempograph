@@ -3239,6 +3239,24 @@ def _signals_async_oop(
             f" — deep class hierarchy; verify all contracts are implemented by concrete subclasses"
         )
 
+    # S877: Low docstring coverage — 70%+ of exported non-test functions lack docstrings.
+    # Undocumented functions require reading the full body to understand intent; agents
+    # generating or modifying code in this codebase should add docstrings proactively.
+    _src_fns877 = [
+        s for s in graph.symbols.values()
+        if s.kind.value in ("function", "method")
+        and s.exported
+        and not _is_test_file(s.file_path)
+    ]
+    if len(_src_fns877) >= 5:
+        _undoc877 = [s for s in _src_fns877 if not s.doc]
+        _undoc_pct877 = int(len(_undoc877) / len(_src_fns877) * 100)
+        if _undoc_pct877 >= 70:
+            lines.append(
+                f"low doc coverage: {_undoc_pct877}% of exported functions lack docstrings"
+                f" — undocumented codebase; read function bodies carefully to infer intent"
+            )
+
     # S871: No test files — repo has 5+ source files but no test files.
     # An untested codebase means all changes carry undetected regression risk;
     # agents should flag any behavior changes as potentially breaking.
