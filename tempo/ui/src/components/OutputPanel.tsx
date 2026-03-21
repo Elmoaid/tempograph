@@ -56,6 +56,11 @@ function parseKitSections(output: string): KitSection[] {
   })).filter(s => s.content.length > 0);
 }
 
+function estimateTokens(text: string): string {
+  const count = Math.round(text.length / 4);
+  return count >= 1000 ? `~${(count / 1000).toFixed(1)}k tokens` : `~${count} tokens`;
+}
+
 const EXPANDED_KEY = (activeMode: string) => `tempo-kit-expanded-${activeMode}`;
 
 function loadExpanded(activeMode: string, modes: string[]): Set<string> {
@@ -184,6 +189,11 @@ export function OutputPanel(props: OutputPanelProps) {
                 <WrapText size={10} aria-hidden="true" />
               </button>
             </>
+          )}
+          {modeOutput && (
+            <span style={{ fontSize: "0.75rem", color: "var(--text-tertiary)", marginRight: "0.25rem", alignSelf: "center", fontFamily: "var(--font-mono)" }}>
+              {estimateTokens(modeOutput)}
+            </span>
           )}
           <button
             className="btn btn-ghost"
