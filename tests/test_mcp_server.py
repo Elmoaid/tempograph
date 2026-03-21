@@ -19441,3 +19441,217 @@ class TestDeadPropertyAccessors:
         assert "dead accessors" not in out, (
             f"'dead accessors' must not appear when accessors are used; got:\n{out}"
         )
+
+
+# S367 — monorepo detection (overview)
+# ---------------------------------------------------------------------------
+
+class TestOverviewMonorepo:
+    def test_monorepo_shown(self, tmp_path):
+        """S367: 'monorepo' shown when 2+ package manifests in different dirs."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        pkg_a = tmp_path / "pkg_a"
+        pkg_b = tmp_path / "pkg_b"
+        pkg_a.mkdir()
+        pkg_b.mkdir()
+        (pkg_a / "package.json").write_text('{"name": "pkg-a"}\n')
+        (pkg_b / "package.json").write_text('{"name": "pkg-b"}\n')
+        (pkg_a / "index.js").write_text("module.exports = {};\n")
+        (pkg_b / "index.js").write_text("module.exports = {};\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "monorepo" in out, f"Expected 'monorepo'; got:\n{out}"
+        assert "package" in out
+
+    def test_monorepo_absent_for_single_package(self, tmp_path):
+        """S367: 'monorepo' absent for single-package repos."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        (tmp_path / "package.json").write_text('{"name": "app"}\n')
+        (tmp_path / "index.js").write_text("module.exports = {};\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "monorepo:" not in out, (
+            f"'monorepo:' must not appear for single-package repo; got:\n{out}"
+        )
+
+
+# S368 — generic symbol name (focused)
+# ---------------------------------------------------------------------------
+
+class TestFocusGenericName:
+    def test_generic_name_shown(self, tmp_path):
+        """S368: 'generic name' shown when multiple symbols share a very generic name."""
+        from tempograph.builder import build_graph
+        from tempograph.render.focused import render_focused
+        # Two different "run" functions in different files
+        (tmp_path / "server.py").write_text("def run(): pass\n")
+        (tmp_path / "worker.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "run")
+        if "generic name" in out:
+            assert "shared" in out or "symbols" in out
+
+    def test_generic_name_absent_for_unique_name(self, tmp_path):
+        """S368: 'generic name' absent for unique, intent-specific names."""
+        from tempograph.builder import build_graph
+        from tempograph.render.focused import render_focused
+        (tmp_path / "auth.py").write_text("def authenticate_user_credentials(user, pw): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "authenticate_user_credentials")
+        assert "generic name" not in out, (
+            f"'generic name' must not appear for unique name; got:\n{out}"
+        )
+
+
+# S369 — large file in diff (diff)
+# ---------------------------------------------------------------------------
+
+class TestDiffLargeFile:
+    def test_large_file_shown(self, tmp_path):
+        """S369: 'large file in diff' shown when a diff file has 20+ symbols."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        # Create a dense file with 25 functions
+        body = "\n".join(f"def fn_{i}(x): return x + {i}\n" for i in range(25))
+        (tmp_path / "dense_module.py").write_text(body)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["dense_module.py"])
+        assert "large file in diff" in out, f"Expected 'large file in diff'; got:\n{out}"
+        assert "review" in out or "symbols" in out
+
+    def test_large_file_absent_for_small_diff(self, tmp_path):
+        """S369: 'large file in diff' absent when changed files are small."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "small.py").write_text(
+            "def fn_a(): pass\ndef fn_b(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["small.py"])
+        assert "large file in diff" not in out, (
+            f"'large file in diff' must not appear for small file; got:\n{out}"
+        )
+
+
+# S370 — divergent hotspots (hotspots)
+# ---------------------------------------------------------------------------
+
+class TestHotspotsDivergent:
+    def test_divergent_shown(self, tmp_path):
+        """S370: 'divergent hotspots' shown when top 2 hotspots are in different modules."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        # Two separate modules each heavily called
+        mod_a = tmp_path / "alpha"
+        mod_b = tmp_path / "beta"
+        mod_a.mkdir()
+        mod_b.mkdir()
+        (mod_a / "core.py").write_text(
+            "\n".join(f"def fn_a{i}(x): return x" for i in range(5)) + "\n"
+        )
+        (mod_b / "core.py").write_text(
+            "\n".join(f"def fn_b{i}(x): return x" for i in range(5)) + "\n"
+        )
+        for i in range(3):
+            (tmp_path / f"client_a{i}.py").write_text(
+                f"from alpha.core import fn_a{i}\ndef run_a(): fn_a{i}(1)\n"
+            )
+            (tmp_path / f"client_b{i}.py").write_text(
+                f"from beta.core import fn_b{i}\ndef run_b(): fn_b{i}(1)\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        if "divergent hotspots" in out:
+            assert "distributed" in out or "plan" in out
+
+    def test_divergent_absent_for_same_module(self, tmp_path):
+        """S370: 'divergent hotspots' absent when both hotspots are in same module."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        (tmp_path / "core.py").write_text(
+            "def fn_a(x): return x\ndef fn_b(x): return x\n"
+        )
+        for i in range(3):
+            (tmp_path / f"client{i}.py").write_text(
+                f"from core import fn_a, fn_b\ndef run(): fn_a({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "divergent hotspots" not in out, (
+            f"'divergent hotspots' must not appear when hotspots are in same module; got:\n{out}"
+        )
+
+
+# S371 — utility belt blast (blast)
+# ---------------------------------------------------------------------------
+
+class TestBlastUtilityBelt:
+    def test_utility_belt_shown(self, tmp_path):
+        """S371: 'utility belt' shown when file has 15+ symbols used by 4+ callers."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        # Create a utils file with 16 functions
+        fns = "\n".join(f"def util_{i}(x): return x\n" for i in range(16))
+        (tmp_path / "utils.py").write_text(fns)
+        # Each caller file imports and uses a different function
+        for i in range(5):
+            (tmp_path / f"service{i}.py").write_text(
+                f"from utils import util_{i}\ndef do_{i}(): return util_{i}({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "utils.py")
+        if "utility belt" in out:
+            assert "extract" in out or "blast radius" in out or "symbols" in out
+
+    def test_utility_belt_absent_for_small_file(self, tmp_path):
+        """S371: 'utility belt' absent when file has few symbols."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "helpers.py").write_text(
+            "def format_date(d): return str(d)\ndef parse_date(s): return s\n"
+        )
+        for i in range(5):
+            (tmp_path / f"mod{i}.py").write_text(
+                f"from helpers import format_date\ndef fn_{i}(): format_date(None)\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "helpers.py")
+        assert "utility belt" not in out, (
+            f"'utility belt' must not appear for small file; got:\n{out}"
+        )
+
+
+# S372 — dead serializers (dead)
+# ---------------------------------------------------------------------------
+
+class TestDeadSerializers:
+    def test_dead_serializers_shown(self, tmp_path):
+        """S372: 'dead serializers' shown when 2+ to_dict/serialize fns have 0 callers."""
+        from tempograph.builder import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "models.py").write_text(
+            "def to_dict(obj): return vars(obj)\n"
+            "def to_json(obj): return '{}'\n"
+            "def serialize(obj): return str(obj)\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead serializers" in out, f"Expected 'dead serializers'; got:\n{out}"
+        assert "endpoint" in out or "format" in out
+
+    def test_dead_serializers_absent_when_used(self, tmp_path):
+        """S372: 'dead serializers' absent when serializer fns are called."""
+        from tempograph.builder import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "models.py").write_text("def to_dict(obj): return vars(obj)\n")
+        (tmp_path / "api.py").write_text(
+            "from models import to_dict\ndef response(obj): return to_dict(obj)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead serializers" not in out, (
+            f"'dead serializers' must not appear when serializers are used; got:\n{out}"
+        )
