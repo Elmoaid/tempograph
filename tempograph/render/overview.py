@@ -2134,6 +2134,23 @@ def _signals_async_oop(
             f" — shared-library changes require updating every consumer; test each service independently"
         )
 
+    # S463: No entry points — codebase has no main()/cli()/entry() function.
+    # A library with no entry points is entirely consumed by callers; there is no
+    # single place to trace the full execution path end-to-end for integration testing.
+    _s463_entry_names = {"main", "cli", "run", "start", "entry", "app", "serve", "launch"}
+    _s463_entry_syms = [
+        s for s in graph.symbols.values()
+        if s.name.lower() in _s463_entry_names
+        and s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+    ]
+    _s463_src_files = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_s463_src_files) >= 5 and not _s463_entry_syms:
+        lines.append(
+            f"no entry points: {len(_s463_src_files)} source files with no main/cli/run function"
+            f" — library-only; no single execution path to trace for integration testing"
+        )
+
     return lines
 
 

@@ -2654,6 +2654,33 @@ def _signals_focused_fn_advanced(
                     f" — hard to call and test; consider a parameter object or splitting the function"
                 )
 
+    # S464: Property method — focused symbol is a @property or setter.
+    # Property methods create an implicit interface; renaming or removing them breaks
+    # all attribute-style accesses, which are invisible to call-edge analysis.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim464 = next((s for s in _seed_syms if s.kind.value in ("function", "method")), None)
+        if _prim464 and _prim464.signature:
+            _is_prop464 = (
+                "@property" in (_prim464.signature or "").lower()
+                or ".setter" in (_prim464.signature or "").lower()
+                or ".deleter" in (_prim464.signature or "").lower()
+                or (_prim464.name.startswith("get_") and _prim464.parent_id and _prim464.parent_id in graph.symbols)
+            )
+            if not _is_prop464:
+                # Check if any callers use attribute-access pattern (no args in callee)
+                _callers464 = graph.callers_of(_prim464.id)
+                _all_sym_names464 = {s.name for s in graph.symbols.values()}
+                # Check for getter/setter naming convention
+                _is_prop464 = (
+                    _prim464.name.startswith(("get_", "set_", "is_", "has_"))
+                    and len(_callers464) >= 3
+                )
+            if _is_prop464:
+                lines.append(
+                    f"\nproperty method: {_prim464.name} is a getter/setter"
+                    f" — attribute-style callers are invisible to call-edge analysis; grep for usages before renaming"
+                )
+
     # S350: Orphaned symbol — focused symbol has 0 callers and the file is not imported anywhere.
     # Zero-caller symbols in unimported files may be dead code that was never wired up
     # during a refactor; modifying them has no effect unless the file is imported first.

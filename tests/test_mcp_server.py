@@ -22860,3 +22860,207 @@ class TestDeadValidatorsS462:
         assert "dead validators" not in out, (
             f"'dead validators' must not appear when validator is called; got:\n{out}"
         )
+
+
+class TestNoEntryPointsS463:
+    """S463: Codebase with 5+ source files and no main/run/cli function emits signal."""
+
+    def test_no_entry_points_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        for i in range(6):
+            (tmp_path / f"module_{i}.py").write_text(
+                f"def process_{i}(x):\n    return x * {i}\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no entry points" in out, (
+            f"Expected 'no entry points' signal for library with no main; got:\n{out}"
+        )
+
+    def test_no_entry_points_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        for i in range(5):
+            (tmp_path / f"module_{i}.py").write_text(
+                f"def helper_{i}(): pass\n"
+            )
+        (tmp_path / "main.py").write_text("def main():\n    pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no entry points" not in out, (
+            f"'no entry points' must not appear when main() exists; got:\n{out}"
+        )
+
+
+class TestPropertyMethodFocusedS464:
+    """S464: Getter/setter method with callers emits property-method signal."""
+
+    def test_property_method_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "model.py").write_text(
+            "class User:\n"
+            "    def get_email(self): return self._email\n"
+        )
+        for i in range(4):
+            (tmp_path / f"service_{i}.py").write_text(
+                f"from model import User\ndef use_{i}(): User().get_email()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "get_email")
+        assert "property method" in out, (
+            f"Expected 'property method' signal for get_email with 4 callers; got:\n{out}"
+        )
+
+    def test_property_method_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def compute_total(items):\n    return sum(items)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "compute_total")
+        assert "property method" not in out, (
+            f"'property method' must not appear for non-getter fn; got:\n{out}"
+        )
+
+
+class TestLargeFileTouchedS465:
+    """S465: Diff touches a 500+ line file emits signal."""
+
+    def test_large_file_touched_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        big_content = "def fn():\n    pass\n" * 260  # > 500 lines
+        (tmp_path / "large_module.py").write_text(big_content)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["large_module.py"])
+        assert "large file touched" in out, (
+            f"Expected 'large file touched' signal for 500+ line file; got:\n{out}"
+        )
+
+    def test_large_file_touched_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "small.py").write_text("def fn():\n    pass\n" * 10)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["small.py"])
+        assert "large file touched" not in out, (
+            f"'large file touched' must not appear for small file; got:\n{out}"
+        )
+
+
+class TestCrossModuleHotspotS466:
+    """S466: Top hotspot imported from 3+ directories emits cross-module signal."""
+
+    def test_cross_module_hotspot_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text(
+            "def shared_util(): pass\n"
+        )
+        for pkg in ("pkg_a", "pkg_b", "pkg_c"):
+            pkg_dir = tmp_path / pkg
+            pkg_dir.mkdir()
+            (pkg_dir / "module.py").write_text(
+                "import sys\nsys.path.insert(0, '..')\nfrom core import shared_util\n"
+                "def run(): shared_util()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "cross-module hotspot" in out, (
+            f"Expected 'cross-module hotspot' signal; got:\n{out}"
+        )
+
+    def test_cross_module_hotspot_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        (tmp_path / "caller.py").write_text(
+            "from utils import helper\ndef run(): helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "cross-module hotspot" not in out, (
+            f"'cross-module hotspot' must not appear for single-dir importer; got:\n{out}"
+        )
+
+
+class TestTestOnlyImporterBlastS467:
+    """S467: File only imported by test files emits test-only-importer signal."""
+
+    def test_test_only_importer_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "fixture_helper.py").write_text(
+            "def make_user(): return {'name': 'test'}\n"
+        )
+        (tmp_path / "test_user.py").write_text(
+            "from fixture_helper import make_user\ndef test_create(): assert make_user()\n"
+        )
+        (tmp_path / "test_auth.py").write_text(
+            "from fixture_helper import make_user\ndef test_auth(): u = make_user()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "fixture_helper.py")
+        assert "test-only importer" in out, (
+            f"Expected 'test-only importer' signal; got:\n{out}"
+        )
+
+    def test_test_only_importer_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "helper.py").write_text("def util(): pass\n")
+        (tmp_path / "main.py").write_text(
+            "from helper import util\ndef run(): util()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "helper.py")
+        assert "test-only importer" not in out, (
+            f"'test-only importer' must not appear when non-test file imports it; got:\n{out}"
+        )
+
+
+class TestDeadSerializersS468:
+    """S468: Unused serialize_*/encode_* functions emit the dead serializers signal."""
+
+    def test_dead_serializers_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "export.py").write_text(
+            "def serialize_user(user):\n    pass\n\n"
+            "def encode_payload(data):\n    pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead serializers" in out, (
+            f"Expected 'dead serializers' signal for unused serializer fns; got:\n{out}"
+        )
+
+    def test_dead_serializers_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "export.py").write_text(
+            "def serialize_user(user):\n    pass\n"
+        )
+        (tmp_path / "api.py").write_text(
+            "from export import serialize_user\n\ndef send():\n    serialize_user({})\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead serializers" not in out, (
+            f"'dead serializers' must not appear when serializer is called; got:\n{out}"
+        )
