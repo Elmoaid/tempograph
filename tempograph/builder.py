@@ -5,6 +5,7 @@ import concurrent.futures
 import fnmatch
 import json
 import os
+import subprocess
 from pathlib import Path
 from typing import Sequence
 
@@ -69,6 +70,7 @@ def build_graph(
     use_cache: bool = True,
     use_config: bool = True,
     use_db: bool = True,
+    lazy_edges: bool = False,
 ) -> Tempo:
     root = Path(root).resolve()
     # Normalize exclude_dirs: "a,b" string → ["a", "b"] list (str is Sequence[str] in Python,
@@ -104,6 +106,18 @@ def build_graph(
     # Bulk-fetch stored {path: (hash, mtime_ns)} — one query replaces per-file hash lookups.
     # mtime_ns check (nanosecond precision) skips read_bytes()+md5() for unchanged files.
     stored_files: dict[str, tuple[str, int]] = db.get_stored_files() if db else {}
+
+    # Batch all DB writes into one transaction (eliminates N per-file commits → 1).
+    if db:
+        db.begin_batch()
+
+    # Kick off hot-file detection in background so it runs parallel to the parse loop.
+    _is_git = is_git_repo(str(root))
+    _hot_future: concurrent.futures.Future | None = None
+    if _is_git:
+        _hot_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        _hot_future = _hot_executor.submit(_get_hot_files, str(root))
+        _hot_executor.shutdown(wait=False)
 
     for file_path, rel_path in _walk_files(root, ignore_dirs, ignore_files, include_patterns, exclude_patterns, exclude_dirs):
         ext = file_path.suffix.lower()
@@ -192,7 +206,8 @@ def build_graph(
     # Load entire graph from DB in one shot
     if db:
         db.remove_stale_files(current_files)
-        files, symbols, edges = db.load_all()
+        db.end_batch()
+        files, symbols, edges = db.load_all(lazy_edges=lazy_edges)
         graph.files = files
         graph.symbols = symbols
         graph.edges = edges
@@ -204,16 +219,23 @@ def build_graph(
     graph._cache_hits = cache_hits  # type: ignore[attr-defined]
 
     # Resolve import edges: match import statements to actual files
-    _resolve_imports(graph, root)
-    # Resolve call edges: match target names to actual symbol IDs
-    _resolve_edges(graph)
+    if not lazy_edges:
+        _resolve_imports(graph, root)
+        # Resolve call edges: match target names to actual symbol IDs
+        _resolve_edges(graph)
     graph.build_indexes()
 
-    # Temporal weighting: populate hot_files from working-tree or recent history.
+    # Temporal weighting: collect hot_files (background thread already running since before parse).
     # Source files only — test files and docs are excluded so that test symbols
     # don't outrank implementations for ambiguous queries.
-    if is_git_repo(str(root)):
-        all_hot = _get_hot_files(str(root))
+    if _is_git:
+        if _hot_future is not None:
+            try:
+                all_hot = _hot_future.result(timeout=5)
+            except Exception:
+                all_hot = set()
+        else:
+            all_hot = _get_hot_files(str(root))
         graph.hot_files = {f for f in all_hot if _is_hot_source_file(f)}
 
     return graph
@@ -273,6 +295,57 @@ _TEST_SUFFIXES = (
 _DOC_EXTENSIONS = frozenset({".md", ".rst", ".txt", ".adoc"})
 
 
+# Cache for _get_hot_files keyed on (repo_root, head_sha).
+# Invalidated automatically when HEAD changes (new commit = new SHA = cache miss).
+_hot_files_cache: dict[tuple[str, str], set[str]] = {}
+
+
+def _get_head_sha(repo: str) -> str | None:
+    """Read HEAD commit SHA via direct file read, subprocess fallback.
+
+    Direct file read avoids ~16ms subprocess overhead (measures <1ms).
+    Handles normal repos, worktrees, detached HEAD, and packed refs.
+    """
+    try:
+        git_path = Path(repo) / ".git"
+        if git_path.is_file():
+            raw = git_path.read_text().strip()
+            git_dir = (Path(repo) / raw[8:]).resolve() if raw.startswith("gitdir: ") else None
+        elif git_path.is_dir():
+            git_dir = git_path
+        else:
+            git_dir = None
+
+        if git_dir:
+            head_file = git_dir / "HEAD"
+            if head_file.exists():
+                head = head_file.read_text().strip()
+                if not head.startswith("ref: "):
+                    return head  # Detached HEAD
+                ref = head[5:]
+                ref_file = git_dir / ref
+                if ref_file.exists():
+                    return ref_file.read_text().strip()
+                # Worktree: shared refs live in commondir
+                commondir_file = git_dir / "commondir"
+                if commondir_file.exists():
+                    commondir = (git_dir / commondir_file.read_text().strip()).resolve()
+                    ref_file = commondir / ref
+                    if ref_file.exists():
+                        return ref_file.read_text().strip()
+    except (OSError, ValueError):
+        pass
+    # Subprocess fallback for edge cases (packed refs, unusual layouts)
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo,
+            capture_output=True, text=True, timeout=5,
+        )
+        return r.stdout.strip() if r.returncode == 0 else None
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+
+
 def _get_hot_files(repo: str) -> set[str]:
     """Return candidate hot file paths for temporal weighting.
 
@@ -280,16 +353,29 @@ def _get_hot_files(repo: str) -> set[str]:
     is actively editing right now. If the working tree is clean, fall back to the
     last 2 commits so a freshly-committed session still gets a signal.
 
-    Both git subprocesses run in parallel threads (independent read-only ops).
-    On a clean repo this saves ~9ms vs sequential fallback (36% reduction).
+    Results are cached per (repo, HEAD SHA). Cache hit avoids ~20ms of git
+    subprocess overhead. Invalidated automatically on new commits.
     """
+    head_sha = _get_head_sha(repo)
+    if head_sha:
+        cache_key = (os.path.realpath(repo), head_sha)
+        cached = _hot_files_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
         fut_working = ex.submit(changed_files_vs_head, repo)
         fut_recent = ex.submit(recently_modified_files, repo, 2)
         working = set(fut_working.result())
         if working:
-            return working
-        return fut_recent.result()
+            result = working
+        else:
+            result = fut_recent.result()
+
+    if head_sha:
+        _hot_files_cache[cache_key] = result  # type: ignore[possibly-undefined]
+
+    return result
 
 
 def _is_hot_source_file(path: str) -> bool:

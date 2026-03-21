@@ -11,6 +11,11 @@ from .c_handler import CHandlerMixin
 from .rust_handler import RustHandlerMixin
 from .swift_handler import SwiftHandlerMixin
 from .php_handler import PHPHandlerMixin
+from .kotlin_handler import KotlinHandlerMixin
+from .dart_handler import DartHandlerMixin
+from .elixir_handler import ElixirHandlerMixin
+from .scala_handler import ScalaHandlerMixin
+from .ocaml_handler import OCamlHandlerMixin
 
 __all__ = [
     "PythonHandlerMixin",
@@ -24,4 +29,9 @@ __all__ = [
     "RustHandlerMixin",
     "SwiftHandlerMixin",
     "PHPHandlerMixin",
+    "KotlinHandlerMixin",
+    "DartHandlerMixin",
+    "ElixirHandlerMixin",
+    "ScalaHandlerMixin",
+    "OCamlHandlerMixin",
 ]

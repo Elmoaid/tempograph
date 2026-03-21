@@ -362,6 +362,16 @@ def index_repo(repo_path: str, exclude_dirs: str = "", output_format: str = "tex
         return _error(code, msg or "Graph build failed", output_format)
 
     elapsed = time.time() - start
+
+    # Pre-warm cochange matrix so the first focus/blast call doesn't pay the git log cost.
+    # cochange_matrix_recency has lru_cache(maxsize=4) — one call primes it for the session.
+    try:
+        from .git import cochange_matrix_recency, is_git_repo
+        if is_git_repo(str(p)):
+            cochange_matrix_recency(str(p))
+    except Exception:
+        pass
+
     # Add storage and embedding status via graph_stats
     db_status = ""
     if hasattr(result, '_db') and result._db is not None:
