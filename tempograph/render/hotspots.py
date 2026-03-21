@@ -2946,5 +2946,19 @@ def _collect_hotspots_signals(
                 f" — extreme complexity; refactoring into smaller units would significantly reduce maintenance risk"
             )
 
+    # S1006: Entrypoint hotspot — top hotspot is in a well-known entrypoint file.
+    # Complex code at the application entry point is doubly risky: high complexity
+    # at the start of all execution means bugs affect every code path from the first call.
+    _entry_bases1006 = {"main.py", "app.py", "server.py", "index.py", "run.py", "cli.py", "__main__.py", "wsgi.py", "asgi.py"}
+    if scores:
+        _top1006 = scores[0][1]
+        if _top1006 is not None and not _is_test_file(_top1006.file_path):
+            _fbase1006 = _top1006.file_path.replace("\\", "/").rsplit("/", 1)[-1].lower()
+            if _fbase1006 in _entry_bases1006:
+                out.append(
+                    f"\nentrypoint hotspot: {_top1006.name} is in {_fbase1006}"
+                    f" — complex code at the start of all execution paths; changes affect every request/call"
+                )
+
     return out
 
