@@ -755,6 +755,40 @@ def _render_cochange_section(graph, seed_file_paths: list[str]) -> str:
     return ""
 
 
+def _render_hot_callers_section(
+    graph, seeds: list, token_count: int, max_tokens: int
+) -> str:
+    """Build the 'Hot callers:' section — callers of seed symbols in recently-modified files.
+
+    Helps agents understand which callers are actively being changed, critical
+    context for avoiding merge conflicts and understanding in-progress work.
+    Does NOT filter by seen_ids: even callers already shown in BFS benefit from
+    the focused summary (the inline [hot] tag is easy to miss in long output)."""
+    if token_count > max_tokens - 80 or not graph.hot_files:
+        return ""
+
+    hot_entries: list[tuple[str, str, int]] = []  # (caller_name, file_path, line)
+    seen_files_dedup: set[str] = set()
+    for seed in seeds:
+        for caller in graph.callers_of(seed.id):
+            if caller.file_path in graph.hot_files and caller.file_path not in seen_files_dedup:
+                hot_entries.append((caller.name, caller.file_path, caller.line_start))
+                seen_files_dedup.add(caller.file_path)
+
+    if not hot_entries:
+        return ""
+
+    # Sort by file path for stable output, cap at 5
+    hot_entries.sort(key=lambda e: e[1])
+    hot_entries = hot_entries[:5]
+
+    parts = ["\nHot callers:"]
+    for name, fp, line in hot_entries:
+        basename = Path(fp).name
+        parts.append(f"  {name} ({basename}:{line}) \u2014 last seen in hot file")
+    return "\n".join(parts)
+
+
 def _render_dependency_files_section(
     graph, ordered: list[tuple], seen_files: set[str], token_count: int, max_tokens: int
 ) -> str:
@@ -1156,6 +1190,12 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     dep_section = _render_dependency_files_section(graph, ordered, seen_files, token_count, max_tokens)
     if dep_section:
         lines.append(dep_section)
+
+    # Hot callers: callers of seed symbols that live in recently-modified files.
+    _seed_syms = [sym for sym, d in ordered if d == 0]
+    hot_section = _render_hot_callers_section(graph, _seed_syms, token_count, max_tokens)
+    if hot_section:
+        lines.append(hot_section)
 
     return "\n".join(lines)
 

@@ -2247,7 +2247,7 @@ class TestFileVolatilityWarning:
         mock_counts = {"tempograph/render.py": 15}
         file_commit_counts.cache_clear()
         with patch("tempograph.git.file_commit_counts", return_value=mock_counts):
-            out = render_focused(g, "render_focused", max_tokens=4000)
+            out = render_focused(g, "render_focused", max_tokens=8000)
 
         assert "Volatile:" in out, "render_focused must emit Volatile: for high-churn seed"
         assert "15/200 commits" in out, "must include commit count in annotation"
@@ -3560,3 +3560,89 @@ class TestOverviewHotSymbols:
         assert m is not None, f"Must show count in parentheses; got:\n{out}"
         count = int(m.group(1))
         assert count >= 3, f"Expected ≥3 unique caller files, got {count}"
+
+
+class TestFocusHotCallers:
+    """Tests for the 'Hot callers:' section in render_focused (S22).
+
+    Focus mode shows callers of the seed symbol that live in recently-modified
+    (hot) files. This helps agents understand which callers are actively being
+    changed. The section is omitted when no callers reside in hot files.
+    """
+
+    def test_hot_callers_shown_when_callers_in_hot_files(self, tmp_path):
+        """render_focused shows Hot callers: when callers exist in hot files."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "core.py").write_text("def target():\n    return 42\n")
+        (tmp_path / "caller_a.py").write_text(
+            "from core import target\n\ndef use_target():\n    return target()\n"
+        )
+        (tmp_path / "caller_b.py").write_text(
+            "from core import target\n\ndef also_uses():\n    return target()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        g.hot_files = {"caller_a.py", "caller_b.py"}
+        out = render_focused(g, "target", max_tokens=4000)
+
+        assert "\nHot callers:" in out, f"Hot callers: section must appear; got:\n{out}"
+        assert "caller_a.py" in out, f"caller_a.py must be listed; got:\n{out}"
+
+    def test_hot_callers_omitted_when_no_hot_files(self, tmp_path):
+        """render_focused omits Hot callers: when hot_files is empty."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "core.py").write_text("def target():\n    return 42\n")
+        (tmp_path / "caller.py").write_text(
+            "from core import target\n\ndef use_target():\n    return target()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        g.hot_files = set()
+        out = render_focused(g, "target", max_tokens=4000)
+
+        assert "Hot callers:" not in out, (
+            f"Must NOT show Hot callers: when no hot files; got:\n{out}"
+        )
+
+    def test_hot_callers_capped_at_five(self, tmp_path):
+        """render_focused caps Hot callers: at 5 entries even with more hot callers."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "core.py").write_text("def target():\n    return 42\n")
+        hot_set = set()
+        for i in range(8):
+            fname = f"mod_{i:02d}.py"
+            (tmp_path / fname).write_text(
+                f"from core import target\n\ndef caller_{i}():\n    return target()\n"
+            )
+            hot_set.add(fname)
+
+        g = build_graph(str(tmp_path), use_cache=False)
+        g.hot_files = hot_set
+        out = render_focused(g, "target", max_tokens=4000)
+
+        assert "\nHot callers:" in out, f"Hot callers: must appear; got:\n{out}"
+        hot_lines = [l for l in out.split("\n") if "last seen in hot file" in l]
+        assert len(hot_lines) == 5, (
+            f"Must cap at 5 hot callers, got {len(hot_lines)}; output:\n{out}"
+        )
+
+    def test_hot_callers_omitted_when_callers_not_in_hot_files(self, tmp_path):
+        """render_focused omits Hot callers: when callers exist but none are in hot files."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "core.py").write_text("def target():\n    return 42\n")
+        (tmp_path / "caller.py").write_text(
+            "from core import target\n\ndef use_target():\n    return target()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        g.hot_files = {"unrelated.py"}
+        out = render_focused(g, "target", max_tokens=4000)
+
+        assert "Hot callers:" not in out, (
+            f"Must NOT show Hot callers: when callers are not in hot files; got:\n{out}"
+        )
