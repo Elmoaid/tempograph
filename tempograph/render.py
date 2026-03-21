@@ -217,6 +217,21 @@ def render_overview(graph: Tempo) -> str:
         _lf_parts = [f"{name} ({lc}L)" for lc, name, _ in _large_fns[:3]]
         lines.append(f"largest fns: {', '.join(_lf_parts)}")
 
+    # God files: source files with unusually many exported symbols (>15).
+    # Signal for undivided modules or god objects — high cognitive load, hard to navigate.
+    _god_files = sorted(
+        (
+            (sum(1 for sid in fi.symbols if graph.symbols.get(sid, None) and graph.symbols[sid].exported), fp)
+            for fp, fi in graph.files.items()
+            if not _is_test_file(fp) and fi.symbols
+        ),
+        key=lambda x: -x[0],
+    )
+    _god_files = [(n, fp) for n, fp in _god_files if n >= 15]
+    if len(_god_files) >= 1:
+        _gf_parts = [f"{fp.rsplit('/', 1)[-1]} ({n} exported)" for n, fp in _god_files[:3]]
+        lines.append(f"god files: {', '.join(_gf_parts)}")
+
     # Top imported: files most imported by other source files — true infrastructure files.
     # Distinct from hot symbols (call frequency) and hot files (commit count).
     _importer_counts: dict[str, int] = {}
