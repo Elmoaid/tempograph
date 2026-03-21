@@ -3167,7 +3167,7 @@ class TestFileBlastCountRanking:
         g = self._build(tmp_path, files)
         out = render_hotspots(g, top_n=5)
         assert "blast:" in out, f"Should annotate file with 22 dependents; got:\n{out}"
-        assert "files depend on this" in out
+        assert "caller files" in out
 
     def test_blast_annotation_silent_below_threshold(self, tmp_path, monkeypatch):
         """render_hotspots does NOT annotate files with <20 external dependents."""
@@ -3243,3 +3243,84 @@ class TestFocusTestCoverage:
         assert "Tests:" not in out, (
             f"Must NOT show Tests section when symbol has no callers; got:\n{out}"
         )
+
+
+class TestFocusDependencyFiles:
+    """Tests for the 'Depends on:' section in render_focused.
+
+    Focus mode shows which files the seed symbols depend on (outgoing callees),
+    grouped by file with up to 3 symbol names per file. Omitted when fewer than
+    2 dependency files exist after filtering the seed's own file.
+    """
+
+    def test_depends_on_shown_when_seed_calls_into_multiple_files(self, tmp_path):
+        """render_focused shows Depends on: when seed has callees in 2+ different files."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "utils.py").write_text("def do_parse(data):\n    return data\n")
+        (tmp_path / "db.py").write_text("def do_connect(url):\n    return url\n")
+        (tmp_path / "app.py").write_text(
+            "from utils import do_parse\nfrom db import do_connect\n\n"
+            "def main():\n    x = do_parse('a')\n    y = do_connect('b')\n    return x, y\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "main", max_tokens=4000)
+
+        assert "\nDepends on:" in out, f"Depends on: section must appear; got:\n{out}"
+        assert "utils.py" in out, f"utils.py must be listed as dependency; got:\n{out}"
+        assert "db.py" in out, f"db.py must be listed as dependency; got:\n{out}"
+
+    def test_depends_on_omitted_when_only_one_dependency_file(self, tmp_path):
+        """render_focused omits Depends on: when seed calls into only 1 external file."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "utils.py").write_text("def do_parse(data):\n    return data\n")
+        (tmp_path / "app.py").write_text(
+            "from utils import do_parse\n\ndef main():\n    do_parse('a')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "main", max_tokens=4000)
+
+        assert "Depends on:" not in out, (
+            f"Must NOT show Depends on: with only 1 dependency file; got:\n{out}"
+        )
+
+    def test_depends_on_omitted_when_no_callees(self, tmp_path):
+        """render_focused omits Depends on: when seed has no callees at all."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "solo.py").write_text("def standalone():\n    return 42\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "standalone", max_tokens=4000)
+
+        assert "Depends on:" not in out, (
+            f"Must NOT show Depends on: when symbol has no callees; got:\n{out}"
+        )
+
+    def test_depends_on_shows_callee_names(self, tmp_path):
+        """Depends on: section includes the callee symbol names in parentheses."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "auth.py").write_text(
+            "def verify_token():\n    return True\n\n"
+            "def refresh_token():\n    return True\n"
+        )
+        (tmp_path / "cache.py").write_text("def get_cached():\n    return None\n")
+        (tmp_path / "handler.py").write_text(
+            "from auth import verify_token, refresh_token\n"
+            "from cache import get_cached\n\n"
+            "def handle_request():\n"
+            "    verify_token()\n"
+            "    refresh_token()\n"
+            "    get_cached()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "handle_request", max_tokens=4000)
+
+        assert "\nDepends on:" in out, f"Depends on: must appear; got:\n{out}"
+        assert "verify_token" in out, f"callee name verify_token must appear; got:\n{out}"
+        assert "get_cached" in out, f"callee name get_cached must appear; got:\n{out}"
