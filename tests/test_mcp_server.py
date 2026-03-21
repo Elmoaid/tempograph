@@ -40675,3 +40675,231 @@ class TestDeadFactoriesS857:
         assert "dead factories" not in out, (
             f"'dead factories' must not appear when create_ function is called; got:\n{out}"
         )
+
+# ── S858–S863 ──────────────────────────────────────────────────────────────────
+
+# ── S858: Abstract method focus ───────────────────────────────────────────────
+
+class TestAbstractMethodFocusS858:
+    """S858: Method in Abstract*/Base* class emits abstract-method signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "base.py").write_text(
+            "class AbstractProcessor:\n"
+            "    def abstract_process(self, data): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from base import AbstractProcessor\n"
+            "def use(): AbstractProcessor().abstract_process(None)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "abstract_process")
+        assert "abstract method" in out, (
+            f"'abstract method' expected for method in AbstractProcessor; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "class ServiceHandler:\n"
+            "    def process_request(self, req): return req\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from service import ServiceHandler\n"
+            "def run(): ServiceHandler().process_request({})\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process_request")
+        assert "abstract method" not in out, (
+            f"'abstract method' must not appear for method in non-abstract class; got:\n{out}"
+        )
+
+
+# ── S859: Low module cohesion ─────────────────────────────────────────────────
+
+class TestLowModuleCohesionS859:
+    """S859: 5+ files each with 5+ top-level functions emits low-cohesion signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        for i in range(5):
+            code = "\n".join(f"def fn_{i}_{j}(x): return x" for j in range(5))
+            (tmp_path / f"mod_{i}.py").write_text(code + "\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "low cohesion" in out, (
+            f"'low cohesion' expected for 5 files each with 5+ top-level functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        # Fewer than 5 files — condition requires len(src_fps) >= 5
+        for i in range(3):
+            (tmp_path / f"mod_{i}.py").write_text(f"def fn_{i}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "low cohesion" not in out, (
+            f"'low cohesion' must not appear for fewer than 5 source files; got:\n{out}"
+        )
+
+
+# ── S860: API file blast ───────────────────────────────────────────────────────
+
+class TestApiFileBlastS860:
+    """S860: Blast target in api/views/routes directory emits api-layer-blast signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        api_dir = tmp_path / "api"
+        api_dir.mkdir()
+        (api_dir / "service.py").write_text("def get_users(): return []\n")
+        (tmp_path / "app.py").write_text(
+            "from api.service import get_users\ndef main(): get_users()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "api/service.py")
+        assert "api layer blast" in out, (
+            f"'api layer blast' expected for file in api/ directory; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "service.py").write_text("def get_users(): return []\n")
+        (tmp_path / "app.py").write_text(
+            "from service import get_users\ndef main(): get_users()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "service.py")
+        assert "api layer blast" not in out, (
+            f"'api layer blast' must not appear for file not in api directory; got:\n{out}"
+        )
+
+
+# ── S861: Init file in diff ────────────────────────────────────────────────────
+
+class TestInitFileInDiffS861:
+    """S861: __init__.py in changed_files emits init-file-in-diff signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        pkg_dir = tmp_path / "mypkg"
+        pkg_dir.mkdir()
+        (pkg_dir / "__init__.py").write_text("from .core import MyClass\n")
+        (pkg_dir / "core.py").write_text("class MyClass: pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["mypkg/__init__.py"])
+        assert "init file in diff" in out, (
+            f"'init file in diff' expected when __init__.py is changed; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "service.py").write_text("def process(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from service import process\ndef run(): process()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["service.py"])
+        assert "init file in diff" not in out, (
+            f"'init file in diff' must not appear when no __init__.py is changed; got:\n{out}"
+        )
+
+
+# ── S862: Private hotspot ──────────────────────────────────────────────────────
+
+class TestPrivateHotspotS862:
+    """S862: Top hotspot with _ prefix emits private-hotspot signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "core.py").write_text(
+            "def _internal_helper(x): return x * 2\n"
+        )
+        for i in range(5):
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from core import _internal_helper\n"
+                f"def run_{i}(v): _internal_helper(v)\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "private hotspot" in out, (
+            f"'private hotspot' expected for _-prefixed top hotspot; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "core.py").write_text(
+            "def public_helper(x): return x\n"
+        )
+        for i in range(5):
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from core import public_helper\n"
+                f"def run_{i}(v): public_helper(v)\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "private hotspot" not in out, (
+            f"'private hotspot' must not appear when top hotspot is a public function; got:\n{out}"
+        )
+
+
+# ── S863: Dead singleton accessors ────────────────────────────────────────────
+
+class TestDeadSingletonsS863:
+    """S863: Unused get_instance/get_singleton function emits dead-singletons signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "registry.py").write_text(
+            "def get_instance(): return None\n"
+            "def active_fn(): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from registry import active_fn\n"
+            "def run(): active_fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead singletons" in out, (
+            f"'dead singletons' expected for unused get_instance function; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "registry.py").write_text(
+            "def get_instance(): return None\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from registry import get_instance\n"
+            "def run(): get_instance()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead singletons" not in out, (
+            f"'dead singletons' must not appear when get_instance is called; got:\n{out}"
+        )

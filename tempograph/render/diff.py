@@ -695,6 +695,20 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — parallel new implementation likely exists; verify migration is not being bypassed"
             )
 
+    # S861: Init file in diff — __init__.py changed.
+    # __init__.py changes alter a package's public surface or initialization order;
+    # this affects all importers of the package, not just callers of changed symbols.
+    if changed_files:
+        _init_files861 = [
+            f for f in changed_files
+            if f.replace("\\", "/").rsplit("/", 1)[-1] == "__init__.py"
+        ]
+        if _init_files861:
+            lines.append(
+                f"init file in diff: {len(_init_files861)} __init__.py file(s) changed"
+                f" — package public surface changed; all importers of this package are affected"
+            )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 
