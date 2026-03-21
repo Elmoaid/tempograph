@@ -375,6 +375,27 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — missing error recovery"
         )
 
+    # S208: Dead callbacks — callback/handler/listener/hook functions that are dead.
+    # Unregistered callbacks suggest event wiring was removed but the handler wasn't cleaned up.
+    # Only shown when 1+ dead callback function found (conf >= 40, standalone fns only).
+    _s208_cb_patterns = ("_callback", "_handler", "_listener", "_hook")
+    _s208_dead_cbs = [
+        sym for sym, conf in scored
+        if conf >= 40
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.endswith(p) for p in _s208_cb_patterns)
+    ]
+    if len(_s208_dead_cbs) >= 1:
+        _cb_names = [s.name for s in _s208_dead_cbs[:3]]
+        _cb_str = ", ".join(_cb_names)
+        if len(_s208_dead_cbs) > 3:
+            _cb_str += f" +{len(_s208_dead_cbs) - 3} more"
+        lines.append(
+            f"dead callbacks: {len(_s208_dead_cbs)} unused callback/handler fn(s) ({_cb_str})"
+            f" — event wiring may have been removed"
+        )
+
     # S196: Dead fixtures — setup_*/teardown_* functions that are dead.
     # Test fixture functions with 0 callers are often orphaned test infrastructure.
     # Only shown when 2+ such dead fixture functions found.

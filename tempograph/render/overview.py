@@ -1118,6 +1118,23 @@ def render_overview(graph: Tempo) -> str:
             f" — changes here have wide blast radius"
         )
 
+    # S203: Undocumented exports — high percentage of exported symbols with empty docstrings.
+    # Public API without docs is harder to use correctly and harder to review for contracts.
+    # Only shown when >= 10 exported non-test symbols exist and >= 50% have no doc.
+    _s203_exports = [
+        s for s in graph.symbols.values()
+        if s.exported and not _is_test_file(s.file_path)
+        and s.kind.value in ("function", "method", "class")
+    ]
+    if len(_s203_exports) >= 10:
+        _s203_no_doc = [s for s in _s203_exports if not s.doc]
+        _s203_pct = len(_s203_no_doc) / len(_s203_exports) * 100
+        if _s203_pct >= 50:
+            lines.append(
+                f"undocumented exports: {len(_s203_no_doc)}/{len(_s203_exports)}"
+                f" exported symbols lack docstrings ({_s203_pct:.0f}%)"
+            )
+
     # S197: Constant explosion — high number of named constants/variables across source files.
     # Many constants may indicate magic-number parameterization or config sprawl.
     # Only shown when >= 20 non-test constant/variable symbols exist.

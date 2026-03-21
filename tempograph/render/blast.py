@@ -563,6 +563,20 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — deep call chain increases change blast"
         )
 
+    # S207: Single importer — exactly 1 file imports the blast target.
+    # Narrow dependency means blast is contained; useful to know before refactoring.
+    # Positive signal: suppressed when importers != 1 (too many = already shown in blast header).
+    _s207_importers = [
+        i for i in graph.importers_of(file_path)
+        if i in graph.files and i != file_path
+    ]
+    if len(_s207_importers) == 1:
+        _s207_name = _s207_importers[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"single importer: only {_s207_name} imports this file"
+            f" — narrow dependency, check that consumer before modifying"
+        )
+
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
 

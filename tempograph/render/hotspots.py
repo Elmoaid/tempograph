@@ -816,4 +816,21 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             lines.append("")
             lines.append(f"recursive hotspots: {len(_recursive_syms144)} recursive fns in top ranks ({_r_str})")
 
+    # S206: Fan-in spike — top-ranked hotspot symbol has significantly more callers than average.
+    # A hotspot that is also a caller magnet is the highest-risk change target.
+    # Only shown when the top hotspot's caller count >= 3x the average of the top 10.
+    if scores:
+        _caller_counts206 = []
+        for _sc206, _sym206 in scores[:10]:
+            _n_callers206 = len(graph.callers_of(_sym206.id))
+            _caller_counts206.append((_n_callers206, _sym206))
+        if len(_caller_counts206) >= 3:
+            _avg206 = sum(c for c, _ in _caller_counts206) / len(_caller_counts206)
+            _top_count206, _top_sym206 = max(_caller_counts206, key=lambda x: x[0])
+            if _avg206 > 0 and _top_count206 >= _avg206 * 3.0:
+                lines.append(
+                    f"\nfan-in spike: {_top_sym206.name} — {_top_count206} callers"
+                    f" vs avg {_avg206:.1f} ({_top_count206 / _avg206:.1f}×)"
+                )
+
     return "\n".join(lines)
