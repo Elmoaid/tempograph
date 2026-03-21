@@ -13424,3 +13424,27 @@ class TestFocusTestFilePointer:
         out = render_focused(g, "login")
         # Both test_auth.py and test_auth_integration.py match "auth" — ambiguous
         assert out.count("test file:") <= 1  # at most one match shown
+
+
+# ---------------------------------------------------------------------------
+# S200 — missing co-editors (diff)
+# ---------------------------------------------------------------------------
+
+class TestDiffMissingCoEditors:
+    def test_no_crash_without_git(self, tmp_path):
+        """S200 silently skips when repo has no git history."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "mod.py").write_text("def fn(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["mod.py"])
+        assert isinstance(out, str)
+
+    def test_missing_coeditors_keyword_format(self):
+        """When S200 fires, output contains 'missing co-editors' prefix."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        g = build_graph(REPO_PATH, use_cache=True)
+        out = render_diff_context(g, ["tempograph/render/diff.py"])
+        if "missing co-editors" in out:
+            assert "usually change alongside" in out
