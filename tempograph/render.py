@@ -179,6 +179,22 @@ def render_overview(graph: Tempo) -> str:
         lines.append("")
         lines.append(f"hot symbols: {', '.join(_hot_parts)}")
 
+    # Untested hot: hot symbols (>=3 caller files) with zero test file callers.
+    # These are the most dangerous to refactor — widely used but unprotected by tests.
+    _untested_hot: list[tuple[int, str]] = []
+    for sym in graph.symbols.values():
+        if sym.kind.value not in ("function", "method") or _is_test_file(sym.file_path):
+            continue
+        _all_callers = graph.callers_of(sym.id)
+        _src_caller_files = {c.file_path for c in _all_callers if c.file_path != sym.file_path and not _is_test_file(c.file_path)}
+        _test_callers = [c for c in _all_callers if _is_test_file(c.file_path)]
+        if len(_src_caller_files) >= 3 and not _test_callers:
+            _untested_hot.append((len(_src_caller_files), sym.name))
+    if _untested_hot:
+        _untested_hot.sort(key=lambda x: -x[0])
+        _uh_parts = [f"{name} ({n})" for n, name in _untested_hot[:3]]
+        lines.append(f"untested hot: {', '.join(_uh_parts)} — no test coverage")
+
     # Function size distribution: tiny/small/medium/large/huge counts across source functions.
     # One-line style signal — "large: 3" means 3 functions >50L each; agents know to grep not read.
     _fn_sizes = {"tiny": 0, "small": 0, "medium": 0, "large": 0, "huge": 0}

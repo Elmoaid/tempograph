@@ -6642,3 +6642,51 @@ class TestDiffRiskSummary:
         assert "Risk:" not in out, (
             f"'Risk:' must not appear when changed files have no importers; got:\n{out}"
         )
+
+
+class TestOverviewUntestedHot:
+    """S60: Overview — 'untested hot:' section for widely-used functions with no test coverage.
+
+    When a function has >=3 unique non-test caller files but zero test file callers,
+    it's flagged as 'untested hot'. Most dangerous symbols to change without coverage.
+    """
+
+    def _build(self, tmp_path, files: dict):
+        from tempograph.builder import build_graph
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_untested_hot_shown_for_uncovered_hot_function(self, tmp_path):
+        """'untested hot:' appears when a hot function has no test file callers."""
+        from tempograph.render import render_overview
+
+        g = self._build(tmp_path, {
+            "core.py": "def process(x): return x\n",
+            "a.py": "from core import process\ndef a(): return process(1)\n",
+            "b.py": "from core import process\ndef b(): return process(2)\n",
+            "c.py": "from core import process\ndef c(): return process(3)\n",
+        })
+        out = render_overview(g)
+        assert "untested hot:" in out, (
+            f"Expected 'untested hot:' for hot function with no tests; got:\n{out}"
+        )
+        assert "process" in out, (
+            f"Expected 'process' in untested hot output; got:\n{out}"
+        )
+
+    def test_untested_hot_absent_when_function_has_test_coverage(self, tmp_path):
+        """'untested hot:' absent when the hot function IS covered by a test."""
+        from tempograph.render import render_overview
+
+        g = self._build(tmp_path, {
+            "core.py": "def process(x): return x\n",
+            "a.py": "from core import process\ndef a(): return process(1)\n",
+            "b.py": "from core import process\ndef b(): return process(2)\n",
+            "c.py": "from core import process\ndef c(): return process(3)\n",
+            "test_core.py": "from core import process\ndef test_process(): assert process(1) == 1\n",
+        })
+        out = render_overview(g)
+        assert "untested hot:" not in out, (
+            f"'untested hot:' must not appear when function has test coverage; got:\n{out}"
+        )
