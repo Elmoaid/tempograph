@@ -2156,7 +2156,7 @@ def _collect_hotspots_signals(
             ]
             if len(_file_syms688) == 1:
                 out.append(
-                    f"\nsolo file hotspot: {_top688.name} is the only symbol in"
+                    f"\nsingle-symbol hotspot: {_top688.name} is the only symbol in"
                     f" {_top688.file_path.rsplit('/', 1)[-1]}"
                     f" — single-symbol file; consider inlining or merging"
                 )
@@ -2252,6 +2252,21 @@ def _collect_hotspots_signals(
             out.append(
                 f"\ndeprecated hotspot: {_top718.name} is a top hotspot but looks deprecated"
                 f" ({len(_callers718)} callers) — migration is incomplete; audit callers and remove"
+            )
+
+    # S724: Hotspot in __init__ file — the top hotspot lives in an __init__.py.
+    # __init__ hotspots are public API re-exports under high load; they are hard to change without
+    # breaking consumers and signal the public surface is over-loaded.
+    if scores and scores[0]:
+        _top724 = scores[0][1]
+        if (
+            _top724 is not None
+            and _top724.file_path.replace("\\", "/").rsplit("/", 1)[-1] == "__init__.py"
+        ):
+            _callers724 = graph.callers_of(_top724.id)
+            out.append(
+                f"\ninit file hotspot: {_top724.name} (in __init__.py) is a top hotspot"
+                f" ({len(_callers724)} callers) — public API re-export under high load; breaking change risk"
             )
 
     return out

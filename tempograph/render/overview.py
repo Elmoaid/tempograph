@@ -2848,6 +2848,20 @@ def _signals_async_oop(
                 )
                 break
 
+    # S721: No entry points — no files with standard entry-point names found in the repo.
+    # A repo without main.py / app.py / server.py etc. is likely a library or has non-standard
+    # naming; agents should not assume a runnable entrypoint exists.
+    _entry_names721 = {
+        "main.py", "app.py", "server.py", "cli.py", "__main__.py",
+        "run.py", "index.py", "wsgi.py", "asgi.py",
+    }
+    _all_basenames721 = {fp.rsplit("/", 1)[-1] for fp in graph.files}
+    if not (_all_basenames721 & _entry_names721) and len(graph.files) >= 3:
+        lines.append(
+            f"no entry points: none of {len(graph.files)} files have standard entry-point names"
+            f" — library-style repo or entry point uses non-standard naming"
+        )
+
     return lines
 
 

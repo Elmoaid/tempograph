@@ -3487,6 +3487,24 @@ def _signals_focused_fn_advanced(
                 f" — look at the source counterpart for implementation details"
             )
 
+    # S720: Deprecated caller — a caller of the focused symbol has a deprecated name.
+    # If active code is being called by deprecated functions, the focused symbol may be on a
+    # removal path — callers marked old/legacy/deprecated signal incomplete migration.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim720 = _seed_syms[0]
+        if not _is_test_file(_prim720.file_path):
+            _callers720 = graph.callers_of(_prim720.id)
+            _dep_callers720 = [
+                c for c in _callers720
+                if any(kw in c.name.lower() for kw in ("old", "legacy", "deprecated"))
+            ]
+            if _dep_callers720:
+                _dc_names720 = ", ".join(c.name for c in _dep_callers720[:2])
+                lines.append(
+                    f"\ndeprecated caller: {_prim720.name} is called by deprecated code ({_dc_names720})"
+                    f" — this symbol may be on a removal path; check if it should be migrated"
+                )
+
     return lines
 
 

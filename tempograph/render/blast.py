@@ -1926,6 +1926,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — changes here propagate to all importers; review blast radius carefully"
         )
 
+    # S722: Utility file blast — the blast target has a utility-style name (util/helper/common etc).
+    # Utility files are conventionally imported everywhere; even small changes can have a large
+    # blast radius that may not be obvious from the file's apparent simplicity.
+    _util_kws722 = ("util", "helper", "common", "shared", "base", "mixin")
+    _blast_stem722 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].replace(".py", "").lower()
+    if any(kw in _blast_stem722 for kw in _util_kws722):
+        lines.append(
+            f"utility file blast: {_fp589.rsplit('/', 1)[-1]} has a utility-style name"
+            f" — widely imported by convention; expect broad blast radius"
+        )
+
     return "\n".join(lines)
 
 
