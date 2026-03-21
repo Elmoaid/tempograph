@@ -3241,6 +3241,26 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — orphaned error types; removed error handling paths may be silently suppressing errors"
         )
 
+    # S941: Dead setup functions — unused configure_/setup_/init_ prefixed functions.
+    # Dead setup functions indicate initialization paths that were removed; if they
+    # registered resources or side effects, those may now be silently skipped.
+    _setup_prefixes941 = ("configure_", "setup_", "init_", "initialize_", "bootstrap_", "register_")
+    _dead_setup941 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().startswith(p) for p in _setup_prefixes941)
+    ]
+    if _dead_setup941:
+        _setup_names941 = ", ".join(s.name for s in _dead_setup941[:3])
+        if len(_dead_setup941) > 3:
+            _setup_names941 += f" +{len(_dead_setup941) - 3} more"
+        lines.append(
+            f"dead setup: {len(_dead_setup941)} unused setup/init function(s) ({_setup_names941})"
+            f" — removed initialization paths may leave resources unregistered or unconfigured"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

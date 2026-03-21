@@ -42230,7 +42230,7 @@ class TestNewFilesInDiffS891:
 # ── S892: Hotspot cluster ────────────────────────────────────────────────────
 
 class TestHotspotClusterS892:
-    """S892: 3+ top-10 hotspots in same file emits hotspot-cluster signal."""
+    """S892: 3+ top-10 hotspots in same file emits coupling-hub signal."""
 
     def test_shown(self, tmp_path):
         from tempograph import build_graph
@@ -42247,8 +42247,8 @@ class TestHotspotClusterS892:
         )
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_hotspots(g)
-        assert "hotspot cluster" in out, (
-            f"'hotspot cluster' expected when 3+ hotspots in same file; got:\n{out}"
+        assert "coupling hub" in out, (
+            f"'coupling hub' expected when 3+ hotspots in same file; got:\n{out}"
         )
 
     def test_absent(self, tmp_path):
@@ -42265,8 +42265,8 @@ class TestHotspotClusterS892:
         )
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_hotspots(g)
-        assert "hotspot cluster" not in out, (
-            f"'hotspot cluster' must not appear when hotspots spread across files; got:\n{out}"
+        assert "coupling hub" not in out, (
+            f"'coupling hub' must not appear when hotspots spread across files; got:\n{out}"
         )
 
 
@@ -43862,4 +43862,218 @@ class TestDeadExceptionClassesS935:
         out = render_dead_code(g)
         assert "dead exceptions" not in out, (
             f"'dead exceptions' must not appear when exception is used; got:\n{out}"
+        )
+
+
+class TestAsyncMethodFocusS936:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "client.py").write_text(
+            "async def fetch_data(url: str) -> dict:\n"
+            "    return {}\n"
+            "\n"
+            "def sync_fn(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "fetch_data")
+        assert "async method" in out, (
+            f"'async method' expected for async function focus; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "client.py").write_text(
+            "def fetch_data(url: str) -> dict:\n"
+            "    return {}\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "fetch_data")
+        assert "async method" not in out, (
+            f"'async method' must not appear for sync function; got:\n{out}"
+        )
+
+
+class TestNoConstantsS937:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "service.py").write_text(
+            "def process_a(): pass\n"
+            "def process_b(): pass\n"
+            "def process_c(): pass\n"
+            "def process_d(): pass\n"
+            "def process_e(): pass\n"
+            "def process_f(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no constants" in out, (
+            f"'no constants' expected when no module-level constants exist; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "service.py").write_text(
+            "MAX_RETRIES = 3\n"
+            "TIMEOUT = 30\n"
+            "def process_a(): pass\n"
+            "def process_b(): pass\n"
+            "def process_c(): pass\n"
+            "def process_d(): pass\n"
+            "def process_e(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no constants" not in out, (
+            f"'no constants' must not appear when constants exist; got:\n{out}"
+        )
+
+
+class TestLoaderBlastS938:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "loader.py").write_text(
+            "def load_config(): return {}\n"
+            "def load_data(): return []\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from loader import load_config\ndef run(): load_config()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "loader.py")
+        assert "loader blast" in out, (
+            f"'loader blast' expected for loader.py target; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "service.py").write_text(
+            "def process(): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from service import process\ndef run(): process()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "service.py")
+        assert "loader blast" not in out, (
+            f"'loader blast' must not appear for regular service file; got:\n{out}"
+        )
+
+
+class TestInterfaceInDiffS939:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "base_repository.py").write_text(
+            "class BaseRepository:\n"
+            "    def find_by_id(self, id): raise NotImplementedError\n"
+        )
+        (tmp_path / "user_repo.py").write_text(
+            "from base_repository import BaseRepository\n"
+            "class UserRepository(BaseRepository):\n"
+            "    def find_by_id(self, id): return None\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["base_repository.py"])
+        assert "interface in diff" in out, (
+            f"'interface in diff' expected for base/abstract file in diff; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "service.py").write_text("def process(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from service import process\ndef run(): process()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["service.py"])
+        assert "interface in diff" not in out, (
+            f"'interface in diff' must not appear for regular service file; got:\n{out}"
+        )
+
+
+class TestLegacyHotspotS940:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "legacy_processor.py").write_text(
+            "def complex_fn():\n"
+            + "    x = 0\n" * 60
+            + "    if x: pass\n" * 5
+            + "    return x\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from legacy_processor import complex_fn\ndef run(): complex_fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "legacy hotspot" in out, (
+            f"'legacy hotspot' expected for hotspot in legacy file; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "processor.py").write_text(
+            "def complex_fn():\n"
+            + "    x = 0\n" * 60
+            + "    if x: pass\n" * 5
+            + "    return x\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from processor import complex_fn\ndef run(): complex_fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "legacy hotspot" not in out, (
+            f"'legacy hotspot' must not appear for non-legacy file; got:\n{out}"
+        )
+
+
+class TestDeadSetupFunctionsS941:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "bootstrap.py").write_text(
+            "def configure_logging(): pass\n"
+            "def setup_database(): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead setup" in out, (
+            f"'dead setup' expected for unused configure_/setup_ functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "bootstrap.py").write_text(
+            "def configure_logging(): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from bootstrap import configure_logging\ndef run(): configure_logging()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead setup" not in out, (
+            f"'dead setup' must not appear when setup function is called; got:\n{out}"
         )

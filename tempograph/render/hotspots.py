@@ -2692,7 +2692,7 @@ def _collect_hotspots_signals(
             if _top_cluster_count892 >= 3:
                 _top_cluster_fp892 = max(_cluster_files892, key=_cluster_files892.__getitem__)
                 out.append(
-                    f"\nhotspot cluster: {_top_cluster_fp892.rsplit('/', 1)[-1]} contains"
+                    f"\ncoupling hub: {_top_cluster_fp892.rsplit('/', 1)[-1]} contains"
                     f" {_top_cluster_count892} of top hotspots"
                     f" — concentrated complexity; changes here affect multiple high-impact symbols"
                 )
@@ -2786,6 +2786,20 @@ def _collect_hotspots_signals(
                 out.append(
                     f"\nuntested hotspot: {_top934.name} has no direct test callers"
                     f" — highest complexity function lacks unit test coverage; consider adding targeted tests"
+                )
+
+    # S940: Hotspot in deprecated file — the top hotspot is in a legacy-named file.
+    # Working in deprecated code is higher risk; bugs may be intentionally left unfixed
+    # and there may be pressure to avoid changes that could delay a planned migration.
+    if scores:
+        _top940 = scores[0][1]
+        _legacy_kws940 = ("legacy", "deprecated", "old", "obsolete", "archive")
+        if _top940 is not None:
+            _fname940 = _top940.file_path.replace("\\", "/").rsplit("/", 1)[-1].lower()
+            if any(kw in _fname940 for kw in _legacy_kws940):
+                out.append(
+                    f"\nlegacy hotspot: {_top940.name} is the top hotspot but lives in {_top940.file_path.rsplit('/', 1)[-1]}"
+                    f" — deprecated file; changes here risk introducing debt into code scheduled for removal"
                 )
 
     return out
