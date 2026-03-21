@@ -2368,6 +2368,25 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — abandoned subclass design; verify base class is still the right abstraction"
         )
 
+    # S695: Dead test utility — unused functions in source files with test-utility names.
+    # Functions named mock_*, stub_*, fake_*, or *_fixture in non-test files are test helpers
+    # that leaked into production modules; they should either be moved or removed.
+    _test_util_kws695 = ("mock", "stub", "fake", "fixture")
+    _dead_test_util695 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and any(kw in s.name.lower() for kw in _test_util_kws695)
+    ]
+    if _dead_test_util695:
+        _tu_names695 = ", ".join(s.name for s in _dead_test_util695[:3])
+        if len(_dead_test_util695) > 3:
+            _tu_names695 += f" +{len(_dead_test_util695) - 3} more"
+        lines.append(
+            f"dead test utilities: {len(_dead_test_util695)} test-utility name(s) in source files ({_tu_names695})"
+            f" — test helpers in production code; move to test files or remove"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
