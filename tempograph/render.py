@@ -814,7 +814,7 @@ def _render_recent_changes_section(graph, seed_file_paths: list[str]) -> str:
 
 def _render_volatility_section(graph, seed_file_paths: list[str], token_count: int, max_tokens: int) -> str:
     """Build the 'Volatile:' section for render_focused."""
-    if not graph.root or not seed_file_paths or token_count >= max_tokens - 60:
+    if not graph.root or not seed_file_paths:
         return ""
     try:
         from .git import file_commit_counts
