@@ -357,4 +357,22 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
         _ep_str = ", ".join(_ep_names)
         lines.append(f"entry points changed: {_ep_str} — top-level API/runner modified")
 
+    # S133: Touched test count — test files that exist in the graph for changed source files.
+    # Tells agents how many tests they should run after this diff; zero = untested change.
+    # Only shown when 1+ source file in the diff and test files exist in the project.
+    _s133_src_changed = [fp for fp in normalized if not _is_test_file(fp)]
+    if _s133_src_changed:
+        _all_test_fps_133 = {fp for fp in graph.files if _is_test_file(fp)}
+        if _all_test_fps_133:
+            _touched_tests: set[str] = set()
+            for _fp133 in _s133_src_changed:
+                _stem133 = _fp133.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+                for _tfp in _all_test_fps_133:
+                    if _stem133 in _tfp:
+                        _touched_tests.add(_tfp)
+            if _touched_tests:
+                lines.append(f"touched test count: {len(_touched_tests)} test files cover the diff")
+            else:
+                lines.append("touched test count: 0 — no test files found for changed files")
+
     return "\n".join(lines)
