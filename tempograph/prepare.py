@@ -186,7 +186,7 @@ def _coverage_line(query_tokens: list[str], graph: Tempo, context_files: list[st
 def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: str = "",
                    baseline_predicted_files: list[str] | None = None,
                    precision_filter: bool = False,
-                   definition_first: bool = False) -> str:
+                   definition_first: bool = True) -> str:
     """Batch context preparation: overview + focus + hotspots + diff in one token-budgeted output.
 
     If L2 learned insights exist for task_type, includes extra modes (dead code, quality)
@@ -260,7 +260,7 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                 # Definition-first fallback: when focus is too_broad and all path matching found nothing,
                 # return just the DEFINING file(s) of the top-ranked symbol.
                 # Handles: "redirect" → flask/helpers.py (where redirect() lives) rather than all callers.
-                # Gated behind definition_first=True (bench evidence required before enabling by default).
+                # Enabled by default (Phase 5.31 bench: +16.0% F1, p=0.012*, n=93).
                 if definition_first and too_broad and not path_fallback_files:
                     scored = graph.search_symbols_scored(kw)
                     if scored:
@@ -412,7 +412,7 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                         sections.append(cc_section)
                         token_count += count_tokens(cc_section)
 
-    hotspot_budget = int(max_tokens * 0.15)
+    hotspot_budget = int(max_tokens * 0.20)
     if token_count < max_tokens - 100:
         hotspot_output = render_hotspots(graph, top_n=5)
         ht = count_tokens(hotspot_output)

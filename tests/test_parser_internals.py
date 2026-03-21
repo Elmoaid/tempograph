@@ -439,3 +439,71 @@ class TestParentQualifiedName:
         method = next((s for s in syms if s.name == "method"), None)
         assert method is not None
         assert method.parent_id is not None
+
+
+# ── _walk ─────────────────────────────────────────────────────────────────────
+
+class TestWalk:
+    def test_walk_dispatches_to_python_handler(self):
+        # _walk dispatches to _handle_python for Python files
+        code = "def greet(): pass\n"
+        p = _parser(code)
+        import tree_sitter_python as tsp
+        from tree_sitter import Language as TSLanguage, Parser as TSParser
+        ts_lang = TSLanguage(tsp.language())
+        ts_parser = TSParser(ts_lang)
+        tree = ts_parser.parse(code.encode())
+        root = tree.root_node
+        p._walk(root)
+        # After walking, symbols should include greet
+        assert any(s.name == "greet" for s in p.symbols)
+
+    def test_walk_produces_symbols(self):
+        code = "class Foo:\n    def bar(self): pass\n"
+        p = _parser(code)
+        import tree_sitter_python as tsp
+        from tree_sitter import Language as TSLanguage, Parser as TSParser
+        ts_lang = TSLanguage(tsp.language())
+        ts_parser = TSParser(ts_lang)
+        tree = ts_parser.parse(code.encode())
+        p._walk(tree.root_node)
+        names = {s.name for s in p.symbols}
+        assert "Foo" in names
+        assert "bar" in names
+
+
+# ── _scan_calls ───────────────────────────────────────────────────────────────
+
+class TestScanCalls:
+    def _get_call_node(self, code: str):
+        """Return root node of parsed python code."""
+        import tree_sitter_python as tsp
+        from tree_sitter import Language as TSLanguage, Parser as TSParser
+        ts_lang = TSLanguage(tsp.language())
+        ts_parser = TSParser(ts_lang)
+        return ts_parser.parse(code.encode()).root_node
+
+    def test_scan_calls_detects_function_call(self):
+        code = "def fn():\n    helper()\n"
+        p = _parser(code)
+        p.parse()
+        # After parsing, edges should contain a CALLS edge for helper
+        call_edges = [e for e in p.edges if e.kind == EdgeKind.CALLS]
+        assert any("helper" in e.target_id for e in call_edges)
+
+    def test_scan_calls_on_root_adds_no_top_level_calls(self):
+        # _scan_calls on a non-call node should not crash
+        code = "x = 1\n"
+        p = _parser(code)
+        root = self._get_call_node(code)
+        # Should not raise, even with depth=0 and a simple node
+        p._scan_calls(root, "test.py::x", depth=0)
+
+    def test_scan_calls_depth_limit(self):
+        # At depth > 20, should return immediately without adding edges
+        code = "def fn(): helper()\n"
+        p = _parser(code)
+        root = self._get_call_node(code)
+        before = len(p.edges)
+        p._scan_calls(root, "test.py::fn", depth=21)
+        assert len(p.edges) == before  # no edges added at depth > 20

@@ -70,6 +70,50 @@ def current_branch(repo: str) -> str | None:
     return _run_git(repo, "rev-parse", "--abbrev-ref", "HEAD")
 
 
+def head_sha(repo: str) -> str | None:
+    """Return the current HEAD commit SHA, or None if not a git repo.
+
+    Reads directly from the filesystem (.git/HEAD -> refs) to avoid subprocess
+    overhead (~0.2ms vs ~15ms for ``git rev-parse HEAD``).  Handles both
+    regular repos and worktrees.  Falls back to subprocess on any error.
+    """
+    git_path = Path(repo) / ".git"
+    try:
+        if git_path.is_file():
+            # Worktree: .git is a file containing "gitdir: <path>"
+            content = git_path.read_text().strip()
+            if not content.startswith("gitdir: "):
+                return _run_git(repo, "rev-parse", "HEAD")
+            git_dir = Path(content[8:])
+            if not git_dir.is_absolute():
+                git_dir = (Path(repo) / git_dir).resolve()
+        elif git_path.is_dir():
+            git_dir = git_path
+        else:
+            return None
+
+        head_content = (git_dir / "HEAD").read_text().strip()
+        if head_content.startswith("ref: "):
+            ref = head_content[5:]
+            ref_path = git_dir / ref
+            if ref_path.exists():
+                return ref_path.read_text().strip()
+            # Worktrees store refs in the common git dir
+            commondir_file = git_dir / "commondir"
+            if commondir_file.exists():
+                commondir = (git_dir / commondir_file.read_text().strip()).resolve()
+                ref_path = commondir / ref
+                if ref_path.exists():
+                    return ref_path.read_text().strip()
+            return _run_git(repo, "rev-parse", "HEAD")
+        # Detached HEAD — content is the SHA itself
+        if len(head_content) == 40:
+            return head_content
+    except OSError:
+        pass
+    return _run_git(repo, "rev-parse", "HEAD")
+
+
 @functools.lru_cache(maxsize=4)
 def cochange_matrix(repo: str, n_commits: int = 200) -> dict[str, list[tuple[str, float]]]:
     """Build a co-change matrix from git history.
