@@ -36402,28 +36402,28 @@ class TestWideDiffS771:
         )
 
 
-# ── S772: Test hotspot ────────────────────────────────────────────────────────
+# ── S772: All-test hotspots ───────────────────────────────────────────────────
 
-class TestTestHotspotS772:
-    """S772: Top hotspot is a test function emits test-hotspot signal."""
+class TestAllTestHotspotsS772:
+    """S772: Top 3 hotspots all in test files emits all-test-hotspots signal."""
 
     def test_shown(self, tmp_path):
         from tempograph.render.hotspots import render_hotspots
         from tempograph.builder import build_graph
 
-        # test helper called by many other test functions
-        (tmp_path / "test_helpers.py").write_text(
-            "def make_client(url): return {'url': url}\n"
-        )
-        for i in range(7):
-            (tmp_path / f"test_svc_{i}.py").write_text(
-                f"from test_helpers import make_client\n"
-                f"def test_call_{i}(): make_client('http://{i}')\n"
+        # 3 test helpers each called by many test files
+        for name in ("test_make_client", "test_make_user", "test_make_order"):
+            (tmp_path / f"{name}.py").write_text(
+                f"def {name}(x): return {{'x': x}}\n"
             )
+            for i in range(5):
+                (tmp_path / f"test_{name}_{i}.py").write_text(
+                    f"from {name} import {name}\ndef test_{i}(): {name}({i})\n"
+                )
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_hotspots(g)
-        assert "is a test function ranked as the top hotspot" in out, (
-            f"Expected 'test hotspot' when top hotspot is in a test file; got:\n{out}"
+        assert "all-test hotspots" in out, (
+            f"Expected 'all-test hotspots' when top 3 hotspots are in test files; got:\n{out}"
         )
 
     def test_absent(self, tmp_path):
@@ -36437,8 +36437,8 @@ class TestTestHotspotS772:
             )
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_hotspots(g)
-        assert "is a test function ranked as the top hotspot" not in out, (
-            f"'test hotspot' must not appear when top hotspot is a source function; got:\n{out}"
+        assert "all-test hotspots" not in out, (
+            f"'all-test hotspots' must not appear when top hotspots are source functions; got:\n{out}"
         )
 
 
