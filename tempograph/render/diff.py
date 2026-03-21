@@ -1198,4 +1198,23 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — public API contract may change; ensure clients are notified or version the endpoint"
         )
 
+    # S399: Error handling diff — diff touches files with "error", "exception", "retry" in names.
+    # Changes to error handling code are high-risk; removing a try/except, changing retry limits,
+    # or narrowing exception types can turn handled failures into unhandled crashes.
+    _s399_err_words = (
+        "error_handler", "exception_handler", "retry", "fallback",
+        "circuit_breaker", "error_boundary",
+    )
+    _s399_err_files = [
+        f for f in changed_files
+        if any(w in f.lower().replace("-", "_") for w in _s399_err_words)
+        and not _is_test_file(f)
+    ]
+    if _s399_err_files:
+        _err_names399 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s399_err_files[:2])
+        lines.append(
+            f"error handling change: {_err_names399} in diff"
+            f" — changes to error/retry handlers can turn handled failures into crashes"
+        )
+
     return "\n".join(lines)

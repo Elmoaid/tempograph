@@ -1773,6 +1773,34 @@ def _signals_structure(
             )
 
 
+    # S397: Mixed sync/async boundary — codebase has async functions called from non-async code.
+    # Mixed boundaries create subtle bugs: calling async functions without await silently
+    # returns a coroutine object instead of the result, or blocks the event loop.
+    _s397_async_syms = {
+        s.id for s in graph.symbols.values()
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and s.signature.startswith("async ")
+    }
+    _s397_sync_syms = {
+        s.id for s in graph.symbols.values()
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and not s.signature.startswith("async ")
+    }
+    # Find sync calling async (cross-boundary call)
+    _s397_cross_calls = [
+        e for e in graph.edges
+        if e.kind.value == "calls"
+        and e.source_id in _s397_sync_syms
+        and e.target_id in _s397_async_syms
+    ]
+    if len(_s397_async_syms) >= 3 and len(_s397_cross_calls) >= 2:
+        lines.append(
+            f"mixed async/sync: {len(_s397_cross_calls)} sync→async cross-boundary call(s)"
+            f" — sync functions calling async without await; may return coroutines silently"
+        )
+
     # S391: No tests detected — 0 test files found in the codebase.
     # A codebase with no tests has no regression protection; any change can silently break
     # behavior that previously worked. This is a critical quality signal.

@@ -20471,3 +20471,239 @@ class TestDeadLoggingFunctions:
         assert "dead logging" not in out, (
             f"'dead logging' must not appear when logging fn is used; got:\n{out}"
         )
+
+
+# ── S397: Mixed sync/async boundary ──────────────────────────────────────────
+
+class TestMixedSyncAsyncBoundaryS397:
+    """S397: Codebase with sync functions calling async functions emits the signal."""
+
+    def test_mixed_sync_async_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        (tmp_path / "async_utils.py").write_text(
+            "async def fetch_data():\n    pass\n\n"
+            "async def load_config():\n    pass\n\n"
+            "async def save_record():\n    pass\n"
+        )
+        (tmp_path / "sync_caller.py").write_text(
+            "from async_utils import fetch_data, load_config\n\n"
+            "def process():\n    fetch_data()\n\n"
+            "def configure():\n    load_config()\n"
+        )
+        (tmp_path / "another.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "mixed async/sync" in out, (
+            f"Expected 'mixed async/sync' signal; got:\n{out}"
+        )
+
+    def test_mixed_sync_async_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def fetch_data():\n    pass\n\n"
+            "def load_config():\n    pass\n"
+        )
+        (tmp_path / "caller.py").write_text(
+            "from utils import fetch_data\n\n"
+            "def process():\n    fetch_data()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "mixed async/sync" not in out, (
+            f"'mixed async/sync' must not appear when no async symbols; got:\n{out}"
+        )
+
+
+# ── S398: Error-swallowing function ──────────────────────────────────────────
+
+class TestErrorSwallowingFunctionS398:
+    """S398: A focused symbol whose name implies silent error suppression emits the signal."""
+
+    def test_error_swallowing_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "safe_ops.py").write_text(
+            "def safe_call(fn):\n    try:\n        return fn()\n    except Exception:\n        pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="safe_call")
+        assert "error-swallowing" in out, (
+            f"Expected 'error-swallowing' signal for safe_call; got:\n{out}"
+        )
+
+    def test_error_swallowing_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "processor.py").write_text(
+            "def process_data(items):\n    return [x * 2 for x in items]\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="process_data")
+        assert "error-swallowing" not in out, (
+            f"'error-swallowing' must not appear for process_data; got:\n{out}"
+        )
+
+
+# ── S399: Error handling change in diff ──────────────────────────────────────
+
+class TestErrorHandlingDiffS399:
+    """S399: Diff touching an error_handler file emits the signal."""
+
+    def test_error_handling_diff_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "error_handler.py").write_text(
+            "def handle_error(exc):\n    pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["error_handler.py"])
+        assert "error handling change" in out, (
+            f"Expected 'error handling change' signal; got:\n{out}"
+        )
+
+    def test_error_handling_diff_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "models.py").write_text(
+            "class User:\n    def __init__(self, name):\n        self.name = name\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["models.py"])
+        assert "error handling change" not in out, (
+            f"'error handling change' must not appear for models.py; got:\n{out}"
+        )
+
+
+# ── S400: Test-file hotspot ───────────────────────────────────────────────────
+
+class TestTestFileHotspotS400:
+    """S400: When the top hotspot symbol is inside a test file, the signal fires."""
+
+    def test_test_file_hotspot_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "test_helpers.py").write_text(
+            "def assert_valid(obj):\n    assert obj is not None\n"
+        )
+        (tmp_path / "test_models.py").write_text(
+            "from test_helpers import assert_valid\n\n"
+            "def test_a():\n    assert_valid(1)\n"
+        )
+        (tmp_path / "test_views.py").write_text(
+            "from test_helpers import assert_valid\n\n"
+            "def test_b():\n    assert_valid(2)\n"
+        )
+        (tmp_path / "test_api.py").write_text(
+            "from test_helpers import assert_valid\n\n"
+            "def test_c():\n    assert_valid(3)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "test-file hotspot" in out, (
+            f"Expected 'test-file hotspot' signal; got:\n{out}"
+        )
+
+    def test_test_file_hotspot_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def helper(x):\n    return x + 1\n"
+        )
+        (tmp_path / "a.py").write_text("from utils import helper\ndef f(): return helper(1)\n")
+        (tmp_path / "b.py").write_text("from utils import helper\ndef g(): return helper(2)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "test-file hotspot" not in out, (
+            f"'test-file hotspot' must not appear for non-test hotspot; got:\n{out}"
+        )
+
+
+# ── S401: Shared secrets blast ────────────────────────────────────────────────
+
+class TestSharedSecretsBlastS401:
+    """S401: A secrets file imported by 3+ files emits the signal."""
+
+    def test_shared_secrets_blast_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "api_key.py").write_text(
+            "API_KEY = \"sk-abc123\"\n"
+            "SECRET_TOKEN = \"tok-xyz\"\n"
+        )
+        for i in range(4):
+            (tmp_path / f"service_{i}.py").write_text(
+                f"from api_key import API_KEY\n\n"
+                f"def call_{i}():\n    return API_KEY\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="api_key.py")
+        assert "secrets blast" in out, (
+            f"Expected 'secrets blast' signal; got:\n{out}"
+        )
+
+    def test_shared_secrets_blast_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "models.py").write_text(
+            "class User:\n    pass\n"
+        )
+        for i in range(4):
+            (tmp_path / f"view_{i}.py").write_text(
+                f"from models import User\n\n"
+                f"def show_{i}():\n    return User()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="models.py")
+        assert "secrets blast" not in out, (
+            f"'secrets blast' must not appear for non-credentials file; got:\n{out}"
+        )
+
+
+# ── S402: Dead background tasks ───────────────────────────────────────────────
+
+class TestDeadBackgroundTasksS402:
+    """S402: Unused background_task_* functions with 0 callers emit the signal."""
+
+    def test_dead_background_tasks_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "tasks.py").write_text(
+            "def background_task_send_email():\n    pass\n\n"
+            "def background_task_cleanup_cache():\n    pass\n\n"
+            "def background_task_sync_users():\n    pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead background tasks" in out, (
+            f"Expected 'dead background tasks' signal; got:\n{out}"
+        )
+
+    def test_dead_background_tasks_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "tasks.py").write_text(
+            "def background_task_send_email():\n    pass\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from tasks import background_task_send_email\n\n"
+            "def run():\n    background_task_send_email()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead background tasks" not in out, (
+            f"'dead background tasks' must not appear when tasks are called; got:\n{out}"
+        )

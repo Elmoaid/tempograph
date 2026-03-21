@@ -2499,6 +2499,25 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                     f" — may be unreachable dead code; verify before modifying"
                 )
 
+    # S398: Error-swallowing function — focused function name implies it suppresses exceptions.
+    # Functions that suppress errors silently mask bugs; callers cannot distinguish success
+    # from failure and issues become invisible until production symptoms appear.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim398 = next(
+            (s for s in _seed_syms if s.kind.value in ("function", "method")), None
+        )
+        if _prim398:
+            _swallow_patterns398 = (
+                "swallow", "ignore_error", "silent_", "suppress_error",
+                "no_raise", "_safe", "safe_",
+            )
+            _is_swallow398 = any(p in _prim398.name.lower() for p in _swallow_patterns398)
+            if _is_swallow398:
+                lines.append(
+                    f"\nerror-swallowing: {_prim398.name} implies silent error suppression"
+                    f" — callers cannot detect failures; log or re-raise to preserve observability"
+                )
+
     # S392: Pure utility function — focused function calls 0 other symbols.
     # Pure functions with no outbound calls are easy to test in isolation and safe to refactor;
     # this is a positive signal worth noting as it indicates well-bounded scope.

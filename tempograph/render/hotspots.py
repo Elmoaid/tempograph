@@ -1381,4 +1381,20 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                     f" — refactors propagate through multiple layers; map all call paths before changing"
                 )
 
+    # S400: Test-file hotspot — the top hotspot symbol lives inside a test file itself.
+    # Test files should not be hotspots; if a test helper is the most-called symbol it has
+    # leaked production logic into tests, or tests are overly interdependent.
+    if scores:
+        _top400 = scores[0][1]
+        if _is_test_file(_top400.file_path):
+            _callers400 = {
+                e.source_id for e in graph.edges
+                if e.kind.value == "calls" and e.target_id == _top400.id
+            }
+            lines.append(
+                f"\ntest-file hotspot: {_top400.name} (in {_top400.file_path.rsplit('/', 1)[-1]})"
+                f" is the top hotspot with {len(_callers400)} caller(s)"
+                f" — test helpers should not accumulate logic; extract shared helpers to a src/ utility"
+            )
+
     return "\n".join(lines)  # ALWAYS return here — never inside a conditional block
