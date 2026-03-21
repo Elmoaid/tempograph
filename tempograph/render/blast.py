@@ -2455,6 +2455,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — changes require coordinated migration, serialization updates, and consumer validation"
         )
 
+    # S1004: Security blast — blast target is an authentication or security file.
+    # Security code is high-stakes; changes to auth logic can silently bypass checks,
+    # escalate privileges, or expose credentials across all paths that rely on it.
+    _sec_kws1004 = ("auth", "authentication", "authorization", "security", "credentials", "crypto", "password", "passwords", "token", "tokens", "session", "sessions", "permission", "permissions", "acl", "oauth", "jwt")
+    _fname1004 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if any(_fname1004 == kw or _fname1004.startswith(kw + "_") or _fname1004.endswith("_" + kw) for kw in _sec_kws1004):
+        lines.append(
+            f"security blast: {_fp589.rsplit('/', 1)[-1]} is an auth/security module"
+            f" — high-stakes; changes may silently bypass checks, escalate privileges, or expose credentials"
+        )
+
     return "\n".join(lines)
 
 

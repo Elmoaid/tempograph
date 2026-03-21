@@ -3596,6 +3596,23 @@ def _signals_async_oop(
             f" — high test burden; CI may be slow and expect many test updates per code change"
         )
 
+    # S1003: Deep nesting — codebase contains files nested 3 or more directory levels deep.
+    # Deeply nested source files indicate complex package hierarchies; agents must track
+    # long import paths and may miss files hidden in rarely explored subdirectories.
+    _root1003 = graph.root.replace("\\", "/").rstrip("/")
+    _deep_files1003 = [
+        fp for fp in graph.files
+        if fp.replace("\\", "/").replace(_root1003 + "/", "").count("/") >= 3
+        and not _is_test_file(fp)
+    ]
+    if _deep_files1003:
+        _deepest1003 = max(_deep_files1003, key=lambda fp: fp.replace("\\", "/").replace(_root1003 + "/", "").count("/"))
+        _depth1003 = _deepest1003.replace("\\", "/").replace(_root1003 + "/", "").count("/")
+        lines.append(
+            f"deep nesting: {len(_deep_files1003)} source file(s) nested {_depth1003}+ levels deep"
+            f" — complex package hierarchy; agents may miss deeply nested modules"
+        )
+
     return lines
 
 

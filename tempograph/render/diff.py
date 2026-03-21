@@ -821,6 +821,21 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — wide diff increases review difficulty; consider splitting into focused commits per concern"
         )
 
+    # S1005: Docs-only diff — all changed files are documentation files (.md, .rst, .txt).
+    # A diff that only touches docs has zero production regression risk;
+    # however, stale documentation is a common maintenance debt — verify accuracy of changed content.
+    if changed_files:
+        _doc_exts1005 = {".md", ".rst", ".txt", ".adoc", ".asciidoc"}
+        _doc_changed1005 = [
+            f for f in changed_files
+            if any(f.lower().endswith(ext) for ext in _doc_exts1005)
+        ]
+        if len(_doc_changed1005) == len(changed_files) and _doc_changed1005:
+            lines.append(
+                f"docs-only diff: all {len(_doc_changed1005)} changed file(s) are documentation"
+                f" — no production code changed; verify doc content reflects the current implementation"
+            )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 

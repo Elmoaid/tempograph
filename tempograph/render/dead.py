@@ -3458,6 +3458,26 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — removed object creation paths may leave callers unable to instantiate expected objects"
         )
 
+    # S1007: Dead error handlers — unused handle_error_/on_error/error_handler_ prefixed functions.
+    # Dead error handlers indicate removed exception processing paths; callers may now
+    # propagate unhandled exceptions where errors were previously caught and reported.
+    _err_prefixes1007 = ("handle_error", "on_error", "error_handler", "handle_exception", "on_exception", "catch_error", "rescue_")
+    _dead_errhandlers1007 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().startswith(p) for p in _err_prefixes1007)
+    ]
+    if _dead_errhandlers1007:
+        _err_names1007 = ", ".join(s.name for s in _dead_errhandlers1007[:3])
+        if len(_dead_errhandlers1007) > 3:
+            _err_names1007 += f" +{len(_dead_errhandlers1007) - 3} more"
+        lines.append(
+            f"dead error handlers: {len(_dead_errhandlers1007)} unused error handler(s) ({_err_names1007})"
+            f" — removed exception handlers may leave callers with unhandled errors propagating silently"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
