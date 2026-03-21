@@ -2685,6 +2685,32 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         ]
         lines.append(f"Orphan files (all-dead): {', '.join(_o_parts)}")
 
+    # Recently dead: dead symbols in files touched in the last 30 days.
+    # These are most likely accidentally dead (just added but not yet wired up).
+    # Only shown when git history is available and at least 2 symbols qualify.
+    from .git import file_last_modified_days as _file_last_modified_days  # noqa: PLC0415
+    _touched_cache: dict[str, int | None] = {}
+
+    def _file_age(fp: str) -> int | None:
+        if fp not in _touched_cache:
+            _touched_cache[fp] = _file_last_modified_days(graph.root, fp)
+        return _touched_cache[fp]
+
+    _recently_dead = [
+        (sym, conf) for sym, conf in scored
+        if conf >= 40  # medium+ confidence only
+        and (_file_age(sym.file_path) or 9999) <= 30
+    ]
+    if len(_recently_dead) >= 2:
+        _rd_names = [
+            f"{sym.name} ({sym.file_path.rsplit('/', 1)[-1]})"
+            for sym, _ in _recently_dead[:4]
+        ]
+        _rd_str = ", ".join(_rd_names)
+        if len(_recently_dead) > 4:
+            _rd_str += f" +{len(_recently_dead) - 4} more"
+        lines.append(f"Recently dead ({len(_recently_dead)}): {_rd_str}")
+
     lines.append("")
     total_lines = 0
 
@@ -2692,10 +2718,6 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
              ("MEDIUM CONFIDENCE (review before removing)", medium)]
     if include_low:
         tiers.append(("LOW CONFIDENCE (likely false positives)", low))
-
-    # Per-file git caches — avoids redundant git calls across symbols in the same file.
-    from .git import file_last_modified_days as _file_last_modified_days  # noqa: PLC0415
-    _touched_cache: dict[str, int | None] = {}
 
     def _last_touched(file_path: str) -> str:
         if file_path not in _touched_cache:

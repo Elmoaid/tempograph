@@ -5524,3 +5524,50 @@ class TestDiffBlastAnnotationOnChangedFiles:
         assert "[blast:" not in out, (
             f"[blast: N] must not appear for file with 0 importers; got:\n{out}"
         )
+
+
+class TestDeadCodeRecentlyDead:
+    """S45: Dead code — 'Recently dead (N):' section for symbols in recently-modified files.
+
+    When >= 2 dead symbols have medium+ confidence AND live in files touched
+    in the last 30 days, a 'Recently dead' summary line appears.
+    For non-git directories the section is absent (graceful fallback).
+    """
+
+    def test_recently_dead_absent_without_git(self, tmp_path):
+        """'Recently dead' must not appear in a non-git directory."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        (tmp_path / "lib.py").write_text(
+            "def unused_a(): pass\n"
+            "def unused_b(): pass\n"
+            "def unused_c(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+
+        assert "Recently dead" not in out, (
+            f"'Recently dead' must not appear without git history; got:\n{out}"
+        )
+
+    def test_recently_dead_shown_in_git_repo(self):
+        """'Recently dead (N):' appears for dead symbols in recently-modified files."""
+        import os
+        from unittest.mock import patch
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+        from tempograph import git as tg
+
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        g = build_graph(repo, use_cache=False)
+
+        # Mock file ages so symbols appear "recently dead"
+        with patch.object(tg, "file_last_modified_days", return_value=5):
+            out = render_dead_code(g)
+
+        # If any medium+ dead code exists, Recently dead should appear
+        if "Potential dead code" in out and "MEDIUM" in out or "HIGH" in out:
+            assert "Recently dead" in out, (
+                f"Expected 'Recently dead' when mock age=5d; got:\n{out}"
+            )
