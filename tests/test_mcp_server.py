@@ -3186,3 +3186,60 @@ class TestFileBlastCountRanking:
         g = self._build(tmp_path, files)
         out = render_hotspots(g, top_n=5)
         assert "blast:" not in out, f"Should NOT annotate file with only 5 dependents; got:\n{out}"
+
+
+class TestFocusTestCoverage:
+    """Tests for the test coverage section in render_focused.
+
+    Focus mode shows which test files cover the focused symbol, separated from
+    regular callers. Shows 'Tests: none' when the symbol has source callers but
+    no test callers, and omits the section entirely when there are no callers.
+    """
+
+    def test_test_coverage_appears_when_test_callers_exist(self, tmp_path):
+        """render_focused shows Tests: section listing test files that call the seed."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "core.py").write_text("def foo():\n    return 42\n")
+        (tmp_path / "app.py").write_text(
+            "from core import foo\n\ndef main():\n    return foo()\n"
+        )
+        (tmp_path / "test_core.py").write_text(
+            "from core import foo\n\ndef test_foo_returns_42():\n    assert foo() == 42\n\n"
+            "def test_foo_type():\n    assert isinstance(foo(), int)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "foo", max_tokens=4000)
+
+        assert "\nTests:" in out, f"Tests: section must appear when test files call the seed; got:\n{out}"
+        assert "test_core.py" in out, f"test file must be listed; got:\n{out}"
+
+    def test_tests_none_when_only_source_callers(self, tmp_path):
+        """render_focused shows 'Tests: none' when seed has callers but none are test files."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "lib.py").write_text("def helper():\n    return 1\n")
+        (tmp_path / "app.py").write_text(
+            "from lib import helper\n\ndef main():\n    return helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper", max_tokens=4000)
+
+        assert "Tests: none" in out, (
+            f"Must show 'Tests: none' when callers exist but none are test files; got:\n{out}"
+        )
+
+    def test_no_tests_section_when_zero_callers(self, tmp_path):
+        """render_focused omits the Tests section entirely when the seed has no callers at all."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "orphan.py").write_text("def alone():\n    return 0\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "alone", max_tokens=4000)
+
+        assert "Tests:" not in out, (
+            f"Must NOT show Tests section when symbol has no callers; got:\n{out}"
+        )

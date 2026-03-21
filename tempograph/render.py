@@ -899,6 +899,26 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
         except Exception:
             pass
 
+    # Test coverage section: which test files call the primary seed symbols?
+    # Only consider depth-0 (seed) symbols to avoid noise from BFS expansion.
+    if token_count < max_tokens - 40:
+        _test_callers: dict[str, int] = {}
+        _has_source_callers = False
+        for _ts, _td in ordered:
+            if _td != 0:
+                continue
+            for caller in graph.callers_of(_ts.id):
+                if _is_test_file(caller.file_path):
+                    _test_callers[caller.file_path] = _test_callers.get(caller.file_path, 0) + 1
+                else:
+                    _has_source_callers = True
+        if _test_callers:
+            lines.append("\nTests:")
+            for _tfp, _tcount in sorted(_test_callers.items()):
+                lines.append(f"  {_tfp} ({_tcount} caller{'s' if _tcount != 1 else ''})")
+        elif _has_source_callers:
+            lines.append("\nTests: none")
+
     return "\n".join(lines)
 
 
