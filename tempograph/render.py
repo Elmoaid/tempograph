@@ -281,7 +281,9 @@ def render_overview(graph: Tempo) -> str:
     # Quick signal for known issues, shortcuts, and incomplete work.
     # Only source-code files with symbols; capped to avoid I/O cost on huge repos.
     import re as _re  # noqa: PLC0415
-    _TD_PAT = _re.compile(r'\b(TODO|FIXME|HACK|XXX)\b')
+    # Only match markers that appear in comment lines (after # or //).
+    # Avoids false positives from regex strings, test fixtures, and scanner code itself.
+    _TD_PAT = _re.compile(r'(?:#|//)[^\n]*\b(TODO|FIXME|HACK|XXX)\b')
     _td_counts: dict[str, int] = {}
     _td_file_count = 0
     for _fp in _src_fps[:200]:  # cap at 200 to keep I/O bounded
@@ -791,7 +793,11 @@ def _collect_seeds(
     # Quality gate: drop seeds with much lower scores than the best match
     top_score = scored[0][0]
     threshold = max(top_score * 0.3, 2.0)  # at least 30% of best, minimum 2.0
-    seeds = [sym for score, sym in scored if score >= threshold][:10]
+    all_seeds = [sym for score, sym in scored if score >= threshold][:10]
+    # Prefer non-test seeds when available — test functions named "test_foo_bar"
+    # match queries like "foo_bar" but they're not useful as BFS starting points.
+    non_test_seeds = [sym for sym in all_seeds if not _is_test_file(sym.file_path)]
+    seeds = non_test_seeds if non_test_seeds else all_seeds
 
     seed_files: set[str] = set()
     for s in seeds:
