@@ -1554,6 +1554,36 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     if hot_section:
         lines.append(hot_section)
 
+    # Similar symbols: functions/methods that share ≥2 callees with the seed.
+    # Surfaces parallel implementations that likely need the same change.
+    # Only applies to FUNCTION/METHOD seeds (not classes, not test files).
+    if _seed_syms and token_count < max_tokens - 60:
+        _prim_s = _seed_syms[0]
+        if _prim_s.kind.value in ("function", "method") and not _is_test_file(_prim_s.file_path):
+            _seed_callees = {c.id for c in graph.callees_of(_prim_s.id)}
+            if len(_seed_callees) >= 2:
+                _shared_counts: dict[str, int] = {}  # sym_id → shared callee count
+                for _callee_id in _seed_callees:
+                    for _caller in graph.callers_of(_callee_id):
+                        if (
+                            _caller.id != _prim_s.id
+                            and not _is_test_file(_caller.file_path)
+                            and _caller.kind.value in ("function", "method")
+                        ):
+                            _shared_counts[_caller.id] = _shared_counts.get(_caller.id, 0) + 1
+                _similar = [
+                    (cnt, graph.symbols[sid])
+                    for sid, cnt in _shared_counts.items()
+                    if cnt >= 2 and sid in graph.symbols
+                ]
+                if _similar:
+                    _similar.sort(key=lambda x: -x[0])
+                    _sim_parts = [
+                        f"{sym.name} ({sym.file_path.rsplit('/', 1)[-1]}, {cnt} shared)"
+                        for cnt, sym in _similar[:3]
+                    ]
+                    lines.append(f"\nsimilar: {', '.join(_sim_parts)}")
+
     # File siblings: other notable symbols in the primary seed's file.
     # Shows agents what else is in the file without requiring a blast query.
     # Only shown when token budget allows and siblings have callers (i.e. are live code).
@@ -2002,7 +2032,11 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
         fi = graph.files[fp]
         _v = _vel.get(fp, 0.0)
         _vel_ann = f" [{_v:.0f}x/wk]" if _v >= 2.0 else ""
-        lines.append(f"  {fp} ({fi.line_count} lines, {len(fi.symbols)} symbols){_vel_ann}")
+        # Blast count: how many external files import this changed file.
+        # Inline signal — agents see risk per file without reading the importer list.
+        _blast_n = len({i for i in graph.importers_of(fp) if i != fp and i in graph.files})
+        _blast_ann = f" [blast: {_blast_n}]" if _blast_n >= 2 else ""
+        lines.append(f"  {fp} ({fi.line_count} lines, {len(fi.symbols)} symbols){_vel_ann}{_blast_ann}")
     lines.append("")
 
     # Exported symbols with external callers (breaking change risk)
