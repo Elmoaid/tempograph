@@ -1283,7 +1283,7 @@ def _build_symbol_block_lines(
             # Implementors: classes/traits that extend or implement this symbol.
             # Shown only for CLASS/INTERFACE seeds to surface the inheritance fanout.
             if sym.kind in (SymbolKind.CLASS, SymbolKind.INTERFACE):
-                _subtypes = graph.subtypes_of(sym.name)
+                _subtypes = graph.subtypes_of(sym.id)
                 if _subtypes:
                     _sub_strs = [
                         f"{s.qualified_name} ({s.file_path.rsplit('/', 1)[-1]}:{s.line_start})"
