@@ -567,6 +567,38 @@ def render_overview(graph: Tempo) -> str:
                 _dh_parts = [f"{fp.rsplit('/', 1)[-1]} ({n})" for fp, n in _debt_hot]
                 lines.append(f"debt hot: {', '.join(_dh_parts)}")
 
+    # S82: High coupling — source files that import 8+ other source files.
+    # These fragile hub files are expensive to test and the first to break during refactors.
+    # Only shown when 2+ such files exist (single offender is noise).
+    _coupling_candidates: list[tuple[int, str]] = []
+    for _fp in _src_fps:
+        if _is_test_file(_fp) or not graph.files[_fp].symbols:
+            continue
+        _out_imports = len({
+            e.target_id for e in graph.edges
+            if e.kind == EdgeKind.IMPORTS and e.source_id == _fp and e.target_id in graph.files
+        })
+        if _out_imports >= 8:
+            _coupling_candidates.append((_out_imports, _fp))
+    if len(_coupling_candidates) >= 2:
+        _coupling_candidates.sort(key=lambda x: -x[0])
+        _coupling_parts = [f"{fp.rsplit('/', 1)[-1]} ({n} imports)" for n, fp in _coupling_candidates[:3]]
+        lines.append(f"high coupling: {', '.join(_coupling_parts)}")
+
+    # S84: Async surface — count exported async functions to signal async-heavy codebases.
+    # Helps agents understand whether the project needs coroutine/event-loop awareness.
+    # Only shown when 3+ exported async functions exist (prevents false signal on tiny projects).
+    _async_syms = [
+        sym for sym in graph.symbols.values()
+        if sym.kind.value in ("function", "method")
+        and sym.exported
+        and not _is_test_file(sym.file_path)
+        and sym.signature.startswith("async ")
+    ]
+    if len(_async_syms) >= 3:
+        _async_files = len({s.file_path for s in _async_syms})
+        lines.append(f"async surface: {len(_async_syms)} exported async functions in {_async_files} files")
+
     # Deepest import chain: longest path from any source file through import edges.
     # High depth = deep coupling = hard to refactor. Only shown when depth >= 5.
     # Uses iterative DFS on the import graph; stops early at depth 12 to stay fast.
@@ -1589,6 +1621,7 @@ def _build_symbol_block_lines(
     # High callee count signals broad side-effects — risky to change.
     _callee_ann = ""
     _depth_ann = ""
+    _async_ann = ""
     _recursive_label = ""
     if depth == 0:
         _callee_ids = {
@@ -1615,6 +1648,10 @@ def _build_symbol_block_lines(
                     _bfs_q.append((_e.target_id, _cur_lvl + 1))
         if _max_callee_depth >= 3:
             _depth_ann = f" [callee depth: {_max_callee_depth}]"
+        # S81: Async annotation — mark async functions/methods in the focus header.
+        # Agents working with async code need to track await chains and error propagation differently.
+        if sym.kind.value in ("function", "method") and sym.signature.startswith("async "):
+            _async_ann = " [async]"
         # S68: Undocumented annotation — exported fn with 3+ external caller files but no docstring.
         # Signals missing API docs on a widely-used symbol.
         _doc_ann = ""
@@ -1722,7 +1759,7 @@ def _build_symbol_block_lines(
         }
         if len(_hub_caller_files) >= 15:
             _hub_ann = f" [hub: {len(_hub_caller_files)} files]"
-    block_lines = [f"{prefix} {sym.kind.value} {sym.qualified_name}{_blast_ann}{_hub_ann}{_age_ann}{_callee_ann}{_depth_ann}{_doc_ann}{_param_ann}{_depth_from_entry_ann}{_class_size_ann} — {loc}{orbit_note}"]
+    block_lines = [f"{prefix} {sym.kind.value} {sym.qualified_name}{_blast_ann}{_hub_ann}{_age_ann}{_callee_ann}{_depth_ann}{_async_ann}{_doc_ann}{_param_ann}{_depth_from_entry_ann}{_class_size_ann} — {loc}{orbit_note}"]
     # S61: "also in:" — warn when same symbol name exists in other files.
     # Prevents agents from fixing the wrong copy in multi-file refactors.
     if depth == 0:
@@ -1730,6 +1767,23 @@ def _build_symbol_block_lines(
         if _dupes:
             _dupe_strs = [f"{s.file_path.rsplit('/', 1)[-1]}:{s.line_start}" for s in _dupes[:3]]
             block_lines.append(f"{indent}  also in: {', '.join(_dupe_strs)}")
+    # S83: "implements:" — show parent classes/interfaces for class seeds via INHERITS edges.
+    # Tells agents about the class hierarchy before they look at the call graph.
+    if depth == 0 and sym.kind.value in ("class", "interface", "struct"):
+        _parent_ids = [
+            e.target_id for e in graph.edges
+            if e.kind == EdgeKind.INHERITS and e.source_id == sym.id
+        ]
+        _parents = [graph.symbols[pid].name for pid in _parent_ids if pid in graph.symbols]
+        if not _parents:
+            # Fallback: bare target_id for unresolved parent names (no "::" = likely a simple name)
+            _parents = [
+                e.target_id for e in graph.edges
+                if e.kind == EdgeKind.INHERITS and e.source_id == sym.id
+                and "::" not in e.target_id
+            ]
+        if _parents:
+            block_lines.append(f"{indent}  implements: {', '.join(_parents[:4])}")
     # Recursion annotation: emit [recursive] or [recursive: mutual with X] as sub-line.
     if depth == 0 and _recursive_label:
         block_lines.append(f"{indent}  {_recursive_label}")
@@ -1799,7 +1853,9 @@ def _build_symbol_block_lines(
                 for _c in _callees_cd[:15]:  # cap to avoid subprocess spam
                     if _c.file_path == sym.file_path:
                         continue  # same-file callees usually updated together
-                    _c_days = _fld_cd(graph.root, _c.file_path)
+                    if _c.file_path not in staleness_cache:
+                        staleness_cache[_c.file_path] = _fld_cd(graph.root, _c.file_path)
+                    _c_days = staleness_cache[_c.file_path]
                     if _c_days is not None and _c_days < 14:
                         _drifted.append((_c_days, _c.name))
                 if _drifted:
@@ -2755,6 +2811,32 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
         if 2 <= len(_exported_syms) <= 8:
             _exp_names = [s.name for s in _exported_syms]
             lines.append(f"Exported: {', '.join(_exp_names)}")
+        # S80: Global change risk verdict — top-level signal before file details.
+        # Combines blast radius and exported-with-callers count.
+        # Agents use this as a quick go/no-go before reviewing change details.
+        _total_blast_files = len({
+            i for fp in normalized
+            for i in graph.importers_of(fp)
+            if i != fp and i in graph.files
+        })
+        _exported_with_callers = sum(
+            1 for s in _all_changed_syms
+            if s.exported and any(c.file_path not in normalized for c in graph.callers_of(s.id))
+        )
+        _risk_score = _total_blast_files + _exported_with_callers * 3
+        if _risk_score >= 16:
+            _risk_label = "HIGH"
+        elif _risk_score >= 6:
+            _risk_label = "MEDIUM"
+        else:
+            _risk_label = "low"
+        _risk_detail_parts = []
+        if _exported_with_callers:
+            _risk_detail_parts.append(f"{_exported_with_callers} exported with callers")
+        if _total_blast_files:
+            _risk_detail_parts.append(f"blast: {_total_blast_files} files")
+        _risk_detail = f" — {', '.join(_risk_detail_parts)}" if _risk_detail_parts else ""
+        lines.append(f"change risk: {_risk_label}{_risk_detail}")
         lines.append("")
 
     # Risk summary: top changed files by blast radius, so agents can prioritize review.
