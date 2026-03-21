@@ -658,6 +658,161 @@ def _handle_overflow(
     return False, block_tokens
 
 
+
+def _render_cochange_section(graph, seed_file_paths: list[str]) -> str:
+    """Build the 'Co-changed with (basename):' section for render_focused."""
+    if not graph.root or not seed_file_paths:
+        return ""
+    try:
+        from .git import cochange_pairs
+        pairs = cochange_pairs(graph.root, seed_file_paths[0])
+        if pairs:
+            basename = Path(seed_file_paths[0]).name
+            parts = [f"\nCo-changed with ({basename}):"]
+            for p in pairs:
+                parts.append(f"  \u2022 {p['path']} \u2014 {p['count']} commits together")
+            return "\n".join(parts)
+    except Exception:
+        pass
+    return ""
+
+
+def _render_recent_changes_section(graph, seed_file_paths: list[str]) -> str:
+    """Build the 'Recent changes (basename):' section for render_focused."""
+    if not graph.root or not seed_file_paths:
+        return ""
+    try:
+        from .git import recent_file_commits
+        primary_file = seed_file_paths[0]
+        commits = recent_file_commits(graph.root, primary_file)
+        if commits:
+            basename = Path(primary_file).name
+            parts = [f"\nRecent changes ({basename}):"]
+            for c in commits:
+                parts.append(f"  \u2022 {c['days_ago']}d ago: {c['message']}")
+            return "\n".join(parts)
+    except Exception:
+        pass
+    return ""
+
+
+def _render_volatility_section(graph, seed_file_paths: list[str], token_count: int, max_tokens: int) -> str:
+    """Build the 'Volatile:' section for render_focused."""
+    if not graph.root or not seed_file_paths or token_count >= max_tokens - 60:
+        return ""
+    try:
+        from .git import file_commit_counts
+        churn = file_commit_counts(graph.root)
+        _VOLATILE_THRESHOLD = 10
+        volatile = [(fp, churn.get(fp, 0)) for fp in seed_file_paths
+                     if churn.get(fp, 0) >= _VOLATILE_THRESHOLD]
+        if volatile:
+            parts = [f"{fp} ({count}/200 commits)" for fp, count in volatile]
+            return f"\nVolatile: {', '.join(parts)} \u2014 high-churn file(s), re-read before editing"
+    except Exception:
+        pass
+    return ""
+
+
+def _render_cochange_orbit_section(graph, seed_file_paths: list[str], seen_files: set[str],
+                                    token_count: int, max_tokens: int) -> str:
+    """Build the 'Co-change orbit:' section for render_focused."""
+    orbit = _cochange_orbit(graph.root, seed_file_paths, seen_files)
+    if not orbit or token_count >= max_tokens - 80:
+        return ""
+
+    def _recency_label(days: int) -> str:
+        if days < 45:
+            return "recent"
+        elif days < 120:
+            return "aging"
+        return "stale"
+
+    orbit_parts = [f"{fp} ({score:.0%} {_recency_label(days)})" for fp, score, days in orbit]
+    return (f"\nCo-change orbit: {', '.join(orbit_parts)}\n"
+            "  (files that historically change with these \u2014 check if your change affects them)")
+
+
+def _render_blast_risk_section(graph, ordered: list, token_count: int, max_tokens: int) -> str:
+    """Build the 'High impact:' blast risk badge for render_focused."""
+    _BLAST_FILE_THRESHOLD = 5
+    _blast_hits: list[tuple] = []
+    for _bs, _bd in ordered[:5]:
+        if _bd != 0:
+            continue
+        _ext_files = {c.file_path for c in graph.callers_of(_bs.id) if c.file_path != _bs.file_path}
+        if len(_ext_files) > _BLAST_FILE_THRESHOLD:
+            _blast_hits.append((_bs, len(_ext_files)))
+    if _blast_hits and token_count < max_tokens - 60:
+        _blast_hits.sort(key=lambda x: -x[1])
+        _top_sym, _top_count = _blast_hits[0]
+        return f"\nHigh impact: {_top_count} files depend on {_top_sym.qualified_name} \u2014 run blast mode before editing"
+    return ""
+
+
+def _render_related_files_section(graph, ordered: list, seen_files: set[str]) -> str:
+    """Build the 'Related files:' section for render_focused."""
+    related = _find_related_files(graph, [s for s, _ in ordered[:10]])
+    unseen = related - seen_files
+    if not unseen:
+        return ""
+    parts = ["\nRelated files:"]
+    for fp in sorted(unseen)[:10]:
+        fi = graph.files.get(fp)
+        if fi:
+            tag = " [grep-only]" if fi.line_count > 500 else ""
+            parts.append(f"  {fp} ({fi.line_count} lines){tag}")
+    return "\n".join(parts)
+
+
+def _render_file_context_section(graph, seen_files: set[str], seen_ids: set[str],
+                                  token_count: int, max_tokens: int) -> tuple[str, int]:
+    """Build the 'Also in these files:' section for render_focused.
+    Returns (section_text, token_cost)."""
+    file_context: list[str] = []
+    for fp in sorted(seen_files):
+        fi = graph.files.get(fp)
+        if not fi or len(fi.symbols) < 3:
+            continue
+        file_syms = [graph.symbols[sid] for sid in fi.symbols if sid in graph.symbols and sid not in seen_ids]
+        important = [s for s in file_syms if s.exported and s.kind in (
+            SymbolKind.FUNCTION, SymbolKind.CLASS, SymbolKind.COMPONENT, SymbolKind.HOOK
+        )][:5]
+        if important:
+            names = ", ".join(f"{s.name} L{s.line_start}" for s in important)
+            file_context.append(f"  {fp}: also has {names}")
+    if file_context:
+        ctx_block = "\nAlso in these files:\n" + "\n".join(file_context)
+        ctx_tokens = count_tokens(ctx_block)
+        if token_count + ctx_tokens <= max_tokens:
+            return ctx_block, ctx_tokens
+    return "", 0
+
+
+def _render_monolith_section(graph, ordered: list, token_count: int, max_tokens: int) -> tuple[str, int]:
+    """Build monolith neighborhood sections for render_focused.
+    Returns (section_text, token_cost)."""
+    parts: list[str] = []
+    total_tokens = 0
+    for sym, depth in ordered:
+        if depth > 0:
+            break
+        fi = graph.files.get(sym.file_path)
+        if not fi or fi.line_count < _MONOLITH_THRESHOLD:
+            continue
+        neighborhood = _monolith_neighborhood(graph, sym)
+        if neighborhood:
+            nb_block = "\n".join(neighborhood)
+            nb_tokens = count_tokens(nb_block)
+            if token_count + total_tokens + nb_tokens <= max_tokens:
+                parts.append("")
+                parts.extend(neighborhood)
+                total_tokens += nb_tokens
+    if parts:
+        return "\n".join(parts), total_tokens
+    return "", 0
+
+
 def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     """Task-focused rendering with BFS graph traversal.
     Starts from search results, then follows call/render/import edges
@@ -804,129 +959,47 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
         seen_files.add(sym.file_path)
 
     # File context: for each file touched, show key co-located symbols
-    file_context: list[str] = []
-    for fp in sorted(seen_files):
-        fi = graph.files.get(fp)
-        if not fi or len(fi.symbols) < 3:
-            continue
-        file_syms = [graph.symbols[sid] for sid in fi.symbols if sid in graph.symbols and sid not in seen_ids]
-        important = [s for s in file_syms if s.exported and s.kind in (
-            SymbolKind.FUNCTION, SymbolKind.CLASS, SymbolKind.COMPONENT, SymbolKind.HOOK
-        )][:5]
-        if important:
-            names = ", ".join(f"{s.name} L{s.line_start}" for s in important)
-            file_context.append(f"  {fp}: also has {names}")
-
-    if file_context:
-        ctx_block = "\nAlso in these files:\n" + "\n".join(file_context)
-        ctx_tokens = count_tokens(ctx_block)
-        if token_count + ctx_tokens <= max_tokens:
-            lines.append(ctx_block)
-            token_count += ctx_tokens
+    ctx_block, ctx_tokens = _render_file_context_section(graph, seen_files, seen_ids, token_count, max_tokens)
+    if ctx_block:
+        lines.append(ctx_block)
+        token_count += ctx_tokens
 
     # Monolith neighborhood: for seed symbols in large files, show nearby symbols
-    for sym, depth in ordered:
-        if depth > 0:
-            break  # only seeds
-        fi = graph.files.get(sym.file_path)
-        if not fi or fi.line_count < _MONOLITH_THRESHOLD:
-            continue
-        neighborhood = _monolith_neighborhood(graph, sym)
-        if neighborhood:
-            nb_block = "\n".join(neighborhood)
-            nb_tokens = count_tokens(nb_block)
-            if token_count + nb_tokens <= max_tokens:
-                lines.append("")
-                lines.extend(neighborhood)
-                token_count += nb_tokens
+    mono_block, mono_tokens = _render_monolith_section(graph, ordered, token_count, max_tokens)
+    if mono_block:
+        lines.append(mono_block)
+        token_count += mono_tokens
 
     # Related files with size warnings
-    related = _find_related_files(graph, [s for s, _ in ordered[:10]])
-    if related - seen_files:
-        lines.append("")
-        lines.append("Related files:")
-        for fp in sorted(related - seen_files)[:10]:
-            fi = graph.files.get(fp)
-            if fi:
-                tag = " [grep-only]" if fi.line_count > 500 else ""
-                lines.append(f"  {fp} ({fi.line_count} lines){tag}")
+    related_section = _render_related_files_section(graph, ordered, seen_files)
+    if related_section:
+        lines.append(related_section)
 
     # Blast risk badge: count unique downstream files for seed symbols.
-    # Concrete file counts ("12 files depend on this") change agent behavior at the right moment.
-    # Vague "check downstream impact" hints get ignored. Specific numbers don't.
-    _BLAST_FILE_THRESHOLD = 5
-    _blast_hits: list[tuple[Symbol, int]] = []
-    for _bs, _bd in ordered[:5]:
-        if _bd != 0:
-            continue
-        _ext_files = {c.file_path for c in graph.callers_of(_bs.id) if c.file_path != _bs.file_path}
-        if len(_ext_files) > _BLAST_FILE_THRESHOLD:
-            _blast_hits.append((_bs, len(_ext_files)))
-    if _blast_hits and token_count < max_tokens - 60:
-        _blast_hits.sort(key=lambda x: -x[1])
-        _top_sym, _top_count = _blast_hits[0]
-        lines.append(f"\nHigh impact: {_top_count} files depend on {_top_sym.qualified_name} — run blast mode before editing")
+    blast_section = _render_blast_risk_section(graph, ordered, token_count, max_tokens)
+    if blast_section:
+        lines.append(blast_section)
 
     # Co-change orbit: git history reveals which files change together with seed files.
-    # Structural call graph = what's connected. Co-change orbit = what historically moves together.
-    # These are different signals. A file with 50 callers might co-change with only 2 partners.
     seed_file_paths = [s.file_path for s, d in ordered if d == 0]
-    orbit = _cochange_orbit(graph.root, seed_file_paths, seen_files)
-    if orbit and token_count < max_tokens - 80:
-        def _recency_label(days: int) -> str:
-            if days < 45:
-                return "recent"
-            elif days < 120:
-                return "aging"
-            return "stale"
-        orbit_parts = [f"{fp} ({score:.0%} {_recency_label(days)})" for fp, score, days in orbit]
-        lines.append(f"\nCo-change orbit: {', '.join(orbit_parts)}")
-        lines.append("  (files that historically change with these — check if your change affects them)")
+    orbit_section = _render_cochange_orbit_section(graph, seed_file_paths, seen_files, token_count, max_tokens)
+    if orbit_section:
+        lines.append(orbit_section)
 
     # File volatility: flag seed files that are actively changing.
-    # Volatile files mean context may lag behind recent edits — agents should re-read before modifying.
-    # Only fires for files with high churn (≥10/200 commits). No annotation for normal/stable files.
-    if graph.root and seed_file_paths and token_count < max_tokens - 60:
-        try:
-            from .git import file_commit_counts
-            churn = file_commit_counts(graph.root)
-            _VOLATILE_THRESHOLD = 10
-            volatile = [(fp, churn.get(fp, 0)) for fp in seed_file_paths
-                        if churn.get(fp, 0) >= _VOLATILE_THRESHOLD]
-            if volatile:
-                parts = [f"{fp} ({count}/200 commits)" for fp, count in volatile]
-                lines.append(f"\nVolatile: {', '.join(parts)} — high-churn file(s), re-read before editing")
-        except Exception:
-            pass
+    volatile_section = _render_volatility_section(graph, seed_file_paths, token_count, max_tokens)
+    if volatile_section:
+        lines.append(volatile_section)
 
     # Recent changes: show last 3 commits for the primary seed file.
-    # Gives agents the change narrative — "was this file touched 3 days ago or 6 months ago?"
-    if graph.root and seed_file_paths:
-        try:
-            from .git import recent_file_commits
-            primary_file = seed_file_paths[0]
-            commits = recent_file_commits(graph.root, primary_file)
-            if commits:
-                basename = Path(primary_file).name
-                lines.append(f"\nRecent changes ({basename}):")
-                for c in commits:
-                    lines.append(f"  • {c['days_ago']}d ago: {c['message']}")
-        except Exception:
-            pass
+    recent_section = _render_recent_changes_section(graph, seed_file_paths)
+    if recent_section:
+        lines.append(recent_section)
 
     # Co-change suggestions: which source files historically move with the primary file?
-    # Raw commit count exposes implicit coupling that imports don't capture.
-    if graph.root and seed_file_paths:
-        try:
-            from .git import cochange_pairs
-            pairs = cochange_pairs(graph.root, seed_file_paths[0])
-            if pairs:
-                basename = Path(seed_file_paths[0]).name
-                lines.append(f"\nCo-changed with ({basename}):")
-                for p in pairs:
-                    lines.append(f"  • {p['path']} — {p['count']} commits together")
-        except Exception:
-            pass
+    cochange_section = _render_cochange_section(graph, seed_file_paths)
+    if cochange_section:
+        lines.append(cochange_section)
 
     return "\n".join(lines)
 
