@@ -341,6 +341,36 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                 lines.append(f"  {_path}")
             lines.append("")
 
+    # S124: Untested blast callers — how many source files importing this file have no test coverage.
+    # Complements S122 (ratio) by listing concrete count for agents to action.
+    # Only shown when 3+ non-test importers AND test files exist in the project.
+    _s124_downstream_src = [f for f in importers if not _is_test_file(f) and f in graph.files]
+    if len(_s124_downstream_src) >= 3:
+        _s124_all_tests = {fp for fp in graph.files if _is_test_file(fp)}
+        if _s124_all_tests:
+            _s124_untested = [
+                fp for fp in _s124_downstream_src
+                if not any(fp.rsplit("/", 1)[-1].rsplit(".", 1)[0] in t for t in _s124_all_tests)
+            ]
+            if len(_s124_untested) >= 2:
+                lines.append(f"untested callers: {len(_s124_untested)}/{len(_s124_downstream_src)} importing files have no tests")
+
+    # S122: Downstream test coverage — fraction of files in blast radius that have tests.
+    # Low downstream coverage = high blast risk: breakage can go undetected.
+    # Only shown when 4+ non-test importers exist (otherwise blast radius too small to matter).
+    _s122_downstream = [f for f in importers if not _is_test_file(f) and f in graph.files]
+    if len(_s122_downstream) >= 4:
+        _all_proj_test_fps_bl = {fp for fp in graph.files if _is_test_file(fp)}
+        if _all_proj_test_fps_bl:
+            _s122_tested = sum(
+                1 for fp in _s122_downstream
+                if any(fp.rsplit("/", 1)[-1].rsplit(".", 1)[0] in t for t in _all_proj_test_fps_bl)
+            )
+            _s122_total = len(_s122_downstream)
+            _s122_pct = int(_s122_tested / _s122_total * 100)
+            if _s122_pct < 80:
+                lines.append(f"downstream coverage: {_s122_tested}/{_s122_total} importers have tests ({_s122_pct}%)")
+
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
 

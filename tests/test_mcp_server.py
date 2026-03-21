@@ -10358,3 +10358,87 @@ class TestHotspotsRecentlyActive:
         assert "recently active (not in hotspots)" not in out, (
             f"'recently active' must not appear when active files are all in hotspots; got:\n{out}"
         )
+
+
+class TestBlastDownstreamCoverage:
+    """S122: Blast — 'downstream coverage: N/M importers have tests'."""
+
+    def test_low_coverage_shown(self, tmp_path):
+        """When most importers have no tests, show downstream coverage."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        (tmp_path / "core.py").write_text(
+            "def util():\n    pass\ndef helper():\n    pass\n"
+        )
+        for i in range(5):
+            (tmp_path / f"svc{i}.py").write_text(
+                f"from core import util\ndef svc{i}_fn():\n    util()\n"
+            )
+        # Only one test file
+        (tmp_path / "test_svc0.py").write_text(
+            "from svc0 import svc0_fn\ndef test_svc0():\n    svc0_fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "core.py")
+        assert "downstream coverage" in out, (
+            f"Expected 'downstream coverage' when most importers untested; got:\n{out}"
+        )
+
+    def test_full_coverage_not_shown(self, tmp_path):
+        """When all importers have tests, do NOT show downstream coverage."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        (tmp_path / "lib.py").write_text(
+            "def helper():\n    pass\ndef util():\n    pass\n"
+        )
+        for i in range(4):
+            (tmp_path / f"mod{i}.py").write_text(
+                f"from lib import helper\ndef fn{i}():\n    helper()\n"
+            )
+            (tmp_path / f"test_mod{i}.py").write_text(
+                f"from mod{i} import fn{i}\ndef test_fn{i}():\n    fn{i}()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "lib.py")
+        assert "downstream coverage" not in out, (
+            f"'downstream coverage' must not appear when all importers have tests; got:\n{out}"
+        )
+
+
+class TestDeadCodeByModule:
+    """S123: Dead code — 'dead by module: dir1/ (N), dir2/ (M)' breakdown."""
+
+    def test_multi_module_dead_shown(self, tmp_path):
+        """When dead code spans 2+ modules with 8+ total dead symbols, show breakdown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        for mod in ["alpha", "beta"]:
+            (tmp_path / mod).mkdir()
+            (tmp_path / mod / "__init__.py").write_text("")
+            for i in range(6):
+                (tmp_path / mod / f"unused{i}.py").write_text(
+                    f"def dead_{mod}_{i}():\n    pass\n"
+                )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead by module" in out, (
+            f"Expected 'dead by module' breakdown for multi-module dead code; got:\n{out}"
+        )
+
+    def test_single_module_not_shown(self, tmp_path):
+        """Dead code in only 1 module must NOT show module breakdown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        (tmp_path / "utils").mkdir()
+        (tmp_path / "utils" / "__init__.py").write_text("")
+        for i in range(3):
+            (tmp_path / "utils" / f"fn{i}.py").write_text(f"def fn{i}():\n    pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead by module" not in out, (
+            f"'dead by module' must not appear for single-module dead code; got:\n{out}"
+        )

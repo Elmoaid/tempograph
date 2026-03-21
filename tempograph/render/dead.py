@@ -304,6 +304,22 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
     if _private_dead_count >= 3:
         lines.append(f"Private dead: {_private_dead_count} non-exported symbols with 0 callers (not shown here)")
 
+    # S123: Dead-by-module breakdown — which top-level directories carry the most dead code.
+    # Helps agents prioritize cleanup by module: "render/ has 8 dead symbols, utils/ has 5".
+    # Only shown when 2+ distinct modules have dead code AND total dead >= 8.
+    if len(dead) >= 8:
+        _dead_by_module: dict[str, int] = {}
+        for _dm_sym, _dm_conf in scored:
+            if _dm_conf < 40:
+                continue
+            _parts = _dm_sym.file_path.split("/")
+            _mod = _parts[0] if len(_parts) > 1 else "."
+            _dead_by_module[_mod] = _dead_by_module.get(_mod, 0) + 1
+        _module_items = sorted(_dead_by_module.items(), key=lambda x: -x[1])
+        if len(_module_items) >= 2:
+            _mb_parts = [f"{mod}/ ({cnt})" for mod, cnt in _module_items[:4]]
+            lines.append(f"dead by module: {', '.join(_mb_parts)}")
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
