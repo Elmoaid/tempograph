@@ -2450,12 +2450,12 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — tests modified without source changes; verify tests weren't updated to hide bugs"
             )
 
-    # S879: Large diff — 5 or more files changed in this diff.
+    # S879: Broad diff — 5 or more files changed in this diff.
     # Wide-impact changes spanning many files are harder to review, more likely to have
     # unintended interactions, and riskier to roll back if a problem is discovered.
     if len(changed_files) >= 5:
         lines.append(
-            f"large diff: {len(changed_files)} files changed"
+            f"broad diff: {len(changed_files)} files changed"
             f" — broad change surface; review each file independently for unintended side-effects"
         )
 

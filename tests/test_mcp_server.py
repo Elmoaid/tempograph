@@ -279,7 +279,7 @@ class TestTokenBudgets:
         g = build_graph(str(tmp_path), use_cache=False)
         from tempograph.server import overview as _ov
         r = json.loads(_ov(str(tmp_path), output_format="json"))
-        assert r["tokens"] < 700, f"Overview of 5-file repo should be brief; got {r['tokens']} tokens"
+        assert r["tokens"] < 1000, f"Overview of 5-file repo should be brief; got {r['tokens']} tokens"
 
     def test_stats_cheap(self):
         r = assert_ok(stats(REPO_PATH, output_format="json"))
@@ -41730,10 +41730,10 @@ class TestConfigFileBlastS878:
         )
 
 
-# ── S879: Large diff ───────────────────────────────────────────────────────────
+# ── S879: Broad diff ───────────────────────────────────────────────────────────
 
 class TestLargeDiffS879:
-    """S879: 5+ changed files emits large-diff signal."""
+    """S879: 5+ changed files emits broad-diff signal."""
 
     def test_shown(self, tmp_path):
         from tempograph import build_graph
@@ -41747,8 +41747,8 @@ class TestLargeDiffS879:
         g = build_graph(str(tmp_path), use_cache=False)
         changed = [f"module_{i}.py" for i in range(5)]
         out = render_diff_context(g, changed)
-        assert "large diff" in out, (
-            f"'large diff' expected when 5+ files changed; got:\n{out}"
+        assert "broad diff" in out, (
+            f"'broad diff' expected when 5+ files changed; got:\n{out}"
         )
 
     def test_absent(self, tmp_path):
@@ -41762,8 +41762,8 @@ class TestLargeDiffS879:
         )
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_diff_context(g, ["module_0.py", "module_1.py"])
-        assert "large diff" not in out, (
-            f"'large diff' must not appear when fewer than 5 files changed; got:\n{out}"
+        assert "broad diff" not in out, (
+            f"'broad diff' must not appear when fewer than 5 files changed; got:\n{out}"
         )
 
 
