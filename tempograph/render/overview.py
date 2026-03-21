@@ -3060,6 +3060,24 @@ def _signals_async_oop(
                 f" at 3+ directory levels — over-organized structure increases navigation cost"
             )
 
+    # S799: No entry point diversity — repo has only one entry point (low resilience).
+    # Repos with a single entry point have a single failure point for the entire startup
+    # path; adding CLI/worker entry points improves operational flexibility.
+    _entry799 = [
+        s for s in graph.symbols.values()
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and s.name in ("main", "run", "start", "app", "application", "create_app", "entry")
+        and s.parent_id is None
+        and not graph.callers_of(s.id)
+    ]
+    _total_src799 = sum(1 for fp in graph.files if not _is_test_file(fp))
+    if len(_entry799) == 1 and _total_src799 >= 5:
+        lines.append(
+            f"single entry point: only {_entry799[0].name} in {_entry799[0].file_path.rsplit('/', 1)[-1]}"
+            f" — one startup path; consider adding CLI or worker entry points for resilience"
+        )
+
     return lines
 
 
