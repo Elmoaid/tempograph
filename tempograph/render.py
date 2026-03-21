@@ -183,7 +183,8 @@ def render_overview(graph: Tempo) -> str:
 
     # Test coverage ratio: source files with a matching test file (name-pattern match).
     # Signals overall project health — agents use this to identify undertested areas.
-    _src_fps = [fp for fp in graph.files if not _is_test_file(fp)]
+    # Only count code files with symbols (excludes docs, config, markdown).
+    _src_fps = [fp for fp in graph.files if not _is_test_file(fp) and graph.files[fp].symbols]
     _test_fps = {fp for fp in graph.files if _is_test_file(fp)}
     if _src_fps and _test_fps:
         _covered = sum(

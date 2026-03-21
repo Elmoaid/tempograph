@@ -3877,3 +3877,56 @@ class TestDeadCodeQuickWins:
             # Count file mentions (each has "filename (N high-conf)")
             n_files = qw_line.count("high-conf)")
             assert n_files <= 2, f"Quick wins: must list at most 2 files; got: {qw_line}"
+
+
+class TestOverviewTestCoverage:
+    """S27: Overview shows 'test coverage: N/M source files (P%)' line.
+
+    Counts code source files (with symbols) that have a matching test file
+    by name-pattern. Skips doc/config files with no symbols.
+    """
+
+    def test_shows_ratio_when_test_file_present(self, tmp_path):
+        """Overview shows 'test coverage:' when at least one source file has a test."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "core.py").write_text("def helper(): pass\n")
+        (tmp_path / "test_core.py").write_text(
+            "from core import helper\ndef test_helper(): assert helper() is None\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+
+        assert "test coverage:" in out, f"test coverage: line must appear; got:\n{out}"
+        assert "1/1" in out, f"1/1 source files must be shown; got:\n{out}"
+
+    def test_omitted_when_no_test_files(self, tmp_path):
+        """Overview omits 'test coverage:' when there are no test files in the project."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "utils.py").write_text("def helper(): pass\ndef other(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+
+        assert "test coverage:" not in out, (
+            f"test coverage: must NOT appear when no test files exist; got:\n{out}"
+        )
+
+    def test_uncovered_source_files_counted(self, tmp_path):
+        """Source files without a matching test file are counted in denominator."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "a.py").write_text("def fn_a(): pass\n")
+        (tmp_path / "b.py").write_text("def fn_b(): pass\n")
+        (tmp_path / "c.py").write_text("def fn_c(): pass\n")
+        (tmp_path / "test_a.py").write_text(
+            "from a import fn_a\ndef test_a(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+
+        assert "test coverage:" in out, f"test coverage: line must appear; got:\n{out}"
+        assert "1/3" in out, f"1/3 source files must be shown; got:\n{out}"
