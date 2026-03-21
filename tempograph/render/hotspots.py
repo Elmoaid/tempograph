@@ -2398,6 +2398,26 @@ def _collect_hotspots_signals(
                 f" — top hotspot with high complexity; bugs here propagate to {len(graph.callers_of(_top778.id))} callers"
             )
 
+    # S790: Test-only callers hotspot — top hotspot is only called from test files.
+    # An exported symbol only called from tests may be an internal helper mistakenly exposed,
+    # or a public API with no real consumers yet — clarify intent before making changes.
+    if scores:
+        _top790 = scores[0][1]
+        if (
+            _top790 is not None
+            and not _is_test_file(_top790.file_path)
+            and _top790.exported
+        ):
+            _callers790 = graph.callers_of(_top790.id)
+            _test_callers790 = [c for c in _callers790 if _is_test_file(c.file_path)]
+            _src_callers790 = [c for c in _callers790 if not _is_test_file(c.file_path)]
+            if len(_test_callers790) >= 3 and not _src_callers790:
+                out.append(
+                    f"\ntest-only callers hotspot: {_top790.name} is exported but only called"
+                    f" from {len(_test_callers790)} test file(s) — no production callers;"
+                    f" verify whether this is intentional or an unused public API"
+                )
+
     # S784: Package-local hotspot — top hotspot is only called from within its own directory.
     # A hotspot with all callers in the same package has high internal coupling but low
     # external exposure; refactoring is contained but the package itself is tightly coupled.

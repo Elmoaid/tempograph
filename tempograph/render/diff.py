@@ -510,6 +510,23 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — package interface may change; check for broken star imports or re-exports"
         )
 
+    # S789: Non-Python diff — at least one changed file is not a Python/JS/TS source file.
+    # Diffs mixing compiled, config, or data files with source files may require extra
+    # validation steps (recompile, migrate, re-format) beyond code review.
+    if changed_files:
+        _non_src789 = [
+            f for f in changed_files
+            if f.rsplit(".", 1)[-1].lower() not in {"py", "js", "ts", "tsx", "jsx", "go", "rs", "java", "rb", "php", "cs"}
+            and "." in f
+        ]
+        if _non_src789:
+            _ext789 = set(f.rsplit(".", 1)[-1].lower() for f in _non_src789)
+            lines.append(
+                f"non-source files in diff: {len(_non_src789)} file(s) with"
+                f" non-source extensions ({', '.join(sorted(_ext789)[:3])})"
+                f" — may require recompile, migration, or re-format beyond code review"
+            )
+
     # S783: Unindexed files in diff — changed files not present in the graph (likely new/moved).
     # Files not in the graph may be newly created or renamed; they lack call-graph context
     # and their dependents cannot be determined until the graph is rebuilt.

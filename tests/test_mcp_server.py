@@ -37126,3 +37126,229 @@ class TestDeadConstantsClusterS785:
         assert "dead constants cluster" not in out, (
             f"'dead constants cluster' must not appear when constants are imported; got:\n{out}"
         )
+
+
+# S786 – S791
+# ---------------------------------------------------------------------------
+
+# ── S786: Dunder method focus ─────────────────────────────────────────────────
+
+class TestDunderMethodFocusS786:
+    """S786: Focused symbol is a dunder method emits dunder-method signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "model.py").write_text(
+            "class Container:\n"
+            "    def __init__(self, value): self._v = value\n"
+            "    def get(self): return self._v\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from model import Container\ndef run(): return Container(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "__init__")
+        assert "dunder method" in out, (
+            f"Expected 'dunder method' for __init__; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def process(x): return x\n")
+        (tmp_path / "app.py").write_text(
+            "from utils import process\ndef run(x): return process(x)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process")
+        assert "dunder method" not in out, (
+            f"'dunder method' must not appear for regular function; got:\n{out}"
+        )
+
+
+# ── S787: High import coupling ────────────────────────────────────────────────
+
+class TestHighImportCouplingS787:
+    """S787: One file imported by >50% of source files emits high-import-coupling signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # core.py imported by 4 out of 5 source files (>50%)
+        (tmp_path / "core.py").write_text("def shared(): pass\n")
+        for name in ("a", "b", "c", "d"):
+            (tmp_path / f"{name}.py").write_text(
+                f"from core import shared\ndef fn_{name}(): shared()\n"
+            )
+        (tmp_path / "standalone.py").write_text("def other(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "high import coupling" in out, (
+            f"Expected 'high import coupling' when one file is imported by >50%; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # No single file imported by more than 50%
+        (tmp_path / "a.py").write_text("def fn_a(): pass\n")
+        (tmp_path / "b.py").write_text("def fn_b(): pass\n")
+        (tmp_path / "c.py").write_text("def fn_c(): pass\n")
+        (tmp_path / "d.py").write_text(
+            "from a import fn_a\ndef use_a(): fn_a()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "high import coupling" not in out, (
+            f"'high import coupling' must not appear when coupling is below 50%; got:\n{out}"
+        )
+
+
+# ── S788: Shared utility blast ────────────────────────────────────────────────
+
+class TestSharedUtilityBlastS788:
+    """S788: Blast target has utility/shared name emits shared-utility-blast signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def helper(x): return x\n")
+        (tmp_path / "app.py").write_text(
+            "from utils import helper\ndef run(): helper(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "utils.py")
+        assert "shared utility blast" in out, (
+            f"Expected 'shared utility blast' for utils.py; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "payments.py").write_text("def charge(amount): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from payments import charge\ndef run(): charge(10)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "payments.py")
+        assert "shared utility blast" not in out, (
+            f"'shared utility blast' must not appear for domain-specific files; got:\n{out}"
+        )
+
+
+# ── S789: Non-source files in diff ────────────────────────────────────────────
+
+class TestNonSourceFilesInDiffS789:
+    """S789: Diff contains non-source file extensions emits non-source-files signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["app.py", "schema.sql", "config.yaml"])
+        assert "non-source files in diff" in out, (
+            f"Expected 'non-source files in diff' for .sql/.yaml; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        (tmp_path / "core.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["app.py", "core.py"])
+        assert "non-source files in diff" not in out, (
+            f"'non-source files in diff' must not appear for Python-only diff; got:\n{out}"
+        )
+
+
+# ── S790: Test-only callers hotspot ───────────────────────────────────────────
+
+class TestTestOnlyCallersHotspotS790:
+    """S790: Exported hotspot only called from tests emits test-only-callers-hotspot signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "api.py").write_text("def public_endpoint(req): return {}\n")
+        for i in range(4):
+            (tmp_path / f"test_endpoint_{i}.py").write_text(
+                f"from api import public_endpoint\n"
+                f"def test_{i}(): public_endpoint(None)\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "test-only callers hotspot" in out, (
+            f"Expected 'test-only callers hotspot' when only tests call exported fn; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "api.py").write_text("def public_endpoint(req): return {}\n")
+        # Mix of test and source callers
+        for i in range(3):
+            (tmp_path / f"test_ep_{i}.py").write_text(
+                f"from api import public_endpoint\ndef test_{i}(): public_endpoint(None)\n"
+            )
+        (tmp_path / "client.py").write_text(
+            "from api import public_endpoint\ndef call(): public_endpoint({})\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "test-only callers hotspot" not in out, (
+            f"'test-only callers hotspot' must not appear when source callers exist; got:\n{out}"
+        )
+
+
+# ── S791: Dead subclass ────────────────────────────────────────────────────────
+
+class TestDeadSubclassS791:
+    """S791: Dead class with explicit inheritance emits dead-subclass signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "base.py").write_text("class BaseHandler: pass\n")
+        (tmp_path / "handlers.py").write_text(
+            "from base import BaseHandler\n"
+            "class SpecialHandler(BaseHandler): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead subclass" in out, (
+            f"Expected 'dead subclass' for unused inheriting class; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "base.py").write_text("class BaseHandler: pass\n")
+        (tmp_path / "handlers.py").write_text(
+            "from base import BaseHandler\n"
+            "class SpecialHandler(BaseHandler): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from handlers import SpecialHandler\n"
+            "def main(): return SpecialHandler()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead subclass" not in out, (
+            f"'dead subclass' must not appear when subclass is used; got:\n{out}"
+        )
