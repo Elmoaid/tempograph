@@ -381,6 +381,13 @@ class Tempo:
             searchable = f"{name_lower} {qname_lower} {sig_lower} {doc_lower} {sym.file_path.lower()}"
             score = 0.0
             matched_count = 0  # only name/qname/sig/doc matches (used for conjunction bonus)
+            # Exact snake-normalized match: "buildGraph" → "buildgraph" == "build_graph" stripped.
+            # Prevents test classes (TestBuildGraph qname has "buildgraph" substring) from
+            # outranking the actual snake_case symbol. Applied once, before the token loop.
+            _name_stripped = name_lower.replace('_', '').replace('-', '')
+            if _re.match(r'^[a-z][a-z0-9]*$', query_lower) and _name_stripped == query_lower:
+                score += 15.0
+                matched_count += 1
             for token in tokens:
                 weight = min(len(token) / 3, 2.0) * _idf_factors.get(token, 1.0)
                 if token == name_lower:
