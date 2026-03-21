@@ -2172,6 +2172,37 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                         )
                         break
 
+
+    # S293: Deep inheritance — focused class inherits from a chain 3+ levels deep.
+    # Deep hierarchies are hard to reason about; changes at the top cascade silently
+    # through all descendants. Prefer composition over deep inheritance.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim293 = next((s for s in _seed_syms if s.kind.value == "class"), None)
+        if _prim293:
+            # Walk inheritance chain upward
+            _depth293 = 0
+            _current293_ids = {_prim293.id}
+            _chain293: list[str] = [_prim293.name]
+            while _depth293 < 10:
+                _parent_ids293 = [
+                    e.target_id for e in graph.edges
+                    if e.kind.value == "inherits" and e.source_id in _current293_ids
+                    and e.target_id not in _current293_ids
+                ]
+                if not _parent_ids293:
+                    break
+                _depth293 += 1
+                _current293_ids = set(_parent_ids293)
+                _first_parent293 = graph.symbols.get(_parent_ids293[0])
+                if _first_parent293:
+                    _chain293.append(_first_parent293.name)
+            if _depth293 >= 3:
+                _chain_str293 = " → ".join(reversed(_chain293[:4]))
+                lines.append(
+                    f"\ndeep inheritance: {_prim293.name} is {_depth293} levels deep"
+                    f" ({_chain_str293}) — deep hierarchy; prefer composition"
+                )
+
     # S244: Property accessor — focused symbol is a @property method.
     # Callers access it like an attribute (no parentheses); renaming or changing type is
     # a breaking change even if the source looks like a function change.

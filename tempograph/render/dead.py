@@ -888,6 +888,31 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — data access paths removed; safe to clean up API surface"
         )
 
+
+    # S297: Dead test helpers — helper functions in test files with 0 callers.
+    # Dead test helpers inflate test file size and may represent removed test cases
+    # whose setup/teardown was not cleaned up.
+    # Only shown when 3+ such functions found (conf >= 30).
+    _s297_helper_patterns = ("helper", "setup", "teardown", "fixture", "mock", "stub",
+                             "fake", "create_", "make_", "build_", "generate_")
+    _s297_dead_helpers = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(pat in sym.name.lower() for pat in _s297_helper_patterns)
+        and not sym.name.startswith("test_")
+    ]
+    if len(_s297_dead_helpers) >= 3:
+        _helper_names = [s.name for s in _s297_dead_helpers[:3]]
+        _helper_str = ", ".join(_helper_names)
+        if len(_s297_dead_helpers) > 3:
+            _helper_str += f" +{len(_s297_dead_helpers) - 3} more"
+        lines.append(
+            f"dead test helpers: {len(_s297_dead_helpers)} unused helper(s) in test files ({_helper_str})"
+            f" — orphaned test setup; likely from removed test cases"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

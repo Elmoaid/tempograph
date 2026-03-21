@@ -1600,6 +1600,24 @@ def render_overview(graph: Tempo) -> str:
                 f" — low coupling; modules may be disconnected or code is largely dead"
             )
 
+
+    # S292: Polyglot codebase — 3+ programming languages detected in source files.
+    # Polyglot repos require multi-language expertise; each language adds its own
+    # toolchain, build system, and dependency management overhead.
+    _s292_langs: set[str] = set()
+    for _fp292, _fi292 in graph.files.items():
+        if not _is_test_file(_fp292) and _fi292.language.value in _CODE_LANGS:
+            _s292_langs.add(_fi292.language.value)
+    if len(_s292_langs) >= 3:
+        _lang_list292 = sorted(_s292_langs)[:4]
+        _lang_str292 = ", ".join(_lang_list292)
+        if len(_s292_langs) > 4:
+            _lang_str292 += f" +{len(_s292_langs) - 4} more"
+        lines.append(
+            f"polyglot: {len(_s292_langs)} languages ({_lang_str292})"
+            f" — multi-language repo; each adds toolchain and CI complexity"
+        )
+
         # Suggest directories to exclude — detect likely noise
     noisy = _detect_noisy_dirs(graph, modules)
     if noisy:
