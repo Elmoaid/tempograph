@@ -553,6 +553,36 @@ def render_overview(graph: Tempo) -> str:
         _qw_parts = [f"{sym.name} ({lc}L)" for lc, sym in _quick_wins]
         lines.append(f"quick wins: {', '.join(_qw_parts)} — no callers, likely dead")
 
+    # Lone files: source files with both 0 outgoing imports AND 0 incoming importers.
+    # Completely structurally isolated — either dead utility modules or entry points not yet wired.
+    # Only shown when 3+ exist (single lone file = normal for utilities; 3+ = structural smell).
+    if len(_src_fps) >= 6:
+        _LONE_SKIP = {
+            "__init__.py", "__main__.py", "main.py", "app.py", "manage.py",
+            "cli.py", "server.py", "conftest.py", "setup.py",
+        }
+        _lone_files: list[str] = []
+        _src_import_set = {
+            e.source_id for e in graph.edges
+            if e.kind == EdgeKind.IMPORTS and e.source_id in graph.files
+        }
+        _imported_set = {
+            e.target_id for e in graph.edges
+            if e.kind == EdgeKind.IMPORTS and e.target_id in graph.files
+        }
+        for _fp in _src_fps:
+            _bname = _fp.rsplit("/", 1)[-1]
+            if _bname in _LONE_SKIP or _is_test_file(_fp):
+                continue
+            if _fp not in _src_import_set and _fp not in _imported_set and graph.files[_fp].symbols:
+                _lone_files.append(_fp)
+        if len(_lone_files) >= 3:
+            _lone_names = [fp.rsplit("/", 1)[-1] for fp in _lone_files[:4]]
+            _lone_str = ", ".join(_lone_names)
+            if len(_lone_files) > 4:
+                _lone_str += f" +{len(_lone_files) - 4} more"
+            lines.append(f"lone files ({len(_lone_files)}): {_lone_str} — no imports or importers")
+
     # Potentially unused modules: source files with 0 source importers AND no test coverage.
     # Flags entire floating modules that nothing depends on and nothing tests — either dead
     # features or undiscovered entry points agents should investigate.
@@ -2867,6 +2897,46 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             )
             lines.append("")
 
+    # S90: Call chain preview — top 2-3 entry paths reaching exported symbols in this file.
+    # Shows 2-hop chains: "top_caller::fn → mid_caller::fn → target_sym".
+    # Only shown when 2+ distinct two-hop chains exist — adds depth the 1-hop callers list misses.
+    _cc_exported = sorted(
+        (sym for sym in symbols if sym.exported and sym.kind.value in ("function", "method")),
+        key=lambda s: -len([
+            c for c in graph.callers_of(s.id)
+            if c.file_path != file_path and not _is_test_file(c.file_path)
+        ])
+    )
+    if _cc_exported:
+        _cc_paths: list[str] = []
+        _cc_seen: set[str] = set()
+        for _cc_sym in _cc_exported[:4]:
+            _cc_ext = [
+                c for c in graph.callers_of(_cc_sym.id)
+                if c.file_path != file_path and not _is_test_file(c.file_path)
+            ]
+            for _cc_mid in _cc_ext[:3]:
+                _cc_top = [
+                    c for c in graph.callers_of(_cc_mid.id)
+                    if c.file_path != _cc_mid.file_path
+                    and not _is_test_file(c.file_path)
+                    and c.file_path != file_path
+                ]
+                if _cc_top:
+                    _top = _cc_top[0]
+                    _chain = (
+                        f"{_top.file_path.rsplit('/', 1)[-1]}::{_top.name}"
+                        f" → {_cc_mid.name} → {_cc_sym.name}"
+                    )
+                    if _chain not in _cc_seen:
+                        _cc_seen.add(_chain)
+                        _cc_paths.append(_chain)
+        if len(_cc_paths) >= 2:
+            lines.append("Call chains (entry paths):")
+            for _path in _cc_paths[:3]:
+                lines.append(f"  {_path}")
+            lines.append("")
+
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
 
@@ -3589,6 +3659,23 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             ]
             lines.append("")
             lines.append(f"Danger zone: {', '.join(_dz_parts)} — high churn + complexity")
+
+    # Refactor targets: unexported (private) functions with high complexity (cx >= 5) and
+    # zero external callers. These are internal functions that have grown too complex
+    # but have no call graph forcing the complexity — prime candidates for simplification.
+    _refactor_candidates = [
+        sym for sym in graph.symbols.values()
+        if sym.kind.value in ("function", "method")
+        and not sym.exported
+        and not _is_test_file(sym.file_path)
+        and sym.complexity >= 5
+        and not any(c.file_path != sym.file_path for c in graph.callers_of(sym.id))
+    ]
+    if len(_refactor_candidates) >= 2:
+        _refactor_candidates.sort(key=lambda s: -s.complexity)
+        _rf_parts = [f"{s.name} (cx={s.complexity})" for s in _refactor_candidates[:4]]
+        lines.append("")
+        lines.append(f"Refactor targets: {', '.join(_rf_parts)} — high-cx private with no ext callers")
 
     return "\n".join(lines)
 

@@ -8686,3 +8686,55 @@ class TestHotspotsTestBadge:
         out = render_hotspots(g)
         assert "[tested]" not in out, f"Badge must be absent when no test files exist; got:\n{out}"
         assert "[no tests]" not in out, f"Badge must be absent when no test files exist; got:\n{out}"
+
+
+class TestBlastCallChainPreview:
+    """S90: Blast 'Call chains (entry paths):' shows 2-hop call paths entering blast target."""
+
+    def test_call_chains_shown_for_two_hop_callers(self, tmp_path):
+        """2+ distinct 2-hop chains → 'Call chains (entry paths):' section appears."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        # auth.py: exported validate()
+        (tmp_path / "auth.py").write_text("def validate(token): return bool(token)\n")
+        # api.py: calls validate() and is itself called by main.py
+        (tmp_path / "api.py").write_text(
+            "from auth import validate\n"
+            "def handle_request(req): return validate(req.token)\n"
+        )
+        # main.py: calls handle_request (making a 2-hop chain)
+        (tmp_path / "main.py").write_text(
+            "from api import handle_request\n"
+            "def run(req): return handle_request(req)\n"
+        )
+        # service.py: also calls validate() and is called by router.py
+        (tmp_path / "service.py").write_text(
+            "from auth import validate\n"
+            "def check_auth(token): return validate(token)\n"
+        )
+        (tmp_path / "router.py").write_text(
+            "from service import check_auth\n"
+            "def dispatch(req): return check_auth(req.token)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "auth.py")
+        assert "Call chains (entry paths):" in out, (
+            f"Expected 'Call chains (entry paths):' for 2-hop callers; got:\n{out}"
+        )
+        assert "→" in out, f"Expected arrow in call chain lines; got:\n{out}"
+
+    def test_call_chains_absent_for_direct_callers_only(self, tmp_path):
+        """Only direct (1-hop) callers → no 'Call chains' section."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        (tmp_path / "utils.py").write_text("def helper(): return 42\n")
+        (tmp_path / "app.py").write_text(
+            "from utils import helper\ndef run(): return helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "utils.py")
+        assert "Call chains (entry paths):" not in out, (
+            f"'Call chains' must not appear for 1-hop callers only; got:\n{out}"
+        )
