@@ -8978,3 +8978,46 @@ class TestOverviewDirTestCoverage:
         assert "by dir:" not in out, (
             f"'by dir:' must not appear when only one dir qualifies; got:\n{out}"
         )
+
+
+class TestDeadCodeComplexDead:
+    """S92: Dead code 'Complex dead: fn (cx:N)' for dead symbols with high cyclomatic complexity."""
+
+    def test_complex_dead_shown_for_high_cx_dead_functions(self, tmp_path):
+        """2 dead functions with cx >= 5 → 'Complex dead:' appears."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        # Two uncalled functions with many branches (high cx)
+        code = "def complex_unused_a(x):\n"
+        for i in range(6):
+            code += f"    if x > {i}: return {i}\n"
+        code += "    return 0\n"
+        code += "def complex_unused_b(y):\n"
+        for i in range(6):
+            code += f"    if y < {i}: return {i}\n"
+        code += "    return 0\n"
+        (tmp_path / "legacy.py").write_text(code)
+
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "Complex dead:" in out, (
+            f"Expected 'Complex dead:' for 2 high-cx dead functions; got:\n{out}"
+        )
+        assert "cx:" in out, f"Expected 'cx:' in complex dead line; got:\n{out}"
+
+    def test_complex_dead_absent_for_low_cx_dead_functions(self, tmp_path):
+        """Dead functions with cx < 5 → no 'Complex dead:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        # Simple uncalled functions (low cx)
+        (tmp_path / "utils.py").write_text(
+            "def unused_a(): return 1\n"
+            "def unused_b(): return 2\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "Complex dead:" not in out, (
+            f"'Complex dead:' must not appear for low-cx dead functions; got:\n{out}"
+        )

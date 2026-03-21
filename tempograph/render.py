@@ -3987,6 +3987,20 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         ]
         lines.append(f"Largest dead: {', '.join(_ld_parts)}")
 
+    # S92: Complex dead — top dead symbols by cyclomatic complexity (cx >= 5).
+    # Complements "Largest dead" (line count): a short but complex dead function
+    # has high cognitive overhead; deleting it reduces maintainability burden.
+    _cx_dead = sorted(
+        [(sym, conf) for sym, conf in scored if conf >= 40 and sym.complexity >= 5],
+        key=lambda x: -x[0].complexity,
+    )
+    if len(_cx_dead) >= 2:
+        _cd_parts = [
+            f"{sym.name} (cx:{sym.complexity}, conf:{conf})"
+            for sym, conf in _cx_dead[:3]
+        ]
+        lines.append(f"Complex dead: {', '.join(_cd_parts)}")
+
     # Orphan files: files where ALL exported symbols are dead → delete the whole file.
     # More actionable than quick wins: one `rm` instead of N symbol deletions.
     _dead_sym_ids = {sym.id for sym, _ in scored}
