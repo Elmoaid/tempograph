@@ -2228,6 +2228,44 @@ class TestDeadCodeTestFileFilter:
         )
 
 
+class TestDeadCodeLastTouched:
+    """Test that dead code output includes 'last touched: N days ago' annotation per file."""
+
+    def test_last_touched_annotation_appears(self, tmp_path):
+        """Dead code output should show last-touched days for each file."""
+        from unittest.mock import patch
+
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        (tmp_path / "stale_module.py").write_text("def unused_func(): pass\n")
+        g = build_graph(tmp_path, use_cache=False)
+
+        with patch("tempograph.git.file_last_modified_days", return_value=42):
+            out = render_dead_code(g, include_low=True)
+
+        assert "last touched: 42 days ago" in out, (
+            f"Expected 'last touched: 42 days ago' in dead code output, got:\n{out}"
+        )
+
+    def test_last_touched_none_no_annotation(self, tmp_path):
+        """When git returns None (no history), no annotation should appear."""
+        from unittest.mock import patch
+
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        (tmp_path / "no_history.py").write_text("def orphan(): pass\n")
+        g = build_graph(tmp_path, use_cache=False)
+
+        with patch("tempograph.git.file_last_modified_days", return_value=None):
+            out = render_dead_code(g, include_low=True)
+
+        assert "last touched" not in out, (
+            f"No annotation expected when git returns None, got:\n{out}"
+        )
+
+
 class TestFileVolatilityWarning:
     """Tests for file volatility annotation in render_focused.
 
