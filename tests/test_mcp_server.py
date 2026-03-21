@@ -5048,3 +5048,42 @@ class TestHotspotsUntestedSummary:
         assert "Untested hotspots:" not in out, (
             f"Untested hotspots: must NOT appear when all hotspot files have tests; got:\n{out}"
         )
+
+
+class TestBlastImporterCallIntensitySort:
+    """S38: Blast mode — importers sorted by call count (most dependent first).
+
+    When multiple files import the blast target, the importer with the most
+    calls to symbols in the target file should appear before importers with
+    fewer calls.
+    """
+
+    def test_heavy_caller_listed_before_light_caller(self, tmp_path):
+        """Heavy importer (many calls) appears before light importer (few calls)."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        (tmp_path / "lib.py").write_text(
+            "def fn_a(): pass\ndef fn_b(): pass\ndef fn_c(): pass\n"
+        )
+        # heavy.py calls all 3 symbols
+        (tmp_path / "heavy.py").write_text(
+            "from lib import fn_a, fn_b, fn_c\n"
+            "def run():\n    fn_a()\n    fn_b()\n    fn_c()\n"
+        )
+        # light.py calls only 1 symbol
+        (tmp_path / "light.py").write_text(
+            "from lib import fn_a\ndef minimal(): return fn_a()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "lib.py")
+
+        # Both importers should appear
+        assert "heavy.py" in out, f"heavy.py must appear in blast output; got:\n{out}"
+        assert "light.py" in out, f"light.py must appear in blast output; got:\n{out}"
+        # heavy.py (3 calls) should appear before light.py (1 call)
+        heavy_pos = out.index("heavy.py")
+        light_pos = out.index("light.py")
+        assert heavy_pos < light_pos, (
+            f"heavy.py (3 calls) must appear before light.py (1 call); got:\n{out}"
+        )

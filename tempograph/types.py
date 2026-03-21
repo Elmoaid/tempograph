@@ -73,6 +73,7 @@ class Language(str, Enum):
     ZIG = "zig"
     CPP = "cpp"
     C = "c"
+    FSHARP = "fsharp"
     HASKELL = "haskell"
     OCAML = "ocaml"
     CLOJURE = "clojure"
@@ -124,6 +125,9 @@ EXTENSION_TO_LANGUAGE: dict[str, Language] = {
     ".hxx": Language.CPP,
     ".c": Language.C,
     ".h": Language.C,
+    ".fs": Language.FSHARP,
+    ".fsx": Language.FSHARP,
+    ".fsi": Language.FSHARP,
     ".hs": Language.HASKELL,
     ".ml": Language.OCAML,
     ".mli": Language.OCAML,
