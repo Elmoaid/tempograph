@@ -467,6 +467,7 @@ def render_overview(graph: Tempo) -> str:
     # Avoids false positives from regex strings, test fixtures, and scanner code itself.
     _TD_PAT = _re.compile(r'(?:#|//)[^\n]*\b(TODO|FIXME|HACK|XXX)\b')
     _td_counts: dict[str, int] = {}
+    _td_per_file: dict[str, int] = {}
     _td_file_count = 0
     for _fp in _src_fps[:200]:  # cap at 200 to keep I/O bounded
         if Path(_fp).suffix not in _SRC_EXTS:
@@ -476,6 +477,7 @@ def render_overview(graph: Tempo) -> str:
             _matches = _TD_PAT.findall(_content)
             if _matches:
                 _td_file_count += 1
+                _td_per_file[_fp] = len(_matches)
                 for _m in _matches:
                     _td_counts[_m] = _td_counts.get(_m, 0) + 1
         except Exception:
@@ -489,6 +491,14 @@ def render_overview(graph: Tempo) -> str:
                 if _td_counts.get(k, 0) > 0
             ]
             lines.append(f"tech debt: {_td_total} markers in {_td_file_count} files ({', '.join(_td_parts)})")
+        # Per-file tech debt concentration: top 3 files with most markers.
+        # Tells agents where to focus cleanup effort.
+        if _td_total >= 5 and _td_per_file:
+            _debt_hot = sorted(_td_per_file.items(), key=lambda x: -x[1])[:3]
+            _debt_hot = [(fp, n) for fp, n in _debt_hot if n >= 3]
+            if _debt_hot:
+                _dh_parts = [f"{fp.rsplit('/', 1)[-1]} ({n})" for fp, n in _debt_hot]
+                lines.append(f"debt hot: {', '.join(_dh_parts)}")
 
     # Deepest import chain: longest path from any source file through import edges.
     # High depth = deep coupling = hard to refactor. Only shown when depth >= 5.
@@ -2400,6 +2410,13 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                 lines.append("")
         except Exception:
             pass
+
+    # S70: Singleton caller hint — file only imported by 1 non-test file.
+    # This tight coupling suggests the two files may be candidates for merging.
+    _src_imps = [imp for imp in importers if not _is_test_file(imp)]
+    if len(_src_imps) == 1:
+        lines.append(f"Singleton caller: only used by {_src_imps[0].rsplit('/', 1)[-1]} — consider merging")
+        lines.append("")
 
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")

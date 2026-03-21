@@ -7388,3 +7388,83 @@ class TestDeadCodeSafeToDelete:
         assert "Safe to delete" not in out, (
             f"'Safe to delete' must not appear when file has importers; got:\n{out}"
         )
+
+
+class TestBlastSingletonCaller:
+    """S70: Blast mode shows 'Singleton caller' hint when file is only used by 1 other source file."""
+
+    def test_singleton_caller_shown_when_one_importer(self, tmp_path):
+        """File imported by exactly 1 non-test file → 'Singleton caller' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        (tmp_path / "main.py").write_text("from utils import helper\ndef run(): return helper()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "utils.py")
+        assert "Singleton caller" in out, (
+            f"Expected 'Singleton caller' when file has exactly 1 importer; got:\n{out}"
+        )
+        assert "main.py" in out, f"Expected importer filename in singleton hint; got:\n{out}"
+
+    def test_singleton_caller_absent_when_multiple_importers(self, tmp_path):
+        """File imported by 2+ source files → no 'Singleton caller'."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        (tmp_path / "a.py").write_text("from utils import helper\ndef run_a(): return helper()\n")
+        (tmp_path / "b.py").write_text("from utils import helper\ndef run_b(): return helper()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "utils.py")
+        assert "Singleton caller" not in out, (
+            f"'Singleton caller' must not appear for file with 2 importers; got:\n{out}"
+        )
+
+
+class TestOverviewDebtHot:
+    """S69: Overview mode — 'debt hot:' per-file tech debt concentration.
+
+    Shows top files with most TODO/FIXME/HACK/XXX markers when total
+    markers >= 5 and top file has >= 3 markers. Absent for clean repos.
+    """
+
+    def test_debt_hot_shown_for_concentrated_tech_debt(self, tmp_path):
+        """Files with concentrated TODO/FIXME get 'debt hot:' annotation."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "messy.py").write_text(
+            "# TODO: fix this\n# TODO: also this\n# FIXME: broken\n# FIXME: critical\n"
+            "def fn(): pass\n"
+        )
+        (tmp_path / "clean.py").write_text(
+            "def helper(): return 1\n"
+        )
+        # Need at least 5 total markers — 4 in messy.py is below threshold
+        # Add one more to reach 5
+        (tmp_path / "main.py").write_text(
+            "# HACK: workaround\nfrom messy import fn\ndef run(): return fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "debt hot:" in out, (
+            f"Expected 'debt hot:' for repo with 5+ markers in concentrated files; got:\n{out}"
+        )
+        assert "messy.py" in out, (
+            f"Expected 'messy.py' in debt hot (most markers); got:\n{out}"
+        )
+
+    def test_debt_hot_absent_for_clean_repo(self, tmp_path):
+        """No tech debt markers → no debt hot line."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "clean.py").write_text(
+            "def fn():\n    return 1\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "debt hot:" not in out, (
+            f"'debt hot:' must not appear in clean repo; got:\n{out}"
+        )
