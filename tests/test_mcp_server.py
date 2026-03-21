@@ -11120,3 +11120,125 @@ class TestDiffCrossModuleImpact:
         assert "cross-module impact" not in out, (
             f"'cross-module impact' must not appear for single-module diff; got:\n{out}"
         )
+
+
+class TestHotspotsRecursiveFns:
+    """S144: Hotspots — 'recursive hotspots: N recursive fns in top ranks (fn1, fn2)'."""
+
+    def test_recursive_hotspots_shown(self, tmp_path):
+        """2+ recursive functions in top hotspot → 'recursive hotspots:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        # Two recursive functions with many callers (high hotspot score)
+        (tmp_path / "recur.py").write_text(
+            "def factorial(n):\n"
+            "    if n <= 1: return 1\n"
+            "    return n * factorial(n - 1)\n"
+            "\n"
+            "def fibonacci(n):\n"
+            "    if n <= 1: return n\n"
+            "    return fibonacci(n - 1) + fibonacci(n - 2)\n"
+        )
+        # Give them callers so they rank in hotspots
+        for i in range(4):
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from recur import factorial, fibonacci\n"
+                f"def use_{i}(): return factorial({i}) + fibonacci({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "recursive hotspots" in out, (
+            f"Expected 'recursive hotspots' for 2 recursive fns; got:\n{out}"
+        )
+
+    def test_recursive_hotspots_absent_for_non_recursive(self, tmp_path):
+        """No recursive functions → 'recursive hotspots:' NOT shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        (tmp_path / "plain.py").write_text(
+            "def fn_a(x):\n" + "".join(f"    if x == {i}: return {i}\n" for i in range(8)) + "    return 0\n"
+        )
+        for i in range(4):
+            (tmp_path / f"c_{i}.py").write_text(
+                f"from plain import fn_a\ndef go(): fn_a({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "recursive hotspots" not in out, (
+            f"'recursive hotspots' must not appear for non-recursive fns; got:\n{out}"
+        )
+
+
+class TestBlastSubclassCount:
+    """S145: Blast — 'subclass count: N subclasses extend ClassName (N)'."""
+
+    def test_subclass_count_shown(self, tmp_path):
+        """Class with 2+ subclasses → 'subclass count:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        (tmp_path / "base.py").write_text("class Animal:\n    def speak(self):\n        pass\n")
+        (tmp_path / "dog.py").write_text(
+            "from base import Animal\nclass Dog(Animal):\n    def speak(self):\n        return 'woof'\n"
+        )
+        (tmp_path / "cat.py").write_text(
+            "from base import Animal\nclass Cat(Animal):\n    def speak(self):\n        return 'meow'\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "base.py")
+        assert "subclass count" in out, (
+            f"Expected 'subclass count' when Animal has 2 subclasses; got:\n{out}"
+        )
+
+    def test_subclass_count_absent_for_standalone_class(self, tmp_path):
+        """Class with no subclasses → 'subclass count:' NOT shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        (tmp_path / "standalone.py").write_text(
+            "class Solo:\n    def do_thing(self):\n        pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "standalone.py")
+        assert "subclass count" not in out, (
+            f"'subclass count' must not appear when no subclasses; got:\n{out}"
+        )
+
+
+class TestOverviewBarrelFiles:
+    """S146: Overview — 'barrel files: N aggregator files (file1.py, file2.py)'."""
+
+    def test_barrel_files_shown(self, tmp_path):
+        """Repo with 2+ barrel files (importing 5+ modules each) → 'barrel files:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        # Create 6 small modules
+        for i in range(6):
+            (tmp_path / f"mod_{i}.py").write_text(f"def fn_{i}():\n    pass\n")
+        # Two barrel files, each importing from 5+ modules
+        barrel_a = "\n".join(f"from mod_{i} import fn_{i}" for i in range(6))
+        barrel_b = "\n".join(f"from mod_{i} import fn_{i}" for i in range(5))
+        (tmp_path / "barrel_a.py").write_text(barrel_a + "\n")
+        (tmp_path / "barrel_b.py").write_text(barrel_b + "\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "barrel files" in out, (
+            f"Expected 'barrel files' for 2 aggregator files; got:\n{out}"
+        )
+
+    def test_barrel_files_absent_for_focused_repo(self, tmp_path):
+        """Repo without barrel files → 'barrel files:' NOT shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        # Each file imports from max 1 other
+        (tmp_path / "core.py").write_text("def fn():\n    pass\n")
+        (tmp_path / "service.py").write_text("from core import fn\ndef run(): fn()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "barrel files" not in out, (
+            f"'barrel files' must not appear when no file imports 5+ modules; got:\n{out}"
+        )

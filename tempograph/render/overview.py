@@ -1025,6 +1025,29 @@ def render_overview(graph: Tempo) -> str:
                 f" source files have no tests ({_s142_gap_pct}%)"
             )
 
+    # S146: Barrel file count — source files that import from 5+ other modules (aggregators).
+    # Many barrel files = fragmented architecture; changes to any dependency flow through them.
+    # Only shown when 2+ barrel files found.
+    from ..types import EdgeKind as _EK146
+    _s146_import_counts: dict[str, int] = {}
+    for _e146 in graph.edges:
+        if _e146.kind != _EK146.IMPORTS:
+            continue
+        if _e146.source_id not in graph.files or _e146.target_id not in graph.files:
+            continue
+        if _is_test_file(_e146.source_id) or _is_test_file(_e146.target_id):
+            continue
+        if _e146.source_id == _e146.target_id:
+            continue
+        _s146_import_counts[_e146.source_id] = _s146_import_counts.get(_e146.source_id, 0) + 1
+    _s146_barrels = [fp for fp, cnt in _s146_import_counts.items() if cnt >= 5]
+    if len(_s146_barrels) >= 2:
+        _s146_names = [fp.rsplit("/", 1)[-1] for fp in sorted(_s146_barrels)[:3]]
+        _s146_str = ", ".join(_s146_names)
+        if len(_s146_barrels) > 3:
+            _s146_str += f" +{len(_s146_barrels) - 3} more"
+        lines.append(f"barrel files: {len(_s146_barrels)} aggregator files ({_s146_str})")
+
     # Suggest directories to exclude — detect likely noise
     noisy = _detect_noisy_dirs(graph, modules)
     if noisy:

@@ -637,4 +637,24 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                     f" = {_pct139}% of {_top_sym139.name} callers — single file dominates usage"
                 )
 
+    # S144: Recursive fns in hotspots — top-ranked symbols that call themselves.
+    # Recursive functions are harder to modify: changing loop invariants or base cases
+    # requires understanding the full recursion contract. Flag when 2+ are in top hotspots.
+    if scores:
+        _recursive_syms144: list[str] = []
+        for _sc144, _sym144 in scores[:top_n]:
+            if _sym144.kind.value not in ("function", "method"):
+                continue
+            if _is_test_file(_sym144.file_path):
+                continue
+            # Recursive if the symbol calls itself
+            if any(_callee.id == _sym144.id for _callee in graph.callees_of(_sym144.id)):
+                _recursive_syms144.append(_sym144.name)
+        if len(_recursive_syms144) >= 2:
+            _r_str = ", ".join(_recursive_syms144[:3])
+            if len(_recursive_syms144) > 3:
+                _r_str += f" +{len(_recursive_syms144) - 3} more"
+            lines.append("")
+            lines.append(f"recursive hotspots: {len(_recursive_syms144)} recursive fns in top ranks ({_r_str})")
+
     return "\n".join(lines)
