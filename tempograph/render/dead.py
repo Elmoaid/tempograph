@@ -2778,6 +2778,26 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — abandoned feature extensions; check if any base class still expects them"
         )
 
+    # S821: Dead dataclasses — unused dataclass or TypedDict definitions.
+    # Dataclasses and TypedDicts define structured data contracts; dead ones indicate
+    # abandoned data shapes that were never wired into the data pipeline.
+    _dead_dc821 = [
+        s for s in dead
+        if s.kind.value == "class"
+        and not _is_test_file(s.file_path)
+        and (s.name.endswith("Data") or s.name.endswith("Dto") or s.name.endswith("Schema")
+             or s.name.endswith("Model") or s.name.endswith("Config") or s.name.endswith("Params")
+             or s.name.endswith("TypedDict") or "TypedDict" in s.name)
+    ]
+    if _dead_dc821:
+        _dc_names821 = ", ".join(s.name for s in _dead_dc821[:3])
+        if len(_dead_dc821) > 3:
+            _dc_names821 += f" +{len(_dead_dc821) - 3} more"
+        lines.append(
+            f"dead data models: {len(_dead_dc821)} unused data class(es) ({_dc_names821})"
+            f" — abandoned data shapes; verify no serialization or API contract depends on them"
+        )
+
     # S815: Dead abstract classes — unused abstract base classes.
     # Abstract classes define contracts for subclasses; a dead abstract class means no
     # concrete implementation is wired in, leaving the design pattern incomplete.

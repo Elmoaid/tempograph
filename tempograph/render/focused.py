@@ -3779,10 +3779,9 @@ def _signals_focused_fn_advanced(
             and _prim816.parent_id is None
             and not _is_test_file(_prim816.file_path)
         ):
-            import re as _re816
-            import linecache as _lc816
-            _def_line816 = _lc816.getline(_prim816.file_path, _prim816.line_start).strip()
-            if _re816.search(r"\bdef\s+\w+\s*\(\s*\)\s*(?:->|:)", _def_line816):
+            # Use stored signature (relative file_path, so linecache would fail)
+            _sig816 = (_prim816.signature or "").strip()
+            if _sig816 and _sig816.startswith("def ") and ("()" in _sig816 or "( )" in _sig816):
                 lines.append(
                     f"\nzero-argument function: {_prim816.name} takes no parameters"
                     f" — implicitly couples to global/module state; hard to test in isolation"
