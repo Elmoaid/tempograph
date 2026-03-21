@@ -1454,6 +1454,16 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — blast radius is fully contained; changes are safe from propagation but test locally"
         )
 
+    # S511: Single-consumer blast — blast target is only imported by exactly one other file.
+    # Files with a single consumer are easier to refactor (only one caller to update),
+    # but they often encode a tight coupling that prevents reuse across the codebase.
+    if len(importers) == 1:
+        _single511 = next(iter(importers))
+        lines.append(
+            f"single consumer: {file_path.rsplit('/', 1)[-1]} is only imported by {_single511.rsplit('/', 1)[-1]}"
+            f" — tightly coupled to one consumer; safe to change in sync, but consider if the coupling is intentional"
+        )
+
     return "\n".join(lines)
 
 

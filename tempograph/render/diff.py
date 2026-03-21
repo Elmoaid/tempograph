@@ -1505,4 +1505,20 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — verify all downstream consumers are updated before merging"
         )
 
+    # S509: ORM model touched — diff includes an ORM model or entity file.
+    # ORM model changes affect database schema, serialization, and all query code;
+    # any field rename or type change requires a migration and query audit.
+    _s509_orm_keywords = ("model", "entity", "orm", "schema", "table", "record", "domain")
+    _s509_orm_files = [
+        f for f in changed_files
+        if any(kw in f.lower().replace("_", "").replace("-", "") for kw in _s509_orm_keywords)
+        and not _is_test_file(f)
+    ]
+    if _s509_orm_files:
+        lines.append(
+            f"ORM model touched: {len(_s509_orm_files)} model/entity file(s) changed"
+            f" ({', '.join(f.rsplit('/', 1)[-1] for f in _s509_orm_files[:2])})"
+            f" — check for required migrations and audit all queries against changed fields"
+        )
+
     return "\n".join(lines)
