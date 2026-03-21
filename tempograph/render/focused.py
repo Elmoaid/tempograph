@@ -2604,6 +2604,32 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                     f" — callers must handle None/variant; document when None is returned and why"
                 )
 
+    # S428: Abstract method — focused function lives in a base/abstract class with concrete impls.
+    # Abstract methods define a contract that subclasses must implement; focusing on an
+    # abstract method means you need to find all concrete implementations to understand behavior.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim428 = next((s for s in _seed_syms if s.kind.value in ("function", "method")), None)
+        if _prim428 and _prim428.parent_id:
+            _parent428 = graph.symbols.get(_prim428.parent_id)
+            _base_class_keywords428 = ("base", "abstract", "interface", "protocol", "mixin")
+            _parent_is_base428 = (
+                _parent428 is not None
+                and any(kw in _parent428.name.lower() for kw in _base_class_keywords428)
+            )
+            if _parent_is_base428:
+                _subclass_impls428 = [
+                    s for s in graph.symbols.values()
+                    if s.name == _prim428.name and s.id != _prim428.id
+                    and s.kind.value in ("function", "method")
+                    and s.file_path != _prim428.file_path
+                ]
+                if _subclass_impls428:
+                    lines.append(
+                        f"\nabstract method: {_prim428.name} is from {_parent428.name}"
+                        f" with {len(_subclass_impls428)} concrete implementation(s)"
+                        f" — focus on a concrete subclass to see actual behavior"
+                    )
+
     return "\n".join(lines)
 
 

@@ -1461,4 +1461,15 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                     f" — class instantiated in many places; consider DI/singleton to reduce coupling"
                 )
 
+    # S430: High-complexity hotspot — top hotspot symbol has cyclomatic complexity >= 20.
+    # High complexity means many execution paths; each path needs its own test scenario.
+    # Complex hotspots are refactor targets AND test coverage bottlenecks simultaneously.
+    if scores:
+        _top430 = scores[0][1]
+        if not _is_test_file(_top430.file_path) and (_top430.complexity or 0) >= 20:
+            lines.append(
+                f"\nhigh-complexity hotspot: {_top430.name} has cyclomatic complexity {_top430.complexity}"
+                f" — {_top430.complexity} distinct paths need test coverage; refactor before growing further"
+            )
+
     return "\n".join(lines)  # ALWAYS return here — never inside a conditional block

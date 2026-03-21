@@ -1284,4 +1284,23 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — verify matching production changes aren't missing from this diff"
             )
 
+    # S429: Infrastructure file in diff — diff touches Dockerfile, CI/CD, or infra config.
+    # Infrastructure file changes affect the deployment environment, not just the code;
+    # a wrong config can break all deployments or expose the service to the internet.
+    _s429_infra_names = (
+        "dockerfile", "docker-compose", "docker_compose", ".github",
+        "kubernetes", "k8s", "terraform", "ansible", "ci.yml",
+        "pipeline.yml", ".circleci", "jenkinsfile",
+    )
+    _s429_infra_files = [
+        f for f in changed_files
+        if any(w in f.lower().replace("-", "_") for w in _s429_infra_names)
+    ]
+    if _s429_infra_files:
+        _infra_names429 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s429_infra_files[:2])
+        lines.append(
+            f"infra change: {_infra_names429} in diff"
+            f" — deployment environment changes; test in staging before deploying to production"
+        )
+
     return "\n".join(lines)

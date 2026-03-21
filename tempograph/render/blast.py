@@ -1247,6 +1247,27 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — constants files are silently high-impact; all importers pick up changes immediately"
         )
 
+    # S431: Event emitter blast — blast target file contains event emit/dispatch functions.
+    # Event emitters have hidden blast radius — subscribers don't show up as direct importers,
+    # so all the subscribers are affected but invisible in a normal dependency trace.
+    _s431_event_patterns = (
+        "emit_", "dispatch_", "publish_", "fire_event_",
+        "trigger_", "broadcast_", "send_event_",
+    )
+    _s431_event_syms = [
+        s for s in graph.symbols.values()
+        if s.file_path == file_path
+        and s.kind.value in ("function", "method")
+        and any(s.name.lower().startswith(p) for p in _s431_event_patterns)
+    ]
+    if len(_s431_event_syms) >= 2:
+        _ev_names431 = ", ".join(s.name for s in _s431_event_syms[:3])
+        lines.append(
+            f"event emitter blast: {file_path.rsplit('/', 1)[-1]} has {len(_s431_event_syms)}"
+            f" event dispatch fn(s) ({_ev_names431})"
+            f" — subscribers are invisible in dependency trace; grep for event names to find all consumers"
+        )
+
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
 

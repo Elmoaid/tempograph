@@ -1892,6 +1892,29 @@ def _signals_structure(
             f" — consider grouping by domain; flat layouts become unnavigable past ~10 files"
         )
 
+    # S427: High method-to-class ratio — classes average 10+ methods each.
+    # Classes with many methods are doing too much; long method lists indicate
+    # low cohesion and a class that should be split into specialized collaborators.
+    _s427_classes = [
+        s for s in graph.symbols.values()
+        if s.kind.value == "class" and not _is_test_file(s.file_path)
+    ]
+    if len(_s427_classes) >= 2:
+        _s427_method_counts = []
+        for cls in _s427_classes:
+            _method_count = sum(
+                1 for s in graph.symbols.values()
+                if s.parent_id == cls.id and s.kind.value == "method"
+            )
+            _s427_method_counts.append(_method_count)
+        _s427_avg_methods = sum(_s427_method_counts) / len(_s427_method_counts)
+        if _s427_avg_methods >= 10:
+            lines.append(
+                f"high method density: {len(_s427_classes)} classes averaging"
+                f" {_s427_avg_methods:.0f} methods each"
+                f" — large class surface areas; split by Single Responsibility Principle"
+            )
+
     return lines
 
 

@@ -1432,6 +1432,29 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — removed decorator pattern may still apply dynamically; verify before deleting"
         )
 
+    # S432: Dead event handlers (subscription style) — subscribe_*/listen_*/watch_* with 0 callers.
+    # Subscription functions that are never called may be intended handlers that were
+    # never wired up; events fire without a handler, silently dropping signal.
+    _s432_sub_prefixes = (
+        "subscribe_", "listen_", "watch_", "observe_",
+        "on_event_", "attach_", "bind_",
+    )
+    _s432_dead_subs = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s432_sub_prefixes)
+    ]
+    if len(_s432_dead_subs) >= 2:
+        _sub_names432 = ", ".join(s.name for s in _s432_dead_subs[:3])
+        if len(_s432_dead_subs) > 3:
+            _sub_names432 += f" +{len(_s432_dead_subs) - 3} more"
+        lines.append(
+            f"dead subscriptions: {len(_s432_dead_subs)} unwired subscription fn(s) ({_sub_names432})"
+            f" — events fire without listener; silently drops signals"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
