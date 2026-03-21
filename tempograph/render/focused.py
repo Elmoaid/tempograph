@@ -2146,6 +2146,32 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                         f" but has no docstring — callers must infer behavior from code"
                     )
 
+
+    # S287: Method override — focused method has the same name as a method in a parent class.
+    # Overriding methods must maintain the parent's contract (Liskov Substitution Principle).
+    # Changes to signature or return type may break polymorphic callers.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim287 = _seed_syms[0]
+        if _prim287.kind.value == "method" and _prim287.parent_id:
+            _parent287 = graph.symbols.get(_prim287.parent_id)
+            if _parent287 and _parent287.kind.value == "class":
+                # Find parent classes (via inherits edges)
+                _super_class_ids287 = [
+                    e.target_id for e in graph.edges
+                    if e.kind.value == "inherits" and e.source_id == _parent287.id
+                ]
+                for _super_id287 in _super_class_ids287:
+                    _super_children287 = graph.children_of(_super_id287)
+                    _matching287 = [c for c in _super_children287 if c.name == _prim287.name]
+                    if _matching287:
+                        _super_sym287 = graph.symbols.get(_super_id287)
+                        _super_name287 = _super_sym287.name if _super_sym287 else "parent"
+                        lines.append(
+                            f"\nmethod override: {_prim287.name} overrides {_super_name287}.{_prim287.name}"
+                            f" — must preserve parent's contract; signature changes break polymorphism"
+                        )
+                        break
+
     # S244: Property accessor — focused symbol is a @property method.
     # Callers access it like an attribute (no parentheses); renaming or changing type is
     # a breaking change even if the source looks like a function change.

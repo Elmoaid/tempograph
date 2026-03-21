@@ -1072,4 +1072,22 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 f"\nuntested repo: no test files found — all hotspot churn is completely unprotected"
             )
 
+
+    # S289: Interface module hotspot — top hotspot symbol lives in an __init__.py file.
+    # Package init files act as public interfaces; changes there affect ALL importers
+    # of the package, not just files that use that symbol directly.
+    if scores:
+        _s289_top = next(
+            (sym for _, sym in scores[:5]
+             if not _is_test_file(sym.file_path)
+             and sym.file_path.rsplit("/", 1)[-1] == "__init__.py"),
+            None
+        )
+        if _s289_top:
+            _importers289 = len([f for f in graph.importers_of(_s289_top.file_path) if f in graph.files])
+            lines.append(
+                f"\ninterface hotspot: {_s289_top.name} is in __init__.py"
+                f" ({_importers289} package importer(s)) — changes here affect all package consumers"
+            )
+
     return "\n".join(lines)  # ALWAYS return here — never inside a conditional block

@@ -828,6 +828,22 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — multi-team impact; coordinate changes across all consuming packages"
         )
 
+
+    # S290: No importers — blast target has exported symbols but nothing imports it.
+    # A non-test file with exported symbols and zero importers may be dead code,
+    # a new module not yet wired in, or an external entry point (tested separately).
+    if symbols:
+        _s290_importers = [
+            f for f in graph.importers_of(file_path)
+            if f in graph.files and f != file_path
+        ]
+        _s290_exported = [s for s in symbols if s.exported]
+        if not _s290_importers and _s290_exported and not _is_test_file(file_path):
+            lines.append(
+                f"no importers: {len(_s290_exported)} exported symbol(s) but nothing imports this file"
+                f" — may be dead code, an unwired module, or a standalone entry point"
+            )
+
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
 

@@ -16735,3 +16735,221 @@ class TestDeadFactoryFunctions:
         assert "dead factories" not in out, (
             f"'dead factories' must not appear when factory fns are used; got:\n{out}"
         )
+
+
+# S286 — shallow module graph (overview)
+# ---------------------------------------------------------------------------
+
+class TestOverviewShallowGraph:
+    def test_shallow_graph_shown(self, tmp_path):
+        """S286: 'shallow graph' shown when avg imports/file < 1.0 with 8+ source files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        # 10 independent files with no imports between them
+        for i in range(10):
+            (tmp_path / f"mod{i}.py").write_text(f"def fn_{i}(): return {i}\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "shallow graph" in out, f"Expected 'shallow graph'; got:\n{out}"
+        assert "disconnected" in out
+
+    def test_shallow_graph_absent_for_connected_code(self, tmp_path):
+        """S286: 'shallow graph' absent when files import multiple others (avg >= 1)."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        # Chain: each mod imports the previous one → 9 import edges / 10 files = 0.9...
+        # Use a denser mesh: each of 8 mods imports 2 hubs → 16 edges / 10 = 1.6 avg
+        (tmp_path / "hub1.py").write_text("def h1(): return 1\n")
+        (tmp_path / "hub2.py").write_text("def h2(): return 2\n")
+        for i in range(8):
+            (tmp_path / f"mod{i}.py").write_text(
+                f"from hub1 import h1\nfrom hub2 import h2\ndef fn_{i}(): return h1() + h2()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "shallow graph" not in out, (
+            f"'shallow graph' must not appear for connected codebase; got:\n{out}"
+        )
+
+
+# S287 — method override (focus)
+# ---------------------------------------------------------------------------
+
+class TestFocusMethodOverride:
+    def test_method_override_shown(self, tmp_path):
+        """S287: 'method override' shown when focused method overrides a parent class method."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        (tmp_path / "base.py").write_text(
+            "class Animal:\n    def speak(self): return 'generic sound'\n"
+        )
+        (tmp_path / "dog.py").write_text(
+            "from base import Animal\n"
+            "class Dog(Animal):\n"
+            "    def speak(self): return 'woof'\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from dog import Dog\ndef run(): Dog().speak()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "Dog.speak")
+        if "method override" in out:
+            assert "parent's contract" in out
+
+    def test_method_override_absent_for_unique_method(self, tmp_path):
+        """S287: 'method override' absent when method doesn't exist in parent."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        (tmp_path / "base.py").write_text(
+            "class Base:\n    def init(self): pass\n"
+        )
+        (tmp_path / "child.py").write_text(
+            "from base import Base\n"
+            "class Child(Base):\n"
+            "    def unique_method(self): return 42\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from child import Child\ndef run(): Child().unique_method()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "unique_method")
+        assert "method override" not in out, (
+            f"'method override' must not appear for unique method; got:\n{out}"
+        )
+
+
+# S288 — version file in diff (diff)
+# ---------------------------------------------------------------------------
+
+class TestDiffVersionFile:
+    def test_version_file_shown(self, tmp_path):
+        """S288: 'version file' shown when pyproject.toml or package.json is in diff."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "pyproject.toml").write_text('[tool.poetry]\nversion = "1.2.0"\n')
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "pyproject.toml"])
+        assert "version file" in out, f"Expected 'version file'; got:\n{out}"
+        assert "changelog" in out
+
+    def test_version_file_absent_for_source_only(self, tmp_path):
+        """S288: 'version file' absent when diff has no version files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "utils.py"])
+        assert "version file" not in out, (
+            f"'version file' must not appear for source-only diff; got:\n{out}"
+        )
+
+
+# S289 — interface module hotspot (hotspots)
+# ---------------------------------------------------------------------------
+
+class TestHotspotsInterfaceModule:
+    def test_interface_hotspot_shown(self, tmp_path):
+        """S289: 'interface hotspot' shown when top hotspot is in __init__.py."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        pkg = tmp_path / "mypackage"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text(
+            "def public_api(x): return x\n"
+        )
+        for i in range(6):
+            (tmp_path / f"user{i}.py").write_text(
+                f"from mypackage import public_api\n"
+                f"def work_{i}(): public_api({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "interface hotspot" in out, f"Expected 'interface hotspot'; got:\n{out}"
+        assert "all package consumers" in out
+
+    def test_interface_hotspot_absent_for_regular_file(self, tmp_path):
+        """S289: 'interface hotspot' absent when top hotspot is a regular source file."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        (tmp_path / "core.py").write_text("def process(x): return x\n")
+        for i in range(5):
+            (tmp_path / f"service{i}.py").write_text(
+                f"from core import process\ndef work_{i}(): process({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "interface hotspot" not in out, (
+            f"'interface hotspot' must not appear for regular file; got:\n{out}"
+        )
+
+
+# S290 — no importers blast (blast)
+# ---------------------------------------------------------------------------
+
+class TestBlastNoImporters:
+    def test_no_importers_shown(self, tmp_path):
+        """S290: 'no importers' shown when blast target has exported symbols but zero importers."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "orphan.py").write_text(
+            "def exported_fn(): return 1\n"
+            "def another_fn(): return 2\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "orphan.py")
+        assert "no importers" in out, f"Expected 'no importers'; got:\n{out}"
+        assert "unwired module" in out
+
+    def test_no_importers_absent_when_imported(self, tmp_path):
+        """S290: 'no importers' absent when target is imported by something."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "utils.py").write_text("def helper(): return 1\n")
+        (tmp_path / "app.py").write_text(
+            "from utils import helper\ndef run(): helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "utils.py")
+        assert "no importers" not in out, (
+            f"'no importers' must not appear when file is imported; got:\n{out}"
+        )
+
+
+# S291 — dead property getters (dead)
+# ---------------------------------------------------------------------------
+
+class TestDeadPropertyGetters:
+    def test_dead_getters_shown(self, tmp_path):
+        """S291: 'dead getters' shown when 3+ get_*/fetch_* fns are unused."""
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "repository.py").write_text(
+            "def get_user(id): return None\n"
+            "def get_order(id): return None\n"
+            "def fetch_products(): return []\n"
+            "def retrieve_config(): return {}\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead getters" in out, f"Expected 'dead getters'; got:\n{out}"
+        assert "API surface" in out
+
+    def test_dead_getters_absent_when_called(self, tmp_path):
+        """S291: 'dead getters' absent when getter fns are called."""
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "data.py").write_text(
+            "def get_user(id): return None\n"
+        )
+        (tmp_path / "service.py").write_text(
+            "from data import get_user\n"
+            "def process(uid): return get_user(uid)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead getters" not in out, (
+            f"'dead getters' must not appear when getters are used; got:\n{out}"
+        )

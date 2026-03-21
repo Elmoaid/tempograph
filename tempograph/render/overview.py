@@ -1580,6 +1580,26 @@ def render_overview(graph: Tempo) -> str:
             f" — multi-mode app; each startup path must be maintained separately"
         )
 
+
+    # S286: Shallow module graph — few import edges between source files (avg < 1 per file).
+    # Very low coupling may indicate disconnected modules, dead code islands, or
+    # a library with very independent components.
+    _s286_src = [
+        fp for fp in graph.files
+        if not _is_test_file(fp) and graph.files[fp].language.value in _CODE_LANGS
+    ]
+    if len(_s286_src) >= 8:
+        _s286_import_edges = sum(
+            1 for e in graph.edges
+            if e.kind.value == "imports" and not _is_test_file(e.source_id)
+        )
+        _s286_avg = _s286_import_edges / len(_s286_src)
+        if _s286_avg < 1.0:
+            lines.append(
+                f"shallow graph: avg {_s286_avg:.1f} imports/file across {len(_s286_src)} source files"
+                f" — low coupling; modules may be disconnected or code is largely dead"
+            )
+
         # Suggest directories to exclude — detect likely noise
     noisy = _detect_noisy_dirs(graph, modules)
     if noisy:
