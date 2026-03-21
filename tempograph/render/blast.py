@@ -2094,6 +2094,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — dense dependency; changes require tracing effects through many call paths"
         )
 
+    # S812: Constants/config blast — blast target is a constants or configuration file.
+    # Config and constants files are imported by many modules; changes to values (not structure)
+    # propagate silently — no call graph edge is broken, yet behaviour changes everywhere.
+    _stem812 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    _cfg_kws812 = ("constants", "constant", "config", "settings", "conf", "consts", "vars", "env")
+    if any(_stem812 == kw or _stem812.startswith(kw + "_") or _stem812.endswith("_" + kw) for kw in _cfg_kws812):
+        lines.append(
+            f"constants blast: {_fp589.rsplit('/', 1)[-1]} is a constants/config file"
+            f" — value changes propagate silently to all importers without triggering call-graph alerts"
+        )
+
     return "\n".join(lines)
 
 

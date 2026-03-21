@@ -2778,6 +2778,24 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — abandoned feature extensions; check if any base class still expects them"
         )
 
+    # S815: Dead abstract classes — unused abstract base classes.
+    # Abstract classes define contracts for subclasses; a dead abstract class means no
+    # concrete implementation is wired in, leaving the design pattern incomplete.
+    _dead_abc815 = [
+        s for s in dead
+        if s.kind.value == "class"
+        and (s.name.startswith("Abstract") or s.name.startswith("Base") or "Abstract" in s.name[1:])
+        and not _is_test_file(s.file_path)
+    ]
+    if _dead_abc815:
+        _abc_names815 = ", ".join(s.name for s in _dead_abc815[:3])
+        if len(_dead_abc815) > 3:
+            _abc_names815 += f" +{len(_dead_abc815) - 3} more"
+        lines.append(
+            f"dead abstract classes: {len(_dead_abc815)} unused abstract/base class(es) ({_abc_names815})"
+            f" — no concrete implementation wired in; the design contract is orphaned"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

@@ -2492,5 +2492,24 @@ def _collect_hotspots_signals(
                     f" — concurrency bugs here manifest as race conditions; review await chains carefully"
                 )
 
+    # S814: Cross-module hotspot — top hotspot is called from 3+ distinct top-level directories.
+    # When a symbol is depended upon across many structural boundaries it becomes a de-facto
+    # shared infrastructure piece; any change requires coordinating across all those modules.
+    if scores:
+        _top814 = scores[0][1]
+        if _top814 is not None and not _is_test_file(_top814.file_path):
+            _callers814 = graph.callers_of(_top814.id)
+            _dirs814 = {
+                c.file_path.replace("\\", "/").split("/")[0]
+                for c in _callers814
+                if c.file_path != _top814.file_path
+                and "/" in c.file_path.replace("\\", "/")
+            }
+            if len(_dirs814) >= 3:
+                out.append(
+                    f"\ncross-module hotspot: {_top814.name} is called from {len(_dirs814)} distinct top-level directories"
+                    f" — de-facto shared infrastructure; changes require cross-module coordination"
+                )
+
     return out
 

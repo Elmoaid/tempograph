@@ -3094,6 +3094,18 @@ def _signals_async_oop(
             f" — cross-language codebase; ensure tooling covers all languages"
         )
 
+    # S811: Large average file size — average source file line count exceeds 300.
+    # Oversized files accumulate multiple responsibilities; they increase cognitive load
+    # and are a leading indicator of future hotspots and refactoring pressure.
+    _src_files811 = [fi for fp, fi in graph.files.items() if not _is_test_file(fp)]
+    if _src_files811:
+        _avg_lines811 = sum(fi.line_count for fi in _src_files811) / len(_src_files811)
+        if _avg_lines811 > 300:
+            lines.append(
+                f"large avg file size: {_avg_lines811:.0f} lines per source file on average"
+                f" — files may benefit from splitting to improve navigability"
+            )
+
     return lines
 
 

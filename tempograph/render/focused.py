@@ -3757,6 +3757,18 @@ def _signals_focused_fn_advanced(
                 f" — changes affect startup sequencing and all initialization logic"
             )
 
+    # S810: Deprecated symbol focus — focused symbol has a deprecation notice in its docstring.
+    # Deprecated symbols signal intentional abandonment; callers should migrate to the replacement.
+    # Changing deprecated code is risky because the migration path is already prescribed.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim810 = _seed_syms[0]
+        _doc810 = (_prim810.doc or "").lower()
+        if "deprecated" in _doc810 and not _is_test_file(_prim810.file_path):
+            lines.append(
+                f"\ndeprecated symbol: {_prim810.name} has a deprecation notice in its docstring"
+                f" — verify all callers have migrated to the replacement before modifying"
+            )
+
     return lines
 
 

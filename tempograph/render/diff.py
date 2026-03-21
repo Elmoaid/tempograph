@@ -577,6 +577,17 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — fixture changes affect all tests in scope; audit callers before merging"
             )
 
+    # S813: __init__.py in diff — a package's public API surface file changed.
+    # __init__.py controls what is exported from a package; changing it shifts the public
+    # API and can break any code that relies on star imports or specific re-exports.
+    if changed_files:
+        _init813 = [f for f in changed_files if f.replace("\\", "/").rsplit("/", 1)[-1] == "__init__.py"]
+        if _init813:
+            lines.append(
+                f"init file in diff: __init__.py changed ({_init813[0].rsplit('/', 1)[-1]} in {_init813[0].rsplit('/', 2)[-2] if '/' in _init813[0] else '.'})"
+                f" — package public API surface may have shifted; audit all downstream imports"
+            )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 
