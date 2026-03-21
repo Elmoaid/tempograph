@@ -8571,3 +8571,119 @@ class TestFocusCallerCoverage:
         assert "caller coverage:" not in out, (
             f"'caller coverage:' must not appear for function with only 2 callers; got:\n{out}"
         )
+
+
+class TestHotspotsFileDangerZone:
+    """S89: Hotspots 'Danger zone:' for files that are both high-complexity AND high-churn."""
+
+    def test_danger_zone_shown_for_high_cx_high_churn_file(self, tmp_path):
+        """File with total cx >= 15 AND velocity >= 2/wk → 'Danger zone:' appears."""
+        from unittest.mock import patch
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        # Build a file with multiple complex functions (many branches = high cx)
+        code = "def fn_a(x):\n"
+        for i in range(8):
+            code += f"    if x > {i}: return {i}\n"
+        code += "    return 0\n"
+        code += "def fn_b(x):\n"
+        for i in range(8):
+            code += f"    if x < {i}: return {i}\n"
+        code += "    return 0\n"
+        (tmp_path / "heavy.py").write_text(code)
+
+        g = build_graph(str(tmp_path), use_cache=False)
+        heavy_fp = str(tmp_path / "heavy.py")
+        # Patch git.file_change_velocity to simulate active churn on this file
+        with patch("tempograph.git.file_change_velocity", return_value={heavy_fp: 3.5}):
+            out = render_hotspots(g)
+        assert "Danger zone:" in out, (
+            f"Expected 'Danger zone:' for high-cx + high-churn file; got:\n{out}"
+        )
+
+    def test_danger_zone_absent_when_no_git_velocity(self, tmp_path):
+        """No git history → velocity dict empty → no 'Danger zone:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        code = "def fn_a(x):\n"
+        for i in range(8):
+            code += f"    if x > {i}: return {i}\n"
+        code += "    return 0\n"
+        (tmp_path / "heavy.py").write_text(code)
+
+        g = build_graph(str(tmp_path), use_cache=False)
+        # No git repo → velocity will be empty → no danger zone
+        out = render_hotspots(g)
+        assert "Danger zone:" not in out, (
+            f"'Danger zone:' must not appear with no git velocity data; got:\n{out}"
+        )
+
+
+class TestHotspotsTestBadge:
+    """S86 — test coverage badge on hotspot header lines."""
+
+    def test_tested_badge_shown_for_covered_hotspot(self, tmp_path):
+        """Hotspot with direct test callers shows [tested] on header line."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        files = {
+            "core.py": "def engine(x):\n    return x * 2\n",
+            "a.py": "from core import engine\ndef a(x): return engine(x)\n",
+            "b.py": "from core import engine\ndef b(x): return engine(x)\n",
+            "c.py": "from core import engine\ndef c(x): return engine(x)\n",
+            "d.py": "from core import engine\ndef d(x): return engine(x)\n",
+            "e.py": "from core import engine\ndef e(x): return engine(x)\n",
+            "f.py": "from core import engine\ndef f(x): return engine(x)\n",
+            "test_core.py": "from core import engine\ndef test_engine(): assert engine(1) == 2\n",
+        }
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "[tested]" in out, (
+            f"Expected '[tested]' badge for hotspot with test coverage; got:\n{out}"
+        )
+
+    def test_no_tests_badge_shown_for_uncovered_hotspot(self, tmp_path):
+        """Hotspot with no test callers shows [no tests] on header line."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        files = {
+            "core.py": "def engine(x):\n    return x * 2\n",
+            "a.py": "from core import engine\ndef a(x): return engine(x)\n",
+            "b.py": "from core import engine\ndef b(x): return engine(x)\n",
+            "c.py": "from core import engine\ndef c(x): return engine(x)\n",
+            "d.py": "from core import engine\ndef d(x): return engine(x)\n",
+            "e.py": "from core import engine\ndef e(x): return engine(x)\n",
+            "f.py": "from core import engine\ndef f(x): return engine(x)\n",
+            "test_other.py": "def test_unrelated(): assert True\n",
+        }
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "[no tests]" in out, (
+            f"Expected '[no tests]' badge for hotspot with no coverage; got:\n{out}"
+        )
+
+    def test_no_badge_when_no_test_files_in_project(self, tmp_path):
+        """No badge at all when project has no test files."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        files = {
+            "core.py": "def engine(x):\n    return x * 2\n",
+            "a.py": "from core import engine\ndef a(x): return engine(x)\n",
+            "b.py": "from core import engine\ndef b(x): return engine(x)\n",
+            "c.py": "from core import engine\ndef c(x): return engine(x)\n",
+        }
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "[tested]" not in out, f"Badge must be absent when no test files exist; got:\n{out}"
+        assert "[no tests]" not in out, f"Badge must be absent when no test files exist; got:\n{out}"

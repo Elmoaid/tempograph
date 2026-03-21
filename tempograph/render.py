@@ -3325,9 +3325,21 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         caller_files_display = set(c.file_path for c in callers)
         cross_files = len(caller_files_display - {sym.file_path})
 
+        # Test coverage badge: [tested] = direct test callers or test file imports;
+        # [no tests] = no coverage; omitted when no test files exist in project.
+        _test_badge = ""
+        if _any_tests_in_project and sym.kind.value in ("function", "method", "class", "module"):
+            _tc_callers = [c for c in graph.callers_of(sym.id) if _is_test_file(c.file_path)]
+            if _tc_callers:
+                _test_badge = " [tested]"
+            elif sym.file_path and any(_is_test_file(i) for i in graph.importers_of(sym.file_path)):
+                _test_badge = " [tested]"
+            else:
+                _test_badge = " [no tests]"
+
         lines.append(
             f"{i:2d}. {sym.kind.value} {sym.qualified_name} "
-            f"[risk={score:.0f}] ({sym.file_path}:{sym.line_start})"
+            f"[risk={score:.0f}]{_test_badge} ({sym.file_path}:{sym.line_start})"
         )
         details = []
         if callers:
@@ -3527,6 +3539,29 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         _fcx_parts = [f"{fp.rsplit('/', 1)[-1]} (cx:{cx})" for fp, cx in _top_cx_files]
         lines.append("")
         lines.append(f"File complexity: {', '.join(_fcx_parts)}")
+
+    # S89: Danger zone — files in BOTH the top-churn AND top-complexity quadrant.
+    # Symbol-level churn risk (above) covers individual functions; this flags files where
+    # the combination of total complexity AND change rate creates the highest refactor risk.
+    # Threshold: file total cx >= 15 AND churn >= 2 commits/week.
+    if velocity and _file_cx:
+        _dz_files: list[tuple[float, str, int, float]] = []
+        for _dz_fp, _dz_cx in _file_cx.items():
+            if _dz_cx < 15:
+                continue
+            _dz_velo = velocity.get(_dz_fp, 0.0)
+            if _dz_velo < 2.0:
+                continue
+            _dz_score = _dz_cx * (_dz_velo ** 0.5)
+            _dz_files.append((_dz_score, _dz_fp, _dz_cx, _dz_velo))
+        if len(_dz_files) >= 1:
+            _dz_files.sort(key=lambda x: -x[0])
+            _dz_parts = [
+                f"{fp.rsplit('/', 1)[-1]} (cx:{fcx}, {fv:.1f}/wk)"
+                for _, fp, fcx, fv in _dz_files[:3]
+            ]
+            lines.append("")
+            lines.append(f"Danger zone: {', '.join(_dz_parts)} — high churn + complexity")
 
     return "\n".join(lines)
 
