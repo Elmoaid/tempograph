@@ -356,6 +356,23 @@ def render_overview(graph: Tempo) -> str:
             _ap_line += f", {len(_unused_exp)} unused ({_unused_pct}%)"
         lines.append(_ap_line)
 
+    # Private API leaking: symbols with _ prefix called from external files.
+    # Indicates callers depending on implementation details — fragile coupling.
+    _private_leaks: list[str] = []
+    for sym in graph.symbols.values():
+        if not sym.name.startswith("_") or sym.name.startswith("__"):
+            continue
+        if _is_test_file(sym.file_path) or sym.kind.value not in ("function", "method"):
+            continue
+        _ext_callers = {c.file_path for c in graph.callers_of(sym.id) if c.file_path != sym.file_path and not _is_test_file(c.file_path)}
+        if _ext_callers:
+            _private_leaks.append(sym.name)
+    if len(_private_leaks) >= 2:
+        _pl_str = ", ".join(_private_leaks[:4])
+        if len(_private_leaks) > 4:
+            _pl_str += f" +{len(_private_leaks) - 4} more"
+        lines.append(f"private leak ({len(_private_leaks)}): {_pl_str} — _ symbols called externally")
+
     # Potentially unused modules: source files with 0 source importers AND no test coverage.
     # Flags entire floating modules that nothing depends on and nothing tests — either dead
     # features or undiscovered entry points agents should investigate.

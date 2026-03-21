@@ -7163,3 +7163,52 @@ class TestOverviewCircularImports:
         assert "circular imports" not in out, (
             f"'circular imports' must not appear when no cycles exist; got:\n{out}"
         )
+
+
+class TestOverviewPrivateLeak:
+    """S67: Overview — 'private leak:' for _ symbols called from external non-test files.
+
+    Indicates callers depending on implementation details — fragile coupling.
+    Shown when 2+ private functions are called across file boundaries.
+    """
+
+    def _build(self, tmp_path, files: dict):
+        from tempograph.builder import build_graph
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_private_leak_shown_when_private_fns_called_externally(self, tmp_path):
+        """'private leak:' appears when 2+ _ functions are called from other files."""
+        from tempograph.render import render_overview
+
+        g = self._build(tmp_path, {
+            "utils.py": (
+                "def _private_a(x): return x\n"
+                "def _private_b(y): return y\n"
+            ),
+            "consumer.py": (
+                "from utils import _private_a, _private_b\n"
+                "def use(): return _private_a(1) + _private_b(2)\n"
+            ),
+        })
+        out = render_overview(g)
+        assert "private leak" in out, (
+            f"Expected 'private leak' when _ fns called externally; got:\n{out}"
+        )
+
+    def test_private_leak_absent_when_privates_stay_internal(self, tmp_path):
+        """'private leak:' absent when _ functions are only called within the same file."""
+        from tempograph.render import render_overview
+
+        g = self._build(tmp_path, {
+            "utils.py": (
+                "def _private_a(x): return x\n"
+                "def _private_b(y): return y\n"
+                "def public_fn(): return _private_a(1) + _private_b(2)\n"
+            ),
+        })
+        out = render_overview(g)
+        assert "private leak" not in out, (
+            f"'private leak' must not appear when _ fns are only used internally; got:\n{out}"
+        )
