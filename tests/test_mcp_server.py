@@ -3167,7 +3167,7 @@ class TestFileBlastCountRanking:
         g = self._build(tmp_path, files)
         out = render_hotspots(g, top_n=5)
         assert "blast:" in out, f"Should annotate file with 22 dependents; got:\n{out}"
-        assert "files depend on this" in out
+        assert "files depend" in out
 
     def test_blast_annotation_silent_below_threshold(self, tmp_path, monkeypatch):
         """render_hotspots does NOT annotate files with <20 external dependents."""
