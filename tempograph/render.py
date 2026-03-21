@@ -3600,6 +3600,20 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
                 lines.append(f"    ... and {len(by_line) - 10} more")
             lines.append("")
 
+    # S76: Private dead hint — non-exported functions/methods with 0 callers.
+    # find_dead_code() only reports exported symbols; private dead code is invisible without this.
+    # Shows count only (not full list) to keep output concise.
+    _private_dead_count = 0
+    for _pd_sym in graph.symbols.values():
+        if _pd_sym.exported or _is_test_file(_pd_sym.file_path):
+            continue
+        if _pd_sym.kind.value not in ("function", "method"):
+            continue
+        if not graph.callers_of(_pd_sym.id) and _pd_sym.line_count >= 2:
+            _private_dead_count += 1
+    if _private_dead_count >= 3:
+        lines.append(f"Private dead: {_private_dead_count} non-exported symbols with 0 callers (not shown here)")
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

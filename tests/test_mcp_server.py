@@ -7801,3 +7801,39 @@ class TestFocusImportDepthFromEntry:
         assert "[depth:" not in out, (
             f"'[depth:' must not appear for symbol only 1 hop from entry; got:\n{out}"
         )
+
+
+class TestDeadCodePrivateDead:
+    """S76: Dead code mode shows 'Private dead: N' hint when 3+ non-exported fns have 0 callers."""
+
+    def test_private_dead_shown_when_many_uncalled_private_fns(self, tmp_path):
+        """3+ private functions with 0 callers → 'Private dead:' hint shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        # Need an exported symbol too (so render_dead_code doesn't return early)
+        code = "def _a():\n    pass\n" * 3 + "def _b():\n    pass\n" + "def _c():\n    pass\n"
+        (tmp_path / "module.py").write_text(
+            "def exported_fn(): pass\n"
+            + "\n".join(f"def _priv{i}():\n    x = {i}\n    return x * 2\n" for i in range(4))
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "Private dead:" in out, (
+            f"Expected 'Private dead:' for 4 uncalled private fns; got:\n{out}"
+        )
+
+    def test_private_dead_absent_when_few_uncalled_fns(self, tmp_path):
+        """Only 1 private function with 0 callers → no 'Private dead:' hint."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        (tmp_path / "module.py").write_text(
+            "def exported_fn(): pass\n"
+            "def _only_one():\n    return 42\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "Private dead:" not in out, (
+            f"'Private dead:' must not appear for only 1 uncalled private fn; got:\n{out}"
+        )
