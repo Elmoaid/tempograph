@@ -7524,3 +7524,28 @@ class TestOverviewStableCore:
         assert "stable core:" in out, (
             f"Expected 'stable core:' when 2+ files have 5+ importers and are 60d stable; got:\n{out}"
         )
+
+
+class TestFocusCoChangeBuddy:
+    """S71: Focus mode — 'co-changes with:' file buddy from git history.
+
+    Shows the most frequently co-changed source file for the seed's file.
+    Absent for non-git repos and when no file has co-change count >= 4.
+    """
+
+    def test_co_change_absent_without_git(self, tmp_path):
+        """No co-change annotation in a non-git directory (no git history)."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "core.py").write_text(
+            "def process(x): return x\n"
+        )
+        (tmp_path / "utils.py").write_text(
+            "def helper(y): return y\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process")
+        assert "co-changes with:" not in out, (
+            f"'co-changes with:' must not appear without git history; got:\n{out}"
+        )
