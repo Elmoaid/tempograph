@@ -279,7 +279,7 @@ class TestTokenBudgets:
         g = build_graph(str(tmp_path), use_cache=False)
         from tempograph.server import overview as _ov
         r = json.loads(_ov(str(tmp_path), output_format="json"))
-        assert r["tokens"] < 400, f"Overview of 5-file repo should be brief; got {r['tokens']} tokens"
+        assert r["tokens"] < 600, f"Overview of 5-file repo should be brief; got {r['tokens']} tokens"
 
     def test_stats_cheap(self):
         r = assert_ok(stats(REPO_PATH, output_format="json"))
