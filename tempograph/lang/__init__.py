@@ -12,6 +12,7 @@ from .rust_handler import RustHandlerMixin
 from .swift_handler import SwiftHandlerMixin
 from .php_handler import PHPHandlerMixin
 from .kotlin_handler import KotlinHandlerMixin
+from .dart_handler import DartHandlerMixin
 
 __all__ = [
     "PythonHandlerMixin",
@@ -26,4 +27,5 @@ __all__ = [
     "SwiftHandlerMixin",
     "PHPHandlerMixin",
     "KotlinHandlerMixin",
+    "DartHandlerMixin",
 ]
