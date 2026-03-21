@@ -42304,3 +42304,227 @@ class TestDeadExportedS893:
         assert "dead exports" not in out, (
             f"'dead exports' must not appear when exported function is used; got:\n{out}"
         )
+
+
+# ── S894–S899 ──────────────────────────────────────────────────────────────────
+
+# ── S894: Deprecated file focus ───────────────────────────────────────────────
+
+class TestDeprecatedFileFocusS894:
+    """S894: Focused symbol in deprecated/legacy-named file emits deprecated-file signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "legacy_auth.py").write_text("def old_login(user): return True\n")
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "old_login")
+        assert "deprecated file" in out, (
+            f"'deprecated file' expected for symbol in legacy-named file; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "auth.py").write_text("def login(user): return True\n")
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "login")
+        assert "deprecated file" not in out, (
+            f"'deprecated file' must not appear for symbol in non-legacy file; got:\n{out}"
+        )
+
+
+# ── S895: Circular import pair ────────────────────────────────────────────────
+
+class TestCircularImportS895:
+    """S895: Two source files mutually importing each other emits circular-imports signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "alpha.py").write_text(
+            "from beta import beta_fn\ndef alpha_fn(): beta_fn()\n"
+        )
+        (tmp_path / "beta.py").write_text(
+            "from alpha import alpha_fn\ndef beta_fn(): alpha_fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "circular imports" in out, (
+            f"'circular imports' expected for mutually importing files; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        (tmp_path / "service.py").write_text(
+            "from utils import helper\ndef run(): helper()\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from service import run\ndef main(): run()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "circular imports" not in out, (
+            f"'circular imports' must not appear for non-circular dependency graph; got:\n{out}"
+        )
+
+
+# ── S896: Event handler blast ─────────────────────────────────────────────────
+
+class TestEventHandlerBlastS896:
+    """S896: Blast target filename contains 'handler'/'listener'/'event' emits event-handler-blast signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "payment_handler.py").write_text(
+            "def process_payment(event): return True\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from payment_handler import process_payment\n"
+            "def run(): process_payment({'amount': 100})\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "payment_handler.py")
+        assert "event handler blast" in out, (
+            f"'event handler blast' expected for handler-named file; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "payment_processor.py").write_text(
+            "def process_payment(data): return True\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from payment_processor import process_payment\n"
+            "def run(): process_payment({'amount': 100})\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "payment_processor.py")
+        assert "event handler blast" not in out, (
+            f"'event handler blast' must not appear for non-handler file; got:\n{out}"
+        )
+
+
+# ── S897: Co-located diff ────────────────────────────────────────────────────
+
+class TestCoLocatedDiffS897:
+    """S897: 2+ changed files in same directory emits co-located-diff signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        subdir = tmp_path / "services"
+        subdir.mkdir()
+        (subdir / "auth.py").write_text("def login(): pass\n")
+        (subdir / "permissions.py").write_text(
+            "from auth import login\ndef check(): login()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["services/auth.py", "services/permissions.py"])
+        assert "co-located diff" in out, (
+            f"'co-located diff' expected when 2+ files in same directory; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "auth.py").write_text("def login(): pass\n")
+        (tmp_path / "users.py").write_text(
+            "from auth import login\ndef get_user(): login()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["auth.py", "users.py"])
+        assert "co-located diff" not in out, (
+            f"'co-located diff' must not appear when files are in root (no subdir); got:\n{out}"
+        )
+
+
+# ── S898: Long method hotspot ─────────────────────────────────────────────────
+
+class TestLongMethodHotspotS898:
+    """S898: Top hotspot function spans 50+ lines emits long-method-hotspot signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        long_body = "    x = 1\n" * 52
+        (tmp_path / "processor.py").write_text(
+            f"def process_data(a, b, c, d):\n{long_body}    return a\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from processor import process_data\n"
+            "def run(): process_data(1, 2, 3, 4)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "long method hotspot" in out, (
+            f"'long method hotspot' expected for 50+ line function; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "processor.py").write_text(
+            "def process_data(a, b):\n    return a + b\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from processor import process_data\ndef run(): process_data(1, 2)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "long method hotspot" not in out, (
+            f"'long method hotspot' must not appear for short function; got:\n{out}"
+        )
+
+
+# ── S899: Dead error handlers ────────────────────────────────────────────────
+
+class TestDeadErrorHandlersS899:
+    """S899: Unused functions with error/exception naming emits dead-error-handlers signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "handlers.py").write_text(
+            "def handle_error(e): print(e)\n"
+            "def on_exception(ex): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead error handlers" in out, (
+            f"'dead error handlers' expected for unused error-handling functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "handlers.py").write_text(
+            "def handle_error(e): print(e)\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from handlers import handle_error\ndef _run(): handle_error(Exception())\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead error handlers" not in out, (
+            f"'dead error handlers' must not appear when error handler is called; got:\n{out}"
+        )

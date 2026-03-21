@@ -3088,6 +3088,28 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — public API symbols with no internal callers; check external consumers before removing"
         )
 
+    # S899: Dead error handlers — unused functions with error/exception handling naming.
+    # Orphaned error handlers indicate removed error recovery paths; they may still be
+    # registered in framework configs or expected by callers that are themselves dead.
+    _dead_errors899 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and any(
+            kw in s.name.lower()
+            for kw in ("error", "exception", "catch", "on_error", "onerror", "handle_exc")
+        )
+    ]
+    if _dead_errors899:
+        _err_names899 = ", ".join(s.name for s in _dead_errors899[:3])
+        if len(_dead_errors899) > 3:
+            _err_names899 += f" +{len(_dead_errors899) - 3} more"
+        lines.append(
+            f"dead error handlers: {len(_dead_errors899)} unused error handling function(s) ({_err_names899})"
+            f" — orphaned error handlers may indicate removed error recovery paths"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

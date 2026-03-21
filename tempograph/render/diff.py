@@ -2476,4 +2476,23 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — newly created files have no usage history; verify integration and imports"
             )
 
+    # S897: Co-located diff — 2+ changed files are in the same directory.
+    # Multiple changes within one directory suggest a localized refactor; verify that
+    # the directory's public interface contracts remain intact after the changes.
+    if len(changed_files) >= 2:
+        _dirs897 = [
+            f.replace("\\", "/").rsplit("/", 1)[0] if "/" in f.replace("\\", "/") else "."
+            for f in changed_files
+        ]
+        _dir_counts897: dict[str, int] = {}
+        for d in _dirs897:
+            _dir_counts897[d] = _dir_counts897.get(d, 0) + 1
+        _max_dir_count897 = max(_dir_counts897.values())
+        _max_dir_name897 = max(_dir_counts897, key=_dir_counts897.__getitem__)
+        if _max_dir_count897 >= 2 and _max_dir_name897 != ".":
+            lines.append(
+                f"co-located diff: {_max_dir_count897} changed files in {_max_dir_name897}/"
+                f" — directory-scoped change; verify public interface contracts remain intact"
+            )
+
     return "\n".join(lines)
