@@ -116,3 +116,53 @@ class TestPHPParser:
         )
         assert len(imports) >= 1
         assert any("User" in imp for imp in imports)
+
+    def test_public_property_extracted(self):
+        symbols, edges, _ = self._parse(
+            "<?php\nclass User {\n    public $name;\n}"
+        )
+        props = [s for s in symbols if s.kind == SymbolKind.VARIABLE]
+        assert len(props) == 1
+        assert props[0].name == "name"
+        assert props[0].exported is True
+
+    def test_private_property_not_exported(self):
+        symbols, _, _ = self._parse(
+            "<?php\nclass User {\n    private string $password;\n}"
+        )
+        props = [s for s in symbols if s.kind == SymbolKind.VARIABLE]
+        assert len(props) == 1
+        assert props[0].name == "password"
+        assert props[0].exported is False
+
+    def test_protected_property_not_exported(self):
+        symbols, _, _ = self._parse(
+            "<?php\nclass User {\n    protected $email;\n}"
+        )
+        props = [s for s in symbols if s.kind == SymbolKind.VARIABLE]
+        assert len(props) == 1
+        assert props[0].name == "email"
+        assert props[0].exported is False
+
+    def test_property_contains_edge(self):
+        symbols, edges, _ = self._parse(
+            "<?php\nclass Repo {\n    public $db;\n}"
+        )
+        contains = [e for e in edges if e.kind == EdgeKind.CONTAINS]
+        assert any("db" in e.target_id for e in contains), f"No CONTAINS for db: {contains}"
+
+    def test_multiple_properties(self):
+        symbols, _, _ = self._parse(
+            "<?php\nclass Config {\n    public $host;\n    protected $port;\n    private $secret;\n}"
+        )
+        props = [s for s in symbols if s.kind == SymbolKind.VARIABLE]
+        names = {p.name for p in props}
+        assert names == {"host", "port", "secret"}
+
+    def test_trait_property_extracted(self):
+        symbols, _, _ = self._parse(
+            "<?php\ntrait HasTimestamps {\n    public $created_at;\n}"
+        )
+        props = [s for s in symbols if s.kind == SymbolKind.VARIABLE]
+        assert len(props) == 1
+        assert props[0].name == "created_at"
