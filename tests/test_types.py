@@ -236,3 +236,66 @@ class TestSearchSymbolsScored:
         results = g.search_symbols("greet")
         assert isinstance(results, list)
         assert any(s.name == "greet" for s in results)
+
+
+# ── dependency_layers ─────────────────────────────────────────────────────────
+
+class TestDependencyLayers:
+    def test_returns_list_of_lists(self, tmp_path):
+        g = _build(tmp_path, {
+            "lib.py": "def fn(): pass\n",
+            "app.py": "from lib import fn\n",
+        })
+        result = g.dependency_layers()
+        assert isinstance(result, list)
+        for layer in result:
+            assert isinstance(layer, list)
+
+    def test_leaf_in_layer_zero(self, tmp_path):
+        g = _build(tmp_path, {
+            "lib.py": "def fn(): pass\n",
+            "app.py": "from lib import fn\n",
+        })
+        layers = g.dependency_layers()
+        assert len(layers) >= 1
+        # lib.py has no imports — should be in layer 0
+        assert any("lib.py" in f for f in layers[0])
+
+    def test_importer_in_higher_layer(self, tmp_path):
+        g = _build(tmp_path, {
+            "lib.py": "def fn(): pass\n",
+            "app.py": "from lib import fn\n",
+        })
+        layers = g.dependency_layers()
+        flat = [f for layer in layers for f in layer]
+        lib_layer = next(i for i, layer in enumerate(layers) if any("lib.py" in f for f in layer))
+        app_layer = next(i for i, layer in enumerate(layers) if any("app.py" in f for f in layer))
+        assert app_layer > lib_layer
+
+    def test_chain_produces_three_layers(self, tmp_path):
+        g = _build(tmp_path, {
+            "core.py": "def base(): pass\n",
+            "mid.py": "from core import base\ndef wrapper(): base()\n",
+            "top.py": "from mid import wrapper\ndef main(): wrapper()\n",
+        })
+        layers = g.dependency_layers()
+        assert len(layers) >= 2
+        core_layer = next(i for i, layer in enumerate(layers) if any("core.py" in f for f in layer))
+        mid_layer = next(i for i, layer in enumerate(layers) if any("mid.py" in f for f in layer))
+        top_layer = next(i for i, layer in enumerate(layers) if any("top.py" in f for f in layer))
+        assert core_layer < mid_layer < top_layer
+
+    def test_no_import_edges_returns_empty(self, tmp_path):
+        g = _build(tmp_path, {"standalone.py": "def fn(): pass\n"})
+        result = g.dependency_layers()
+        # No IMPORTS edges — no files in layers
+        assert result == []
+
+    def test_circular_dep_does_not_crash(self, tmp_path):
+        g = _build(tmp_path, {
+            "a.py": "from b import g\ndef f(): g()\n",
+            "b.py": "from a import f\ndef g(): f()\n",
+        })
+        result = g.dependency_layers()
+        # Should not raise; cycles get dumped into last layer
+        assert isinstance(result, list)
