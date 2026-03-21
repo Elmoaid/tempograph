@@ -1224,9 +1224,12 @@ def _build_symbol_block_lines(
         if depth == 0:
             children = graph.children_of(sym.id)
             if children:
-                block_lines.append(
-                    f"{indent}  contains: {', '.join(f'{c.kind.value[:4]} {c.name}' for c in children[:10])}"
-                )
+                _child_strs = []
+                for c in children[:10]:
+                    _c_callers = len(graph.callers_of(c.id))
+                    _c_ann = f" ({_c_callers})" if _c_callers >= 1 else ""
+                    _child_strs.append(f"{c.kind.value[:4]} {c.name}{_c_ann}")
+                block_lines.append(f"{indent}  contains: {', '.join(_child_strs)}")
     return block_lines
 
 

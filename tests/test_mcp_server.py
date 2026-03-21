@@ -4609,3 +4609,58 @@ class TestDiffKeySymbolCallerAnnotation:
         assert "[callers:" not in out, (
             f"Must NOT show [callers:] for symbols with no cross-file callers; got:\n{out}"
         )
+
+
+class TestFocusContainsCallerCounts:
+    """S35: Focus mode — caller counts on contained methods in 'contains:' line.
+
+    When a class is focused at depth-0, each method in 'contains:' should
+    show '(N)' caller count when N >= 1. Methods with 0 callers show no
+    annotation. Gives agents immediate understanding of which class methods
+    are most-used API surfaces.
+    """
+
+    def test_contains_shows_caller_count_for_called_method(self, tmp_path):
+        """Method with callers shows (N) annotation in contains: line."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "models.py").write_text(
+            "class User:\n"
+            "    def save(self): pass\n"
+            "    def delete(self): pass\n"
+        )
+        (tmp_path / "views.py").write_text(
+            "from models import User\n"
+            "def view(): u = User(); u.save(); u.save()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "User")
+
+        contains_line = next((l for l in out.split("\n") if "contains:" in l), "")
+        assert "save" in contains_line, f"save must be in contains:; got:\n{contains_line}"
+        # save has callers → should show count annotation
+        assert "(" in contains_line and ")" in contains_line, (
+            f"Caller count must appear for save; got:\n{contains_line}"
+        )
+
+    def test_contains_no_annotation_for_uncalled_method(self, tmp_path):
+        """Method with 0 callers shows no (0) annotation."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "models.py").write_text(
+            "class Widget:\n"
+            "    def render(self): pass\n"
+            "    def unused_helper(self): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "Widget")
+
+        contains_line = next((l for l in out.split("\n") if "contains:" in l), "")
+        if "unused_helper" in contains_line:
+            # Extract just the portion after 'unused_helper'
+            after = contains_line.split("unused_helper")[1].split(",")[0]
+            assert "(0)" not in after, (
+                f"No (0) annotation for uncalled methods; got:\n{contains_line}"
+            )
