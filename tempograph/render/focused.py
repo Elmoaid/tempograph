@@ -2806,6 +2806,24 @@ def _signals_focused_fn_advanced(
                     f" — changing return type or validation silently breaks all construction sites"
                 )
 
+    # S500: Recursive function — focused function has a direct self-call.
+    # Recursive functions have implicit stack depth limits and subtle base-case logic;
+    # adding a branch or changing the base case can silently cause infinite recursion.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim500 = next((s for s in _seed_syms if s.kind.value in ("function", "method")), None)
+        if _prim500:
+            _self_calls500 = [
+                e for e in graph.edges
+                if e.kind.value == "calls"
+                and e.source_id == _prim500.id
+                and e.target_id == _prim500.id
+            ]
+            if _self_calls500:
+                lines.append(
+                    f"\nrecursive: {_prim500.name} calls itself"
+                    f" — verify the base case before modifying; missing or changed base cases cause stack overflow"
+                )
+
     # S350: Orphaned symbol — focused symbol has 0 callers and the file is not imported anywhere.
     # Zero-caller symbols in unimported files may be dead code that was never wired up
     # during a refactor; modifying them has no effect unless the file is imported first.
@@ -2846,6 +2864,23 @@ def _signals_focused_fn_advanced(
                         f" but has no docstring — callers must infer behavior from code"
                     )
 
+    # S501: Pure function — focused function makes no outbound calls and is not a method.
+    # Pure functions are the easiest to test and refactor in isolation; any side-effect
+    # discovered later (e.g. global mutation, I/O) is a contract violation for all callers.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim501 = next((s for s in _seed_syms if s.kind.value == "function"), None)
+        if _prim501 and not _prim501.parent_id:
+            _callees501 = [
+                e for e in graph.edges
+                if e.kind.value == "calls" and e.source_id == _prim501.id
+            ]
+            # Use raw _callers index — callers_of() misses file-level caller edges
+            _has_callers501 = bool(getattr(graph, "_callers", {}).get(_prim501.id))
+            if not _callees501 and _has_callers501:
+                lines.append(
+                    f"\npure function: {_prim501.name} makes no outbound calls"
+                    f" — treat as a pure transformation; any side-effect introduced is a silent contract break"
+                )
 
     return lines
 

@@ -1489,4 +1489,20 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — wide diffs increase review blind-spots; consider splitting into smaller PRs"
         )
 
+    # S502: Public API change — diff contains a file that defines exported symbols used externally.
+    # Changes to publicly exported APIs break all downstream consumers silently;
+    # any rename, signature change, or removal requires a compatibility audit.
+    _s502_api_keywords = ("api", "public", "interface", "export", "schema", "contract")
+    _s502_api_files = [
+        f for f in changed_files
+        if any(kw in f.lower().replace("_", "").replace("-", "") for kw in _s502_api_keywords)
+        and not _is_test_file(f)
+    ]
+    if _s502_api_files:
+        lines.append(
+            f"public API change: {len(_s502_api_files)} API-named file(s) changed"
+            f" ({', '.join(f.rsplit('/', 1)[-1] for f in _s502_api_files[:2])})"
+            f" — verify all downstream consumers are updated before merging"
+        )
+
     return "\n".join(lines)

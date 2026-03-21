@@ -2254,6 +2254,22 @@ def _signals_async_oop(
             f" — wildcard imports hide symbol origins and risk silent name collisions"
         )
 
+    # S506: Deep nesting — source files are organized 3+ directory levels deep.
+    # Deeply nested modules make imports brittle and directory structure hard to navigate;
+    # any reorganization breaks all relative import paths across the affected subtree.
+    _s506_max_depth = 0
+    for _fp506 in graph.files:
+        if _is_test_file(_fp506):
+            continue
+        _depth506 = _fp506.replace("\\", "/").count("/")
+        if _depth506 > _s506_max_depth:
+            _s506_max_depth = _depth506
+    if _s506_max_depth >= 3:
+        lines.append(
+            f"deep nesting: source files are organized {_s506_max_depth} directories deep"
+            f" — deep nesting makes refactors brittle; consider flatter module structure"
+        )
+
     return lines
 
 
