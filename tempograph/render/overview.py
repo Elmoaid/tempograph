@@ -3323,6 +3323,21 @@ def _signals_async_oop(
             f" — e.g. {_ex895[0]} ↔ {_ex895[1]}; circular imports create tight coupling"
         )
 
+    # S901: Flat structure — all source files are in a single root directory.
+    # A flat codebase with 5+ files and no subdirectories becomes hard to navigate
+    # as it grows; consider grouping by module or domain to improve discoverability.
+    if len(graph.files) >= 5:
+        _src_files901 = [fp for fp in graph.files if not _is_test_file(fp)]
+        _dirs901 = {
+            fp.replace("\\", "/").rsplit("/", 1)[0] if "/" in fp.replace("\\", "/") else "."
+            for fp in _src_files901
+        }
+        if len(_dirs901) == 1 and "." in _dirs901 and len(_src_files901) >= 5:
+            lines.append(
+                f"flat structure: all {len(_src_files901)} source files are in the root directory"
+                f" — no subdirectory organization; consider grouping by module as codebase grows"
+            )
+
     return lines
 
 

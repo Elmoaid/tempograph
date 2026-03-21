@@ -2261,6 +2261,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — event handler changes affect all producers and consumers; verify message contracts"
         )
 
+    # S902: Router blast — blast target is a router, controller, or API endpoint file.
+    # Router files define URL-to-handler mappings; changes affect the public API surface
+    # and may break clients relying on stable endpoints or response contracts.
+    _router_kws902 = ("route", "router", "endpoint", "controller", "view", "urls", "api")
+    _fname902 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if any(kw in _fname902 for kw in _router_kws902):
+        lines.append(
+            f"router blast: {_fp589.rsplit('/', 1)[-1]} contains routes or endpoints"
+            f" — changes affect API surface; review backward compatibility and client contracts"
+        )
+
     return "\n".join(lines)
 
 
