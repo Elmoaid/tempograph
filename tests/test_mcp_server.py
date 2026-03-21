@@ -16953,3 +16953,204 @@ class TestDeadPropertyGetters:
         assert "dead getters" not in out, (
             f"'dead getters' must not appear when getters are used; got:\n{out}"
         )
+
+
+# S292 — polyglot codebase (overview)
+# ---------------------------------------------------------------------------
+
+class TestOverviewPolyglot:
+    def test_polyglot_shown(self, tmp_path):
+        """S292: 'polyglot' shown when 3+ programming languages detected."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        (tmp_path / "app.js").write_text("function hello() { return 1; }\n")
+        (tmp_path / "main.go").write_text("package main\nfunc main() {}\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "polyglot" in out, f"Expected 'polyglot'; got:\n{out}"
+        assert "toolchain" in out
+
+    def test_polyglot_absent_for_single_language(self, tmp_path):
+        """S292: 'polyglot' absent when repo uses only 1-2 languages."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "polyglot:" not in out, (
+            f"'polyglot:' must not appear for single-language repo; got:\n{out}"
+        )
+
+
+# S293 — deep inheritance (focused)
+# ---------------------------------------------------------------------------
+
+class TestFocusDeepInheritance:
+    def test_deep_inheritance_shown(self, tmp_path):
+        """S293: 'deep inheritance' shown when focused class is 3+ levels deep."""
+        from tempograph.builder import build_graph
+        from tempograph.render.focused import render_focused
+        (tmp_path / "hierarchy.py").write_text(
+            "class Base:\n    def base_method(self): pass\n\n"
+            "class Level1(Base):\n    def l1_method(self): pass\n\n"
+            "class Level2(Level1):\n    def l2_method(self): pass\n\n"
+            "class Deep(Level2):\n    def deep_method(self): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "Deep")
+        assert "deep inheritance" in out, f"Expected 'deep inheritance'; got:\n{out}"
+        assert "prefer composition" in out
+
+    def test_deep_inheritance_absent_for_shallow(self, tmp_path):
+        """S293: 'deep inheritance' absent when class inherits only 1 level."""
+        from tempograph.builder import build_graph
+        from tempograph.render.focused import render_focused
+        (tmp_path / "models.py").write_text(
+            "class Base:\n    def base_method(self): pass\n\n"
+            "class Child(Base):\n    def child_method(self): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "Child")
+        assert "deep inheritance" not in out, (
+            f"'deep inheritance' must not appear for 1-level inheritance; got:\n{out}"
+        )
+
+
+# S294 — CI/CD config in diff (diff)
+# ---------------------------------------------------------------------------
+
+class TestDiffCICDConfig:
+    def test_cicd_config_shown(self, tmp_path):
+        """S294: 'CI/CD config' shown when diff includes a workflow file."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", ".github/workflows/ci.yml"])
+        assert "CI/CD config" in out, f"Expected 'CI/CD config'; got:\n{out}"
+        assert "pipeline" in out
+
+    def test_cicd_config_absent_for_source_only(self, tmp_path):
+        """S294: 'CI/CD config' absent when diff has no CI files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "utils.py"])
+        assert "CI/CD config" not in out, (
+            f"'CI/CD config' must not appear for source-only diff; got:\n{out}"
+        )
+
+
+# S295 — re-exported hotspot (hotspots)
+# ---------------------------------------------------------------------------
+
+class TestHotspotsReExported:
+    def test_re_exported_hotspot_shown(self, tmp_path):
+        """S295: 're-exported hotspot' shown when top hotspot is also exported elsewhere."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        (tmp_path / "core.py").write_text("def process(x): return x\n")
+        (tmp_path / "index.py").write_text(
+            "from core import process\ndef process(x): return process(x)\n"
+        )
+        for i in range(6):
+            (tmp_path / f"worker{i}.py").write_text(
+                f"from core import process\ndef work_{i}(x): return process(x)\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "re-exported hotspot" in out, f"Expected 're-exported hotspot'; got:\n{out}"
+        assert "export facades" in out
+
+    def test_re_exported_hotspot_absent_for_unique_symbol(self, tmp_path):
+        """S295: 're-exported hotspot' absent when hotspot symbol is not re-exported."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        (tmp_path / "engine.py").write_text("def execute_pipeline(x): return x\n")
+        for i in range(5):
+            (tmp_path / f"job{i}.py").write_text(
+                f"from engine import execute_pipeline\n"
+                f"def run_{i}(x): return execute_pipeline(x)\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "re-exported hotspot" not in out, (
+            f"'re-exported hotspot' must not appear for unique symbol; got:\n{out}"
+        )
+
+
+# S296 — generated code blast (blast)
+# ---------------------------------------------------------------------------
+
+class TestBlastGeneratedCode:
+    def test_generated_code_shown(self, tmp_path):
+        """S296: 'generated file' shown when blast target path suggests auto-generation."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "api_pb2.py").write_text(
+            "def serialize(msg): return b''\n"
+            "def deserialize(data): return {}\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "api_pb2.py")
+        assert "generated file" in out, f"Expected 'generated file'; got:\n{out}"
+        assert "generator" in out
+
+    def test_generated_code_absent_for_regular_file(self, tmp_path):
+        """S296: 'generated file' absent when blast target is a regular source file."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "service.py").write_text("def handle(req): return {}\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "service.py")
+        assert "generated file" not in out, (
+            f"'generated file' must not appear for regular source file; got:\n{out}"
+        )
+
+
+# S297 — dead test helpers (dead)
+# ---------------------------------------------------------------------------
+
+class TestDeadTestHelpers:
+    def test_dead_test_helpers_shown(self, tmp_path):
+        """S297: 'dead test helpers' shown when 3+ unused helper fns in test files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.dead import render_dead_code
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "helpers.py").write_text(
+            "def setup_database(): pass\n"
+            "def create_user(name): pass\n"
+            "def make_session(token): pass\n"
+            "def build_request(path): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead test helpers" in out, f"Expected 'dead test helpers'; got:\n{out}"
+        assert "orphaned test setup" in out
+
+    def test_dead_test_helpers_absent_when_called(self, tmp_path):
+        """S297: 'dead test helpers' absent when helper fns are called."""
+        from tempograph.builder import build_graph
+        from tempograph.render.dead import render_dead_code
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "helpers.py").write_text(
+            "def setup_env(): pass\n"
+            "def create_fixture(): pass\n"
+        )
+        (tests_dir / "test_app.py").write_text(
+            "from helpers import setup_env, create_fixture\n"
+            "def test_main():\n    setup_env()\n    create_fixture()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead test helpers" not in out, (
+            f"'dead test helpers' must not appear when helpers are called; got:\n{out}"
+        )
