@@ -2156,6 +2156,19 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — value changes propagate to all consumers; blast radius is wider than direct callers"
         )
 
+    # S848: No direct symbol callers blast — blast target has importers but no graph callers.
+    # A file imported everywhere but with no tracked callers likely exports constants,
+    # type aliases, or re-exports; changes affect consumers in ways not visible in the graph.
+    if _fp589 in graph.files:
+        _importers848 = graph.importers_of(_fp589)
+        _syms848 = [graph.symbols[sid] for sid in graph.files[_fp589].symbols if sid in graph.symbols]
+        _callers848 = [c for s in _syms848 for c in graph.callers_of(s.id)]
+        if len(_importers848) >= 3 and not _callers848:
+            lines.append(
+                f"no symbol callers: {_fp589.rsplit('/', 1)[-1]} has {len(_importers848)} importers but no tracked callers"
+                f" — likely exports constants or type aliases; changes affect importers invisibly"
+            )
+
     return "\n".join(lines)
 
 

@@ -662,6 +662,23 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — shape-only change; isinstance checks and attribute access may silently break"
             )
 
+    # S849: Utility file in diff — changed files include utils/helpers/common named files.
+    # Utility files are implicitly depended on across many modules; small utility changes
+    # can have disproportionately wide blast radius beyond what the diff surface suggests.
+    if changed_files:
+        _util_kws849 = ("utils", "helpers", "common", "shared", "base", "core", "lib")
+        _util_files849 = [
+            f for f in changed_files
+            if any(kw == f.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+                   or f.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower().endswith("_" + kw)
+                   for kw in _util_kws849)
+        ]
+        if _util_files849:
+            lines.append(
+                f"utility file in diff: {len(_util_files849)} utility/helper file(s) changed"
+                f" — implicit dependencies; blast radius may be wider than direct callers"
+            )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 

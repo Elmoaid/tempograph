@@ -2925,6 +2925,25 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — removed subscriptions not cleaned up; verify the event or signal was also removed"
         )
 
+    # S851: Dead validation functions — unused validate_/check_/verify_ functions.
+    # Dead validators indicate abandoned input sanity checks or replaced validation logic;
+    # they may signal that callers no longer validate data they were once required to check.
+    _val_prefixes851 = ("validate_", "check_", "verify_", "assert_", "ensure_")
+    _dead_val851 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().startswith(p) for p in _val_prefixes851)
+    ]
+    if _dead_val851:
+        _val_names851 = ", ".join(s.name for s in _dead_val851[:3])
+        if len(_dead_val851) > 3:
+            _val_names851 += f" +{len(_dead_val851) - 3} more"
+        lines.append(
+            f"dead validators: {len(_dead_val851)} unused validation function(s) ({_val_names851})"
+            f" — abandoned input checks; verify callers no longer need these validations"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
