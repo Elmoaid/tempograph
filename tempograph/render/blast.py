@@ -1268,6 +1268,24 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — subscribers are invisible in dependency trace; grep for event names to find all consumers"
         )
 
+    # S437: Circular import risk — blast target has a mutual import relationship.
+    # File A imports from B while B imports from A creates a circular dependency;
+    # any change can trigger import errors at runtime (especially in Python) and
+    # makes refactoring extremely fragile since both files must change together.
+    _s437_outbound_files = {
+        e.target_id for e in graph.edges
+        if e.kind.value == "imports" and e.source_id == file_path
+        and e.target_id != file_path
+    }
+    _s437_circular = [fp for fp in _s437_outbound_files if file_path in graph.importers_of(fp)]
+    if _s437_circular:
+        _circ_name437 = _s437_circular[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"circular import risk: {file_path.rsplit('/', 1)[-1]} ↔ {_circ_name437}"
+            f" have mutual imports"
+            f" — any change in either file can trigger import errors; refactor to break the cycle"
+        )
+
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
 

@@ -21843,3 +21843,205 @@ class TestDeadSubscriptionsS432:
         assert "dead subscriptions" not in out, (
             f"'dead subscriptions' must not appear when subscribe fn is called; got:\n{out}"
         )
+
+
+class TestSyncOnlyOverviewS433:
+    """S433: Sync-only codebase with no async def functions emits the signal."""
+
+    def test_sync_only_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # 10+ source files, all sync (no async def)
+        for i in range(11):
+            (tmp_path / f"module_{i}.py").write_text(
+                f"def process_{i}(x):\n    return x * {i}\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "sync-only" in out, (
+            f"Expected 'sync-only' signal for 11-file sync codebase; got:\n{out}"
+        )
+
+    def test_sync_only_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # Only 3 source files — below the threshold of 10
+        for i in range(3):
+            (tmp_path / f"module_{i}.py").write_text(
+                f"def process_{i}(x):\n    return x\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "sync-only" not in out, (
+            f"'sync-only' must not appear when fewer than 10 source files; got:\n{out}"
+        )
+
+
+class TestFactoryFunctionFocusedS434:
+    """S434: Factory function pattern emits signal in focused output."""
+
+    def test_factory_function_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "factory.py").write_text(
+            "class DatabaseConnection:\n    pass\n\n"
+            "def create_connection(host, port, user, password):\n"
+            "    conn = DatabaseConnection()\n"
+            "    return conn\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "create_connection")
+        assert "factory function" in out, (
+            f"Expected 'factory function' signal for create_connection; got:\n{out}"
+        )
+
+    def test_factory_function_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        # Regular (non-factory-named) function
+        (tmp_path / "util.py").write_text(
+            "def process_data(items):\n    return [x * 2 for x in items]\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process_data")
+        assert "factory function" not in out, (
+            f"'factory function' must not appear for non-factory fn; got:\n{out}"
+        )
+
+
+class TestVersionBumpDiffS435:
+    """S435: Version bump in diff (version/changelog files changed) emits signal."""
+
+    def test_version_bump_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "CHANGELOG.md"])
+        assert "version bump" in out, (
+            f"Expected 'version bump' signal when CHANGELOG.md is in diff; got:\n{out}"
+        )
+
+    def test_version_bump_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py"])
+        assert "version bump" not in out, (
+            f"'version bump' must not appear when only app.py changes; got:\n{out}"
+        )
+
+
+class TestDataLayerHotspotS436:
+    """S436: Data-layer hotspot in DAO/repository/model file emits signal."""
+
+    def test_data_layer_hotspot_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        repo_dir = tmp_path / "src"
+        repo_dir.mkdir()
+        (repo_dir / "user_repository.py").write_text(
+            "class UserRepository:\n"
+            "    def find(self, id): pass\n"
+            "    def save(self, user): pass\n"
+            "    def delete(self, id): pass\n"
+        )
+        (repo_dir / "a.py").write_text("from user_repository import UserRepository\n")
+        (repo_dir / "b.py").write_text("from user_repository import UserRepository\n")
+        (repo_dir / "c.py").write_text("from user_repository import UserRepository\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "data-layer hotspot" in out, (
+            f"Expected 'data-layer hotspot' signal for user_repository.py; got:\n{out}"
+        )
+
+    def test_data_layer_hotspot_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def helper(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "data-layer hotspot" not in out, (
+            f"'data-layer hotspot' must not appear for non-data-layer file; got:\n{out}"
+        )
+
+
+class TestCircularImportBlastS437:
+    """S437: Circular import risk (mutual imports) emits signal in blast output."""
+
+    def test_circular_import_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "models.py").write_text(
+            "from services import ServiceBase\n\n"
+            "class UserModel:\n    pass\n"
+        )
+        (tmp_path / "services.py").write_text(
+            "from models import UserModel\n\n"
+            "class ServiceBase:\n    pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "models.py")
+        assert "circular import" in out, (
+            f"Expected 'circular import risk' signal for mutual import; got:\n{out}"
+        )
+
+    def test_circular_import_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "alpha.py").write_text("def alpha(): pass\n")
+        (tmp_path / "beta.py").write_text("from alpha import alpha\ndef beta(): alpha()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "alpha.py")
+        assert "circular import" not in out, (
+            f"'circular import risk' must not appear for one-way import; got:\n{out}"
+        )
+
+
+class TestDeadMigrationsS438:
+    """S438: Unused migrate_*/upgrade_*/downgrade_* functions emit the signal."""
+
+    def test_dead_migrations_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "migrations.py").write_text(
+            "def migrate_add_user_table():\n    pass\n\n"
+            "def upgrade_schema_v2():\n    pass\n\n"
+            "def downgrade_schema_v1():\n    pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead migrations" in out, (
+            f"Expected 'dead migrations' signal for unused migration fns; got:\n{out}"
+        )
+
+    def test_dead_migrations_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "migrations.py").write_text(
+            "def migrate_add_user_table():\n    pass\n"
+        )
+        (tmp_path / "runner.py").write_text(
+            "from migrations import migrate_add_user_table\n\n"
+            "def run():\n    migrate_add_user_table()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead migrations" not in out, (
+            f"'dead migrations' must not appear when migration fn is called; got:\n{out}"
+        )

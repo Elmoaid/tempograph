@@ -1488,5 +1488,18 @@ def _collect_hotspots_signals(
                 f" — {_top430.complexity} distinct paths need test coverage; refactor before growing further"
             )
 
+    # S436: Data-layer hotspot — top hotspot symbol lives in a DAO/repository/model/ORM file.
+    # Data-layer hotspots are especially risky: changes propagate through every service that
+    # reads that model, can invalidate caches across the stack, and may require migrations.
+    _s436_data_keywords = ("dao", "repository", "repo", "model", "orm", "schema", "database", "db")
+    if scores:
+        _top436 = scores[0][1]
+        _fp436 = _top436.file_path.lower().replace("\\", "/")
+        if not _is_test_file(_top436.file_path) and any(kw in _fp436 for kw in _s436_data_keywords):
+            out.append(
+                f"\ndata-layer hotspot: {_top436.name} lives in {_top436.file_path.rsplit('/', 1)[-1]}"
+                f" — data-layer changes cascade through every reader; check cache invalidation and migrations"
+            )
+
     return out
 
