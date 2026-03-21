@@ -2374,6 +2374,31 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                     f" — callers may assume pure function; order-dependent bugs possible"
                 )
 
+    # S362: Overloaded parameters — focused function/method has 8+ parameters.
+    # Functions with 8+ parameters are hard to call correctly and indicate
+    # missing abstractions; callers must remember argument order and often use positional args.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim362 = next(
+            (s for s in _seed_syms if s.kind.value in ("function", "method")), None
+        )
+        if _prim362 and _prim362.signature:
+            # Count comma-separated params (rough heuristic — exclude self/cls)
+            _sig362 = _prim362.signature
+            _paren362_start = _sig362.find("(")
+            _paren362_end = _sig362.rfind(")")
+            if _paren362_start != -1 and _paren362_end != -1:
+                _params362 = _sig362[_paren362_start + 1:_paren362_end].strip()
+                if _params362:
+                    _param_parts362 = [
+                        p for p in _params362.split(",")
+                        if p.strip() and p.strip() not in ("self", "cls", "*", "**kwargs", "*args")
+                    ]
+                    if len(_param_parts362) >= 8:
+                        lines.append(
+                            f"\nparam overload: {_prim362.name} has {len(_param_parts362)} parameters"
+                            f" — difficult to call correctly; consider a config object or builder pattern"
+                        )
+
     # S356: God method — focused method lives in a class with 20+ total methods.
     # God classes accumulate responsibilities until no single developer can hold them in their head;
     # methods in these classes are hard to test in isolation and often share hidden state.

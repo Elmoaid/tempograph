@@ -1124,6 +1124,39 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — check if registered in migration history; remove from both code and migration registry"
         )
 
+    # S366: Dead property accessors — get_*/set_* pairs where both are unused.
+    # Accessor pairs for removed properties are noisy dead code: two unused fns sharing a name root.
+    # They often survive after the underlying attribute was removed or renamed.
+    _s366_get_names = {
+        sym.name[4:]: sym
+        for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and sym.name.lower().startswith("get_")
+    }
+    _s366_set_names = {
+        sym.name[4:]: sym
+        for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and sym.name.lower().startswith("set_")
+    }
+    _s366_dead_pairs = [
+        (_s366_get_names[k], _s366_set_names[k])
+        for k in _s366_get_names
+        if k in _s366_set_names
+    ]
+    if _s366_dead_pairs:
+        _pair_str366 = ", ".join(
+            f"get_{k}/{_s366_set_names[k].name}" for k in list(_s366_get_names)[:2] if k in _s366_set_names
+        )
+        lines.append(
+            f"dead accessors: {len(_s366_dead_pairs)} unused get/set pair(s) ({_pair_str366})"
+            f" — accessor pairs suggest a removed property; delete both or restore the underlying attribute"
+        )
+
     # S360: Dead event handlers — on_*/handle_*/listen_* functions with 0 callers.
     # Event handlers that are never called may have been unregistered but not deleted;
     # they can mislead future developers into thinking certain events are handled.

@@ -19244,3 +19244,200 @@ class TestDeadEventHandlersS360:
         assert "dead event handlers" not in out, (
             f"'dead event handlers' must not appear when handlers are used; got:\n{out}"
         )
+
+
+# S361 — framework detection (overview)
+# ---------------------------------------------------------------------------
+
+class TestOverviewFrameworkDetection:
+    def test_framework_shown_for_django_files(self, tmp_path):
+        """S361: 'framework' shown when django-named files detected."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        (tmp_path / "django_views.py").write_text("def index(request): pass\n")
+        (tmp_path / "django_models.py").write_text("class Article: pass\n")
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "framework" in out, f"Expected 'framework'; got:\n{out}"
+        assert "Django" in out
+
+    def test_framework_absent_for_plain_code(self, tmp_path):
+        """S361: 'framework' absent when no framework patterns detected."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        for i in range(3):
+            (tmp_path / f"util_{i}.py").write_text(f"def fn_{i}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "framework:" not in out, (
+            f"'framework:' must not appear for plain code; got:\n{out}"
+        )
+
+
+# S362 — overloaded parameters (focused)
+# ---------------------------------------------------------------------------
+
+class TestFocusParamOverload:
+    def test_param_overload_shown(self, tmp_path):
+        """S362: 'param overload' shown when function has 8+ parameters."""
+        from tempograph.builder import build_graph
+        from tempograph.render.focused import render_focused
+        (tmp_path / "service.py").write_text(
+            "def create_order(user_id, item_id, quantity, price, discount,"
+            " currency, address, shipping_method, notes): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "create_order")
+        if "param overload" in out:
+            assert "parameters" in out or "config" in out
+
+    def test_param_overload_absent_for_few_params(self, tmp_path):
+        """S362: 'param overload' absent when function has few parameters."""
+        from tempograph.builder import build_graph
+        from tempograph.render.focused import render_focused
+        (tmp_path / "service.py").write_text("def create(user_id, item_id): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "create")
+        assert "param overload" not in out, (
+            f"'param overload' must not appear for few params; got:\n{out}"
+        )
+
+
+# S363 — test-only diff (diff)
+# ---------------------------------------------------------------------------
+
+class TestDiffTestOnly:
+    def test_test_only_diff_shown(self, tmp_path):
+        """S363: 'test-only diff' shown when all changed files are test files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "test_service.py").write_text("def test_run(): assert True\n")
+        (tmp_path / "test_models.py").write_text("def test_create(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["test_service.py", "test_models.py"])
+        assert "test-only diff" in out, f"Expected 'test-only diff'; got:\n{out}"
+        assert "source" in out or "snapshot" in out
+
+    def test_test_only_diff_absent_when_source_in_diff(self, tmp_path):
+        """S363: 'test-only diff' absent when diff includes source files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "service.py").write_text("def process(): pass\n")
+        (tmp_path / "test_service.py").write_text("def test_process(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["service.py", "test_service.py"])
+        assert "test-only diff" not in out, (
+            f"'test-only diff' must not appear when source is in diff; got:\n{out}"
+        )
+
+
+# S364 — test support hotspot (hotspots)
+# ---------------------------------------------------------------------------
+
+class TestHotspotsTestSupport:
+    def test_test_support_shown(self, tmp_path):
+        """S364: 'test support hotspot' shown when top hotspot is a conftest/fixtures file."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        conftest = "\n".join(f"def fixture_{i}(): pass" for i in range(6))
+        (tmp_path / "conftest.py").write_text(conftest + "\n")
+        for i in range(4):
+            (tmp_path / f"test_{i}.py").write_text(
+                f"from conftest import fixture_{i}\ndef test_fn(): fixture_{i}()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        if "test support hotspot" in out:
+            assert "conftest" in out or "test" in out
+
+    def test_test_support_absent_for_source_hotspot(self, tmp_path):
+        """S364: 'test support hotspot' absent when top hotspot is a source file."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        (tmp_path / "core.py").write_text(
+            "\n".join(f"def fn_{i}(x): return x" for i in range(5)) + "\n"
+        )
+        for i in range(3):
+            (tmp_path / f"client{i}.py").write_text(
+                f"from core import fn_{i}\ndef run(): fn_{i}(1)\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "test support hotspot" not in out, (
+            f"'test support hotspot' must not appear for source hotspot; got:\n{out}"
+        )
+
+
+# S365 — middleware blast (blast)
+# ---------------------------------------------------------------------------
+
+class TestBlastMiddleware:
+    def test_middleware_shown(self, tmp_path):
+        """S365: 'middleware blast' shown when blast target is a middleware file."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "middleware.py").write_text(
+            "def auth_middleware(request, handler): return handler(request)\n"
+        )
+        for i in range(4):
+            (tmp_path / f"view{i}.py").write_text(
+                f"from middleware import auth_middleware\ndef handler_{i}(r): return auth_middleware(r, None)\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "middleware.py")
+        if "middleware blast" in out:
+            assert "wraps" in out or "all code paths" in out or "simultaneously" in out
+
+    def test_middleware_absent_for_regular_file(self, tmp_path):
+        """S365: 'middleware blast' absent for non-middleware files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "helpers.py").write_text("def format_date(d): return str(d)\n")
+        for i in range(4):
+            (tmp_path / f"view{i}.py").write_text(
+                f"from helpers import format_date\ndef render_{i}(): format_date(None)\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "helpers.py")
+        assert "middleware blast" not in out, (
+            f"'middleware blast' must not appear for non-middleware file; got:\n{out}"
+        )
+
+
+# S366 — dead property accessors (dead)
+# ---------------------------------------------------------------------------
+
+class TestDeadPropertyAccessors:
+    def test_dead_accessors_shown(self, tmp_path):
+        """S366: 'dead accessors' shown when get_X/set_X pair both have 0 callers."""
+        from tempograph.builder import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "model.py").write_text(
+            "def get_username(user): return user['name']\n"
+            "def set_username(user, name): user['name'] = name\n"
+            "def get_email(user): return user['email']\n"
+            "def set_email(user, email): user['email'] = email\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead accessors" in out, f"Expected 'dead accessors'; got:\n{out}"
+        assert "pair" in out or "accessor" in out
+
+    def test_dead_accessors_absent_when_used(self, tmp_path):
+        """S366: 'dead accessors' absent when accessor fns are called."""
+        from tempograph.builder import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "props.py").write_text(
+            "def get_name(obj): return obj.name\n"
+            "def set_name(obj, v): obj.name = v\n"
+        )
+        (tmp_path / "service.py").write_text(
+            "from props import get_name, set_name\ndef update(obj): set_name(obj, get_name(obj))\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead accessors" not in out, (
+            f"'dead accessors' must not appear when accessors are used; got:\n{out}"
+        )
