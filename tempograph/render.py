@@ -4060,6 +4060,21 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         ]
         lines.append(f"Complex dead: {', '.join(_cd_parts)}")
 
+    # S95: Dead API — exported symbols with 0 cross-file callers in the dead code list.
+    # Distinct from private dead: exported symbols may be called from external code
+    # outside the indexed codebase. Deprecation-then-delete vs. immediate removal.
+    _dead_api = [
+        (sym, conf) for sym, conf in scored
+        if sym.exported and conf >= 40
+        and not any(c.file_path != sym.file_path for c in graph.callers_of(sym.id))
+    ]
+    if len(_dead_api) >= 2:
+        _da_parts = [f"{sym.name} ({sym.file_path.rsplit('/', 1)[-1]}, conf:{conf})" for sym, conf in _dead_api[:4]]
+        _da_str = ", ".join(_da_parts)
+        if len(_dead_api) > 4:
+            _da_str += f" +{len(_dead_api) - 4} more"
+        lines.append(f"Dead API ({len(_dead_api)}): {_da_str} — exported, no callers (verify before deleting)")
+
     # Orphan files: files where ALL exported symbols are dead → delete the whole file.
     # More actionable than quick wins: one `rm` instead of N symbol deletions.
     _dead_sym_ids = {sym.id for sym, _ in scored}

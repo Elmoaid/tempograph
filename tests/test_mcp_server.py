@@ -9139,3 +9139,41 @@ class TestFocusComplexityRelative:
         # Should show HIGH COMPLEXITY with relative annotation
         assert "HIGH COMPLEXITY" in out, f"Expected HIGH COMPLEXITY warning; got:\n{out}"
         assert "file avg" in out, f"Expected 'file avg' relative annotation; got:\n{out}"
+
+
+class TestDeadCodeDeadAPI:
+    """S95: Dead code 'Dead API (N):' for exported symbols with no cross-file callers."""
+
+    def test_dead_api_shown_for_two_exported_uncalled_functions(self, tmp_path):
+        """2 exported functions with no external callers → 'Dead API' appears."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        (tmp_path / "api.py").write_text(
+            "def create_user(name): return {'name': name}\n"
+            "def delete_user(uid): return True\n"
+        )
+        # No other file calls these functions
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "Dead API" in out, (
+            f"Expected 'Dead API' for 2 exported uncalled functions; got:\n{out}"
+        )
+        assert "create_user" in out or "delete_user" in out, (
+            f"Expected symbol name in Dead API output; got:\n{out}"
+        )
+
+    def test_dead_api_absent_when_exported_functions_are_called(self, tmp_path):
+        """Exported functions called by production code → no 'Dead API'."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        (tmp_path / "api.py").write_text("def process(x): return x\n")
+        (tmp_path / "main.py").write_text(
+            "from api import process\ndef run(): return process(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "Dead API" not in out, (
+            f"'Dead API' must not appear when exported functions have callers; got:\n{out}"
+        )
