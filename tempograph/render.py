@@ -1464,8 +1464,21 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
     importers = graph.importers_of(file_path)
     if importers:
         lines.append(f"Directly imported by ({len(importers)}):")
+        # Build index: importer_file → [caller symbol names that call INTO blast target]
+        _target_sym_ids = set(fi.symbols)
+        _importer_users: dict[str, list[str]] = {}
+        for edge in graph.edges:
+            if edge.kind is EdgeKind.CALLS and edge.target_id in _target_sym_ids:
+                caller = graph.symbols.get(edge.source_id)
+                if caller and caller.file_path in set(importers):
+                    _importer_users.setdefault(caller.file_path, []).append(caller.name)
         for imp in sorted(importers):
-            lines.append(f"  {imp}")
+            users = _importer_users.get(imp, [])
+            unique_users = list(dict.fromkeys(users))[:3]  # deduplicate, cap at 3
+            if unique_users:
+                lines.append(f"  {imp} — used by: {', '.join(unique_users)}")
+            else:
+                lines.append(f"  {imp}")
         lines.append("")
 
     # Symbols in this file that are called externally

@@ -3675,6 +3675,78 @@ class TestFocusHotCallers:
         )
 
 
+class TestBlastImporterUsedBy:
+    """S26: Blast mode — 'used by:' annotations on each direct importer.
+
+    When a file is directly imported by other files, show which specific
+    functions in each importer file actually call symbols from the blast target.
+    This lets agents know exactly which functions to update after changing the target.
+    """
+
+    def test_used_by_annotation_appears(self, tmp_path):
+        """Blast output shows 'used by:' with caller names for each importer."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        (tmp_path / "utils.py").write_text(
+            "def helper(): pass\ndef format_data(x): return x\n"
+        )
+        (tmp_path / "service.py").write_text(
+            "from utils import helper, format_data\n\n"
+            "def process(): return helper()\ndef transform(): return format_data(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "utils.py")
+
+        assert "used by:" in out, f"'used by:' must appear in blast output; got:\n{out}"
+        assert "service.py" in out
+
+    def test_importer_without_callers_shows_plain(self, tmp_path):
+        """Importers that import but have no CALLS edges show without 'used by:'."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        # service.py imports utils but only references it at module level (no function calls)
+        (tmp_path / "utils.py").write_text("VALUE = 42\n")
+        (tmp_path / "service.py").write_text("from utils import VALUE\nX = VALUE + 1\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "utils.py")
+
+        # service.py should appear in "Directly imported by" without "used by:"
+        lines = out.split("\n")
+        service_lines = [l for l in lines if "service.py" in l]
+        assert service_lines, f"service.py must appear; got:\n{out}"
+        # At least one service.py line should NOT have "used by:" (module-level only import)
+        assert any("used by:" not in l for l in service_lines), (
+            f"service.py should appear without 'used by:' for module-level import; got:\n{service_lines}"
+        )
+
+    def test_used_by_capped_at_three_callers(self, tmp_path):
+        """'used by:' annotation shows at most 3 caller names."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        (tmp_path / "lib.py").write_text("def helper(): pass\n")
+        # caller.py has 5 functions that all call helper
+        callers = "\n".join(
+            f"def fn_{i}(): return helper()" for i in range(5)
+        )
+        (tmp_path / "caller.py").write_text(
+            f"from lib import helper\n\n{callers}\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "lib.py")
+
+        used_by_line = next(
+            (l for l in out.split("\n") if "used by:" in l and "caller.py" in l), None
+        )
+        assert used_by_line is not None, f"used by: line must exist; got:\n{out}"
+        caller_names = used_by_line.split("used by:")[1].strip().split(", ")
+        assert len(caller_names) <= 3, (
+            f"Must cap at 3 caller names; got {caller_names}"
+        )
+
+
 class TestOverviewTopImported:
     """S25: Overview shows 'top imported:' section — files most imported by others.
 
