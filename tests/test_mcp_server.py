@@ -32709,3 +32709,235 @@ class TestDeadDerivedClassS689:
         assert "dead derived classes" not in out, (
             f"'dead derived classes' must not appear when subclass is used; got:\n{out}"
         )
+
+
+# ── S690: Method-heavy class (focused) ────────────────────────────────────────
+
+class TestMethodHeavyClassS690:
+    """S690: Focused class with 10+ methods emits method-heavy-class signal."""
+
+    def test_method_heavy_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        # Class with 11 methods
+        methods = "\n".join(f"    def method_{i}(self): pass" for i in range(11))
+        (tmp_path / "service.py").write_text(f"class BigService:\n{methods}\n")
+        (tmp_path / "app.py").write_text(
+            "from service import BigService\ndef run(): BigService()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "BigService")
+        assert "method-heavy class" in out, (
+            f"Expected 'method-heavy class' for class with 11 methods; got:\n{out}"
+        )
+
+    def test_method_heavy_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "service.py").write_text(
+            "class SmallService:\n"
+            "    def alpha(self): pass\n"
+            "    def beta(self): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from service import SmallService\ndef run(): SmallService()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "SmallService")
+        assert "method-heavy class" not in out, (
+            f"'method-heavy class' must not appear for a class with 2 methods; got:\n{out}"
+        )
+
+
+# ── S691: High global state (overview) ────────────────────────────────────────
+
+class TestHighGlobalStateS691:
+    """S691: >20% top-level symbols are variables/constants → high-global-state signal."""
+
+    def test_high_global_state_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # 3 functions + 4 constants = 4/7 = 57% variables (well above 20%)
+        (tmp_path / "config.py").write_text(
+            "MAX_SIZE = 100\nDEFAULT_TIMEOUT = 30\nRETRY_COUNT = 3\nVERSION = '1.0'\n"
+        )
+        (tmp_path / "utils.py").write_text(
+            "def alpha(): pass\ndef beta(): pass\ndef gamma(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "high global state" in out, (
+            f"Expected 'high global state' when >20% symbols are variables; got:\n{out}"
+        )
+
+    def test_high_global_state_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # Mostly functions — below 20% variable threshold
+        for i in range(8):
+            (tmp_path / f"fn_{i}.py").write_text(f"def func_{i}(): pass\n")
+        (tmp_path / "config.py").write_text("TIMEOUT = 30\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "high global state" not in out, (
+            f"'high global state' must not appear when vars are <20% of symbols; got:\n{out}"
+        )
+
+
+# ── S692: Heavily imported (blast) ────────────────────────────────────────────
+
+class TestHeavilyImportedS692:
+    """S692: Blast target imported by 10+ files emits heavily-imported signal."""
+
+    def test_heavily_imported_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def utility(): pass\n")
+        for i in range(10):
+            (tmp_path / f"consumer_{i}.py").write_text(
+                f"from core import utility\ndef task_{i}(): utility()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "core.py")
+        assert "heavily imported" in out, (
+            f"Expected 'heavily imported' for file with 10 importers; got:\n{out}"
+        )
+
+    def test_heavily_imported_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        for i in range(3):
+            (tmp_path / f"user_{i}.py").write_text(
+                f"from utils import helper\ndef run_{i}(): helper()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "utils.py")
+        assert "heavily imported" not in out, (
+            f"'heavily imported' must not appear with only 3 importers; got:\n{out}"
+        )
+
+
+# ── S693: Migration file in diff ──────────────────────────────────────────────
+
+class TestMigrationInDiffS693:
+    """S693: Diff including a migration file emits migration-in-diff signal."""
+
+    def test_migration_in_diff_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "001_add_users_migration.py").write_text(
+            "def upgrade(): pass\ndef downgrade(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "001_add_users_migration.py"])
+        assert "migration in diff" in out, (
+            f"Expected 'migration in diff' for migration file in diff; got:\n{out}"
+        )
+
+    def test_migration_in_diff_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "utils.py"])
+        assert "migration in diff" not in out, (
+            f"'migration in diff' must not appear for non-migration diff; got:\n{out}"
+        )
+
+
+# ── S694: Wrapper class hotspot ───────────────────────────────────────────────
+
+class TestWrapperClassHotspotS694:
+    """S694: Top hotspot is a method in a class with only 1-2 methods → wrapper-class-hotspot."""
+
+    def test_wrapper_class_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        # Wrapper class: only 1 method, called from many places
+        (tmp_path / "wrapper.py").write_text(
+            "class Processor:\n    def execute(self, x): return x\n"
+        )
+        for i in range(6):
+            (tmp_path / f"client_{i}.py").write_text(
+                f"from wrapper import Processor\n"
+                f"def use_{i}(): Processor().execute({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "wrapper class hotspot" in out, (
+            f"Expected 'wrapper class hotspot' for method in 1-method class; got:\n{out}"
+        )
+
+    def test_wrapper_class_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        # Rich class: 5 methods (not a thin wrapper)
+        methods = "\n".join(
+            f"    def op_{i}(self, x): return x + {i}" for i in range(5)
+        )
+        (tmp_path / "service.py").write_text(f"class RichService:\n{methods}\n")
+        for i in range(5):
+            (tmp_path / f"user_{i}.py").write_text(
+                f"from service import RichService\n"
+                f"def run_{i}(): RichService().op_0({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "wrapper class hotspot" not in out, (
+            f"'wrapper class hotspot' must not appear for a class with 5 methods; got:\n{out}"
+        )
+
+
+# ── S695: Dead test utilities ──────────────────────────────────────────────────
+
+class TestDeadTestUtilitiesS695:
+    """S695: Unused functions with test-utility names in source files → dead-test-utilities."""
+
+    def test_dead_test_utils_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        # mock_* functions in a source (non-test) file, never called
+        (tmp_path / "helpers.py").write_text(
+            "def mock_database(): pass\n"
+            "def stub_http_client(): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead test utilities" in out, (
+            f"Expected 'dead test utilities' for unused mock/stub fns in source file; got:\n{out}"
+        )
+
+    def test_dead_test_utils_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        # mock_database IS called from app
+        (tmp_path / "helpers.py").write_text(
+            "def mock_database(): return {}\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from helpers import mock_database\ndef setup(): return mock_database()\n"
+        )
+        (tmp_path / "runner.py").write_text(
+            "from app import setup\ndef run(): setup()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead test utilities" not in out, (
+            f"'dead test utilities' must not appear when mock fn is called; got:\n{out}"
+        )

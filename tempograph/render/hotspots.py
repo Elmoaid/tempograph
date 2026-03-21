@@ -2161,5 +2161,29 @@ def _collect_hotspots_signals(
                     f" — single-symbol file; consider inlining or merging"
                 )
 
+    # S694: Wrapper class hotspot — top hotspot is a method in a class with only 1-2 methods.
+    # A hotspot method inside a near-empty class suggests the class is a thin wrapper;
+    # the class adds abstraction overhead without providing enough behaviour to justify it.
+    if scores and scores[0]:
+        _top694 = scores[0][1]
+        if (
+            _top694 is not None
+            and not _is_test_file(_top694.file_path)
+            and _top694.kind.value == "method"
+            and _top694.parent_id is not None
+        ):
+            _parent694 = graph.symbols.get(_top694.parent_id)
+            if _parent694 is not None:
+                _sibling_methods694 = [
+                    c for c in graph.children_of(_parent694.id)
+                    if c.kind.value in ("method", "function")
+                ]
+                if len(_sibling_methods694) <= 2:
+                    out.append(
+                        f"\nwrapper class hotspot: {_top694.name} is a method in"
+                        f" {_parent694.name} which has only {len(_sibling_methods694)} method(s)"
+                        f" — thin wrapper; consider inlining the class"
+                    )
+
     return out
 
