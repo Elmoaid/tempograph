@@ -7900,3 +7900,33 @@ class TestDiffTestsInDiff:
         assert "Tests in diff:" not in out, (
             f"'Tests in diff:' must not appear when no test files in diff; got:\n{out}"
         )
+
+
+class TestFocusClassSizeAnnotation:
+    """S79: Focus seed shows [methods: N] for classes with >= 5 methods."""
+
+    def test_class_size_shown_for_large_class(self, tmp_path):
+        """Class with 6 methods → '[methods: 6]' shown in header."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        methods = "\n".join(f"    def method_{i}(self): pass" for i in range(6))
+        (tmp_path / "service.py").write_text(f"class Service:\n{methods}\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "Service")
+        assert "[methods:" in out, (
+            f"Expected '[methods:' annotation for class with 6 methods; got:\n{out}"
+        )
+
+    def test_class_size_absent_for_small_class(self, tmp_path):
+        """Class with 3 methods → no '[methods:' annotation."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        methods = "\n".join(f"    def m{i}(self): pass" for i in range(3))
+        (tmp_path / "small.py").write_text(f"class Small:\n{methods}\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "Small")
+        assert "[methods:" not in out, (
+            f"'[methods:' must not appear for class with only 3 methods; got:\n{out}"
+        )

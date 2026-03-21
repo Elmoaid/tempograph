@@ -1537,6 +1537,7 @@ def _build_symbol_block_lines(
     _doc_ann = ""
     _param_ann = ""
     _depth_from_entry_ann = ""
+    _class_size_ann = ""
     if depth == 0:
         _blast_files = {c.file_path for c in graph.callers_of(sym.id) if c.file_path != sym.file_path}
         if len(_blast_files) >= 3:
@@ -1623,6 +1624,17 @@ def _build_symbol_block_lines(
                     _pcount = _pc + 1
                     if _pcount >= 5:
                         _param_ann = f" [params: {_pcount}]"
+        # S79: Class size annotation — for CLASS seeds, show [methods: N] in header.
+        # Helps agents assess class complexity before reading; large classes need grep not read.
+        _class_size_ann = ""
+        if sym.kind.value in ("class", "interface", "component"):
+            _children = graph.children_of(sym.id)
+            _methods = [c for c in _children if c.kind.value in ("method", "function")]
+            _props = [c for c in _children if c.kind.value in ("field", "property", "variable")]
+            if len(_methods) >= 5:
+                _class_size_ann = f" [methods: {len(_methods)}]"
+                if _props:
+                    _class_size_ann += f"[props: {len(_props)}]"
         # S75: Import depth from entry point — BFS backwards through import graph
         # to find the shortest path from any known entry file to the seed's file.
         # [depth: N] tells agents how deeply nested this file is; N>=4 = hard to trace.
@@ -1692,7 +1704,7 @@ def _build_symbol_block_lines(
         }
         if len(_hub_caller_files) >= 15:
             _hub_ann = f" [hub: {len(_hub_caller_files)} files]"
-    block_lines = [f"{prefix} {sym.kind.value} {sym.qualified_name}{_blast_ann}{_hub_ann}{_age_ann}{_callee_ann}{_depth_ann}{_doc_ann}{_param_ann}{_depth_from_entry_ann} — {loc}{orbit_note}"]
+    block_lines = [f"{prefix} {sym.kind.value} {sym.qualified_name}{_blast_ann}{_hub_ann}{_age_ann}{_callee_ann}{_depth_ann}{_doc_ann}{_param_ann}{_depth_from_entry_ann}{_class_size_ann} — {loc}{orbit_note}"]
     # S61: "also in:" — warn when same symbol name exists in other files.
     # Prevents agents from fixing the wrong copy in multi-file refactors.
     if depth == 0:
