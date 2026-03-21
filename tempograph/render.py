@@ -255,6 +255,27 @@ def render_overview(graph: Tempo) -> str:
             lines.append("")
             lines.append(f"top imported: {', '.join(_ti_parts)}")
 
+    # High-coupling files: non-test source files that import >= 8 distinct source files.
+    # High fan-out = many dependencies = fragile integration points. Hard to change safely.
+    _import_fanout: dict[str, int] = {}
+    for _edge in graph.edges:
+        if _edge.kind == EdgeKind.IMPORTS:
+            _src_fp = _edge.source_id
+            _tgt_fp = _edge.target_id
+            if (
+                _src_fp in graph.files and _tgt_fp in graph.files
+                and not _is_test_file(_src_fp) and not _is_test_file(_tgt_fp)
+                and _src_fp != _tgt_fp
+            ):
+                _import_fanout[_src_fp] = _import_fanout.get(_src_fp, 0) + 1
+    _high_coupling = sorted(
+        [(n, fp) for fp, n in _import_fanout.items() if n >= 8],
+        key=lambda x: -x[0],
+    )
+    if _high_coupling:
+        _hc_parts = [f"{fp.rsplit('/', 1)[-1]} ({n} imports)" for n, fp in _high_coupling[:3]]
+        lines.append(f"high-coupling: {', '.join(_hc_parts)}")
+
     # Test coverage ratio: source files with a matching test file (name-pattern match).
     # Signals overall project health — agents use this to identify undertested areas.
     # Only count code files with symbols (excludes docs, config, markdown).

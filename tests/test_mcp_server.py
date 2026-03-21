@@ -6536,31 +6536,63 @@ class TestFocusTestCoverageHint:
             f"Expected 'no tests' warning for exported function with no test callers; got:\n{out}"
         )
 
-    def test_no_coverage_hint_for_class_symbol(self, tmp_path):
-        """Class symbol at depth-0 does NOT get tested/no-tests annotation (only fns/methods do)."""
+    def test_no_tests_absent_for_private_function(self, tmp_path):
+        """Private (non-exported) function does NOT get 'no tests' warning."""
         from tempograph.builder import build_graph
         from tempograph.render import render_focused
 
-        (tmp_path / "config.py").write_text(
-            "class Config:\n    pass\n"
-        )
-        (tmp_path / "main.py").write_text(
-            "from config import Config\ndef run(): return Config()\n"
+        (tmp_path / "lib.py").write_text(
+            "def _internal(x):\n    return x\n"
+            "def public_fn(x):\n    return _internal(x)\n"
         )
         g = build_graph(str(tmp_path), use_cache=False)
-        # Focus on Config (class, no methods, not a function) — no coverage hint
-        out = render_focused(g, "Config")
-        # Extract only depth-0 lines (● prefix) and their immediate annotations
-        depth0_section = []
-        in_depth0 = False
-        for line in out.splitlines():
-            if line.startswith("●"):
-                in_depth0 = True
-            elif line.startswith("  →") or line.startswith("    ·"):
-                in_depth0 = False
-            if in_depth0:
-                depth0_section.append(line)
-        hint_lines = [l for l in depth0_section if "tested:" in l or "no tests" in l]
-        assert not hint_lines, (
-            f"Class depth-0 seed must not get coverage hint; found: {hint_lines}"
+        out = render_focused(g, "_internal")
+        # _internal is not exported, so 'no tests' must not appear
+        assert "no tests" not in out, (
+            f"'no tests' must not appear for private (non-exported) function; got:\n{out}"
+        )
+
+
+class TestOverviewHighCoupling:
+    """S58: Overview — 'high-coupling:' section for files importing >=8 distinct source files.
+
+    Files with high fan-out (many imports) are fragile integration points.
+    Absent when no source file imports 8+ distinct files.
+    """
+
+    def _build(self, tmp_path, files: dict):
+        from tempograph.builder import build_graph
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_high_coupling_shown_for_file_with_many_imports(self, tmp_path):
+        """'high-coupling:' appears when a source file imports >=8 distinct files."""
+        from tempograph.render import render_overview
+
+        # Create 9 simple modules and an integrator that imports them all
+        files = {f"mod_{i}.py": f"def func_{i}(): return {i}\n" for i in range(9)}
+        import_lines = "\n".join(f"from mod_{i} import func_{i}" for i in range(9))
+        files["integrator.py"] = import_lines + "\ndef combine(): pass\n"
+        g = self._build(tmp_path, files)
+        out = render_overview(g)
+        assert "high-coupling:" in out, (
+            f"Expected 'high-coupling:' when file imports 9 modules; got:\n{out}"
+        )
+        assert "integrator.py" in out, (
+            f"Expected 'integrator.py' in high-coupling output; got:\n{out}"
+        )
+
+    def test_high_coupling_absent_when_imports_below_threshold(self, tmp_path):
+        """'high-coupling:' absent when no source file imports >=8 distinct files."""
+        from tempograph.render import render_overview
+
+        g = self._build(tmp_path, {
+            "a.py": "def fa(): pass\n",
+            "b.py": "def fb(): pass\n",
+            "c.py": "from a import fa\nfrom b import fb\ndef fc(): fa(); fb()\n",
+        })
+        out = render_overview(g)
+        assert "high-coupling:" not in out, (
+            f"'high-coupling:' must not appear when max imports is 2; got:\n{out}"
         )
