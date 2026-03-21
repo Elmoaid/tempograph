@@ -1397,4 +1397,22 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 f" — test helpers should not accumulate logic; extract shared helpers to a src/ utility"
             )
 
+    # S406: Init-file hotspot — the top hotspot symbol lives inside an __init__.py.
+    # __init__.py hotspots indicate the package initializer has become a logic hub;
+    # init files should only re-export symbols, not hold business logic.
+    if scores:
+        _top406 = scores[0][1]
+        _fname406 = _top406.file_path.rsplit("/", 1)[-1].lower()
+        if _fname406 in ("__init__.py", "index.js", "index.ts", "index.tsx"):
+            _callers406 = {
+                e.source_id for e in graph.edges
+                if e.kind.value == "calls" and e.target_id == _top406.id
+            }
+            if len(_callers406) >= 2:
+                lines.append(
+                    f"\ninit-file hotspot: {_top406.name} (in {_fname406}) is the top hotspot"
+                    f" with {len(_callers406)} caller(s)"
+                    f" — init files should only re-export; move logic to a dedicated module"
+                )
+
     return "\n".join(lines)  # ALWAYS return here — never inside a conditional block

@@ -1813,6 +1813,29 @@ def _signals_structure(
             f" — no regression protection; any change can silently break existing behavior"
         )
 
+    # S403: Single-file majority — one source file accounts for 50%+ of all source lines.
+    # A single file dominating the codebase indicates a god module; future maintainers
+    # will underestimate the blast radius of any change to that file.
+    _s403_src_files = [
+        fp for fp in graph.files
+        if graph.files[fp].language.value in _CODE_LANGS
+        and not _is_test_file(fp)
+    ]
+    if len(_s403_src_files) >= 4:
+        _s403_total_lines = sum(
+            (graph.files[fp].line_count or 0) for fp in _s403_src_files
+        )
+        if _s403_total_lines > 0:
+            _s403_biggest = max(_s403_src_files, key=lambda fp: graph.files[fp].line_count or 0)
+            _s403_biggest_lines = graph.files[_s403_biggest].line_count or 0
+            _s403_pct = _s403_biggest_lines / _s403_total_lines
+            if _s403_pct >= 0.50:
+                _s403_short = _s403_biggest.rsplit("/", 1)[-1]
+                lines.append(
+                    f"single-file majority: {_s403_short} holds {_s403_biggest_lines} of"
+                    f" {_s403_total_lines} total lines ({_s403_pct:.0%})"
+                    f" — god module risk; split into focused modules before growing further"
+                )
 
     return lines
 
