@@ -133,9 +133,9 @@ class TestFileCommitCounts:
 
     def test_known_active_file_has_count(self):
         result = file_commit_counts(TEMPOGRAPH_ROOT, n_commits=100)
-        # tempograph/parser.py is the most-changed file
-        assert "tempograph/parser.py" in result
-        assert result["tempograph/parser.py"] > 0
+        # tempograph/render/overview.py is consistently among the most-changed files
+        assert "tempograph/render/overview.py" in result
+        assert result["tempograph/render/overview.py"] > 0
 
 
 # ── changed_files_branch ──────────────────────────────────────────────────────

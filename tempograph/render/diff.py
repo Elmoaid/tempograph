@@ -891,4 +891,30 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — version manifest changed; verify changelog and tag are updated"
         )
 
+
+    # S294: CI/CD config in diff — diff includes CI/CD pipeline configuration files.
+    # CI changes affect build, test, and deploy pipelines for everyone;
+    # broken CI blocks all future merges until fixed.
+    _s294_ci_names = {
+        ".travis.yml", ".travis.yaml", "appveyor.yml", "azure-pipelines.yml",
+        "bitbucket-pipelines.yml", "circle.yml", "tox.ini", "Jenkinsfile",
+        ".circleci", ".drone.yml", "codeship-services.yml",
+    }
+    _s294_ci_dirs = (".github/workflows/", ".circleci/", ".buildkite/", ".gitlab/")
+    _s294_ci_files = []
+    for _fp294 in list(normalized) + [f for f in changed_files if f not in normalized]:
+        _name294 = _fp294.rsplit("/", 1)[-1].lower()
+        _fp294_lower = _fp294.lower()
+        if (
+            _name294 in _s294_ci_names
+            or any(_fp294_lower.startswith(d) or f"/{d}" in _fp294_lower for d in _s294_ci_dirs)
+        ):
+            _s294_ci_files.append(_fp294)
+    if _s294_ci_files:
+        _ci_names294 = [fp.rsplit("/", 1)[-1] for fp in _s294_ci_files[:2]]
+        lines.append(
+            f"CI/CD config: {', '.join(_ci_names294)} in diff"
+            f" — pipeline change; broken CI blocks all future merges"
+        )
+
     return "\n".join(lines)

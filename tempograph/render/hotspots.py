@@ -1090,4 +1090,30 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 f" ({_importers289} package importer(s)) — changes here affect all package consumers"
             )
 
+
+    # S295: Re-exported hotspot — top hotspot symbol has the same name exported from another file.
+    # Re-exported symbols create multiple blast radii: changes must propagate
+    # through both the definition and all the re-export facades.
+    if scores:
+        for _sc295, _sym295 in scores[:5]:
+            if _sym295.kind.value not in ("function", "method", "class"):
+                continue
+            if _is_test_file(_sym295.file_path):
+                continue
+            # Find other files that export a symbol with the same name
+            _same_name295 = [
+                s for s in graph.symbols.values()
+                if s.name == _sym295.name
+                and s.file_path != _sym295.file_path
+                and s.exported
+                and not _is_test_file(s.file_path)
+            ]
+            if _same_name295:
+                _facade295 = _same_name295[0].file_path.rsplit("/", 1)[-1]
+                lines.append(
+                    f"\nre-exported hotspot: {_sym295.name} also exported from {_facade295}"
+                    f" — multi-path symbol; changes propagate through all export facades"
+                )
+                break
+
     return "\n".join(lines)  # ALWAYS return here — never inside a conditional block
