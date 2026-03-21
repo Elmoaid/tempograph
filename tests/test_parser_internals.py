@@ -410,3 +410,32 @@ class TestImportersOf:
         g = self._build(tmp_path, {"a.py": "x = 1\n"})
         result = g.importers_of("nonexistent.py")
         assert result == []
+
+
+# ── _parent_qualified_name ────────────────────────────────────────────────────
+
+class TestParentQualifiedName:
+    def test_empty_stack_returns_none(self):
+        p = _parser("")
+        assert p._parent_qualified_name() is None
+
+    def test_returns_qualified_name_of_parent(self):
+        code = "class Outer:\n    def inner(self): pass\n"
+        p = _parser(code)
+        p.parse()
+        outer = next(s for s in p.symbols if s.name == "Outer")
+        p._symbol_stack = [outer.id]
+        qname = p._parent_qualified_name()
+        assert qname == "Outer"
+
+    def test_returns_none_when_stack_id_not_in_symbols(self):
+        p = _parser("")
+        p._symbol_stack = ["nonexistent::id"]
+        assert p._parent_qualified_name() is None
+
+    def test_nested_class_qualified_name(self):
+        code = "class A:\n    class B:\n        def method(self): pass\n"
+        syms, _, _ = _parser(code).parse()
+        method = next((s for s in syms if s.name == "method"), None)
+        assert method is not None
+        assert method.parent_id is not None
