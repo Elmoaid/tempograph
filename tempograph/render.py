@@ -1475,6 +1475,7 @@ def _build_symbol_block_lines(
     _blast_ann = ""
     _hub_ann = ""
     _age_ann = ""
+    _doc_ann = ""
     if depth == 0:
         _blast_files = {c.file_path for c in graph.callers_of(sym.id) if c.file_path != sym.file_path}
         if len(_blast_files) >= 3:
@@ -3329,6 +3330,16 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         if len(_transitively_dead) > 4:
             _trd_str += f" +{len(_transitively_dead) - 4} more"
         lines.append(f"Transitively dead ({len(_transitively_dead)}): {_trd_str} — only called by dead code")
+
+    # S69: Safe-to-delete tier — conf >= 90 symbols, no caveats.
+    # These are the slam-dunk deletions: high certainty, no dispatch patterns, no test-only coverage.
+    _safe_delete = [(sym, conf) for sym, conf in scored if conf >= 90]
+    if len(_safe_delete) >= 2:
+        _sd_parts = [f"{sym.name} ({sym.file_path.rsplit('/', 1)[-1]}, conf:{conf})" for sym, conf in _safe_delete[:4]]
+        _sd_str = ", ".join(_sd_parts)
+        if len(_safe_delete) > 4:
+            _sd_str += f" +{len(_safe_delete) - 4} more"
+        lines.append(f"Safe to delete ({len(_safe_delete)}): {_sd_str}")
 
     lines.append("")
     total_lines = 0

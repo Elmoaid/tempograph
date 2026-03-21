@@ -7284,8 +7284,8 @@ class TestFocusEntryPointAnnotation:
             f"Expected '[entry point]' for exported 0-caller function; got:\n{out}"
         )
 
-    def test_entry_point_absent_when_function_has_callers(self, tmp_path):
-        """Function with cross-file callers does NOT get [entry point]."""
+    def test_entry_point_absent_for_function_with_callers(self, tmp_path):
+        """Function with cross-file callers gets [owned by:], NOT [entry point]."""
         from tempograph.builder import build_graph
         from tempograph.render import render_focused
 
@@ -7297,8 +7297,10 @@ class TestFocusEntryPointAnnotation:
         )
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_focused(g, "helper")
-        assert "[entry point]" not in out, (
-            f"'[entry point]' must not appear when function has callers; got:\n{out}"
+        # helper has cross-file callers → should get [owned by: main.py], NOT [entry point]
+        helper_line = next((l for l in out.splitlines() if "function helper" in l), "")
+        assert "[entry point]" not in helper_line, (
+            f"helper (has callers) must not get '[entry point]'; line: {helper_line!r}"
         )
 
     def test_entry_point_absent_for_private_function(self, tmp_path):
