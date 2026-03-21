@@ -872,4 +872,23 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — test files modified; verify coverage isn't regressing"
         )
 
+
+    # S288: Version bump — diff includes version manifest files (pyproject.toml, package.json).
+    # Version changes may indicate an intentional release; they require changelog review
+    # and tag coordination across repos.
+    _s288_version_files = {
+        "pyproject.toml", "setup.cfg", "setup.py", "package.json", "cargo.toml",
+        "version.py", "version.txt", "_version.py", "__version__.py",
+    }
+    _s288_found = [
+        fp for fp in list(normalized) + [f for f in changed_files if f not in normalized]
+        if fp.rsplit("/", 1)[-1].lower() in _s288_version_files
+    ]
+    if _s288_found:
+        _ver_names288 = [fp.rsplit("/", 1)[-1] for fp in _s288_found[:3]]
+        lines.append(
+            f"version file: {', '.join(_ver_names288)} in diff"
+            f" — version manifest changed; verify changelog and tag are updated"
+        )
+
     return "\n".join(lines)
