@@ -539,6 +539,21 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — likely new or renamed; re-index to get full blast radius"
             )
 
+    # S795: Large diff — diff touches 10+ distinct symbols across changed files.
+    # When a single diff touches many symbols, it is hard to review atomically;
+    # large diffs have higher defect rates and are harder to roll back.
+    if changed_files:
+        _all_syms795: set[str] = set()
+        for _fp795 in changed_files:
+            _fi795 = graph.files.get(_fp795)
+            if _fi795:
+                _all_syms795.update(_fi795.symbols)
+        if len(_all_syms795) >= 10:
+            lines.append(
+                f"large diff: {len(_all_syms795)} symbols touched across {len(changed_files)} files"
+                f" — large diff scope; higher defect rate; consider breaking into smaller PRs"
+            )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 

@@ -2719,6 +2719,26 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
                 f" — entire constants file may be safe to remove"
             )
 
+    # S797: Dead API endpoint — dead functions in files named with api/endpoint/view/handler.
+    # Dead API handlers indicate removed routes or abandoned API versions;
+    # they may still accept requests if routing configuration wasn't updated.
+    _api_kws797 = ("api", "endpoint", "endpoints", "view", "views", "handler", "handlers", "route", "routes")
+    _dead_api797 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and any(kw in s.file_path.replace("\\", "/").rsplit("/", 1)[-1].replace(".py", "").lower()
+                for kw in _api_kws797)
+    ]
+    if _dead_api797:
+        _a_names797 = ", ".join(s.name for s in _dead_api797[:3])
+        if len(_dead_api797) > 3:
+            _a_names797 += f" +{len(_dead_api797) - 3} more"
+        lines.append(
+            f"dead API endpoints: {len(_dead_api797)} unused function(s) in API/handler files ({_a_names797})"
+            f" — removed route handlers; verify routing config no longer references them"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

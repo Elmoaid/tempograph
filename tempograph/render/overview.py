@@ -3048,6 +3048,18 @@ def _signals_async_oop(
                 f" — over-fragmented; consider consolidating related modules"
             )
 
+    # S793: Deep nesting — majority of source files are 3+ directory levels deep.
+    # Codebases where most files are deeply nested are over-organized; navigation
+    # requires traversing many directories and imports become verbose.
+    _all_src793 = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_all_src793) >= 5:
+        _deep793 = [fp for fp in _all_src793 if fp.replace("\\", "/").count("/") >= 3]
+        if len(_deep793) / len(_all_src793) > 0.5:
+            lines.append(
+                f"deep nesting: {len(_deep793)}/{len(_all_src793)} source files"
+                f" at 3+ directory levels — over-organized structure increases navigation cost"
+            )
+
     return lines
 
 

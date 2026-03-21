@@ -2438,5 +2438,21 @@ def _collect_hotspots_signals(
                         f" extract shared logic to a lower-level utility module"
                     )
 
+    # S796: God class hotspot — top hotspot is a class with 10+ methods.
+    # Classes with many methods are often god objects accumulating responsibilities;
+    # when such a class is also a hotspot (many callers), refactoring is risky.
+    if scores:
+        _top796 = scores[0][1]
+        if _top796 is not None and _top796.kind.value == "class" and not _is_test_file(_top796.file_path):
+            _methods796 = [
+                s for s in graph.symbols.values()
+                if s.parent_id == _top796.id and s.kind.value in ("function", "method")
+            ]
+            if len(_methods796) >= 10:
+                out.append(
+                    f"\ngod class hotspot: {_top796.name} is a class with {len(_methods796)} methods"
+                    f" and is the top hotspot — god object pattern; split responsibilities before modifying"
+                )
+
     return out
 

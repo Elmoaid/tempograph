@@ -3704,6 +3704,24 @@ def _signals_focused_fn_advanced(
                 f" — changes affect built-in operations (iteration, comparison, context managers, etc.)"
             )
 
+    # S792: Long function — focused function spans 50+ lines.
+    # Functions longer than 50 lines are hard to read in one mental pass;
+    # they often mix concerns and are difficult to test or refactor safely.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim792 = _seed_syms[0]
+        if (
+            _prim792.kind.value in ("function", "method")
+            and not _is_test_file(_prim792.file_path)
+            and _prim792.line_start is not None
+            and _prim792.line_end is not None
+            and _prim792.line_end - _prim792.line_start >= 50
+        ):
+            _len792 = _prim792.line_end - _prim792.line_start + 1
+            lines.append(
+                f"\nlong function: {_prim792.name} is {_len792} lines"
+                f" — difficult to read and test; consider splitting into focused sub-functions"
+            )
+
     return lines
 
 

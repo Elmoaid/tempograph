@@ -2059,6 +2059,16 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — changes here affect test suite coverage and may break dependent test files"
         )
 
+    # S794: CLI entry point blast — the blast target is a CLI entry point file.
+    # CLI entry points bootstrap the entire application; changes here affect the
+    # startup sequence, argument parsing, and all downstream initialization logic.
+    _stem794 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].replace(".py", "").lower()
+    if _stem794 in ("__main__", "cli", "main", "entrypoint", "entry_point", "run"):
+        lines.append(
+            f"CLI entry point blast: {_fp589.rsplit('/', 1)[-1]} is an application entry point"
+            f" — changes affect startup sequence, argument parsing, and all initialization logic"
+        )
+
     return "\n".join(lines)
 
 
