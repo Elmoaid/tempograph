@@ -1464,6 +1464,18 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — tightly coupled to one consumer; safe to change in sync, but consider if the coupling is intentional"
         )
 
+    # S533: Type stub paired — blast target has a corresponding .pyi stub file.
+    # .pyi stubs are the static type contract for the module; changing signatures without
+    # updating the stub causes type checker failures even when tests pass.
+    if graph.root and file_path.endswith(".py"):
+        from pathlib import Path as _Path533  # noqa: PLC0415
+        _stub533 = _Path533(graph.root) / file_path.replace(".py", ".pyi")
+        if _stub533.exists():
+            lines.append(
+                f"type stub paired: {file_path.rsplit('/', 1)[-1]} has a .pyi stub"
+                f" — sync the stub after any signature change or type checking will fail"
+            )
+
     # S527: Wide export surface — blast target exports 20+ symbols (large public API).
     # Files with many exports have a proportionally large blast radius for signature changes;
     # any one of the exports may be breaking, so each change needs a broader callers audit.

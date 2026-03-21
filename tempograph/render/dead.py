@@ -1765,6 +1765,36 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — stale helpers mislead about test coverage; remove to clarify actual test scope"
         )
 
+    # S536: Dead abstract base class — Abstract*/Protocol class with no subclasses and no callers.
+    # An abstract class that was never implemented is pure dead weight; it cannot be instantiated
+    # and its only value was as a type contract — which is now unrealized.
+    _s536_dead_abc = [
+        sym for sym in graph.symbols.values()
+        if not _is_test_file(sym.file_path)
+        and sym.kind.value == "class"
+        and (
+            sym.name.startswith("Abstract")
+            or sym.name.startswith("Base")
+            or sym.name.endswith("ABC")
+            or sym.name.endswith("Protocol")
+            or sym.name.endswith("Interface")
+        )
+        and not any(
+            e.kind.value in ("inherits", "implements") and e.target_id == sym.id
+            for e in graph.edges
+        )
+        and not graph.callers_of(sym.id)
+        and not graph.importers_of(sym.file_path)
+    ]
+    if _s536_dead_abc:
+        _abc_names536 = ", ".join(s.name for s in _s536_dead_abc[:3])
+        if len(_s536_dead_abc) > 3:
+            _abc_names536 += f" +{len(_s536_dead_abc) - 3} more"
+        lines.append(
+            f"dead abstract classes: {len(_s536_dead_abc)} unimplemented abstract/base class(es) ({_abc_names536})"
+            f" — never implemented; the type contract was never realized; safe to remove"
+        )
+
     # S530: Dead module constants — SCREAMING_SNAKE_CASE names at module level with 0 callers.
     # Unused module-level constants accumulate from feature flags, thresholds, and magic values
     # that were never cleaned up; they mislead about the codebase's active configuration surface.

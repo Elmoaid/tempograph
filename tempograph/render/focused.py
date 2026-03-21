@@ -2950,6 +2950,22 @@ def _signals_focused_fn_advanced(
                     f" — wildcard imports or same-name references may resolve to the wrong definition"
                 )
 
+    # S531: Mutable default argument — focused function signature has a mutable default (=[]/={}).
+    # Mutable defaults are shared across all calls; appending to [] or updating {} in one call
+    # silently mutates the default for all future calls — a classic Python anti-pattern.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim531 = next((s for s in _seed_syms if s.kind.value in ("function", "method")), None)
+        if _prim531 and not _is_test_file(_prim531.file_path):
+            _sig531 = _prim531.signature or ""
+            # Extract parameter section between ( and ) to check for mutable defaults
+            _param531 = _sig531.split("(", 1)[1].rsplit(")", 1)[0] if "(" in _sig531 else ""
+            _mutable_markers531 = ("=[]", "={}", "=set()", "=list()", "=dict()")
+            if any(m in _param531.replace(" ", "") for m in _mutable_markers531):
+                lines.append(
+                    f"\nmutable default: {_prim531.name} uses a mutable default argument"
+                    f" — shared across all calls; mutations in one call silently affect future calls"
+                )
+
     return lines
 
 

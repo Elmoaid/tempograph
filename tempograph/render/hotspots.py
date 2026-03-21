@@ -1702,6 +1702,23 @@ def _collect_hotspots_signals(
                     f" — adding blocking calls or changing its event-loop behavior affects all awaiters"
                 )
 
+    # S535: Class hierarchy hotspot — top hotspot is a class with subclasses.
+    # A base class that is also the most-instantiated symbol is a fragile foundation;
+    # changes to its interface break all subclasses and require coordinated updates.
+    if scores:
+        _top535 = scores[0][1]
+        if not _is_test_file(_top535.file_path) and _top535.kind.value == "class":
+            _subs535 = [
+                e for e in graph.edges
+                if e.kind.value == "inherits" and e.target_id == _top535.id
+            ]
+            if _subs535:
+                out.append(
+                    f"\nclass hierarchy hotspot: {_top535.name} is the most-called class"
+                    f" and has {len(_subs535)} subclass(es)"
+                    f" — base class changes break all subclasses; coordinate updates"
+                )
+
     # S529: Long hotspot function — top hotspot has 50+ lines of code.
     # A large, heavily-called function accumulates complexity over time; it is the most-used
     # yet least-testable function in the system — every caller depends on all of its behaviors.
