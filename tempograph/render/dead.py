@@ -3045,6 +3045,30 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — orphaned test utilities; test coverage may be misleadingly broad"
         )
 
+    # S887: Dead middleware/interceptors — unused functions with middleware/interceptor/filter prefix.
+    # Dead middleware indicates removed pipeline steps; leftover stubs may still be registered
+    # in framework configs, silently consuming resources or blocking requests.
+    _mw_prefixes887 = ("middleware_", "interceptor_", "filter_", "before_", "after_", "pre_", "post_")
+    _mw_contains887 = ("middleware", "interceptor")
+    _dead_mw887 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and (
+            any(s.name.lower().startswith(p) for p in _mw_prefixes887)
+            or any(kw in s.name.lower() for kw in _mw_contains887)
+        )
+    ]
+    if _dead_mw887:
+        _mw_names887 = ", ".join(s.name for s in _dead_mw887[:3])
+        if len(_dead_mw887) > 3:
+            _mw_names887 += f" +{len(_dead_mw887) - 3} more"
+        lines.append(
+            f"dead middleware: {len(_dead_mw887)} unused middleware/interceptor function(s) ({_mw_names887})"
+            f" — may still be registered in framework config; verify before deleting"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

@@ -3239,6 +3239,25 @@ def _signals_async_oop(
             f" — deep class hierarchy; verify all contracts are implemented by concrete subclasses"
         )
 
+    # S883: Monolith file — one file contains 50%+ of all source symbols.
+    # A single file dominating the symbol count indicates a concentration of logic;
+    # changes to it carry higher blast radius than changes to smaller, focused files.
+    _src_syms883 = [
+        s for s in graph.symbols.values()
+        if not _is_test_file(s.file_path) and s.kind.value in ("function", "method", "class")
+    ]
+    if len(_src_syms883) >= 6:
+        _file_counts883: dict[str, int] = {}
+        for s in _src_syms883:
+            _file_counts883[s.file_path] = _file_counts883.get(s.file_path, 0) + 1
+        _top_file883, _top_count883 = max(_file_counts883.items(), key=lambda x: x[1])
+        _pct883 = int(_top_count883 / len(_src_syms883) * 100)
+        if _pct883 >= 50:
+            lines.append(
+                f"monolith file: {_top_file883.rsplit('/', 1)[-1]} contains {_pct883}% of source symbols"
+                f" — concentrated logic; changes have wide blast radius"
+            )
+
     # S877: Low docstring coverage — 70%+ of exported non-test functions lack docstrings.
     # Undocumented functions require reading the full body to understand intent; agents
     # generating or modifying code in this codebase should add docstrings proactively.

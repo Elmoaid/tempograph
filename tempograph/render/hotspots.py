@@ -2652,6 +2652,20 @@ def _collect_hotspots_signals(
                     f" — cross-cutting concern; changes affect {len(_caller_files874)} files across the codebase"
                 )
 
+    # S886: Utility file hotspot — top hotspot is in a utils/helpers/common/shared file.
+    # Utility hotspots are often depended on by unrelated parts of the codebase; changes
+    # can cause surprising regressions across multiple feature areas simultaneously.
+    if scores:
+        _top886 = scores[0][1]
+        if _top886 is not None and not _is_test_file(_top886.file_path):
+            _fname886 = _top886.file_path.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+            _util_kws886 = ("util", "helper", "common", "shared", "base", "mixin", "core")
+            if any(kw in _fname886 for kw in _util_kws886):
+                out.append(
+                    f"\nutility hotspot: {_fname886} is a utility/shared file with the top hotspot ({_top886.name})"
+                    f" — utility hotspots cause cross-feature regressions; changes require wide test coverage"
+                )
+
     # S880: Uncalled hotspot — top complexity hotspot has no recorded callers.
     # A complex function with no callers may be dead code that accumulated complexity
     # without being exercised; investigate before refactoring or deleting.

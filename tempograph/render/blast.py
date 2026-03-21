@@ -2213,6 +2213,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — format changes affect all I/O boundaries; verify protocol compatibility"
         )
 
+    # S884: Security-sensitive blast — blast target handles authentication or credentials.
+    # Security files contain access-control logic; bugs introduced here can expose
+    # data or bypass authorization for the entire application.
+    _sec_kws884 = ("auth", "token", "secret", "credential", "password", "jwt", "oauth", "crypto", "session")
+    _fname884 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if any(kw in _fname884 for kw in _sec_kws884):
+        lines.append(
+            f"security blast: {_fp589.rsplit('/', 1)[-1]} handles authentication or security"
+            f" — security-sensitive file; bugs here can expose data or bypass authorization"
+        )
+
     # S878: Config file blast — blast target is a configuration or settings file.
     # Config files are loaded at startup and read by many modules; changes propagate
     # to all modules that consume configuration values at runtime.

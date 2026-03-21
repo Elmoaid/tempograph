@@ -3926,6 +3926,23 @@ def _signals_focused_fn_advanced(
                         f" — too many parameters; consider a config object or builder pattern"
                     )
 
+    # S882: Class focus — the focused symbol is a class, not a function or method.
+    # Focusing on a class shows the whole class; agents should use method-level focus
+    # for targeted changes to avoid unintended modifications to sibling methods.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim882 = _seed_syms[0]
+        if _prim882.kind.value == "class" and not _is_test_file(_prim882.file_path):
+            _children882 = [
+                s for s in graph.symbols.values()
+                if s.parent_id == _prim882.id
+                and s.kind.value in ("method", "function")
+            ]
+            if _children882:
+                lines.append(
+                    f"\nclass focus: {_prim882.name} is a class with {len(_children882)} method(s)"
+                    f" — focus on individual methods for targeted changes; class-level focus shows all methods"
+                )
+
     # S876: Long function focus — focused function spans 30+ lines.
     # Long functions are hard to reason about end-to-end; agents should be extra cautious
     # about side effects and implicit state changes buried deep in the function body.
