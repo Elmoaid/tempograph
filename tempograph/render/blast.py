@@ -1100,6 +1100,19 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — value/rename changes may silently break consumers that hardcode expected values"
         )
 
+    # S383: Test fixture blast — blast target is a shared test fixture/factory file.
+    # Test fixture files are imported by many tests; changes break test isolation and
+    # can cause cascading failures unrelated to the code being tested.
+    _fp383 = file_path.rsplit("/", 1)[-1].lower()
+    _is_fixture383 = _fp383 in ("conftest.py", "fixtures.py", "factories.py", "test_helpers.py", "test_utils.py")
+    _test_importers383 = [fp for fp in graph.importers_of(file_path) if _is_test_file(fp)]
+    if _is_fixture383 and len(_test_importers383) >= 3:
+        lines.append(
+            f"test fixture blast: {file_path.rsplit('/', 1)[-1]} is a shared test fixture"
+            f" imported by {len(_test_importers383)} test files"
+            f" — fixture changes break test isolation; run full test suite after any modification"
+        )
+
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
 

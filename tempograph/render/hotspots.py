@@ -1319,4 +1319,25 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                     f" — large files accumulate accidental complexity; consider splitting by responsibility"
                 )
 
+    # S382: Deep call chain hotspot — top hotspot has 3+ direct callers AND 5+ depth-2 callers.
+    # Symbols with deep fan-in are harder to refactor safely; changes propagate through
+    # multiple layers, and intermediate layers may have baked-in assumptions.
+    if scores:
+        _top382 = scores[0][1]
+        if not _is_test_file(_top382.file_path):
+            _direct382 = {
+                e.source_id for e in graph.edges
+                if e.kind.value == "calls" and e.target_id == _top382.id
+            }
+            _d2_382 = {
+                e.source_id for e in graph.edges
+                if e.kind.value == "calls" and e.target_id in _direct382
+            }
+            if len(_direct382) >= 3 and len(_d2_382) >= 5:
+                lines.append(
+                    f"\ndeep call chain: {_top382.name} has {len(_direct382)} direct callers"
+                    f" and {len(_d2_382)} depth-2 callers"
+                    f" — refactors propagate through multiple layers; map all call paths before changing"
+                )
+
     return "\n".join(lines)  # ALWAYS return here — never inside a conditional block

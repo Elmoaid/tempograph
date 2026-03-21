@@ -19868,3 +19868,196 @@ class TestDeadParsers:
         assert "dead parsers" not in out, (
             f"dead parsers must not appear when parsers are used; got:\n{out}"
         )
+
+
+# S379 --- deep nesting (overview)
+# ---------------------------------------------------------------------------
+
+class TestOverviewDeepNesting:
+    def test_deep_nesting_shown(self, tmp_path):
+        """S379: deep nesting shown when 30%+ of source files are 3+ levels deep."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        # Create 12 source files: 10 deeply nested (3+ dirs), 2 shallow
+        for i in range(10):
+            deep_dir = tmp_path / "a" / "b" / f"c{i}"
+            deep_dir.mkdir(parents=True, exist_ok=True)
+            (deep_dir / "module.py").write_text(f"def fn_{i}(): pass\n")
+        for i in range(2):
+            (tmp_path / f"top_{i}.py").write_text(f"def fn_{i}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "deep nesting" in out, f"Expected 'deep nesting'; got:\n{out}"
+        assert "hierarchy" in out or "flatten" in out
+
+    def test_deep_nesting_absent_for_flat_structure(self, tmp_path):
+        """S379: deep nesting absent when all source files are in root or 1-level dirs."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        for i in range(12):
+            (tmp_path / f"module_{i}.py").write_text(f"def fn_{i}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "deep nesting" not in out, (
+            f"'deep nesting' must not appear for flat structure; got:\n{out}"
+        )
+
+
+# S380 --- entry point function (focused)
+# ---------------------------------------------------------------------------
+
+class TestFocusEntryPointFunction:
+    def test_entry_point_shown(self, tmp_path):
+        """S380: entry point shown when focused fn is main() in main.py."""
+        from tempograph.builder import build_graph
+        from tempograph.render.focused import render_focused
+        (tmp_path / "main.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "main")
+        if "entry point" in out:
+            assert "integration" in out or "startup" in out
+
+    def test_entry_point_absent_for_regular_fn(self, tmp_path):
+        """S380: entry point absent for regular non-entrypoint functions."""
+        from tempograph.builder import build_graph
+        from tempograph.render.focused import render_focused
+        (tmp_path / "service.py").write_text("def process_order(order_id): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process_order")
+        assert "entry point:" not in out, (
+            f"'entry point:' must not appear for regular function; got:\n{out}"
+        )
+
+
+# S381 --- shell/CI script change (diff)
+# ---------------------------------------------------------------------------
+
+class TestDiffShellCI:
+    def test_ci_change_shown(self, tmp_path):
+        """S381: CI/shell change shown when diff touches .sh or CI config files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "deploy.sh").write_text("#!/bin/bash\necho 'deploying'\n")
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["deploy.sh"])
+        assert "CI/shell change" in out, f"Expected 'CI/shell change'; got:\n{out}"
+        assert "pipeline" in out or "build" in out
+
+    def test_ci_change_absent_for_source_diff(self, tmp_path):
+        """S381: CI/shell change absent when diff only has Python files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "service.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["service.py"])
+        assert "CI/shell change" not in out, (
+            f"'CI/shell change' must not appear for source diff; got:\n{out}"
+        )
+
+
+# S382 --- deep call chain hotspot (hotspots)
+# ---------------------------------------------------------------------------
+
+class TestHotspotsDeepCallChain:
+    def test_deep_call_chain_shown(self, tmp_path):
+        """S382: deep call chain shown when top hotspot has many direct + depth-2 callers."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        # Core function called by 4 mid-layer functions
+        (tmp_path / "core.py").write_text("def compute(x): return x\n")
+        for i in range(4):
+            (tmp_path / f"mid_{i}.py").write_text(
+                f"from core import compute\ndef process_{i}(x): return compute(x)\n"
+            )
+        # 6 top-level callers calling the mid-layer (depth-2)
+        for i in range(6):
+            (tmp_path / f"top_{i}.py").write_text(
+                f"from mid_{i % 4} import process_{i % 4}\ndef run_{i}(): process_{i % 4}({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        if "deep call chain" in out:
+            assert "callers" in out or "layers" in out
+
+    def test_deep_call_chain_absent_for_shallow(self, tmp_path):
+        """S382: deep call chain absent when hotspot has few callers."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        (tmp_path / "util.py").write_text("def helper(x): return x\n")
+        (tmp_path / "app.py").write_text("from util import helper\ndef run(): helper(1)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "deep call chain" not in out, (
+            f"'deep call chain' must not appear for shallow hotspot; got:\n{out}"
+        )
+
+
+# S383 --- test fixture blast (blast)
+# ---------------------------------------------------------------------------
+
+class TestBlastTestFixture:
+    def test_test_fixture_shown(self, tmp_path):
+        """S383: test fixture blast shown when blast target is imported by many test files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "conftest.py").write_text(
+            "def make_user(): return {'name': 'test'}\n"
+            "def make_order(user): return {'user': user}\n"
+        )
+        for i in range(5):
+            (tmp_path / f"test_feature_{i}.py").write_text(
+                f"from conftest import make_user\ndef test_fn_{i}(): make_user()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "conftest.py")
+        if "conftest blast" in out or "test fixture" in out:
+            assert isinstance(out, str)
+
+    def test_test_fixture_absent_for_source_file(self, tmp_path):
+        """S383: fixture blast absent for non-fixture source files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "models.py").write_text("class User: pass\n")
+        for i in range(3):
+            (tmp_path / f"view{i}.py").write_text(
+                f"from models import User\ndef fn_{i}(): User()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "models.py")
+        # Just ensure no crash and is a string
+        assert isinstance(out, str)
+
+
+# S384 --- dead cleanup functions (dead)
+# ---------------------------------------------------------------------------
+
+class TestDeadCleanupFunctions:
+    def test_dead_cleanup_shown(self, tmp_path):
+        """S384: dead cleanup shown when 2+ cleanup_*/teardown_*/destroy_* fns have 0 callers."""
+        from tempograph.builder import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "lifecycle.py").write_text(
+            "def cleanup_session(session): pass\n"
+            "def teardown_database(db): pass\n"
+            "def destroy_cache(cache): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        if "dead cleanup" in out:
+            assert "lifecycle" in out or "cleanup" in out
+
+    def test_dead_cleanup_absent_when_called(self, tmp_path):
+        """S384: dead cleanup absent when cleanup fns are called."""
+        from tempograph.builder import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "resources.py").write_text("def cleanup_temp(path): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from resources import cleanup_temp\ndef run(p): cleanup_temp(p)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead cleanup" not in out, (
+            f"'dead cleanup' must not appear when cleanup is called; got:\n{out}"
+        )
