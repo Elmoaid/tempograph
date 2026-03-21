@@ -1952,10 +1952,21 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
         syms = [graph.symbols[sid] for sid in fi.symbols if sid in graph.symbols]
         affected_symbols.extend(syms)
 
+    # Load per-file velocity for annotation (graceful fallback if not a git repo).
+    _vel: dict[str, float] = {}
+    if graph.root:
+        try:
+            from .git import file_change_velocity as _fcv
+            _vel = _fcv(graph.root)
+        except Exception:
+            pass
+
     lines.append("Changed files:")
     for fp in sorted(normalized):
         fi = graph.files[fp]
-        lines.append(f"  {fp} ({fi.line_count} lines, {len(fi.symbols)} symbols)")
+        _v = _vel.get(fp, 0.0)
+        _vel_ann = f" [{_v:.0f}x/wk]" if _v >= 2.0 else ""
+        lines.append(f"  {fp} ({fi.line_count} lines, {len(fi.symbols)} symbols){_vel_ann}")
     lines.append("")
 
     # Exported symbols with external callers (breaking change risk)
