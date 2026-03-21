@@ -2232,6 +2232,25 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — planned reuse that never materialized; remove unless extension is imminent"
         )
 
+    # S653: Dead protocol/interface — unused class with "Protocol" or "Interface" in its name.
+    # Protocol and Interface classes define behavioral contracts; if unused, the contract
+    # was designed but no implementation adopted it — likely abandoned architecture.
+    _dead_proto653 = [
+        s for s in dead
+        if s.kind.value == "class"
+        and not _is_test_file(s.file_path)
+        and any(m in s.name for m in ("Protocol", "Interface", "ABC", "Abstract"))
+        and not any(m in s.name for m in ("Mixin", "Base"))  # covered by S647
+    ]
+    if _dead_proto653:
+        _proto_names653 = ", ".join(s.name for s in _dead_proto653[:3])
+        if len(_dead_proto653) > 3:
+            _proto_names653 += f" +{len(_dead_proto653) - 3} more"
+        lines.append(
+            f"dead protocols: {len(_dead_proto653)} unused Protocol/Interface class(es) ({_proto_names653})"
+            f" — unimplemented contract; remove or provide at least one concrete implementation"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

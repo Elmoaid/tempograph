@@ -187,6 +187,25 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — dependency update; review transitive changes for breaking or vulnerable packages"
         )
 
+    # S651: Schema file in diff — diff includes a database schema or ORM model file.
+    # Schema migrations affect database structure; any mismatch between code and schema
+    # causes runtime failures that are hard to detect without migration review.
+    _schema_names651 = ("schema.py", "models.py", "model.py", "tables.py", "entities.py")
+    _schema_exts651 = (".sql",)
+    _schema_patterns651 = ("migration", "schema", "models")
+    _schema_files651 = [
+        f for f in changed_files
+        if f.rsplit("/", 1)[-1].lower() in _schema_names651
+        or any(f.lower().endswith(e) for e in _schema_exts651)
+        or any(p in f.lower().replace("/", "_") for p in _schema_patterns651)
+    ]
+    if _schema_files651:
+        _sch_name651 = _schema_files651[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"schema in diff: {_sch_name651} ({len(_schema_files651)} schema/model file(s) changed)"
+            f" — database or ORM changes require migration review; verify schema/code parity"
+        )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 

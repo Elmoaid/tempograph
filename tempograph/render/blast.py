@@ -1754,6 +1754,25 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                 f" — constructor changes break all callers; consider making init params keyword-only"
             )
 
+    # S650: Mutual import — blast target and at least one of its importers import each other.
+    # Bidirectional file-level imports create a circular dependency; this prevents
+    # clean module separation and can cause import errors in some Python patterns.
+    _import_targets650 = {
+        e.target_id for e in graph.edges
+        if e.kind.value == "imports" and e.source_id == _fp589
+    }
+    _mutual650 = [
+        fp for fp in importers
+        if not _is_test_file(fp)
+        and fp in _import_targets650
+    ]
+    if _mutual650:
+        _mutual_name650 = _mutual650[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"mutual import: {_fp589.rsplit('/', 1)[-1]} and {_mutual_name650} import each other"
+            f" — circular file dependency; can cause ImportError in Python; break the cycle"
+        )
+
     return "\n".join(lines)
 
 

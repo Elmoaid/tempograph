@@ -3265,6 +3265,31 @@ def _signals_focused_fn_advanced(
                     f" — cross-layer connector; changes cascade upstream AND downstream"
                 )
 
+    # S648: Name collision — focused symbol's name exists in multiple non-test files.
+    # When the same function or class name is defined in multiple places, refactoring
+    # callers risks accidentally touching the wrong definition.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim648 = _seed_syms[0]
+        if (
+            not _is_test_file(_prim648.file_path)
+            and _prim648.kind.value in ("function", "method", "class")
+        ):
+            _same_name648 = [
+                s for s in graph.symbols.values()
+                if s.name == _prim648.name
+                and s.file_path != _prim648.file_path
+                and not _is_test_file(s.file_path)
+                and s.kind.value in ("function", "method", "class")
+            ]
+            if _same_name648:
+                _collision_files648 = ", ".join(
+                    s.file_path.rsplit("/", 1)[-1] for s in _same_name648[:3]
+                )
+                lines.append(
+                    f"\nname collision: {_prim648.name} is also defined in {_collision_files648}"
+                    f" — same name in multiple files; refactoring risks touching the wrong definition"
+                )
+
     return lines
 
 

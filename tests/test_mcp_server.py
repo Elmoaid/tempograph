@@ -30059,8 +30059,8 @@ class TestInitFileSymbolFocusedS636:
         from tempograph.render.focused import render_focused
         from tempograph.builder import build_graph
 
-        (tmp_path / "pkg").mkdir()
-        (tmp_path / "pkg" / "__init__.py").write_text("def setup(): pass\n")
+        (tmp_path / "mylib").mkdir()
+        (tmp_path / "mylib" / "__init__.py").write_text("def setup(): pass\n")
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_focused(g, "setup")
         assert "init-file symbol" in out, (

@@ -2044,5 +2044,21 @@ def _collect_hotspots_signals(
                     f" but complexity=1 — thin dispatcher; callers may benefit from calling the underlying directly"
                 )
 
+    # S652: Dead co-location — hotspot file also contains dead symbols.
+    # When a high-churn file also has unused symbols, the file has both growth pressure
+    # AND dead weight — it's a refactoring priority: trim dead code before adding features.
+    if scores:
+        _top652 = scores[0][1]
+        if not _is_test_file(_top652.file_path):
+            _dead652 = graph.find_dead_code()
+            _dead_in_file652 = [s for s in _dead652 if s.file_path == _top652.file_path]
+            if _dead_in_file652:
+                _dead_names652 = ", ".join(s.name for s in _dead_in_file652[:3])
+                out.append(
+                    f"\ndead co-location: {_top652.file_path.rsplit('/', 1)[-1]} is a hotspot"
+                    f" with {len(_dead_in_file652)} unused symbol(s) ({_dead_names652})"
+                    f" — trim dead code before adding features to this file"
+                )
+
     return out
 

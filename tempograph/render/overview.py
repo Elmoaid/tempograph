@@ -2635,6 +2635,26 @@ def _signals_async_oop(
             f" — fragile base class risk; prefer composition over deep inheritance"
         )
 
+    # S649: Exception class density — more than 20% of exported classes are Error/Exception types.
+    # A codebase with many custom exception classes is building an exception hierarchy;
+    # this is fine but signals that callers must handle a wide surface of failure modes.
+    _exported_classes649 = [
+        s for s in graph.symbols.values()
+        if s.exported and s.kind.value == "class" and not _is_test_file(s.file_path)
+    ]
+    if len(_exported_classes649) >= 5:
+        _exc_classes649 = [
+            s for s in _exported_classes649
+            if s.name.endswith(("Error", "Exception", "Warning", "Failure", "Fault"))
+        ]
+        _exc_pct649 = int(100 * len(_exc_classes649) / len(_exported_classes649))
+        if _exc_pct649 >= 20:
+            lines.append(
+                f"exception class density: {len(_exc_classes649)}/{len(_exported_classes649)}"
+                f" exported classes ({_exc_pct649}%) are error/exception types"
+                f" — wide failure surface; callers must handle many distinct exception types"
+            )
+
     return lines
 
 
