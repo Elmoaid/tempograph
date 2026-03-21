@@ -2374,6 +2374,23 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                     f" — callers may assume pure function; order-dependent bugs possible"
                 )
 
+    # S374: Deprecated symbol — focused symbol's name contains legacy/deprecated markers.
+    # Symbols named with "old_", "legacy_", "deprecated_", "v1_", "_v1" signal known tech debt;
+    # callers may not know about the newer alternative, causing ongoing use of deprecated paths.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim374 = _seed_syms[0] if _seed_syms else None
+        if _prim374:
+            _dep_markers374 = (
+                "old_", "legacy_", "deprecated_", "_old", "_legacy", "_deprecated",
+                "v1_", "_v1", "v2_", "_v2", "obsolete_", "_obsolete",
+            )
+            _is_dep374 = any(_prim374.name.lower().startswith(m) or _prim374.name.lower().endswith(m) for m in _dep_markers374)
+            if _is_dep374:
+                lines.append(
+                    f"\ndeprecated: {_prim374.name} has a deprecated/legacy naming marker"
+                    f" — callers may not know newer alternative exists; document replacement or remove"
+                )
+
     # S368: Generic symbol name — focused symbol has a very generic, collision-prone name.
     # Generic names like "run", "process", "execute" increase search noise and make
     # symbol lookup ambiguous; many unrelated symbols share these names across the codebase.

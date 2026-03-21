@@ -1124,6 +1124,29 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — check if registered in migration history; remove from both code and migration registry"
         )
 
+    # S378: Dead parsers — parse_*/decode_*/deserialize_* functions with 0 callers.
+    # Dead parser functions often represent formats that were planned but never integrated;
+    # leaving them creates false confidence that the format is supported.
+    _s378_parser_prefixes = (
+        "parse_", "decode_", "deserialize_", "from_json_", "from_dict_",
+        "from_string_", "load_from_", "read_from_",
+    )
+    _s378_dead_parsers = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s378_parser_prefixes)
+    ]
+    if len(_s378_dead_parsers) >= 2:
+        _parser_names378 = ", ".join(s.name for s in _s378_dead_parsers[:3])
+        if len(_s378_dead_parsers) > 3:
+            _parser_names378 += f" +{len(_s378_dead_parsers) - 3} more"
+        lines.append(
+            f"dead parsers: {len(_s378_dead_parsers)} unused parser fn(s) ({_parser_names378})"
+            f" — unintegrated format parsers; creates false impression that format is supported"
+        )
+
     # S372: Dead serializers — to_dict/to_json/serialize/as_dict functions with 0 callers.
     # Serializers that are never called may represent removed API endpoints or deprecated
     # response formats; they can mislead developers about what the system exposes.

@@ -1642,6 +1642,28 @@ def _signals_structure(
             )
 
 
+    # S373: Thin test suite — 50%+ of test files have only 1-2 test functions.
+    # A thin test suite has poor coverage density; each test file adds test-run overhead
+    # but contributes little coverage, suggesting tests are stubs or never maintained.
+    _s373_test_files_all = [
+        fp for fp in graph.files
+        if _is_test_file(fp) and graph.files[fp].language.value in _CODE_LANGS
+    ]
+    if len(_s373_test_files_all) >= 5:
+        _s373_thin = [
+            fp for fp in _s373_test_files_all
+            if len([
+                s for s in graph.symbols.values()
+                if s.file_path == fp and s.name.lower().startswith("test_")
+            ]) <= 2
+        ]
+        if len(_s373_thin) / len(_s373_test_files_all) >= 0.50:
+            _pct373 = int(100 * len(_s373_thin) / len(_s373_test_files_all))
+            lines.append(
+                f"thin test suite: {_pct373}% of test files have ≤2 test functions"
+                f" — low coverage density; many stubs; consider consolidating or expanding tests"
+            )
+
     # S367: Monorepo detection — multiple package manifests detected in different directories.
     # Monorepos require coordinated changes across packages; a single logical change may need
     # updates in multiple packages, each with its own dependency and test pipeline.

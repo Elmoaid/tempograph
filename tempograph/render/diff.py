@@ -1052,6 +1052,28 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — profile before and after; cache TTL/key changes can cause latency spikes"
         )
 
+    # S375: Docs-heavy diff — diff exclusively touches documentation/README/docstring files.
+    # A docs-only change is the inverse of S308; docs-heavy diffs rarely affect runtime
+    # behavior but may indicate documentation debt being addressed after code changes.
+    _s375_doc_exts = (".md", ".rst", ".txt", ".adoc")
+    _s375_doc_words = ("readme", "changelog", "docs/", "documentation", "howto", "guide")
+    _s375_doc_changed = [
+        f for f in changed_files
+        if any(f.lower().endswith(e) for e in _s375_doc_exts)
+        or any(w in f.lower() for w in _s375_doc_words)
+    ]
+    _s375_code_changed = [
+        f for f in changed_files
+        if not any(f.lower().endswith(e) for e in _s375_doc_exts)
+        and not any(w in f.lower() for w in _s375_doc_words)
+        and not _is_test_file(f)
+    ]
+    if _s375_doc_changed and not _s375_code_changed:
+        lines.append(
+            f"docs-heavy diff: {len(_s375_doc_changed)} doc file(s) changed, no source"
+            f" — documentation update; verify doc content matches current code behavior"
+        )
+
     # S369: Large file in diff — diff includes a file with 300+ symbols (dense file added/changed).
     # A very dense changed file likely contains a large new module or refactored logic;
     # reviewers should allocate extra time for careful review of this diff.
