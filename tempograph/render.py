@@ -158,6 +158,29 @@ def render_overview(graph: Tempo) -> str:
         lines.append("")
         lines.append(f"hot symbols: {', '.join(_hot_parts)}")
 
+    # Top imported: files most imported by other source files — true infrastructure files.
+    # Distinct from hot symbols (call frequency) and hot files (commit count).
+    _importer_counts: dict[str, int] = {}
+    for fp in graph.files:
+        if _is_test_file(fp):
+            continue
+        importers = [
+            i for i in graph.importers_of(fp)
+            if i in graph.files and not _is_test_file(i) and i != fp
+        ]
+        if importers:
+            _importer_counts[fp] = len(set(importers))
+    if _importer_counts:
+        _top_imported = sorted(_importer_counts.items(), key=lambda x: -x[1])[:3]
+        _min_importers = 3
+        _top_imported = [(fp, n) for fp, n in _top_imported if n >= _min_importers]
+        if _top_imported:
+            _ti_parts = [
+                f"{fp.rsplit('/', 1)[-1]} ({n})" for fp, n in _top_imported
+            ]
+            lines.append("")
+            lines.append(f"top imported: {', '.join(_ti_parts)}")
+
     # Module structure — just the shape, no noisy import counts
     modules: dict[str, list[str]] = {}
     for fp in graph.files:

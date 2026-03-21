@@ -3673,3 +3673,63 @@ class TestFocusHotCallers:
         assert "Hot callers:" not in out, (
             f"Must NOT show Hot callers: when callers are not in hot files; got:\n{out}"
         )
+
+
+class TestOverviewTopImported:
+    """S25: Overview shows 'top imported:' section — files most imported by others.
+
+    Identifies true infrastructure files (e.g. utils.py, types.py) that are
+    imported by many other source files — distinct from hot symbols (call freq)
+    and hot files (commit count).
+    """
+
+    def test_top_imported_shown_when_file_has_multiple_importers(self, tmp_path):
+        """render_overview shows 'top imported:' when a file is imported 3+ times."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        # One shared utility file imported by 4 others
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        for i in range(4):
+            (tmp_path / f"mod_{i}.py").write_text(
+                "from utils import helper\ndef func(): pass\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+
+        assert "top imported:" in out, f"top imported: section must appear; got:\n{out}"
+        assert "utils.py" in out, f"utils.py must appear in top imported; got:\n{out}"
+
+    def test_top_imported_omitted_when_no_file_reaches_threshold(self, tmp_path):
+        """render_overview omits 'top imported:' when no file has 3+ importers."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        # Only 2 importers each — below threshold
+        (tmp_path / "a.py").write_text("def foo(): pass\n")
+        (tmp_path / "b.py").write_text("from a import foo\ndef bar(): pass\n")
+        (tmp_path / "c.py").write_text("from a import foo\ndef baz(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+
+        assert "top imported:" not in out, (
+            f"top imported: must NOT appear when threshold not met; got:\n{out}"
+        )
+
+    def test_top_imported_excludes_test_files(self, tmp_path):
+        """top imported: section must not count test file importers."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "core.py").write_text("def service(): pass\n")
+        # 3 test files import core — but test files should not count
+        for i in range(3):
+            (tmp_path / f"test_mod_{i}.py").write_text(
+                "from core import service\ndef test_x(): pass\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+
+        assert "top imported:" not in out, (
+            f"top imported: must not appear when only test files import; got:\n{out}"
+        )
