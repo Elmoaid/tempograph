@@ -1052,6 +1052,26 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — profile before and after; cache TTL/key changes can cause latency spikes"
         )
 
+    # S381: Shell/CI script change — diff touches shell scripts, CI config, or Makefile.
+    # Shell scripts and CI configs control build/deploy pipelines; a single wrong variable
+    # or missing quotation can cause silent build failures or deployment outages.
+    _s381_ci_exts = (".sh", ".bash", ".zsh", ".fish", ".ps1", ".bat", ".cmd")
+    _s381_ci_names = (
+        ".github", "jenkinsfile", "makefile", "dockerfile", "docker-compose",
+        ".gitlab-ci", ".travis", "circle", "buildkite", ".drone", "azure-pipelines",
+    )
+    _s381_ci_files = [
+        f for f in changed_files
+        if any(f.lower().endswith(e) for e in _s381_ci_exts)
+        or any(p in f.lower() for p in _s381_ci_names)
+    ]
+    if _s381_ci_files:
+        _ci_names381 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s381_ci_files[:2])
+        lines.append(
+            f"CI/shell change: {_ci_names381} in diff"
+            f" — pipeline changes affect build/deploy; test with a dry run before merging"
+        )
+
     # S375: Docs-heavy diff — diff exclusively touches documentation/README/docstring files.
     # A docs-only change is the inverse of S308; docs-heavy diffs rarely affect runtime
     # behavior but may indicate documentation debt being addressed after code changes.

@@ -2374,6 +2374,27 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                     f" — callers may assume pure function; order-dependent bugs possible"
                 )
 
+    # S380: Entry point function — focused function IS the application entry point.
+    # Entry point functions are often tested via integration tests, not unit tests;
+    # small changes to startup order or argument parsing can have wide-ranging effects.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim380 = _seed_syms[0] if _seed_syms else None
+        if _prim380 and _prim380.kind.value in ("function", "method"):
+            _entry_names380 = {
+                "main", "run", "start", "serve", "launch", "entrypoint",
+                "cli", "app", "create_app", "application",
+            }
+            _fname380 = _prim380.file_path.rsplit("/", 1)[-1].lower() if _prim380.file_path else ""
+            _is_entry380 = (
+                _prim380.name.lower() in _entry_names380
+                and _fname380 in ("__main__.py", "main.py", "app.py", "server.py", "cli.py", "run.py")
+            )
+            if _is_entry380:
+                lines.append(
+                    f"\nentry point: {_prim380.name} is the application entry point"
+                    f" — startup sequence changes are hard to unit-test; cover with integration tests"
+                )
+
     # S374: Deprecated symbol — focused symbol's name contains legacy/deprecated markers.
     # Symbols named with "old_", "legacy_", "deprecated_", "v1_", "_v1" signal known tech debt;
     # callers may not know about the newer alternative, causing ongoing use of deprecated paths.
