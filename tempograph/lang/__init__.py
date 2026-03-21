@@ -18,6 +18,8 @@ from .scala_handler import ScalaHandlerMixin
 from .ocaml_handler import OCamlHandlerMixin
 from .fsharp_handler import FSharpHandlerMixin
 from .haskell_handler import HaskellHandlerMixin
+from .lua_handler import LuaHandlerMixin
+from .clojure_handler import ClojureHandlerMixin
 
 __all__ = [
     "PythonHandlerMixin",
@@ -38,4 +40,6 @@ __all__ = [
     "OCamlHandlerMixin",
     "FSharpHandlerMixin",
     "HaskellHandlerMixin",
+    "LuaHandlerMixin",
+    "ClojureHandlerMixin",
 ]
