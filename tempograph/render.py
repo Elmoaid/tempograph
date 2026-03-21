@@ -1190,10 +1190,18 @@ def _build_symbol_block_lines(
             hot_callees = [c for c in callees if c.file_path in graph.hot_files]
             cold_callees = [c for c in callees if c.file_path not in graph.hot_files]
             ordered_callees = (hot_callees + cold_callees)[:shown]
-            callee_strs = [
-                f"{c.qualified_name} [hot]" if c.file_path in graph.hot_files else c.qualified_name
-                for c in ordered_callees
-            ]
+            callee_strs = []
+            for c in ordered_callees:
+                _hot_ann = " [hot]" if c.file_path in graph.hot_files else ""
+                _cb_ann = ""
+                if depth == 0:
+                    _cb_files = len({
+                        cr.file_path for cr in graph.callers_of(c.id)
+                        if cr.file_path != c.file_path
+                    })
+                    if _cb_files >= 3:
+                        _cb_ann = f" [blast: {_cb_files}]"
+                callee_strs.append(f"{c.qualified_name}{_hot_ann}{_cb_ann}")
             block_lines.append(f"{indent}  calls: {', '.join(callee_strs)}")
             if len(callees) > shown:
                 block_lines[-1] += f" (+{len(callees) - shown} more)"
@@ -1845,6 +1853,25 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 lines.append(ri)
             lines.append("")
             token_count = count_tokens("\n".join(lines))
+    # Tests to run: test files that directly call symbols from the changed file(s).
+    # Sorted by call count — most-covered test files first.
+    if token_count < max_tokens - 60:
+        _test_caller_counts: dict[str, int] = {}
+        for sym in affected_symbols:
+            for caller in graph.callers_of(sym.id):
+                if _is_test_file(caller.file_path):
+                    _test_caller_counts[caller.file_path] = _test_caller_counts.get(caller.file_path, 0) + 1
+        if _test_caller_counts:
+            _sorted_tests = sorted(_test_caller_counts.items(), key=lambda x: -x[1])
+            _test_parts = [f"{fp.rsplit('/', 1)[-1]} ({n})" for fp, n in _sorted_tests[:5]]
+            _overflow = len(_test_caller_counts) - 5
+            _tests_line = f"Tests to run ({len(_test_caller_counts)}): {', '.join(_test_parts)}"
+            if _overflow > 0:
+                _tests_line += f" +{_overflow} more"
+            lines.append(_tests_line)
+            lines.append("")
+            token_count = count_tokens("\n".join(lines))
+
     if max_tokens - token_count > 500:
         lines.append("Key symbols in changed files:")
         for sym in affected_symbols:

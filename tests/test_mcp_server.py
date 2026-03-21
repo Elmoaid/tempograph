@@ -4140,6 +4140,57 @@ class TestFocusBlastAnnotation:
             )
 
 
+class TestFocusCalleeBlastAnnotation:
+    """S31: Focus mode — blast annotation on depth-0 callees.
+
+    When a callee of the seed symbol is called by 3+ cross-file callers,
+    annotate with '[blast: N]' in the calls: line so agents know which
+    downstream dependencies have wide impact.
+    """
+
+    def test_callee_blast_shown_when_widely_referenced(self, tmp_path):
+        """Callee with 3+ cross-file callers shows [blast: N] in calls: line."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "lib.py").write_text("def shared(): pass\n")
+        (tmp_path / "seed.py").write_text(
+            "from lib import shared\ndef seed_fn(): return shared()\n"
+        )
+        for i in range(3):
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from lib import shared\ndef fn_{i}(): return shared()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "seed_fn")
+
+        calls_line = next((l for l in out.split("\n") if "calls:" in l), "")
+        assert "[blast:" in calls_line, (
+            f"[blast: N] must appear for widely-referenced callee; calls: line:\n{calls_line}"
+        )
+        assert "shared" in calls_line
+
+    def test_callee_blast_omitted_for_few_callers(self, tmp_path):
+        """Callee with <3 cross-file callers omits [blast:] annotation."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "lib.py").write_text("def local_fn(): pass\n")
+        (tmp_path / "seed.py").write_text(
+            "from lib import local_fn\ndef seed_fn(): return local_fn()\n"
+        )
+        (tmp_path / "other.py").write_text(
+            "from lib import local_fn\ndef other(): return local_fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "seed_fn")
+
+        calls_line = next((l for l in out.split("\n") if "calls:" in l), "")
+        assert "[blast:" not in calls_line, (
+            f"[blast:] must NOT appear for callee with <3 cross-file callers; got:\n{calls_line}"
+        )
+
+
 class TestOverviewHighRisk:
     """S28: Overview shows 'high risk (no tests):' — high-churn files without test coverage.
 
