@@ -1602,6 +1602,8 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                 caller = graph.symbols.get(edge.source_id)
                 if caller and caller.file_path in set(importers):
                     _importer_users.setdefault(caller.file_path, []).append(caller.name)
+        _all_test_fps = {fp for fp in graph.files if _is_test_file(fp)}
+        _src_importers = [imp for imp in importers if not _is_test_file(imp)]
         for imp in sorted(importers):
             users = _importer_users.get(imp, [])
             unique_users = list(dict.fromkeys(users))[:3]  # deduplicate, cap at 3
@@ -1609,6 +1611,14 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                 lines.append(f"  {imp} — used by: {', '.join(unique_users)}")
             else:
                 lines.append(f"  {imp}")
+        # Refactor safety: how many source importers have test coverage?
+        if _src_importers and _all_test_fps:
+            _tested = sum(
+                1 for imp in _src_importers
+                if any(imp.rsplit("/", 1)[-1].rsplit(".", 1)[0] in t for t in _all_test_fps)
+            )
+            _pct = int(_tested / len(_src_importers) * 100)
+            lines.append(f"  refactor safety: {_tested}/{len(_src_importers)} caller files tested ({_pct}%)")
         lines.append("")
 
     # Symbols in this file that are called externally

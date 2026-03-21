@@ -4191,3 +4191,49 @@ class TestOverviewHighRisk:
         assert "high risk" not in out, (
             f"high risk must not appear when no test files exist; got:\n{out}"
         )
+
+
+class TestBlastRefactorSafety:
+    """S30: Blast mode — 'refactor safety: N/M caller files tested' line.
+
+    Shows how many of the source importer files have matching test coverage.
+    Helps agents understand the blast refactor risk before changing a file.
+    """
+
+    def test_shows_refactor_safety_when_some_callers_tested(self, tmp_path):
+        """refactor safety: line shows correct ratio when some callers have tests."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        (tmp_path / "core.py").write_text("def service(): pass\n")
+        (tmp_path / "caller_a.py").write_text(
+            "from core import service\ndef run(): service()\n"
+        )
+        (tmp_path / "caller_b.py").write_text(
+            "from core import service\ndef work(): service()\n"
+        )
+        # Only caller_a has a test file
+        (tmp_path / "test_caller_a.py").write_text(
+            "from caller_a import run\ndef test_run(): run()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "core.py")
+
+        assert "refactor safety:" in out, f"refactor safety: line must appear; got:\n{out}"
+        assert "1/2" in out, f"1/2 caller files tested must be shown; got:\n{out}"
+
+    def test_refactor_safety_omitted_when_no_test_files(self, tmp_path):
+        """refactor safety: is omitted when no test files exist in the project."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        (tmp_path / "core.py").write_text("def service(): pass\n")
+        (tmp_path / "caller.py").write_text(
+            "from core import service\ndef run(): service()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "core.py")
+
+        assert "refactor safety:" not in out, (
+            f"refactor safety: must not appear when no test files exist; got:\n{out}"
+        )
