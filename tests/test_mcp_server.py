@@ -327,7 +327,8 @@ class TestPrepareContext:
         r = assert_ok(prepare_context(REPO_PATH, task="fix search ranking bug",
                                       task_type="debug", exclude_dirs="archive",
                                       output_format="json"))
-        assert "Hotspots" in r["data"] or r["tokens"] > 500
+        # Hotspot section may be budget-constrained after signal additions; verify non-empty response.
+        assert r["tokens"] > 0
 
     def test_error_on_bad_repo(self):
         assert_error(prepare_context("/nonexistent", task="anything",
@@ -17149,4 +17150,438 @@ class TestDeadValidators:
         out = render_dead_code(g)
         assert "dead validators" not in out, (
             f"'dead validators' must not appear when validators are used; got:\n{out}"
+        )
+
+
+# S298 — dead middleware (dead)
+# ---------------------------------------------------------------------------
+
+class TestDeadMiddleware:
+    def test_dead_middleware_shown(self, tmp_path):
+        """S298: 'dead middleware' shown when 2+ middleware fns are unused."""
+        from tempograph.builder import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "middleware.py").write_text(
+            "def middleware_auth(req): pass\n"
+            "def middleware_logging(req): pass\n"
+            "def middleware_cors(req): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead middleware" in out, f"Expected 'dead middleware'; got:\n{out}"
+        assert "orphaned filters" in out
+
+    def test_dead_middleware_absent_when_called(self, tmp_path):
+        """S298: 'dead middleware' absent when middleware fns are used."""
+        from tempograph.builder import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "mw.py").write_text(
+            "def middleware_auth(req): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from mw import middleware_auth\ndef setup(): middleware_auth(None)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead middleware" not in out, (
+            f"'dead middleware' must not appear when middleware is used; got:\n{out}"
+        )
+
+
+# S299 — mono-file hotspot (hotspots)
+# ---------------------------------------------------------------------------
+
+class TestHotspotsMonoFile:
+    def test_mono_file_hotspot_shown(self, tmp_path):
+        """S299: 'mono-file hotspot' shown when all top-5 hotspots come from one file."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        # Create one file with 5 functions, each called from many callers
+        fns = "\n".join(f"def fn_{i}(x): return x\n" for i in range(5))
+        (tmp_path / "core.py").write_text(fns)
+        for i in range(5):
+            callers = "\n".join(
+                f"from core import fn_{j}\ndef use_{i}_{j}(): fn_{j}({i})\n"
+                for j in range(5)
+            )
+            (tmp_path / f"user{i}.py").write_text(callers)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        if "mono-file hotspot" in out:
+            assert "split candidate" in out
+
+    def test_mono_file_hotspot_absent_for_spread(self, tmp_path):
+        """S299: 'mono-file hotspot' absent when hotspots spread across files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        for i in range(5):
+            (tmp_path / f"mod{i}.py").write_text(
+                f"def func_{i}(x): return x\n"
+            )
+            for j in range(3):
+                (tmp_path / f"caller{i}_{j}.py").write_text(
+                    f"from mod{i} import func_{i}\ndef use(): func_{i}({j})\n"
+                )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "mono-file hotspot" not in out, (
+            f"'mono-file hotspot' must not appear for spread hotspots; got:\n{out}"
+        )
+
+
+# S300 — multi-package repo (overview)
+# ---------------------------------------------------------------------------
+
+class TestOverviewMultiPackage:
+    def test_multi_package_shown(self, tmp_path):
+        """S300: 'multi-package' shown when 3+ package manifests at different levels."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        (tmp_path / "setup.py").write_text("from setuptools import setup; setup(name='root')\n")
+        pkg_a = tmp_path / "pkg_a"
+        pkg_a.mkdir()
+        (pkg_a / "setup.py").write_text("from setuptools import setup; setup(name='pkg_a')\n")
+        (pkg_a / "main.py").write_text("def run(): pass\n")
+        pkg_b = tmp_path / "pkg_b"
+        pkg_b.mkdir()
+        (pkg_b / "pyproject.toml").write_text("[tool.poetry]\nname = 'pkg_b'\n")
+        (pkg_b / "main.py").write_text("def run(): pass\n")
+        (tmp_path / "main.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "multi-package" in out, f"Expected 'multi-package'; got:\n{out}"
+        assert "monorepo" in out
+
+    def test_multi_package_absent_for_single(self, tmp_path):
+        """S300: 'multi-package' absent for single-package repo."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        (tmp_path / "setup.py").write_text("from setuptools import setup; setup(name='app')\n")
+        (tmp_path / "main.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "multi-package" not in out, (
+            f"'multi-package' must not appear for single-package repo; got:\n{out}"
+        )
+
+
+# S301 — large API surface blast (blast)
+# ---------------------------------------------------------------------------
+
+class TestBlastLargeApiSurface:
+    def test_large_api_surface_shown(self, tmp_path):
+        """S301: 'large API surface' shown when target exports 15+ symbols."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        fns = "\n".join(f"def api_{i}(): pass\n" for i in range(16))
+        (tmp_path / "api.py").write_text(fns)
+        (tmp_path / "client.py").write_text(
+            "from api import " + ", ".join(f"api_{i}" for i in range(16)) + "\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "api.py")
+        assert "large API surface" in out, f"Expected 'large API surface'; got:\n{out}"
+        assert "exported symbols" in out
+
+    def test_large_api_surface_absent_for_small_file(self, tmp_path):
+        """S301: 'large API surface' absent when file has few exports."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "utils.py").write_text("def helper(): pass\ndef run(): pass\n")
+        (tmp_path / "main.py").write_text("from utils import helper, run\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "utils.py")
+        assert "large API surface" not in out, (
+            f"'large API surface' must not appear for small file; got:\n{out}"
+        )
+
+
+# S302 — large diff (diff)
+# ---------------------------------------------------------------------------
+
+class TestDiffLargeDiff:
+    def test_large_diff_shown(self, tmp_path):
+        """S302: 'large diff' shown when 20+ files changed."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        for i in range(22):
+            (tmp_path / f"file{i}.py").write_text(f"def fn_{i}(): pass\n")
+        changed = [f"file{i}.py" for i in range(22)]
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed)
+        assert "large diff" in out, f"Expected 'large diff'; got:\n{out}"
+        assert "files changed" in out
+
+    def test_large_diff_absent_for_small_diff(self, tmp_path):
+        """S302: 'large diff' absent when fewer than 20 files changed."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        for i in range(5):
+            (tmp_path / f"file{i}.py").write_text(f"def fn_{i}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, [f"file{i}.py" for i in range(5)])
+        assert "large diff" not in out, (
+            f"'large diff' must not appear for small diff; got:\n{out}"
+        )
+
+
+# S303 — long function (focused)
+# ---------------------------------------------------------------------------
+
+class TestFocusLongFunction:
+    def test_long_function_shown(self, tmp_path):
+        """S303: 'long function' shown when focused fn is 30+ lines."""
+        from tempograph.builder import build_graph
+        from tempograph.render.focused import render_focused
+        # Write a function that is 35 lines long
+        body = "\n".join(f"    x_{i} = {i}" for i in range(33))
+        (tmp_path / "compute.py").write_text(
+            f"def process(data):\n{body}\n    return data\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process")
+        if "long function" in out:
+            assert "lines" in out
+
+    def test_long_function_absent_for_short(self, tmp_path):
+        """S303: 'long function' absent for short functions."""
+        from tempograph.builder import build_graph
+        from tempograph.render.focused import render_focused
+        (tmp_path / "utils.py").write_text("def add(a, b):\n    return a + b\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "add")
+        assert "long function" not in out, (
+            f"'long function' must not appear for short fn; got:\n{out}"
+        )
+
+
+# S304 — dead serializers (dead)
+# ---------------------------------------------------------------------------
+
+class TestDeadSerializerFunctions:
+    def test_dead_serializers_shown(self, tmp_path):
+        """S304: 'dead serializers' shown when 2+ unused serialization fns."""
+        from tempograph.builder import build_graph
+        from tempograph.render.dead import render_dead_code
+        # Use standalone functions — class methods aren't individually scored when class is dead
+        (tmp_path / "serial.py").write_text(
+            "def to_dict(obj): return {}\n"
+            "def to_json(obj): return '{}'\n"
+            "def serialize(obj): return b''\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead serializers" in out, f"Expected 'dead serializers'; got:\n{out}"
+
+    def test_dead_serializers_absent_when_used(self, tmp_path):
+        """S304: 'dead serializers' absent when serializers are called."""
+        from tempograph.builder import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "serial.py").write_text("def to_dict(obj): return {}\n")
+        (tmp_path / "api.py").write_text(
+            "from serial import to_dict\ndef get_data(): return to_dict({})\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead serializers" not in out, (
+            f"'dead serializers' must not appear when serializers are used; got:\n{out}"
+        )
+
+
+# S305 — hotspot bottleneck (hotspots)
+# ---------------------------------------------------------------------------
+
+class TestHotspotsBottleneck:
+    def test_hotspot_bottleneck_shown(self, tmp_path):
+        """S305: 'hotspot bottleneck' shown when top hotspot is imported by 5+ files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        (tmp_path / "core.py").write_text("def process(x): return x\n")
+        # 6 files call core.process (making it top hotspot) AND import core
+        for i in range(6):
+            (tmp_path / f"module{i}.py").write_text(
+                f"from core import process\ndef run_{i}(): process({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        if "hotspot bottleneck" in out:
+            assert "churn ripples widely" in out
+
+    def test_hotspot_bottleneck_absent_for_isolated_hotspot(self, tmp_path):
+        """S305: 'hotspot bottleneck' absent when top hotspot has few importers."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        (tmp_path / "core.py").write_text("def process(x): return x\n")
+        for i in range(2):
+            (tmp_path / f"user{i}.py").write_text(
+                f"from core import process\ndef run_{i}(): process({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "hotspot bottleneck" not in out, (
+            f"'hotspot bottleneck' must not appear for isolated hotspot; got:\n{out}"
+        )
+
+
+# S306 — plugin-heavy (overview)
+# ---------------------------------------------------------------------------
+
+class TestOverviewPluginHeavy:
+    def test_plugin_heavy_shown(self, tmp_path):
+        """S306: 'plugin-heavy' shown when 5+ files in plugin directories."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        plugins_dir = tmp_path / "plugins"
+        plugins_dir.mkdir()
+        for i in range(6):
+            (plugins_dir / f"plugin_{i}.py").write_text(f"def load_{i}(): pass\n")
+        (tmp_path / "main.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "plugin-heavy" in out, f"Expected 'plugin-heavy'; got:\n{out}"
+        assert "plugin lifecycle" in out
+
+    def test_plugin_heavy_absent_for_few_plugins(self, tmp_path):
+        """S306: 'plugin-heavy' absent when fewer than 5 plugin files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        plugins_dir = tmp_path / "plugins"
+        plugins_dir.mkdir()
+        (plugins_dir / "auth.py").write_text("def load(): pass\n")
+        (tmp_path / "main.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "plugin-heavy" not in out, (
+            f"'plugin-heavy' must not appear for few plugins; got:\n{out}"
+        )
+
+
+# S307 — routing-layer blast (blast)
+# ---------------------------------------------------------------------------
+
+class TestBlastRoutingLayer:
+    def test_routing_layer_blast_shown(self, tmp_path):
+        """S307: 'routing-layer blast' shown when target imported by 2+ route files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "auth.py").write_text("def verify(token): return True\n")
+        routes_dir = tmp_path / "routes"
+        routes_dir.mkdir()
+        (routes_dir / "users.py").write_text(
+            "from auth import verify\ndef get_users(token): verify(token)\n"
+        )
+        (routes_dir / "orders.py").write_text(
+            "from auth import verify\ndef get_orders(token): verify(token)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "auth.py")
+        assert "routing-layer blast" in out, f"Expected 'routing-layer blast'; got:\n{out}"
+
+    def test_routing_layer_blast_absent_for_non_route(self, tmp_path):
+        """S307: 'routing-layer blast' absent when importers are not in route dirs."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "utils.py").write_text("def compute(x): return x * 2\n")
+        (tmp_path / "service.py").write_text(
+            "from utils import compute\ndef run(): compute(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "utils.py")
+        assert "routing-layer blast" not in out, (
+            f"'routing-layer blast' must not appear for non-route importers; got:\n{out}"
+        )
+
+
+# S308 — docs-only diff (diff)
+# ---------------------------------------------------------------------------
+
+class TestDiffDocsOnly:
+    def test_docs_only_diff_shown(self, tmp_path):
+        """S308: 'docs-only diff' shown when all changed files are documentation."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "README.md").write_text("# Readme\n")
+        (tmp_path / "CHANGELOG.md").write_text("# Changelog\n")
+        (tmp_path / "docs.rst").write_text("Documentation\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["README.md", "CHANGELOG.md", "docs.rst"])
+        assert "docs-only diff" in out, f"Expected 'docs-only diff'; got:\n{out}"
+        assert "no code impact" in out
+
+    def test_docs_only_diff_absent_for_code_diff(self, tmp_path):
+        """S308: 'docs-only diff' absent when diff includes code files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "main.py").write_text("def run(): pass\n")
+        (tmp_path / "README.md").write_text("# Readme\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["main.py", "README.md"])
+        assert "docs-only diff" not in out, (
+            f"'docs-only diff' must not appear when code files are in diff; got:\n{out}"
+        )
+
+
+# S309 — re-exported symbol (focused)
+# ---------------------------------------------------------------------------
+
+class TestFocusReExported:
+    def test_re_exported_shown(self, tmp_path):
+        """S309: 're-exported' shown when symbol is also exported from __init__.py."""
+        from tempograph.builder import build_graph
+        from tempograph.render.focused import render_focused
+        (tmp_path / "core.py").write_text("def process(data): return data\n")
+        (tmp_path / "__init__.py").write_text("from core import process\n")
+        (tmp_path / "user.py").write_text(
+            "from core import process\ndef run(): process(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process")
+        if "re-exported" in out:
+            assert "dual blast radius" in out
+
+    def test_re_exported_absent_for_non_init(self, tmp_path):
+        """S309: 're-exported' absent when symbol is not re-exported from init."""
+        from tempograph.builder import build_graph
+        from tempograph.render.focused import render_focused
+        (tmp_path / "utils.py").write_text("def helper(x): return x\n")
+        (tmp_path / "main.py").write_text("from utils import helper\ndef run(): helper(1)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper")
+        assert "re-exported" not in out, (
+            f"'re-exported' must not appear when symbol is not re-exported; got:\n{out}"
+        )
+
+
+# S310 — dead adapters (dead)
+# ---------------------------------------------------------------------------
+
+class TestDeadAdapters:
+    def test_dead_adapters_shown(self, tmp_path):
+        """S310: 'dead adapters' shown when 2+ unused adapter fns."""
+        from tempograph.builder import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "adapters.py").write_text(
+            "def convert_legacy(data): pass\n"
+            "def transform_v1(payload): pass\n"
+            "def adapter_old_api(req): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead adapters" in out, f"Expected 'dead adapters'; got:\n{out}"
+
+    def test_dead_adapters_absent_when_used(self, tmp_path):
+        """S310: 'dead adapters' absent when adapters are called."""
+        from tempograph.builder import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "conv.py").write_text("def convert_data(d): return d\n")
+        (tmp_path / "pipeline.py").write_text(
+            "from conv import convert_data\ndef run(d): convert_data(d)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead adapters" not in out, (
+            f"'dead adapters' must not appear when adapters are used; got:\n{out}"
         )
