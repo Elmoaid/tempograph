@@ -644,12 +644,14 @@ def _bfs_expand(
             # More context at shallow depths, less at deeper
             caller_limit = 8 if depth == 0 else 5 if depth == 1 else 3
             callee_limit = 8 if depth == 0 else 5 if depth == 1 else 3
-            # Hot-first traversal: prefer recently-modified symbols when the
-            # 50-node cap forces truncation, so hot-file nodes win the slots.
-            _hot_key = lambda s: s.file_path not in graph.hot_files  # False(0)=hot first
-            for caller in sorted(graph.callers_of(sym.id), key=_hot_key)[:caller_limit]:
+            # Importance-first traversal: when the 50-node cap forces truncation,
+            # structurally important nodes (many cross-file callers, exported) win.
+            def _imp_sort_key(s):
+                cross = sum(1 for c in graph.callers_of(s.id) if c.file_path != s.file_path)
+                return (s.file_path not in graph.hot_files, -(cross * 2 + int(s.exported)))
+            for caller in sorted(graph.callers_of(sym.id), key=_imp_sort_key)[:caller_limit]:
                 _enqueue(caller, depth + 1)
-            for callee in sorted(graph.callees_of(sym.id), key=_hot_key)[:callee_limit]:
+            for callee in sorted(graph.callees_of(sym.id), key=_imp_sort_key)[:callee_limit]:
                 _enqueue(callee, depth + 1)
             if depth < 2:
                 for child in graph.children_of(sym.id)[:5]:
