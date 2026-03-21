@@ -7123,3 +7123,43 @@ class TestFocusRecursionDetection:
         assert "[recursive" not in out, (
             f"Non-recursive function must not get '[recursive' annotation; got:\n{out}"
         )
+
+
+class TestOverviewCircularImports:
+    """S66: Overview — '⚠ circular imports:' section when circular import cycles detected.
+
+    Shows count and first cycle. Absent when no circular imports exist.
+    """
+
+    def _build(self, tmp_path, files: dict):
+        from tempograph.builder import build_graph
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_circular_imports_shown_when_cycle_exists(self, tmp_path):
+        """'circular imports:' appears when a circular import chain exists."""
+        from tempograph.render import render_overview
+
+        # a imports b, b imports a — circular
+        g = self._build(tmp_path, {
+            "a.py": "from b import fb\ndef fa(): return fb()\n",
+            "b.py": "from a import fa\ndef fb(): return fa()\n",
+        })
+        out = render_overview(g)
+        assert "circular imports" in out, (
+            f"Expected 'circular imports' for a↔b cycle; got:\n{out}"
+        )
+
+    def test_circular_imports_absent_when_no_cycles(self, tmp_path):
+        """'circular imports:' absent when no circular imports exist."""
+        from tempograph.render import render_overview
+
+        g = self._build(tmp_path, {
+            "core.py": "def process(): return 1\n",
+            "app.py": "from core import process\ndef run(): return process()\n",
+        })
+        out = render_overview(g)
+        assert "circular imports" not in out, (
+            f"'circular imports' must not appear when no cycles exist; got:\n{out}"
+        )

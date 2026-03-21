@@ -470,6 +470,17 @@ def render_overview(graph: Tempo) -> str:
         _chain_names = [_short(fp) for fp in _best_chain]
         lines.append(f"dep depth: {len(_best_chain)} ({' → '.join(_chain_names[:5])}{'...' if len(_best_chain) > 5 else ''})")
 
+    # Circular imports: flag immediately in overview so agents don't miss them.
+    # Details are in `--mode deps` but overview gives a quick count + first cycle.
+    try:
+        _cycles = graph.detect_circular_imports()
+        if _cycles:
+            _first_cycle = " → ".join(fp.rsplit("/", 1)[-1] for fp in _cycles[0])
+            _more = f" +{len(_cycles) - 1} more" if len(_cycles) > 1 else ""
+            lines.append(f"⚠ circular imports: {len(_cycles)} cycle(s) ({_first_cycle}{_more})")
+    except Exception:
+        pass
+
     # Module structure -- just the shape, no noisy import counts
     modules: dict[str, list[str]] = {}
     for fp in graph.files:
