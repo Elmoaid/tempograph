@@ -1328,6 +1328,33 @@ def _build_symbol_block_lines(
                 block_lines.append(f"{indent}  recent: {', '.join(_commit_parts)}")
         except Exception:
             pass
+    # Callee drift: seed is >=30d old but calls things changed in the last 14d.
+    # Flags potential "stale wrapper" — function may not reflect its dependency changes.
+    # Uses file-level age for callees (fast — no per-line git log overhead).
+    if depth == 0 and graph.root:
+        try:
+            from .git import symbol_last_modified_days as _sld_cd  # noqa: PLC0415
+            from .git import file_last_modified_days as _fld_cd    # noqa: PLC0415
+            _seed_days = _sld_cd(graph.root, sym.file_path, sym.line_start)
+            if _seed_days is not None and _seed_days >= 30:
+                _callees_cd = graph.callees_of(sym.id)
+                _drifted: list[tuple[int, str]] = []
+                for _c in _callees_cd[:15]:  # cap to avoid subprocess spam
+                    if _c.file_path == sym.file_path:
+                        continue  # same-file callees usually updated together
+                    _c_days = _fld_cd(graph.root, _c.file_path)
+                    if _c_days is not None and _c_days < 14:
+                        _drifted.append((_c_days, _c.name))
+                if _drifted:
+                    _drifted.sort()  # most recently changed first
+                    _drift_strs = [f"{n} ({d}d)" for d, n in _drifted[:3]]
+                    _drift_overflow = f" +{len(_drifted) - 3} more" if len(_drifted) > 3 else ""
+                    block_lines.append(
+                        f"{indent}  ⚠ callee drift: {len(_drifted)} dep(s) changed after your last edit"
+                        f" — {', '.join(_drift_strs)}{_drift_overflow}"
+                    )
+        except Exception:
+            pass
     if sym.signature and depth < 2:
         block_lines.append(f"{indent}  sig: {sym.signature[:150]}")
     if sym.doc and depth == 0:

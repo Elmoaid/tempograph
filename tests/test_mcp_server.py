@@ -6071,3 +6071,107 @@ class TestBlastRecentCallers:
         assert "blast radius growing" in out, (
             f"Expected 'blast radius growing' in output; got:\n{out}"
         )
+
+
+class TestFocusCalleeDrift:
+    """S53: Focus mode — callee drift warning.
+
+    When a seed symbol is >=30d old but calls functions in OTHER files whose
+    files were changed within 14d, emit a '⚠ callee drift:' warning line.
+    This flags potential "stale wrapper" situations where the function may not
+    reflect changes to its dependencies.
+
+    No warning when:
+    - seed is fresh (< 30d)
+    - all callees were changed > 14d ago
+    - callees are in the same file as the seed
+    - git is unavailable (graceful fallback)
+    """
+
+    def _build(self, tmp_path, files: dict) -> object:
+        from tempograph.builder import build_graph
+
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_callee_drift_shown_when_old_seed_has_fresh_callee(self, tmp_path):
+        """Drift warning fires: seed is 60d old, cross-file callee's file changed 7d ago."""
+        from unittest.mock import patch
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "core.py": "def helper(): return 1\n",
+            "wrapper.py": "from core import helper\ndef wrap(): return helper()\n",
+        })
+        g.root = str(tmp_path)
+
+        with (
+            patch("tempograph.git.symbol_last_modified_days", return_value=60),
+            patch("tempograph.git.file_last_modified_days", return_value=7),
+        ):
+            out = render_focused(g, "wrap")
+
+        assert "callee drift" in out, (
+            f"Must show 'callee drift' when seed is 60d old and callee file changed 7d ago; got:\n{out}"
+        )
+        assert "helper" in out, (
+            f"Drift warning must name the drifted callee; got:\n{out}"
+        )
+
+    def test_no_callee_drift_when_seed_is_fresh(self, tmp_path):
+        """No drift warning when seed was recently changed (< 30d), even if callees changed."""
+        from unittest.mock import patch
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "core.py": "def helper(): return 1\n",
+            "wrapper.py": "from core import helper\ndef wrap(): return helper()\n",
+        })
+        g.root = str(tmp_path)
+
+        with (
+            patch("tempograph.git.symbol_last_modified_days", return_value=5),
+            patch("tempograph.git.file_last_modified_days", return_value=3),
+        ):
+            out = render_focused(g, "wrap")
+
+        assert "callee drift" not in out, (
+            f"Must NOT show callee drift when seed is fresh (5d); got:\n{out}"
+        )
+
+    def test_no_callee_drift_when_callees_are_old(self, tmp_path):
+        """No drift warning when callees were not recently modified (>= 14d)."""
+        from unittest.mock import patch
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "core.py": "def helper(): return 1\n",
+            "wrapper.py": "from core import helper\ndef wrap(): return helper()\n",
+        })
+        g.root = str(tmp_path)
+
+        with (
+            patch("tempograph.git.symbol_last_modified_days", return_value=60),
+            patch("tempograph.git.file_last_modified_days", return_value=20),
+        ):
+            out = render_focused(g, "wrap")
+
+        assert "callee drift" not in out, (
+            f"Must NOT show callee drift when callees changed 20d ago (not fresh); got:\n{out}"
+        )
+
+    def test_no_callee_drift_without_git(self, tmp_path):
+        """No drift warning in a non-git directory (graceful fallback)."""
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "core.py": "def helper(): return 1\n",
+            "wrapper.py": "from core import helper\ndef wrap(): return helper()\n",
+        })
+        # g.root is None (no git) — default from build_graph on a non-git tmp_path
+        out = render_focused(g, "wrap")
+
+        assert "callee drift" not in out, (
+            f"Must NOT show callee drift without git; got:\n{out}"
+        )
