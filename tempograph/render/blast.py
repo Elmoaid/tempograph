@@ -790,6 +790,24 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — second-order blast; changes propagate further than direct importers suggest"
         )
 
+
+    # S278: Test infrastructure blast — blast target is a conftest or shared test fixture.
+    # Changes to test infrastructure (conftest.py, fixtures.py, test_utils.py) affect
+    # ALL tests that rely on those fixtures; blast is test-suite-wide.
+    _s278_infra_names = {"conftest", "fixtures", "test_utils", "test_helpers", "test_base",
+                         "testutils", "testhelpers", "factory", "factories", "fakes", "mocks"}
+    _s278_stem = file_path.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if _s278_stem in _s278_infra_names or _is_test_file(file_path):
+        _s278_test_importers = [
+            f for f in graph.importers_of(file_path)
+            if f in graph.files and _is_test_file(f)
+        ]
+        if _s278_test_importers:
+            lines.append(
+                f"test infra blast: {len(_s278_test_importers)} test file(s) depend on this fixture"
+                f" — changes here affect the entire test suite"
+            )
+
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
 

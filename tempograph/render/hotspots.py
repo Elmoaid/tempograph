@@ -1039,4 +1039,26 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                     f" in {_s268_label} — single file is instability center, high merge conflict risk"
                 )
 
+
+    # S277: Single-caller hotspot — top hotspot symbol is called from only 1 other symbol.
+    # A high-complexity function with only one caller may be an inlined helper that
+    # could be folded back, or a function named for the wrong abstraction level.
+    if scores:
+        for _sc277, _sym277 in scores[:5]:
+            if _sym277.kind.value not in ("function", "method"):
+                continue
+            if _is_test_file(_sym277.file_path):
+                continue
+            _ext_callers277 = [
+                c for c in graph.callers_of(_sym277.id)
+                if c.file_path != _sym277.file_path
+            ]
+            if len(_ext_callers277) == 1:
+                _caller_name277 = _ext_callers277[0].name
+                lines.append(
+                    f"\nsingle-caller hotspot: {_sym277.name} called only from {_caller_name277}"
+                    f" — high-churn fn with one user; consider inlining or renaming"
+                )
+                break
+
     return "\n".join(lines)  # ALWAYS return here — never inside a conditional block
