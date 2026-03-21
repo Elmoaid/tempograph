@@ -2835,6 +2835,27 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — abandoned data-transformation paths; verify schema changes were completed"
         )
 
+    # S833: Dead CLI commands — unused functions in CLI/command files.
+    # Dead CLI commands indicate removed user-facing features; they add noise to
+    # help output and may be invocable via routing config that was never updated.
+    _cli_kws833 = ("cli", "commands", "command", "cmd", "cmds", "console", "entrypoints")
+    _dead_cli833 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and any(kw == s.file_path.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+                or s.file_path.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower().startswith(kw + "_")
+                for kw in _cli_kws833)
+    ]
+    if _dead_cli833:
+        _cli_names833 = ", ".join(s.name for s in _dead_cli833[:3])
+        if len(_dead_cli833) > 3:
+            _cli_names833 += f" +{len(_dead_cli833) - 3} more"
+        lines.append(
+            f"dead CLI commands: {len(_dead_cli833)} unused function(s) in CLI/command files ({_cli_names833})"
+            f" — removed user-facing commands; verify help text and routing are updated"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

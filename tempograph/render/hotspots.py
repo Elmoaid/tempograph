@@ -2539,5 +2539,19 @@ def _collect_hotspots_signals(
                 f" — top hotspot with large body; callers are exposed to full function complexity"
             )
 
+    # S832: Single-file hotspot callers — top hotspot is only called from one file.
+    # A hotspot with all callers in a single file may be inflated by intra-file calls;
+    # the real external impact is lower than the raw caller count suggests.
+    if scores:
+        _top832 = scores[0][1]
+        if _top832 is not None and not _is_test_file(_top832.file_path):
+            _callers832 = graph.callers_of(_top832.id)
+            _caller_files832 = {c.file_path for c in _callers832 if c.file_path != _top832.file_path}
+            if len(_callers832) >= 3 and len(_caller_files832) == 1:
+                out.append(
+                    f"\nsingle-file hotspot callers: {_top832.name} has {len(_callers832)} callers but all from one file"
+                    f" — hotspot score may be inflated by intra-module calls; external impact is narrower"
+                )
+
     return out
 
