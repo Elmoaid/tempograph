@@ -1946,6 +1946,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — all package consumers depend on this; changes affect the entire public API"
         )
 
+    # S734: Data model blast — the blast target is a data model/schema/entity file.
+    # Domain model changes cascade to all serializers, validators, consumers, and DB mappings;
+    # even small attribute renames can trigger widespread migration needs.
+    _model_kws734 = ("model", "schema", "entity", "dto", "domain")
+    _blast_stem734 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].replace(".py", "").lower()
+    if any(kw in _blast_stem734 for kw in _model_kws734):
+        lines.append(
+            f"data model blast: {_fp589.rsplit('/', 1)[-1]} is a data model/schema file"
+            f" — domain changes cascade to serializers, validators, and all consumers"
+        )
+
     return "\n".join(lines)
 
 

@@ -2283,5 +2283,19 @@ def _collect_hotspots_signals(
                     f" with no direct test callers — high blast radius, low safety net; add tests"
                 )
 
+    # S736: Choke point — top hotspot has 5+ callers AND 5+ callees (both high fan-in and fan-out).
+    # A choke point is both widely depended-upon and widely depending-on; changes propagate
+    # in both directions making it the most fragile position in the call graph.
+    if scores and scores[0]:
+        _top736 = scores[0][1]
+        if _top736 is not None and not _is_test_file(_top736.file_path):
+            _callers736 = graph.callers_of(_top736.id)
+            _callees736 = graph.callees_of(_top736.id)
+            if len(_callers736) >= 5 and len(_callees736) >= 5:
+                out.append(
+                    f"\nchoke point: {_top736.name} has {len(_callers736)} callers and {len(_callees736)} callees"
+                    f" — high fan-in AND fan-out; changes propagate in all directions"
+                )
+
     return out
 

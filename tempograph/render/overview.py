@@ -2876,6 +2876,21 @@ def _signals_async_oop(
             f" — all logic in one file; consider splitting into modules as complexity grows"
         )
 
+    # S733: Flat repo — all source files are in the root directory with no subdirectories.
+    # Flat repos work at small scale but become hard to navigate as file count grows;
+    # organize into subdirectories before cognitive overhead becomes a problem.
+    _src_files733 = [
+        fp for fp in graph.files
+        if not _is_test_file(fp) and fp.endswith(".py")
+    ]
+    if len(_src_files733) >= 5:
+        _has_subdir733 = any("/" in fp.replace("\\", "/") for fp in _src_files733)
+        if not _has_subdir733:
+            lines.append(
+                f"flat repo: all {len(_src_files733)} source files are in the root directory"
+                f" — consider organizing into subdirectories as the codebase grows"
+            )
+
     return lines
 
 

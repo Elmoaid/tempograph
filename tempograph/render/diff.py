@@ -381,6 +381,21 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — verify test coverage matches all changed source paths"
         )
 
+    # S735: Schema or migration file in diff — diff includes a database migration or schema file.
+    # Schema changes need coordinated deployment: DB migrations must run in a specific order
+    # relative to code changes; verify the deployment sequence is correct.
+    _schema_kws735 = ("migration", "migrate", "schema", "alembic")
+    _schema_files735 = [
+        f for f in changed_files
+        if any(kw in f.replace("\\", "/").lower() for kw in _schema_kws735)
+    ]
+    if _schema_files735:
+        _schema_name735 = _schema_files735[0].replace("\\", "/").rsplit("/", 1)[-1]
+        lines.append(
+            f"schema diff: {_schema_name735} is a migration/schema file"
+            f" — verify deployment order: DB migration must run in coordination with code changes"
+        )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 
