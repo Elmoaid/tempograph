@@ -1455,6 +1455,29 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — events fire without listener; silently drops signals"
         )
 
+    # S438: Dead migrations — migrate_*/migration_*/upgrade_*/downgrade_* helpers with 0 callers.
+    # Unapplied database migrations leave the schema out of sync with the ORM models;
+    # if migration helpers are dead, the schema change may never have been applied to production.
+    _s438_migration_prefixes = (
+        "migrate_", "migration_", "upgrade_", "downgrade_",
+        "apply_migration_", "run_migration_",
+    )
+    _s438_dead_migrations = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s438_migration_prefixes)
+    ]
+    if len(_s438_dead_migrations) >= 1:
+        _mig_names438 = ", ".join(s.name for s in _s438_dead_migrations[:3])
+        if len(_s438_dead_migrations) > 3:
+            _mig_names438 += f" +{len(_s438_dead_migrations) - 3} more"
+        lines.append(
+            f"dead migrations: {len(_s438_dead_migrations)} unapplied migration fn(s) ({_mig_names438})"
+            f" — schema changes may never have been applied; verify before deleting"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

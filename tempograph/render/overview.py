@@ -1938,6 +1938,19 @@ def _signals_async_oop(
         _async_files = len({s.file_path for s in _async_syms})
         lines.append(f"async surface: {len(_async_syms)} exported async functions in {_async_files} files")
 
+    # S433: No async code — service-sized codebase with no async def functions.
+    # A sync-only codebase cannot handle concurrent I/O efficiently; any blocking call
+    # stalls the entire thread, making async adoption a potential future rewrite.
+    _s433_src_files = [
+        fp for fp in graph.files
+        if not _is_test_file(fp)
+        and any(fp.endswith(ext) for ext in (".py", ".js", ".ts", ".jsx", ".tsx"))
+    ]
+    if len(_s433_src_files) >= 10 and len(_async_syms) == 0:
+        lines.append(
+            f"sync-only: {len(_s433_src_files)} source files with no async def functions"
+            f" — all I/O is blocking; async adoption requires rewriting call sites"
+        )
 
     # S243: Framework/library detected — codebase imports a well-known web framework or library.
     # Shown to orient agents: know what routing, ORM, and middleware patterns to expect.

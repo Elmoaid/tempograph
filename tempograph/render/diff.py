@@ -1303,4 +1303,29 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — deployment environment changes; test in staging before deploying to production"
         )
 
+    # S435: Version bump in diff — diff touches version or changelog files.
+    # Version bumps should be synchronised with the actual change scope; bumping a version
+    # without updating dependencies or changelogs (or vice versa) causes silent drift and
+    # misleads consumers of the package about what changed.
+    _s435_version_names = (
+        "version", "changelog", "changes", "history", "release",
+    )
+    _s435_version_files_exact = ("version.py", "VERSION", "version.txt", "_version.py")
+    _s435_version_files = [
+        f for f in changed_files
+        if (
+            f.rsplit("/", 1)[-1].lower() in {n.lower() for n in _s435_version_files_exact}
+            or any(
+                w in f.rsplit("/", 1)[-1].lower()
+                for w in _s435_version_names
+            )
+        )
+    ]
+    if _s435_version_files:
+        _ver_names435 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s435_version_files[:2])
+        lines.append(
+            f"version bump: {_ver_names435} in diff"
+            f" — ensure changelog, dependencies, and semver scope are all in sync"
+        )
+
     return "\n".join(lines)
