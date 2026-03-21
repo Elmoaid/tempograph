@@ -2018,6 +2018,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                 f" — large surface area; any change risks breaking a consumer; consider splitting"
             )
 
+    # S770: Constants file blast — the blast target is a constants/settings/config file.
+    # Constants files often define shared values used across many modules; changes
+    # to constants can silently break logic in every consumer without a type error.
+    _stem770 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].replace(".py", "").lower()
+    _const_kws770 = ("constants", "consts", "settings", "config", "configuration", "defaults", "env")
+    if any(kw == _stem770 or _stem770.startswith(kw + "_") or _stem770.endswith("_" + kw) for kw in _const_kws770):
+        lines.append(
+            f"constants file blast: {_fp589.rsplit('/', 1)[-1]} is a constants/settings file"
+            f" — value changes silently affect every consumer; test all affected code paths"
+        )
+
     return "\n".join(lines)
 
 

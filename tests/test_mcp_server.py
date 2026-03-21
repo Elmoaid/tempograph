@@ -36262,3 +36262,217 @@ class TestDeadGetterFunctionsS767:
         assert "dead getter functions" not in out, (
             f"'dead getter functions' must not appear when getter is called; got:\n{out}"
         )
+
+# ---------------------------------------------------------------------------
+# S768 – S773
+# ---------------------------------------------------------------------------
+
+# ── S768: Exported but uncalled ───────────────────────────────────────────────
+
+class TestExportedButUncalledS768:
+    """S768: Focused symbol is exported but has no cross-file callers emits signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def public_helper(): pass\n")
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "public_helper")
+        assert "exported but uncalled" in out, (
+            f"Expected 'exported but uncalled' for public fn with no cross-file callers; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def public_helper(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from utils import public_helper\ndef run(): public_helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "public_helper")
+        assert "exported but uncalled" not in out, (
+            f"'exported but uncalled' must not appear when symbol has cross-file callers; got:\n{out}"
+        )
+
+
+# ── S769: High method-to-class ratio ─────────────────────────────────────────
+
+class TestHighMethodToClassRatioS769:
+    """S769: Avg methods per class >= 10 emits high-method-to-class-ratio signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # 2 classes, 24 methods total = 12 avg
+        methods_a = "\n".join(f"    def method_{i}(self): pass" for i in range(12))
+        methods_b = "\n".join(f"    def fn_{i}(self): pass" for i in range(12))
+        (tmp_path / "services.py").write_text(
+            f"class ServiceA:\n{methods_a}\n\nclass ServiceB:\n{methods_b}\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "high method-to-class ratio" in out, (
+            f"Expected 'high method-to-class ratio' for classes with 12 methods each; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        (tmp_path / "services.py").write_text(
+            "class ServiceA:\n    def run(self): pass\n    def stop(self): pass\n"
+            "class ServiceB:\n    def start(self): pass\n    def pause(self): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "high method-to-class ratio" not in out, (
+            f"'high method-to-class ratio' must not appear for small classes; got:\n{out}"
+        )
+
+
+# ── S770: Constants file blast ────────────────────────────────────────────────
+
+class TestConstantsFileBlastS770:
+    """S770: Blast target is a constants/settings file emits constants-file-blast signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "constants.py").write_text(
+            "MAX_RETRIES = 3\nTIMEOUT = 30\nBASE_URL = 'http://api'\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from constants import MAX_RETRIES\ndef run(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "constants.py")
+        assert "constants file blast" in out, (
+            f"Expected 'constants file blast' for constants.py; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def helper(x): return x\n")
+        (tmp_path / "app.py").write_text(
+            "from utils import helper\ndef run(): helper(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "utils.py")
+        assert "constants file blast" not in out, (
+            f"'constants file blast' must not appear for non-constants files; got:\n{out}"
+        )
+
+
+# ── S771: Wide diff ───────────────────────────────────────────────────────────
+
+class TestWideDiffS771:
+    """S771: Diff spans 5+ files emits wide-diff signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        files = [f"file_{i}.py" for i in range(6)]
+        for fn in files:
+            (tmp_path / fn).write_text(f"def fn(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=files)
+        assert "wide diff" in out, (
+            f"Expected 'wide diff' when 6 files are changed; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "a.py").write_text("def fn_a(): pass\n")
+        (tmp_path / "b.py").write_text("def fn_b(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["a.py", "b.py"])
+        assert "wide diff" not in out, (
+            f"'wide diff' must not appear when only 2 files are changed; got:\n{out}"
+        )
+
+
+# ── S772: Test hotspot ────────────────────────────────────────────────────────
+
+class TestTestHotspotS772:
+    """S772: Top hotspot is a test function emits test-hotspot signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        # test helper called by many other test functions
+        (tmp_path / "test_helpers.py").write_text(
+            "def make_client(url): return {'url': url}\n"
+        )
+        for i in range(7):
+            (tmp_path / f"test_svc_{i}.py").write_text(
+                f"from test_helpers import make_client\n"
+                f"def test_call_{i}(): make_client('http://{i}')\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "is a test function ranked as the top hotspot" in out, (
+            f"Expected 'test hotspot' when top hotspot is in a test file; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def process(data): return data\n")
+        for i in range(5):
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from core import process\ndef run_{i}(x): return process(x)\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "is a test function ranked as the top hotspot" not in out, (
+            f"'test hotspot' must not appear when top hotspot is a source function; got:\n{out}"
+        )
+
+
+# ── S773: Dead single-method class ───────────────────────────────────────────
+
+class TestDeadSingleMethodClassS773:
+    """S773: Unused class with exactly one method emits dead-single-method-class signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "class Converter:\n    def convert(self, x): return str(x)\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead single-method class" in out, (
+            f"Expected 'dead single-method class' for unused class with 1 method; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "class Converter:\n    def convert(self, x): return str(x)\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from utils import Converter\ndef main(): Converter().convert(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead single-method class" not in out, (
+            f"'dead single-method class' must not appear when class is used; got:\n{out}"
+        )

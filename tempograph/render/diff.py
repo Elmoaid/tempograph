@@ -491,6 +491,15 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — entry point or bootstrap code; changes affect startup and test isolation"
             )
 
+    # S771: Wide diff — the diff touches 5 or more distinct files.
+    # Diffs spanning many files are harder to review and have higher merge conflict risk;
+    # they may bundle unrelated changes or indicate a cross-cutting concern was modified.
+    if len(changed_files) >= 5:
+        lines.append(
+            f"wide diff: {len(changed_files)} files changed — large diff scope;"
+            f" consider splitting into smaller focused PRs to ease review"
+        )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 

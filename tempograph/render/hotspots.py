@@ -2371,5 +2371,16 @@ def _collect_hotspots_signals(
                 f" — single-file bottleneck; split into smaller modules to reduce merge conflicts"
             )
 
+    # S772: Test hotspot — the top hotspot is a test function (shared test coupling).
+    # A test function ranking as a top hotspot means many other tests call it — it acts
+    # as a shared test utility; extract to conftest.py as a fixture or helper instead.
+    if scores:
+        _top772 = scores[0][1]
+        if _top772 is not None and _is_test_file(_top772.file_path):
+            out.append(
+                f"\ntest hotspot: {_top772.name} is a test function ranked as the top hotspot"
+                f" — shared test code; move to conftest.py as a fixture or helper"
+            )
+
     return out
 
