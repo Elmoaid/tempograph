@@ -1795,6 +1795,30 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — never implemented; the type contract was never realized; safe to remove"
         )
 
+    # S543: Dead dataclass — dataclass class with 0 callers in files that use dataclasses.
+    # Unused dataclasses are data models that were designed but never wired up;
+    # they silently expand the schema surface and mislead future code about active models.
+    _s542_dc_files = {
+        fp for fp, fi in graph.files.items()
+        if any("dataclass" in imp for imp in fi.imports)
+    }
+    _s542_dead_dc = [
+        sym for sym in graph.symbols.values()
+        if not _is_test_file(sym.file_path)
+        and sym.kind.value == "class"
+        and sym.file_path in _s542_dc_files
+        and not graph.callers_of(sym.id)
+        and not graph.importers_of(sym.file_path)
+    ]
+    if _s542_dead_dc:
+        _dc_names542 = ", ".join(s.name for s in _s542_dead_dc[:3])
+        if len(_s542_dead_dc) > 3:
+            _dc_names542 += f" +{len(_s542_dead_dc) - 3} more"
+        lines.append(
+            f"dead dataclasses: {len(_s542_dead_dc)} unused dataclass(es) ({_dc_names542})"
+            f" — designed but never instantiated; verify intent and remove stale models"
+        )
+
     # S530: Dead module constants — SCREAMING_SNAKE_CASE names at module level with 0 callers.
     # Unused module-level constants accumulate from feature flags, thresholds, and magic values
     # that were never cleaned up; they mislead about the codebase's active configuration surface.
@@ -1858,6 +1882,27 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         lines.append(
             f"dead magic methods: {len(_s518_dead_dunders)} unused dunder method(s) ({_du_names518})"
             f" — orphaned display/comparison methods in dead files; whole class is likely removable"
+        )
+
+    # S545: Dead value object — data/schema/payload class with 0 callers in non-imported files.
+    # Value objects (DTOs, schemas, payloads) defined but never instantiated represent abandoned
+    # API contracts; they are especially easy to miss because they have no logic to trigger errors.
+    _s542_vo_suffixes = ("data", "schema", "payload", "dto", "record", "config", "settings", "response", "request")
+    _s542_dead_vos = [
+        sym for sym in graph.symbols.values()
+        if not _is_test_file(sym.file_path)
+        and sym.kind.value == "class"
+        and any(sym.name.lower().endswith(s) for s in _s542_vo_suffixes)
+        and not graph.callers_of(sym.id)
+        and not graph.importers_of(sym.file_path)
+    ]
+    if _s542_dead_vos:
+        _vo_names542 = ", ".join(s.name for s in _s542_dead_vos[:3])
+        if len(_s542_dead_vos) > 3:
+            _vo_names542 += f" +{len(_s542_dead_vos) - 3} more"
+        lines.append(
+            f"dead value objects: {len(_s542_dead_vos)} unused data/schema class(es) ({_vo_names542})"
+            f" — abandoned API contracts; verify no serialization hooks before deleting"
         )
 
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
