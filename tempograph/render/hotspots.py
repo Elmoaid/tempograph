@@ -1802,5 +1802,23 @@ def _collect_hotspots_signals(
                 f" — accidental public API; rename without _ or expose via a public wrapper"
             )
 
+    # S556: Hotspot untested — top hotspot's source file has no corresponding test file.
+    # The most-called symbol in the project has no test coverage; a bug here propagates
+    # to every caller with no automated safety net to catch the regression.
+    if scores:
+        _top556 = scores[0][1]
+        if not _is_test_file(_top556.file_path):
+            _stem556 = _top556.file_path.replace("\\", "/").rsplit("/", 1)[-1].replace(".py", "")
+            _test_files556 = {fp.replace("\\", "/").rsplit("/", 1)[-1] for fp in graph.files if _is_test_file(fp)}
+            _has_test556 = (
+                f"test_{_stem556}.py" in _test_files556
+                or f"{_stem556}_test.py" in _test_files556
+            )
+            if not _has_test556:
+                out.append(
+                    f"\nhotspot untested: {_top556.name} is the top hotspot but its file has no test coverage"
+                    f" — most-called symbol with no safety net; add tests before modifying"
+                )
+
     return out
 

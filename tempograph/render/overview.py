@@ -2350,6 +2350,21 @@ def _signals_async_oop(
             f" — no safety net for refactoring; treat every change as high-risk"
         )
 
+    # S553: Mixed languages — source files span 3+ different programming languages.
+    # Multi-language repos require multiple toolchains, runtimes, and mental models;
+    # cross-language calls add marshalling overhead and reduce static analysis coverage.
+    _s553_langs = {
+        graph.files[fp].language.value
+        for fp in graph.files
+        if not _is_test_file(fp) and graph.files[fp].language.value in _CODE_LANGS
+    }
+    if len(_s553_langs) >= 3:
+        _lang_list553 = ", ".join(sorted(_s553_langs)[:5])
+        lines.append(
+            f"mixed languages: {len(_s553_langs)} source languages detected ({_lang_list553})"
+            f" — multiple runtimes increase cognitive overhead and reduce unified static analysis coverage"
+        )
+
     return lines
 
 

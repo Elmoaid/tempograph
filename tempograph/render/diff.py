@@ -1626,4 +1626,23 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — broad diffs reduce per-file reviewer attention; consider splitting into smaller PRs"
         )
 
+    # S555: Lock file in diff — diff includes a dependency lock file.
+    # Lock file changes indicate dependency upgrades; upgrades can silently introduce
+    # breaking changes, security fixes, or behavioral regressions in transitive deps.
+    _lock_names555 = frozenset((
+        "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+        "pipfile.lock", "poetry.lock", "pdm.lock",
+        "gemfile.lock", "cargo.lock", "composer.lock",
+    ))
+    _lock_files555 = [
+        f for f in changed_files
+        if f.replace("\\", "/").rsplit("/", 1)[-1].lower() in _lock_names555
+    ]
+    if _lock_files555:
+        _lf_name555 = _lock_files555[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"lock file changed: {_lf_name555} modified"
+            f" — dependency upgrade; audit changelogs and test transitive behavior before merging"
+        )
+
     return "\n".join(lines)
