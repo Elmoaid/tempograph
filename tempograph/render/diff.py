@@ -786,7 +786,7 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
         )
 
 
-    # S261: Broad diff — changed files span 3+ top-level directories.
+    # S267: Broad diff — changed files span 3+ top-level directories.
     # Cross-module changes increase coordination risk; changes in one module may
     # invalidate assumptions in another. Each boundary crossing needs explicit validation.
     _s261_all_changed = list(normalized) + [f for f in changed_files if f not in normalized]

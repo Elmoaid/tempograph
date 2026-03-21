@@ -1514,7 +1514,7 @@ def render_overview(graph: Tempo) -> str:
             )
 
 
-    # S259: Flat structure — 8+ source files all at root level with no subdirectories.
+    # S265: Flat structure — 8+ source files all at root level with no subdirectories.
     # Flat codebases are harder to navigate as they grow; grouping by feature/layer
     # into subdirectories reduces cognitive load and enables selective imports.
     _s259_root_src = [

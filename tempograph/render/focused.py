@@ -2064,7 +2064,7 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                 )
 
 
-    # S260: Circular call — focused symbol and one of its callees also call back to it.
+    # S266: Circular call — focused symbol and one of its callees also call back to it.
     # Circular calls create hidden coupling and make execution order unpredictable;
     # they can cause infinite loops under certain conditions.
     if _seed_syms and token_count < max_tokens - 30:
