@@ -1565,8 +1565,6 @@ def _signals_structure(
             f" — many unimplemented functions; callers may depend on behavior that doesn't exist"
         )
 
-    # S316: Async-heavy — 5+ source files use async def patterns.
-
     # S330: Data-pipeline codebase — 5+ files contain pipeline/processor/etl/transform patterns.
     # Pipeline architectures require understanding the data contract between stages;
     # changes to intermediate formats or schema break all downstream stages.
@@ -1938,6 +1936,53 @@ def _signals_async_oop(
         _async_files = len({s.file_path for s in _async_syms})
         lines.append(f"async surface: {len(_async_syms)} exported async functions in {_async_files} files")
 
+    # S433: No async code — service-sized codebase with no async def functions.
+    # A sync-only codebase cannot handle concurrent I/O efficiently; any blocking call
+    # stalls the entire thread, making async adoption a potential future rewrite.
+    _s433_src_files = [
+        fp for fp in graph.files
+        if not _is_test_file(fp)
+        and any(fp.endswith(ext) for ext in (".py", ".js", ".ts", ".jsx", ".tsx"))
+    ]
+    if len(_s433_src_files) >= 10 and len(_async_syms) == 0:
+        lines.append(
+            f"sync-only: {len(_s433_src_files)} source files with no async def functions"
+            f" — all I/O is blocking; async adoption requires rewriting call sites"
+        )
+
+    # S439: Deep inheritance — codebase has 4+ levels of class inheritance.
+    # Deep hierarchies hide behavior: the effective method set of a leaf class requires
+    # tracing up 4+ classes, and each level is a potential override site.
+    _s439_inherits: dict[str, list[str]] = {}
+    for _e439 in graph.edges:
+        if _e439.kind.value == "inherits":
+            _s439_inherits.setdefault(_e439.source_id, []).append(_e439.target_id)
+    _s439_max_depth = 0
+    _s439_deepest: str = ""
+    for _cls439_id, _parents439 in _s439_inherits.items():
+        _depth439 = 0
+        _cur439_ids = [_cls439_id]
+        _seen439: set[str] = {_cls439_id}
+        while True:
+            _next439: list[str] = []
+            for _cid439 in _cur439_ids:
+                for _pid439 in _s439_inherits.get(_cid439, []):
+                    if _pid439 not in _seen439:
+                        _next439.append(_pid439)
+                        _seen439.add(_pid439)
+            if not _next439:
+                break
+            _depth439 += 1
+            _cur439_ids = _next439
+        if _depth439 > _s439_max_depth:
+            _s439_max_depth = _depth439
+            _cls439_sym = graph.symbols.get(_cls439_id)
+            _s439_deepest = _cls439_sym.name if _cls439_sym else _cls439_id
+    if _s439_max_depth >= 3:
+        lines.append(
+            f"deep inheritance: {_s439_max_depth + 1} levels deep (e.g. {_s439_deepest})"
+            f" — override resolution requires tracing up {_s439_max_depth + 1} classes; prefer composition"
+        )
 
     # S243: Framework/library detected — codebase imports a well-known web framework or library.
     # Shown to orient agents: know what routing, ORM, and middleware patterns to expect.
@@ -2033,6 +2078,722 @@ def _signals_async_oop(
             f" — event-loop semantics apply; avoid introducing blocking calls"
         )
 
+    # S445: Multi-language codebase — source files span 3+ programming languages.
+    # Polyglot codebases require language-specific tooling for each component; a change
+    # that looks simple in one layer may require coordinated changes in every other language.
+    _s445_langs = {
+        graph.files[fp].language.value
+        for fp in graph.files
+        if not _is_test_file(fp)
+        and graph.files[fp].language.value in _CODE_LANGS
+    }
+    if len(_s445_langs) >= 3:
+        _lang_list445 = ", ".join(sorted(_s445_langs)[:5])
+        lines.append(
+            f"multi-language: {len(_s445_langs)} languages in use ({_lang_list445})"
+            f" — cross-language changes need coordinated builds and tooling per layer"
+        )
+
+    # S452: Test-thin codebase — test lines are under 20% of source lines.
+    # Low test coverage relative to source means most changes are unverified;
+    # the lower the ratio, the higher the risk of silent regressions.
+    _s452_src_lines = sum(
+        graph.files[fp].line_count for fp in graph.files
+        if not _is_test_file(fp) and any(fp.endswith(ext) for ext in (".py", ".js", ".ts", ".jsx", ".tsx", ".go", ".rs", ".java", ".rb"))
+        and graph.files[fp].line_count
+    )
+    _s452_test_lines = sum(
+        graph.files[fp].line_count for fp in graph.files
+        if _is_test_file(fp) and graph.files[fp].line_count
+    )
+    if _s452_src_lines > 500 and _s452_test_lines < _s452_src_lines * 0.2:
+        _ratio452 = int(_s452_test_lines / _s452_src_lines * 100) if _s452_src_lines else 0
+        lines.append(
+            f"test-thin: test code is only {_ratio452}% of source ({_s452_test_lines:,} vs {_s452_src_lines:,} lines)"
+            f" — most changes are unverified; add tests before refactoring"
+        )
+
+    # S458: Monorepo structure — multiple independent packages with their own package files.
+    # Monorepos host multiple services in one repo; a change to a shared library
+    # requires updating every consumer service and re-testing each independently.
+    _s458_pkg_files = (
+        "setup.py", "setup.cfg", "pyproject.toml", "package.json",
+        "cargo.toml", "go.mod", "pom.xml", "build.gradle",
+    )
+    _s458_pkg_dirs: set[str] = set()
+    for _fp458 in graph.files:
+        _fname458 = _fp458.rsplit("/", 1)[-1].lower()
+        if _fname458 in _s458_pkg_files:
+            _dir458 = _fp458.rsplit("/", 1)[0] if "/" in _fp458 else "."
+            _s458_pkg_dirs.add(_dir458)
+    if len(_s458_pkg_dirs) >= 3:
+        lines.append(
+            f"monorepo: {len(_s458_pkg_dirs)} independent package roots detected"
+            f" — shared-library changes require updating every consumer; test each service independently"
+        )
+
+    # S463: No entry points — codebase has no main()/cli()/entry() function.
+    # A library with no entry points is entirely consumed by callers; there is no
+    # single place to trace the full execution path end-to-end for integration testing.
+    _s463_entry_names = {"main", "cli", "run", "start", "entry", "app", "serve", "launch"}
+    _s463_entry_syms = [
+        s for s in graph.symbols.values()
+        if s.name.lower() in _s463_entry_names
+        and s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+    ]
+    _s463_src_files = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_s463_src_files) >= 5 and not _s463_entry_syms:
+        lines.append(
+            f"no entry points: {len(_s463_src_files)} source files with no main/cli/run function"
+            f" — library-only; no single execution path to trace for integration testing"
+        )
+
+    # S469: Shallow test suite — all test functions are trivially short (< 10 lines).
+    # Tiny test functions are likely smoke tests or assertion-only stubs;
+    # they prove the code runs but don't verify complex behavior or edge cases.
+    _s469_test_fns = [
+        s for s in graph.symbols.values()
+        if _is_test_file(s.file_path)
+        and s.kind.value in ("function", "method", "test")
+        and s.name.startswith("test_")
+        and s.line_start is not None and s.line_end is not None
+    ]
+    _s469_short_fns = [
+        s for s in _s469_test_fns
+        if (s.line_end - s.line_start) < 10
+    ]
+    if len(_s469_test_fns) >= 10 and len(_s469_short_fns) == len(_s469_test_fns):
+        lines.append(
+            f"shallow tests: all {len(_s469_test_fns)} test functions are under 10 lines"
+            f" — likely smoke tests only; complex behavior and edge cases are untested"
+        )
+
+    # S481: High dead-code ratio — 30%+ of functions appear unreferenced.
+    # A high percentage of unreachable code inflates maintenance surface;
+    # every change must consider whether any dead branch accidentally becomes live.
+    _s481_src_syms = [
+        s for s in graph.symbols.values()
+        if not _is_test_file(s.file_path) and s.kind.value in ("function", "method")
+    ]
+    _s481_unreferenced = [
+        s for s in _s481_src_syms
+        if not graph.callers_of(s.id) and not graph.importers_of(s.file_path)
+    ]
+    if len(_s481_src_syms) >= 20:
+        _dead_ratio481 = len(_s481_unreferenced) / len(_s481_src_syms)
+        if _dead_ratio481 >= 0.30:
+            lines.append(
+                f"high dead-code ratio: {int(_dead_ratio481 * 100)}% of functions are unreferenced"
+                f" ({len(_s481_unreferenced)}/{len(_s481_src_syms)})"
+                f" — clean up dead code before adding features to reduce cognitive load"
+            )
+
+    # S483: No type annotations — 5+ source files have no typed function signatures.
+    # Untyped codebases make refactoring dangerous; callers rely on implicit contracts that
+    # aren't machine-checkable, so type errors only surface at runtime.
+    _s483_untyped: list[str] = []
+    for _fp483, _fi483 in graph.files.items():
+        if _is_test_file(_fp483) or _fi483.language.value != "python":
+            continue
+        _fns483 = [
+            s for s in graph.symbols.values()
+            if s.file_path == _fp483 and s.kind.value in ("function", "method")
+        ]
+        if not _fns483:
+            continue
+        _typed483 = [
+            s for s in _fns483
+            if s.signature and (
+                "->" in s.signature
+                or (
+                    "(" in s.signature
+                    and ":" in s.signature.split("(", 1)[1].rsplit(")", 1)[0]
+                )
+            )
+        ]
+        if len(_typed483) == 0:
+            _s483_untyped.append(_fp483)
+    if len(_s483_untyped) >= 5:
+        lines.append(
+            f"no type annotations: {len(_s483_untyped)} Python source file(s) have zero typed signatures"
+            f" — add mypy/pyright before refactoring to surface implicit contract violations"
+        )
+
+    # S489: God module — a single file holds 30%+ of all source symbols.
+    # Concentrating logic in one file raises merge conflict probability and
+    # increases cognitive load; any change requires understanding the whole module.
+    _s489_src_syms = [
+        s for s in graph.symbols.values()
+        if not _is_test_file(s.file_path) and s.kind.value in ("function", "method", "class")
+    ]
+    if len(_s489_src_syms) >= 20:
+        from collections import Counter as _Counter489  # noqa: PLC0415
+        _s489_counts = _Counter489(s.file_path for s in _s489_src_syms)
+        _s489_top_fp, _s489_top_n = _s489_counts.most_common(1)[0]
+        _s489_ratio = _s489_top_n / len(_s489_src_syms)
+        if _s489_ratio >= 0.30:
+            lines.append(
+                f"god module: {_s489_top_fp.rsplit('/', 1)[-1]} holds {int(_s489_ratio * 100)}%"
+                f" of source symbols ({_s489_top_n}/{len(_s489_src_syms)})"
+                f" — high merge-conflict risk; consider splitting by responsibility"
+            )
+
+    # S495: Star imports — 3+ source files use `from X import *`.
+    # Star imports pollute the namespace and make it impossible to trace where symbols come from;
+    # a name collision silently overrides the previous binding without any error.
+    _s495_star_files: list[str] = []
+    for _fp495, _fi495 in graph.files.items():
+        if _is_test_file(_fp495):
+            continue
+        if any("import *" in _imp for _imp in (_fi495.imports or [])):
+            _s495_star_files.append(_fp495)
+    if len(_s495_star_files) >= 3:
+        lines.append(
+            f"star imports: {len(_s495_star_files)} source file(s) use `import *`"
+            f" — wildcard imports hide symbol origins and risk silent name collisions"
+        )
+
+    # S506: Deep nesting — source files are organized 3+ directory levels deep.
+    # Deeply nested modules make imports brittle and directory structure hard to navigate;
+    # any reorganization breaks all relative import paths across the affected subtree.
+    _s506_max_depth = 0
+    for _fp506 in graph.files:
+        if _is_test_file(_fp506):
+            continue
+        _depth506 = _fp506.replace("\\", "/").count("/")
+        if _depth506 > _s506_max_depth:
+            _s506_max_depth = _depth506
+    if _s506_max_depth >= 3:
+        lines.append(
+            f"deep nesting: source files are organized {_s506_max_depth} directories deep"
+            f" — deep nesting makes refactors brittle; consider flatter module structure"
+        )
+
+    # S507: Single language dominance — 90%+ of source files are in one language.
+    # Monoculture codebases gain simplicity but lose polyglot escape hatches;
+    # performance-critical or platform-specific requirements force a painful split later.
+    _s507_lang_counts: dict[str, int] = {}
+    for _fp507, _fi507 in graph.files.items():
+        if not _is_test_file(_fp507) and _fi507.language.value in _CODE_LANGS:
+            _s507_lang_counts[_fi507.language.value] = _s507_lang_counts.get(_fi507.language.value, 0) + 1
+    _s507_total = sum(_s507_lang_counts.values())
+    if _s507_total >= 10:
+        _s507_top_lang, _s507_top_n = max(_s507_lang_counts.items(), key=lambda x: x[1])
+        if _s507_top_n / _s507_total >= 0.90:
+            lines.append(
+                f"single language: {_s507_top_lang} accounts for {int(_s507_top_n / _s507_total * 100)}%"
+                f" of source files — tightly coupled to one runtime; polyglot needs require careful isolation"
+            )
+
+    # S514: Mixed async/sync — source has both async coroutines and blocking sync functions.
+    # Sync code running inside an async event loop blocks all coroutines on the same thread.
+    # Any refactor crossing sync/async boundaries needs a concurrency review to avoid stalls.
+    _s514_async_n = 0
+    _s514_sync_n = 0
+    for _sym514 in graph.symbols.values():
+        if _sym514.kind.value in ("function", "method") and not _is_test_file(_sym514.file_path):
+            _sig514 = _sym514.signature or ""
+            if _sig514.startswith("async "):
+                _s514_async_n += 1
+            elif _sig514.startswith("def "):
+                _s514_sync_n += 1
+    if _s514_async_n >= 3 and _s514_sync_n >= 3:
+        lines.append(
+            f"mixed async/sync: {_s514_async_n} async + {_s514_sync_n} sync source functions"
+            f" — blocking calls in async context stall the event loop; audit sync→async call boundaries"
+        )
+
+    # S532: Test-heavy repo — test files exceed 50% of total indexed files.
+    # More test code than source code can indicate over-specification of implementation details,
+    # or that tests weren't cleaned up after source was removed. Both increase maintenance burden.
+    _s532_test_n = sum(1 for fp in graph.files if _is_test_file(fp))
+    _s532_total_n = len(graph.files)
+    if _s532_total_n >= 10 and _s532_test_n / _s532_total_n > 0.50:
+        _s532_pct = int(_s532_test_n / _s532_total_n * 100)
+        lines.append(
+            f"test-heavy: {_s532_pct}% of files are test files ({_s532_test_n}/{_s532_total_n})"
+            f" — verify tests weren't left behind after source was deleted"
+        )
+
+    # S526: Dense codebase — average source file has 200+ lines.
+    # Large average file size signals monolith tendencies; files become harder to navigate,
+    # review, and test when they grow above ~200 lines. Consider splitting by responsibility.
+    _s526_src_files = [(fp, fi) for fp, fi in graph.files.items() if not _is_test_file(fp)]
+    if len(_s526_src_files) >= 5:
+        _s526_total_lines = sum(fi.line_count for _, fi in _s526_src_files)
+        _s526_avg = _s526_total_lines // len(_s526_src_files)
+        if _s526_avg >= 200:
+            lines.append(
+                f"dense codebase: avg {_s526_avg} lines/source file ({len(_s526_src_files)} files)"
+                f" — large files on average; files are hard to review and test; consider splitting by responsibility"
+            )
+
+    # S520: No standard entry points — 8+ source files but zero recognized entry points detected.
+    # Projects using frameworks (pytest plugins, Django apps, library packages) have implicit entry;
+    # agents must infer the execution context from framework docs rather than assuming a main() flow.
+    _s520_src_files = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_s520_src_files) >= 8 and not _s220_entry_files:
+        lines.append(
+            f"no entry points: {len(_s520_src_files)} source files but no main/server/cli/app detected"
+            f" — likely uses framework conventions; infer entry context from framework docs"
+        )
+
+    # S547: No tests — 5+ source files but zero test files detected.
+    # A codebase without tests offers no safety net for refactoring; any behavioral change
+    # is unverifiable; treat every modification as high-risk until tests are added.
+    _s547_src_count = sum(1 for fp in graph.files if not _is_test_file(fp))
+    _s547_test_count = sum(1 for fp in graph.files if _is_test_file(fp))
+    if _s547_src_count >= 5 and _s547_test_count == 0:
+        lines.append(
+            f"no tests: {_s547_src_count} source files, 0 test files detected"
+            f" — no safety net for refactoring; treat every change as high-risk"
+        )
+
+    # S553: Mixed languages — source files span 3+ different programming languages.
+    # Multi-language repos require multiple toolchains, runtimes, and mental models;
+    # cross-language calls add marshalling overhead and reduce static analysis coverage.
+    _s553_langs = {
+        graph.files[fp].language.value
+        for fp in graph.files
+        if not _is_test_file(fp) and graph.files[fp].language.value in _CODE_LANGS
+    }
+    if len(_s553_langs) >= 3:
+        _lang_list553 = ", ".join(sorted(_s553_langs)[:5])
+        lines.append(
+            f"mixed languages: {len(_s553_langs)} source languages detected ({_lang_list553})"
+            f" — multiple runtimes increase cognitive overhead and reduce unified static analysis coverage"
+        )
+
+    # S559: Single entry point — exactly 1 recognized entry point file in the repo.
+    # A single-entry-point codebase funnels all traffic through one file; it is the highest-value
+    # target for both breakage and optimization; changes to it affect every execution path.
+    _s559_entry_names = frozenset(("main.py", "app.py", "server.py", "cli.py", "run.py", "index.js", "index.ts"))
+    _s559_entry_files = [
+        fp for fp in graph.files
+        if fp.replace("\\", "/").rsplit("/", 1)[-1].lower() in _s559_entry_names
+        and not _is_test_file(fp)
+    ]
+    if len(_s559_entry_files) == 1:
+        _ep_name559 = _s559_entry_files[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"single entry point: {_ep_name559} is the only entry point"
+            f" — all execution flows through this file; changes here affect every code path"
+        )
+
+    # S565: Large test ratio — test file line count exceeds 2× source file line count.
+    # Over-tested codebases (by line count) often have brittle implementation-coupled tests;
+    # high test volume relative to source signals tests that constrain refactoring more than they enable it.
+    _s565_src = [(fp, fi) for fp, fi in graph.files.items() if not _is_test_file(fp)]
+    _s565_tst = [(fp, fi) for fp, fi in graph.files.items() if _is_test_file(fp)]
+    if len(_s565_src) >= 3 and len(_s565_tst) >= 3:
+        _src_lines565 = sum(fi.line_count for _, fi in _s565_src)
+        _tst_lines565 = sum(fi.line_count for _, fi in _s565_tst)
+        if _src_lines565 > 0 and _tst_lines565 >= _src_lines565 * 2:
+            _ratio565 = round(_tst_lines565 / _src_lines565, 1)
+            lines.append(
+                f"large test ratio: test code is {_ratio565}× source code ({_tst_lines565} vs {_src_lines565} lines)"
+                f" — high test volume may indicate brittle implementation-coupled tests; prefer behavior tests"
+            )
+
+    # S571: No exports — 5+ source files but zero exported (public) symbols detected.
+    # A codebase with no exports is likely a script collection or has accidentally made
+    # everything private; agents can't reliably identify the public API surface.
+    _s571_exported = [
+        sym for sym in graph.symbols.values()
+        if not _is_test_file(sym.file_path) and sym.exported
+    ]
+    _s571_src_count = sum(1 for fp in graph.files if not _is_test_file(fp))
+    if _s571_src_count >= 5 and not _s571_exported:
+        lines.append(
+            f"no exports: {_s571_src_count} source files but 0 exported symbols detected"
+            f" — all symbols are private; agents cannot identify the public API surface"
+        )
+
+    # S577: Orphan test — test file with no corresponding source file in the graph.
+    # Test files without a matching source file often result from source renames or
+    # deletions; tests are wired to nothing and silently provide false coverage confidence.
+    _s577_test_fps = [fp for fp in graph.files if _is_test_file(fp)]
+    _s577_src_stems = {
+        fp.replace("\\", "/").rsplit("/", 1)[-1].replace(".py", "")
+        for fp in graph.files
+        if not _is_test_file(fp)
+    }
+    _s577_orphans = [
+        fp for fp in _s577_test_fps
+        if fp.replace("\\", "/").rsplit("/", 1)[-1].replace("test_", "").replace("_test.py", ".py").replace(".py", "") not in _s577_src_stems
+    ]
+    if _s577_orphans:
+        _orph_names577 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s577_orphans[:3])
+        lines.append(
+            f"orphan tests: {len(_s577_orphans)} test file(s) with no matching source ({_orph_names577})"
+            f" — source was renamed or deleted; tests cover nothing and create false confidence"
+        )
+
+    # S582: No cross-file imports — 5+ source files but zero import edges between them.
+    # A fully disconnected module graph means every file is an island; either the project
+    # uses dynamic imports not detected by the parser, or the files share no dependencies at all.
+    _s582_src_files = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_s582_src_files) >= 5:
+        _s582_import_edges = [
+            e for e in graph.edges
+            if e.kind.value == "imports"
+            and not _is_test_file(e.source_id)
+            and not _is_test_file(e.target_id)
+        ]
+        if not _s582_import_edges:
+            lines.append(
+                f"no cross-file imports: {len(_s582_src_files)} source files with zero import edges detected"
+                f" — may use dynamic imports, path manipulation, or files are truly unrelated"
+            )
+
+    # S588: Single-language repo — all indexed source files share one language.
+    # Homogeneous repos are simpler but less portable; agents can apply language-specific
+    # best practices uniformly. Worth noting when the entire codebase is one language.
+    _s588_langs = {
+        graph.files[fp].language
+        for fp in graph.files
+        if not _is_test_file(fp) and graph.files[fp].language
+    }
+    if len(_s588_langs) == 1:
+        _only_lang588 = next(iter(_s588_langs))
+        _src_count588 = len([fp for fp in graph.files if not _is_test_file(fp)])
+        if _src_count588 >= 3:
+            lines.append(
+                f"single-language repo: all {_src_count588} source files are {_only_lang588}"
+                f" — uniform stack; language-specific linting and type tools apply globally"
+            )
+
+    # S594: No public classes — 5+ source files but zero exported class symbols detected.
+    # A repo with only functions and no public classes may be intentionally procedural,
+    # or may indicate that domain models are missing or unexported.
+    _s594_src_fps = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_s594_src_fps) >= 5:
+        _s594_exported_classes = [
+            sym for sym in graph.symbols.values()
+            if not _is_test_file(sym.file_path)
+            and sym.exported
+            and sym.kind.value == "class"
+        ]
+        if not _s594_exported_classes:
+            lines.append(
+                f"no public classes: {len(_s594_src_fps)} source files but zero exported class symbols"
+                f" — procedural style or domain models are unexported/missing"
+            )
+
+    # S601: Flat repo — 10+ source files all in the root directory with no subdirectories.
+    # A flat layout is fine for scripts but signals that the codebase has outgrown its structure;
+    # consider grouping related files into packages.
+    _s601_root_files = [
+        fp for fp in graph.files
+        if not _is_test_file(fp)
+        and "/" not in fp.replace("\\", "/")
+        and fp.endswith(".py")
+    ]
+    if len(_s601_root_files) >= 10:
+        lines.append(
+            f"flat repo: {len(_s601_root_files)} source files all in the root directory"
+            f" — consider organizing into packages as the codebase grows"
+        )
+
+    # S607: High dead symbol ratio — more than 30% of all indexed symbols have no callers.
+    # A high fraction of unreferenced symbols indicates code accumulation without pruning;
+    # the codebase grows but cleanup is neglected.
+    _s607_all_syms = [
+        sym for sym in graph.symbols.values()
+        if not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method", "class")
+    ]
+    if len(_s607_all_syms) >= 10:
+        _s607_dead = [s for s in _s607_all_syms if not graph.callers_of(s.id)]
+        _s607_ratio = len(_s607_dead) / len(_s607_all_syms)
+        if _s607_ratio > 0.30:
+            lines.append(
+                f"high dead ratio: {len(_s607_dead)}/{len(_s607_all_syms)} symbols"
+                f" ({_s607_ratio:.0%}) have no callers — accumulation without pruning; schedule a dead-code pass"
+            )
+
+    # S613: Circular import pairs — two source files import each other (mutual dependency).
+    # Circular imports in Python are runtime errors in many patterns; they also indicate
+    # that module responsibilities are poorly separated.
+    _import_edges613 = {
+        (e.source_id, e.target_id)
+        for e in graph.edges
+        if e.kind.value == "imports"
+        and not _is_test_file(e.source_id)
+        and not _is_test_file(e.target_id)
+    }
+    _circular613 = [
+        (a, b) for (a, b) in _import_edges613
+        if (b, a) in _import_edges613 and a < b
+    ]
+    if _circular613:
+        _circ_names613 = f"{_circular613[0][0].rsplit('/', 1)[-1]} ↔ {_circular613[0][1].rsplit('/', 1)[-1]}"
+        lines.append(
+            f"circular imports: {len(_circular613)} mutual import pair(s) ({_circ_names613})"
+            f" — bidirectional dependencies indicate poor module separation; refactor to break cycle"
+        )
+
+    # S619: Large average file — average source file line count exceeds 200 lines.
+    # When the typical file is long, the codebase favors large monoliths over small modules;
+    # navigation and comprehension cost are both elevated.
+    _s619_src_files = {
+        fp: fi for fp, fi in graph.files.items()
+        if not _is_test_file(fp) and fi.line_count > 0
+    }
+    if len(_s619_src_files) >= 5:
+        _avg_lines619 = sum(fi.line_count for fi in _s619_src_files.values()) // len(_s619_src_files)
+        if _avg_lines619 > 200:
+            lines.append(
+                f"large average file: average source file is {_avg_lines619} lines"
+                f" — codebase favors monolithic files; navigation cost is elevated"
+            )
+
+    # S625: High export ratio — 5+ source files where >70% of symbols are exported but no imports.
+    # A repo with many exported symbols but no cross-file imports may be a collection of
+    # independent modules with no shared entry point — harder to trace end-to-end.
+    _s625_src_files = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_s625_src_files) >= 5:
+        _s625_export_count = sum(
+            1 for s in graph.symbols.values()
+            if s.exported and not _is_test_file(s.file_path)
+        )
+        _s625_sym_count = sum(
+            1 for s in graph.symbols.values()
+            if not _is_test_file(s.file_path)
+        )
+        _s625_import_edges = [
+            e for e in graph.edges
+            if e.kind.value == "imports"
+            and not _is_test_file(e.source_id)
+            and not _is_test_file(e.target_id)
+        ]
+        if _s625_sym_count > 0 and not _s625_import_edges:
+            _export_pct625 = int(100 * _s625_export_count / _s625_sym_count)
+            if _export_pct625 >= 70:
+                lines.append(
+                    f"high export ratio: {_export_pct625}% of symbols exported but zero cross-file imports"
+                    f" — independent module collection; no shared entry point to trace end-to-end"
+                )
+
+    # S631: Procedural style — 10+ exported functions but zero exported classes in source files.
+    # No exported classes suggests the codebase uses a procedural rather than OOP style;
+    # this is fine intentionally but unexpected in frameworks that rely on class-based dispatch.
+    _s631_src = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_s631_src) >= 5:
+        _exported_fns631 = sum(
+            1 for s in graph.symbols.values()
+            if s.exported and s.kind.value in ("function",) and not _is_test_file(s.file_path)
+        )
+        _exported_cls631 = sum(
+            1 for s in graph.symbols.values()
+            if s.exported and s.kind.value == "class" and not _is_test_file(s.file_path)
+        )
+        if _exported_fns631 >= 10 and _exported_cls631 == 0:
+            lines.append(
+                f"procedural style: {_exported_fns631} exported functions, 0 exported classes"
+                f" — no OOP surface; verify this is intentional for the framework in use"
+            )
+
+    # S637: Test-heavy symbols — test code contains 3x more symbols than source code.
+    # An inverted symbol ratio suggests test infrastructure has grown disproportionately;
+    # test helpers and fixtures may themselves need refactoring.
+    _s637_src_syms = sum(
+        1 for s in graph.symbols.values()
+        if not _is_test_file(s.file_path) and s.parent_id is None
+    )
+    _s637_test_syms = sum(
+        1 for s in graph.symbols.values()
+        if _is_test_file(s.file_path) and s.parent_id is None
+    )
+    if _s637_src_syms >= 5 and _s637_test_syms >= _s637_src_syms * 3:
+        lines.append(
+            f"test-heavy symbols: {_s637_test_syms} top-level test symbols vs {_s637_src_syms} source symbols"
+            f" — test infrastructure may need its own refactoring pass"
+        )
+
+    # S643: Deep inheritance chain — at least one class inherits from a class that itself inherits.
+    # Inheritance depth >= 3 signals a fragile base class problem; changes to base classes
+    # propagate through all descendants, and deep chains are hard to reason about.
+    _inherits643 = {
+        e.source_id: e.target_id
+        for e in graph.edges
+        if e.kind.value == "inherits"
+        and not _is_test_file(e.source_id)
+    }
+    # Check for chains: A→B→C (depth 3)
+    _deep_chains643 = []
+    for child, parent in _inherits643.items():
+        grandparent = _inherits643.get(parent)
+        if grandparent:
+            _deep_chains643.append((child.split("::")[-1], parent.split("::")[-1], grandparent.split("::")[-1]))
+    if _deep_chains643:
+        _chain643 = _deep_chains643[0]
+        lines.append(
+            f"deep inheritance: {len(_deep_chains643)} class(es) have inheritance depth >= 3"
+            f" (e.g. {_chain643[0]} → {_chain643[1]} → {_chain643[2]})"
+            f" — fragile base class risk; prefer composition over deep inheritance"
+        )
+
+    # S649: Exception class density — more than 20% of exported classes are Error/Exception types.
+    # A codebase with many custom exception classes is building an exception hierarchy;
+    # this is fine but signals that callers must handle a wide surface of failure modes.
+    _exported_classes649 = [
+        s for s in graph.symbols.values()
+        if s.exported and s.kind.value == "class" and not _is_test_file(s.file_path)
+    ]
+    if len(_exported_classes649) >= 5:
+        _exc_classes649 = [
+            s for s in _exported_classes649
+            if s.name.endswith(("Error", "Exception", "Warning", "Failure", "Fault"))
+        ]
+        _exc_pct649 = int(100 * len(_exc_classes649) / len(_exported_classes649))
+        if _exc_pct649 >= 20:
+            lines.append(
+                f"exception class density: {len(_exc_classes649)}/{len(_exported_classes649)}"
+                f" exported classes ({_exc_pct649}%) are error/exception types"
+                f" — wide failure surface; callers must handle many distinct exception types"
+            )
+
+    # S655: High average complexity — average symbol complexity exceeds 5.
+    # Complex functions are harder to understand, test, and maintain;
+    # a high average signals that the codebase may need targeted refactoring passes.
+    _cx_syms655 = [
+        s for s in graph.symbols.values()
+        if s.complexity and s.complexity > 1
+        and not _is_test_file(s.file_path)
+        and s.kind.value in ("function", "method")
+    ]
+    if len(_cx_syms655) >= 10:
+        _avg_cx655 = sum(s.complexity for s in _cx_syms655) // len(_cx_syms655)
+        if _avg_cx655 > 5:
+            lines.append(
+                f"high average complexity: avg cyclomatic complexity is {_avg_cx655}"
+                f" across {len(_cx_syms655)} functions"
+                f" — complex codebase; target functions above cx=10 for refactoring first"
+            )
+
+    # S661: Deep directory nesting — source files span 5+ directory levels.
+    # Files buried deep require long import paths and are easy to miss during code review;
+    # deep nesting also signals overly granular package decomposition.
+    _max_depth661 = max(
+        (
+            len(fp.replace("\\", "/").split("/"))
+            for fp in graph.files
+            if not _is_test_file(fp)
+        ),
+        default=0,
+    )
+    if _max_depth661 >= 5:
+        lines.append(
+            f"deep nesting: source files reach {_max_depth661} directory levels deep"
+            f" — long import paths and review-invisible files; consider flattening package structure"
+        )
+
+    # S667: No tests detected — repo has no test files at all (high risk for any change).
+    # Repos without tests have no safety net; any modification is an untested change
+    # and regressions will only surface at runtime.
+    _has_tests667 = any(_is_test_file(fp) for fp in graph.files)
+    if not _has_tests667 and len(graph.files) >= 3:
+        lines.append(
+            "no tests detected: no test files found in this repo"
+            " — all changes are untested; add a test suite before refactoring"
+        )
+
+    # S673: Dominant file — one non-test file holds >30% of all repo symbols.
+    # A file that dominates the symbol count is a gravity well that accumulates
+    # responsibilities; it should be the first target for decomposition.
+    _total_syms673 = sum(
+        1 for s in graph.symbols.values()
+        if not _is_test_file(s.file_path) and s.parent_id is None
+    )
+    if _total_syms673 > 0:
+        _file_counts673: dict[str, int] = {}
+        for s in graph.symbols.values():
+            if not _is_test_file(s.file_path) and s.parent_id is None:
+                _file_counts673[s.file_path] = _file_counts673.get(s.file_path, 0) + 1
+        _top_fp673 = max(_file_counts673, key=lambda f: _file_counts673[f], default=None)
+        if _top_fp673 and _file_counts673[_top_fp673] / _total_syms673 > 0.30:
+            _pct673 = int(_file_counts673[_top_fp673] / _total_syms673 * 100)
+            lines.append(
+                f"dominant file: {_top_fp673.rsplit('/', 1)[-1]} holds {_pct673}% of repo symbols"
+                f" — gravity-well file; prioritize decomposing this file"
+            )
+
+    # S679: High orphan ratio — more than 30% of source files have no importers.
+    # Files that nothing imports may be dead modules, scripts, or tools that
+    # have drifted from the main codebase; high orphan ratios signal poor cohesion.
+    _src_files679 = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_src_files679) >= 4:
+        _orphans679 = [
+            fp for fp in _src_files679
+            if not graph.importers_of(fp)
+        ]
+        _orphan_pct679 = len(_orphans679) / len(_src_files679)
+        if _orphan_pct679 > 0.30:
+            _opct679 = int(_orphan_pct679 * 100)
+            lines.append(
+                f"high orphan ratio: {_opct679}% of source files have no importers"
+                f" — many disconnected files; verify none are abandoned dead modules"
+            )
+
+    # S685: Class-heavy repo — more than 60% of non-test exported symbols are classes.
+    # A repo where classes greatly outnumber functions often has anemic domain models
+    # with shallow behaviour; heavy OOP can obscure data flow and reduce testability.
+    _all_src685 = [
+        s for s in graph.symbols.values()
+        if s.parent_id is None and not _is_test_file(s.file_path)
+        and s.kind.value not in ("unknown", "module")
+    ]
+    if len(_all_src685) >= 5:
+        _class_count685 = sum(1 for s in _all_src685 if s.kind.value == "class")
+        if _class_count685 / len(_all_src685) > 0.60:
+            _cpct685 = int(_class_count685 / len(_all_src685) * 100)
+            lines.append(
+                f"class-heavy repo: {_cpct685}% of symbols are classes ({_class_count685}/{len(_all_src685)})"
+                f" — OOP-heavy; verify classes have behaviour, not just data"
+            )
+
+    # S691: Global variable density — top-level variables/constants are >20% of all symbols.
+    # High global state density increases coupling between modules and makes testing harder;
+    # constants are acceptable but mutable globals are a refactoring risk.
+    _all_top691 = [
+        s for s in graph.symbols.values()
+        if s.parent_id is None and not _is_test_file(s.file_path)
+        and s.kind.value not in ("unknown", "module")
+    ]
+    if len(_all_top691) >= 5:
+        _var_count691 = sum(
+            1 for s in _all_top691
+            if s.kind.value in ("variable", "constant")
+        )
+        if _var_count691 / len(_all_top691) > 0.20:
+            _vpct691 = int(_var_count691 / len(_all_top691) * 100)
+            lines.append(
+                f"high global state: {_vpct691}% of top-level symbols are variables/constants"
+                f" — check for mutable globals; prefer dependency injection or module-level constants"
+            )
+
+    # S697: Low test proxy — source has 5x+ more symbols than test symbols.
+    # When the production codebase greatly outnumbers test code, changes are under-tested;
+    # this is a structural proxy for coverage gaps.
+    _src_syms697 = sum(
+        1 for s in graph.symbols.values()
+        if not _is_test_file(s.file_path) and s.parent_id is None
+        and s.kind.value not in ("unknown", "module")
+    )
+    _test_syms697 = sum(
+        1 for s in graph.symbols.values()
+        if _is_test_file(s.file_path) and s.parent_id is None
+        and s.kind.value not in ("unknown", "module")
+    )
+    if _src_syms697 >= 5 and _test_syms697 > 0 and _src_syms697 >= _test_syms697 * 5:
+        lines.append(
+            f"low test proxy: {_src_syms697} source symbols vs {_test_syms697} test symbols"
+            f" — source outpaces tests by {_src_syms697 // max(_test_syms697, 1)}x; likely under-tested"
+        )
+    elif _src_syms697 >= 5 and _test_syms697 == 0:
+        pass  # covered by S667 (no tests detected)
 
     return lines
 

@@ -1,5 +1,10 @@
 import { useState, useEffect, type RefObject } from "react";
 import { Copy, Check, Save, Search, ThumbsUp, ThumbsDown, X, ChevronDown, ChevronRight, WrapText } from "lucide-react";
+
+const FONT_SIZE_MIN = 9;
+const FONT_SIZE_MAX = 16;
+const FONT_SIZE_DEFAULT = 11;
+const FONT_SIZE_KEY = "tempo_output_font_size";
 import type { ModeInfo } from "./modes";
 import { formatAge } from "./modes";
 import { ArgsInput } from "./ArgsInput";
@@ -83,6 +88,18 @@ export function OutputPanel(props: OutputPanelProps) {
 
   const [expandedModes, setExpandedModes] = useState<Set<string>>(new Set());
   const [wrapEnabled, setWrapEnabled] = useState(() => localStorage.getItem("tempo_output_wrap") !== "false");
+  const [fontSize, setFontSize] = useState<number>(() => {
+    const saved = parseInt(localStorage.getItem(FONT_SIZE_KEY) || "", 10);
+    return saved >= FONT_SIZE_MIN && saved <= FONT_SIZE_MAX ? saved : FONT_SIZE_DEFAULT;
+  });
+
+  const changeFontSize = (delta: number) => {
+    setFontSize(prev => {
+      const next = Math.max(FONT_SIZE_MIN, Math.min(FONT_SIZE_MAX, prev + delta));
+      localStorage.setItem(FONT_SIZE_KEY, String(next));
+      return next;
+    });
+  };
 
   // Load expanded state from localStorage when kit mode or sections change
   useEffect(() => {
@@ -131,20 +148,42 @@ export function OutputPanel(props: OutputPanelProps) {
             </>
           )}
           {modeOutput && (
-            <button
-              className="btn btn-ghost"
-              onClick={() => {
-                const next = !wrapEnabled;
-                setWrapEnabled(next);
-                localStorage.setItem("tempo_output_wrap", String(next));
-              }}
-              title={wrapEnabled ? "Disable line wrap" : "Enable line wrap"}
-              aria-label={wrapEnabled ? "Disable line wrap" : "Enable line wrap"}
-              aria-pressed={wrapEnabled}
-              style={{ padding: "2px 6px", fontSize: 10, opacity: wrapEnabled ? 1 : 0.45 }}
-            >
-              <WrapText size={10} aria-hidden="true" />
-            </button>
+            <>
+              <button
+                className="btn btn-ghost"
+                onClick={() => changeFontSize(-1)}
+                disabled={fontSize <= FONT_SIZE_MIN}
+                title={`Decrease font size (${fontSize}px)`}
+                aria-label="Decrease output font size"
+                style={{ padding: "2px 5px", fontSize: 9, opacity: fontSize <= FONT_SIZE_MIN ? 0.3 : 1, fontFamily: "var(--font-mono)", letterSpacing: "-0.5px" }}
+              >
+                A-
+              </button>
+              <button
+                className="btn btn-ghost"
+                onClick={() => changeFontSize(1)}
+                disabled={fontSize >= FONT_SIZE_MAX}
+                title={`Increase font size (${fontSize}px)`}
+                aria-label="Increase output font size"
+                style={{ padding: "2px 5px", fontSize: 9, opacity: fontSize >= FONT_SIZE_MAX ? 0.3 : 1, fontFamily: "var(--font-mono)", letterSpacing: "-0.5px" }}
+              >
+                A+
+              </button>
+              <button
+                className="btn btn-ghost"
+                onClick={() => {
+                  const next = !wrapEnabled;
+                  setWrapEnabled(next);
+                  localStorage.setItem("tempo_output_wrap", String(next));
+                }}
+                title={wrapEnabled ? "Disable line wrap" : "Enable line wrap"}
+                aria-label={wrapEnabled ? "Disable line wrap" : "Enable line wrap"}
+                aria-pressed={wrapEnabled}
+                style={{ padding: "2px 6px", fontSize: 10, opacity: wrapEnabled ? 1 : 0.45 }}
+              >
+                <WrapText size={10} aria-hidden="true" />
+              </button>
+            </>
           )}
           <button
             className="btn btn-ghost"
@@ -256,7 +295,7 @@ export function OutputPanel(props: OutputPanelProps) {
                         </span>
                       </button>
                       {expanded && (
-                        <pre className="output" style={{ margin: 0, borderRadius: 0, maxHeight: 300, overflow: "auto", whiteSpace: wrapEnabled ? "pre-wrap" : "pre" }}>
+                        <pre className="output" style={{ margin: 0, borderRadius: 0, maxHeight: 300, overflow: "auto", whiteSpace: wrapEnabled ? "pre-wrap" : "pre", fontSize }}>
                           {content}
                         </pre>
                       )}
@@ -265,7 +304,7 @@ export function OutputPanel(props: OutputPanelProps) {
                 })}
               </div>
             ) : (
-              <pre className="output" role="region" aria-label="Mode output" aria-live="polite" style={{ maxHeight: activeMode === "prepare" ? "calc(100% - 96px)" : "calc(100% - 64px)", overflow: "auto", whiteSpace: wrapEnabled ? "pre-wrap" : "pre" }}>{filteredOutput}</pre>
+              <pre className="output" role="region" aria-label="Mode output" aria-live="polite" style={{ maxHeight: activeMode === "prepare" ? "calc(100% - 96px)" : "calc(100% - 64px)", overflow: "auto", whiteSpace: wrapEnabled ? "pre-wrap" : "pre", fontSize }}>{filteredOutput}</pre>
             )}
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>
               <span style={{ fontSize: 9, color: "var(--text-tertiary)", marginRight: 2 }}>Helpful?</span>
