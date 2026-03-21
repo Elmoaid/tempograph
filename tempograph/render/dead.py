@@ -1124,6 +1124,28 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — check if registered in migration history; remove from both code and migration registry"
         )
 
+    # S354: Dead factory functions — create_*/make_*/build_* functions with 0 callers.
+    # Factory functions that are never called may represent abandoned creation patterns
+    # or forgotten constructor alternatives; they can be removed safely once verified unused.
+    _s354_factory_prefixes = (
+        "create_", "make_", "build_", "construct_", "new_", "factory_", "spawn_",
+    )
+    _s354_dead_factories = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s354_factory_prefixes)
+    ]
+    if len(_s354_dead_factories) >= 2:
+        _fac_names354 = ", ".join(s.name for s in _s354_dead_factories[:3])
+        if len(_s354_dead_factories) > 3:
+            _fac_names354 += f" +{len(_s354_dead_factories) - 3} more"
+        lines.append(
+            f"dead factories: {len(_s354_dead_factories)} unused factory fn(s) ({_fac_names354})"
+            f" — abandoned constructor alternatives; safe to remove after confirming no dynamic use"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

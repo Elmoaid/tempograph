@@ -1052,4 +1052,20 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — profile before and after; cache TTL/key changes can cause latency spikes"
         )
 
+    # S351: Config-change diff — diff modifies YAML/TOML/INI/JSON configuration files.
+    # Configuration changes often have no test coverage; a typo or wrong key silently changes
+    # runtime behavior in ways that only surface in staging/production environments.
+    _s351_cfg_exts = (".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".json")
+    _s351_cfg_files = [
+        f for f in changed_files
+        if any(f.lower().endswith(ext) for ext in _s351_cfg_exts)
+        and not _is_test_file(f)
+    ]
+    if _s351_cfg_files:
+        _cfg_names351 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s351_cfg_files[:2])
+        lines.append(
+            f"config change: {_cfg_names351} in diff"
+            f" — config changes often untested; verify expected keys and value types in all environments"
+        )
+
     return "\n".join(lines)

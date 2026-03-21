@@ -1000,6 +1000,24 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — changes here cascade through all dependent tests; run full test suite"
         )
 
+    # S353: Constants blast — blast target is a purely constants/enums file.
+    # Pure constants files are deceptively "safe" to edit; downstream consumers may depend
+    # on specific values via hardcoded literals, making renames or reorders silently breaking.
+    _s353_file_syms = [s for s in graph.symbols.values() if s.file_path == file_path]
+    _s353_const_kinds = {"variable", "constant"}
+    _s353_fn_kinds = {"function", "method", "class"}
+    _s353_all_const = _s353_file_syms and all(
+        s.kind.value in _s353_const_kinds or s.name.isupper()
+        for s in _s353_file_syms
+    )
+    _s353_no_fns = not any(s.kind.value in _s353_fn_kinds for s in _s353_file_syms)
+    if _s353_all_const and _s353_no_fns and len(importers) >= 3:
+        lines.append(
+            f"constants blast: {file_path.rsplit('/', 1)[-1]} is a constants/enums file"
+            f" imported by {len(importers)} files"
+            f" — value/rename changes may silently break consumers that hardcode expected values"
+        )
+
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
 

@@ -2374,6 +2374,23 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                     f" — callers may assume pure function; order-dependent bugs possible"
                 )
 
+    # S350: Orphaned symbol — focused symbol has 0 callers and the file is not imported anywhere.
+    # Zero-caller symbols in unimported files may be dead code that was never wired up
+    # during a refactor; modifying them has no effect unless the file is imported first.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim350 = _seed_syms[0] if _seed_syms else None
+        if _prim350 and _prim350.kind.value in ("function", "method", "class"):
+            _callers350 = [
+                e for e in graph.edges
+                if e.kind.value == "calls" and e.target_id == _prim350.id
+            ]
+            _importers350 = list(graph.importers_of(_prim350.file_path))
+            if not _callers350 and not _importers350 and not _prim350.name.startswith("_"):
+                lines.append(
+                    f"\norphaned: {_prim350.name} has 0 callers and the file is not imported"
+                    f" — may be unreachable dead code; verify before modifying"
+                )
+
     return "\n".join(lines)
 
 

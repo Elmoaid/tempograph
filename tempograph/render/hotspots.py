@@ -1244,4 +1244,17 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 f" — package interface is unstable; every importer of the package is affected"
             )
 
+    # S352: Megafile hotspot — top hotspot file has 500+ lines of code.
+    # Megafiles concentrate change history; a large file with many symbols is harder to reason
+    # about and typically accumulates more accidental complexity over time.
+    if scores:
+        _top352 = scores[0][1]
+        if not _is_test_file(_top352.file_path):
+            _fi352 = graph.files.get(_top352.file_path)
+            if _fi352 and _fi352.line_count >= 500:
+                lines.append(
+                    f"\nmegafile hotspot: {_top352.file_path.rsplit('/', 1)[-1]} has {_fi352.line_count} lines"
+                    f" — large files accumulate accidental complexity; consider splitting by responsibility"
+                )
+
     return "\n".join(lines)  # ALWAYS return here — never inside a conditional block

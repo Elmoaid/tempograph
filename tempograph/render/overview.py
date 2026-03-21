@@ -1622,6 +1622,26 @@ def _signals_structure(
         )
 
 
+    # S349: Micro-module codebase — 50%+ of source files define only 1-2 symbols.
+    # Micro-module repos fragment logic into tiny files; increases import graph complexity
+    # and makes tracing data flow require opening many files in sequence.
+    _s349_src_files = [
+        fp for fp in graph.files
+        if not _is_test_file(fp) and graph.files[fp].language.value in _CODE_LANGS
+    ]
+    if len(_s349_src_files) >= 10:
+        _s349_tiny = [
+            fp for fp in _s349_src_files
+            if len([s for s in graph.symbols.values() if s.file_path == fp]) <= 2
+        ]
+        if len(_s349_tiny) / len(_s349_src_files) >= 0.50:
+            _pct349 = int(100 * len(_s349_tiny) / len(_s349_src_files))
+            lines.append(
+                f"micro-module: {_pct349}% of source files ({len(_s349_tiny)}/{len(_s349_src_files)}) define ≤2 symbols"
+                f" — high fragmentation; tracing flow requires navigating many small files"
+            )
+
+
     return lines
 
 
