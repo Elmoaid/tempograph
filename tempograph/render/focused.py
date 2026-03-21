@@ -3628,6 +3628,23 @@ def _signals_focused_fn_advanced(
                 f" adding or removing async changes all call sites"
             )
 
+    # S768: Exported but uncalled — focused symbol is exported but has no cross-file callers.
+    # A public symbol with no callers may be dead code, a pending API, or only consumed
+    # via dynamic access (getattr, plugin loading) — worth verifying before removing.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim768 = _seed_syms[0]
+        if (
+            _prim768.exported
+            and not _is_test_file(_prim768.file_path)
+            and _prim768.parent_id is None
+        ):
+            _cross768 = [c for c in graph.callers_of(_prim768.id) if c.file_path != _prim768.file_path]
+            if not _cross768:
+                lines.append(
+                    f"\nexported but uncalled: {_prim768.name} is public but has no cross-file callers"
+                    f" — may be dead code or a pending API; verify before removing"
+                )
+
     return lines
 
 

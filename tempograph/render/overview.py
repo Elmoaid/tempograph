@@ -2984,6 +2984,25 @@ def _signals_async_oop(
             f" new classes would break the established paradigm"
         )
 
+    # S769: High method-to-class ratio — average methods per class exceeds 10.
+    # Classes with many methods are often "god objects" or service classes that do too much;
+    # high method counts signal that a class has accumulated too many responsibilities.
+    _classes769 = [
+        s for s in graph.symbols.values()
+        if s.kind.value == "class" and not _is_test_file(s.file_path)
+    ]
+    if len(_classes769) >= 2:
+        _total_methods769 = sum(
+            sum(1 for c in graph.symbols.values() if c.parent_id == cls.id and c.kind.value in ("function", "method"))
+            for cls in _classes769
+        )
+        _avg769 = _total_methods769 / len(_classes769)
+        if _avg769 >= 10:
+            lines.append(
+                f"high method-to-class ratio: avg {_avg769:.1f} methods per class"
+                f" — classes are large; consider splitting responsibilities"
+            )
+
     return lines
 
 

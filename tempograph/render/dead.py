@@ -2634,6 +2634,28 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — abandoned data retrieval logic; feature or query was removed"
         )
 
+    # S773: Dead single-method class — unused class with exactly one method.
+    # A class with only one method usually wraps a single function unnecessarily;
+    # if dead, the method can be extracted as a top-level function and the class removed.
+    _dead_single773 = []
+    for _s773 in dead:
+        if _s773.kind.value == "class" and not _is_test_file(_s773.file_path):
+            _methods773 = [
+                graph.symbols[cid] for cid in graph.symbols
+                if graph.symbols[cid].parent_id == _s773.id
+                and graph.symbols[cid].kind.value in ("function", "method", "classmethod", "staticmethod")
+            ]
+            if len(_methods773) == 1:
+                _dead_single773.append((_s773, _methods773[0]))
+    if _dead_single773:
+        _names773 = ", ".join(f"{cls.name}.{mth.name}" for cls, mth in _dead_single773[:3])
+        if len(_dead_single773) > 3:
+            _names773 += f" +{len(_dead_single773) - 3} more"
+        lines.append(
+            f"dead single-method class: {len(_dead_single773)} unused single-method class(es) ({_names773})"
+            f" — unnecessary wrapping; extract the method as a module-level function"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
