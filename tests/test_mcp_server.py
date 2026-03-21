@@ -20707,3 +20707,233 @@ class TestDeadBackgroundTasksS402:
         assert "dead background tasks" not in out, (
             f"'dead background tasks' must not appear when tasks are called; got:\n{out}"
         )
+
+
+# ── S403: Single-file majority ────────────────────────────────────────────────
+
+class TestSingleFileMajorityS403:
+    """S403: One source file holding 50%+ of all source lines emits the signal."""
+
+    def test_single_file_majority_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # One big file with 100 lines, four small files with 10 each → big is 71%
+        big_content = "\n".join(f"x_{i} = {i}" for i in range(100)) + "\n"
+        (tmp_path / "monolith.py").write_text(big_content)
+        for i in range(4):
+            (tmp_path / f"small_{i}.py").write_text(f"def f_{i}(): pass\n" * 10)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "single-file majority" in out, (
+            f"Expected 'single-file majority' signal; got:\n{out}"
+        )
+
+    def test_single_file_majority_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # Four equal-sized files — no majority
+        for i in range(4):
+            content = "\n".join(f"x_{j} = {j}" for j in range(25)) + "\n"
+            (tmp_path / f"module_{i}.py").write_text(content)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "single-file majority" not in out, (
+            f"'single-file majority' must not appear when files are evenly sized; got:\n{out}"
+        )
+
+
+# ── S404: Recursive function ──────────────────────────────────────────────────
+
+class TestRecursiveFunctionS404:
+    """S404: A focused function with a self-call edge emits the signal."""
+
+    def test_recursive_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "algo.py").write_text(
+            "def factorial(n):\n"
+            "    if n <= 1:\n        return 1\n"
+            "    return n * factorial(n - 1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="factorial")
+        assert "recursive" in out, (
+            f"Expected 'recursive' signal for factorial; got:\n{out}"
+        )
+
+    def test_recursive_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def add(a, b):\n    return a + b\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="add")
+        assert "recursive" not in out, (
+            f"'recursive' must not appear for non-recursive add; got:\n{out}"
+        )
+
+
+# ── S405: Auth/security file in diff ─────────────────────────────────────────
+
+class TestAuthSecurityDiffS405:
+    """S405: Diff containing an auth/login file emits the signal."""
+
+    def test_auth_diff_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "auth.py").write_text(
+            "def login(user, pwd):\n    pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["auth.py"])
+        assert "auth/security change" in out, (
+            f"Expected 'auth/security change' signal; got:\n{out}"
+        )
+
+    def test_auth_diff_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "models.py").write_text(
+            "class Product:\n    def __init__(self, name):\n        self.name = name\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["models.py"])
+        assert "auth/security change" not in out, (
+            f"'auth/security change' must not appear for models.py; got:\n{out}"
+        )
+
+
+# ── S406: Init-file hotspot ───────────────────────────────────────────────────
+
+class TestInitFileHotspotS406:
+    """S406: Top hotspot symbol in __init__.py emits the signal."""
+
+    def test_init_file_hotspot_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "__init__.py").write_text(
+            "def core_helper(x):\n    return x\n"
+        )
+        (tmp_path / "a.py").write_text(
+            "from . import core_helper\ndef f(): return core_helper(1)\n"
+        )
+        (tmp_path / "b.py").write_text(
+            "from . import core_helper\ndef g(): return core_helper(2)\n"
+        )
+        (tmp_path / "c.py").write_text(
+            "from . import core_helper\ndef h(): return core_helper(3)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "init-file hotspot" in out, (
+            f"Expected 'init-file hotspot' signal; got:\n{out}"
+        )
+
+    def test_init_file_hotspot_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def helper(x):\n    return x + 1\n"
+        )
+        (tmp_path / "a.py").write_text("from utils import helper\ndef f(): return helper(1)\n")
+        (tmp_path / "b.py").write_text("from utils import helper\ndef g(): return helper(2)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "init-file hotspot" not in out, (
+            f"'init-file hotspot' must not appear for non-init file; got:\n{out}"
+        )
+
+
+# ── S407: Init-file blast ─────────────────────────────────────────────────────
+
+class TestInitFileBlastS407:
+    """S407: __init__.py with 5+ exports and 3+ importers emits the signal."""
+
+    def test_init_file_blast_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        init_content = (
+            "from .a import alpha\n"
+            "from .b import beta\n"
+            "from .c import gamma\n"
+            "from .d import delta\n"
+            "from .e import epsilon\n"
+            "from .f import zeta\n"
+        )
+        (tmp_path / "__init__.py").write_text(init_content)
+        for name in ("a", "b", "c", "d", "e", "f"):
+            (tmp_path / f"{name}.py").write_text(f"def {name[0]*5}(): pass\n" * 2)
+        for i in range(4):
+            (tmp_path / f"consumer_{i}.py").write_text(
+                f"from . import alpha, beta\ndef use_{i}(): return alpha()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="__init__.py")
+        assert "init-file blast" in out, (
+            f"Expected 'init-file blast' signal; got:\n{out}"
+        )
+
+    def test_init_file_blast_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "models.py").write_text(
+            "class User:\n    pass\n"
+        )
+        for i in range(4):
+            (tmp_path / f"view_{i}.py").write_text(
+                f"from models import User\ndef show_{i}(): return User()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="models.py")
+        assert "init-file blast" not in out, (
+            f"'init-file blast' must not appear for non-init file; got:\n{out}"
+        )
+
+
+# ── S408: Dead validators ─────────────────────────────────────────────────────
+
+class TestDeadValidatorsS408:
+    """S408: Unused validate_*/check_* functions emit the signal."""
+
+    def test_dead_validators_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "validators.py").write_text(
+            "def validate_email(addr):\n    pass\n\n"
+            "def validate_phone(number):\n    pass\n\n"
+            "def validate_zip(code):\n    pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead validators" in out, (
+            f"Expected 'dead validators' signal; got:\n{out}"
+        )
+
+    def test_dead_validators_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "validators.py").write_text(
+            "def validate_email(addr):\n    return bool(addr)\n"
+        )
+        (tmp_path / "forms.py").write_text(
+            "from validators import validate_email\n\n"
+            "def process(email):\n    return validate_email(email)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead validators" not in out, (
+            f"'dead validators' must not appear when validate_email is called; got:\n{out}"
+        )

@@ -2558,6 +2558,24 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                     f" — implicit callable contract; document expected signature and error behavior"
                 )
 
+    # S404: Recursive function — focused function has a direct call edge to itself.
+    # Recursive functions are harder to reason about under load; unbounded recursion can
+    # exhaust the call stack, and tail-call optimization is not guaranteed in most runtimes.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim404 = next((s for s in _seed_syms if s.kind.value in ("function", "method")), None)
+        if _prim404:
+            _self_calls404 = [
+                e for e in graph.edges
+                if e.kind.value == "calls"
+                and e.source_id == _prim404.id
+                and e.target_id == _prim404.id
+            ]
+            if _self_calls404:
+                lines.append(
+                    f"\nrecursive: {_prim404.name} calls itself directly"
+                    f" — verify base case and maximum depth; consider iterative refactor for large inputs"
+                )
+
     return "\n".join(lines)
 
 

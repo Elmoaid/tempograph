@@ -1217,4 +1217,23 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — changes to error/retry handlers can turn handled failures into crashes"
         )
 
+    # S405: Auth/security file in diff — diff touches login/auth/permission/security files.
+    # Authentication and authorization code has high blast radius for mistakes;
+    # even small logic inversions (>= vs >, missing NOT) can open privilege escalation paths.
+    _s405_auth_words = (
+        "auth", "login", "logout", "permission", "security", "token",
+        "oauth", "jwt", "session", "acl", "rbac", "privilege",
+    )
+    _s405_auth_files = [
+        f for f in changed_files
+        if any(w in f.lower().replace("-", "_") for w in _s405_auth_words)
+        and not _is_test_file(f)
+    ]
+    if _s405_auth_files:
+        _auth_names405 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s405_auth_files[:2])
+        lines.append(
+            f"auth/security change: {_auth_names405} in diff"
+            f" — auth logic errors can escalate privileges; get a second reviewer"
+        )
+
     return "\n".join(lines)

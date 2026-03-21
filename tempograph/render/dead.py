@@ -1340,6 +1340,29 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — may be deregistered from task queue; dead worker slots confuse task routing"
         )
 
+    # S408: Dead validators — validate_*/check_*/verify_* functions with 0 callers.
+    # Unused validation functions may have been bypassed rather than deleted; silent bypass
+    # of validation weakens data integrity guarantees without making it obvious in code review.
+    _s408_val_prefixes = (
+        "validate_", "check_", "verify_", "assert_", "ensure_",
+        "is_valid_", "sanitize_",
+    )
+    _s408_dead_validators = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s408_val_prefixes)
+    ]
+    if len(_s408_dead_validators) >= 2:
+        _val_names408 = ", ".join(s.name for s in _s408_dead_validators[:3])
+        if len(_s408_dead_validators) > 3:
+            _val_names408 += f" +{len(_s408_dead_validators) - 3} more"
+        lines.append(
+            f"dead validators: {len(_s408_dead_validators)} unused validation fn(s) ({_val_names408})"
+            f" — may be bypassed rather than deleted; silent bypass weakens data integrity"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

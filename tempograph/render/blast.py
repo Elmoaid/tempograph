@@ -1174,6 +1174,28 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — wide credential sharing increases leak surface; scope access via DI or env-only"
         )
 
+    # S407: Init-file blast — blast target is an __init__.py that re-exports many symbols.
+    # Changing an __init__.py affects every importer of the package; even renaming a re-export
+    # can silently break downstream importers that rely on the package-level name.
+    _fp407 = file_path.rsplit("/", 1)[-1].lower()
+    _is_init407 = _fp407 in ("__init__.py", "index.js", "index.ts", "index.tsx")
+    _init_import_edges407 = [
+        e for e in graph.edges
+        if e.kind.value == "imports" and e.source_id == file_path
+    ]
+    _init_dir407 = file_path.rsplit("/", 1)[0] if "/" in file_path else ""
+    _init_package_size407 = sum(
+        1 for fp in graph.files
+        if (fp.rsplit("/", 1)[0] if "/" in fp else "") == _init_dir407
+        and fp != file_path
+    )
+    if _is_init407 and len(_init_import_edges407) >= 5 and _init_package_size407 >= 3:
+        lines.append(
+            f"init-file blast: {_fp407} re-exports from {len(_init_import_edges407)} module(s)"
+            f" in a package of {_init_package_size407} file(s)"
+            f" — renaming any re-export silently breaks all downstream importers"
+        )
+
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
 
