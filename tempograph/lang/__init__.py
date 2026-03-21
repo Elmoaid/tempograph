@@ -13,6 +13,7 @@ from .swift_handler import SwiftHandlerMixin
 from .php_handler import PHPHandlerMixin
 from .kotlin_handler import KotlinHandlerMixin
 from .dart_handler import DartHandlerMixin
+from .elixir_handler import ElixirHandlerMixin
 
 __all__ = [
     "PythonHandlerMixin",
@@ -28,4 +29,5 @@ __all__ = [
     "PHPHandlerMixin",
     "KotlinHandlerMixin",
     "DartHandlerMixin",
+    "ElixirHandlerMixin",
 ]
