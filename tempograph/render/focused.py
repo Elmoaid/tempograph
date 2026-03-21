@@ -3228,7 +3228,7 @@ def _signals_focused_fn_advanced(
         ):
             _callers630 = graph.callers_of(_prim630.id)
             lines.append(
-                f"\nproperty accessor: {_prim630.name} is a @property accessed by {len(_callers630)} caller(s)"
+                f"\nproperty callers: {_prim630.name} is a @property accessed by {len(_callers630)} caller(s)"
                 f" — looks like an attribute read but executes code; relevant if lazy/cached/expensive"
             )
 
@@ -3339,6 +3339,592 @@ def _signals_focused_fn_advanced(
                     f"\nhigh fan-out: {_prim666.name} calls {len(_callees666)} symbols"
                     f" — high outgoing coupling; changes to callees will cascade here"
                 )
+
+    # S672: Duplicated name — focused symbol's name appears as a top-level symbol in 3+ files.
+    # The same function name defined in many files signals copy-paste drift or inconsistent
+    # abstraction; callers may be using the wrong version without knowing it.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim672 = _seed_syms[0]
+        if not _is_test_file(_prim672.file_path):
+            _dup_count672 = sum(
+                1 for s in graph.symbols.values()
+                if s.name == _prim672.name
+                and s.parent_id is None
+                and not _is_test_file(s.file_path)
+            )
+            if _dup_count672 >= 3:
+                lines.append(
+                    f"\nduplicated name: '{_prim672.name}' defined in {_dup_count672} files"
+                    f" — copy-paste drift; callers may resolve to the wrong definition"
+                )
+
+    # S678: Long function — focused symbol is a function/method with 40+ lines.
+    # Long functions have multiple responsibilities and hidden branching;
+    # they are harder to test, review, and change without introducing bugs.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim678 = _seed_syms[0]
+        if (
+            not _is_test_file(_prim678.file_path)
+            and _prim678.kind.value in ("function", "method")
+            and _prim678.line_count >= 40
+        ):
+            lines.append(
+                f"\nlong function: {_prim678.name} is {_prim678.line_count} lines"
+                f" — consider extracting sub-functions to reduce cognitive load"
+            )
+
+    # S684: Recursive function — focused symbol calls itself directly.
+    # Recursive functions have implicit stack-depth constraints and subtle base-case bugs;
+    # verifying termination conditions and maximum input size is essential before changes.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim684 = _seed_syms[0]
+        if (
+            not _is_test_file(_prim684.file_path)
+            and _prim684.kind.value in ("function", "method")
+        ):
+            _callees684 = graph.callees_of(_prim684.id)
+            if any(c.id == _prim684.id for c in _callees684):
+                lines.append(
+                    f"\nrecursive function: {_prim684.name} calls itself directly"
+                    f" — verify base case and maximum recursion depth before modifying"
+                )
+
+    # S690: Method-heavy class — focused class has 10+ method children.
+    # A class with many methods accumulates too many responsibilities;
+    # the Single Responsibility Principle suggests splitting by behaviour group.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim690 = _seed_syms[0]
+        if (
+            not _is_test_file(_prim690.file_path)
+            and _prim690.kind.value == "class"
+        ):
+            _children690 = graph.children_of(_prim690.id)
+            _methods690 = [c for c in _children690 if c.kind.value in ("method", "function")]
+            if len(_methods690) >= 10:
+                lines.append(
+                    f"\nmethod-heavy class: {_prim690.name} has {len(_methods690)} methods"
+                    f" — god class; split by responsibility before adding more methods"
+                )
+
+    # S696: Hotspot caller — a cross-file caller of the focused symbol is itself widely called.
+    # When a popular function depends on the focused symbol, changes here can cascade through
+    # high-traffic paths; the blast radius is amplified by the caller's own call volume.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim696 = _seed_syms[0]
+        if not _is_test_file(_prim696.file_path):
+            _callers696 = [
+                c for c in graph.callers_of(_prim696.id)
+                if c.file_path != _prim696.file_path
+            ]
+            _hot_callers696 = [
+                c for c in _callers696
+                if len([
+                    cc for cc in graph.callers_of(c.id)
+                    if cc.file_path != c.file_path
+                ]) >= 5
+            ]
+            if _hot_callers696:
+                lines.append(
+                    f"\nhotspot caller: {_hot_callers696[0].name} (a hotspot) calls {_prim696.name}"
+                    f" — changes propagate through a high-traffic path; extra caution needed"
+                )
+
+    # S702: High arity — focused function/method has 5+ parameters.
+    # Functions with many parameters are hard to call correctly and signal missing abstractions;
+    # callers must know the correct argument order, and tests require many stubs.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim702 = _seed_syms[0]
+        if (
+            not _is_test_file(_prim702.file_path)
+            and _prim702.kind.value in ("function", "method")
+            and _prim702.signature
+        ):
+            _sig702 = _prim702.signature
+            _param_str702 = _sig702.split("(", 1)[-1].split(")", 1)[0] if "(" in _sig702 else ""
+            _no_self702 = _param_str702.replace("self,", "").replace("self", "").strip()
+            _arity702 = (
+                len([p for p in _no_self702.split(",") if p.strip()])
+                if _no_self702 else 0
+            )
+            if _arity702 >= 5:
+                lines.append(
+                    f"\nhigh arity: {_prim702.name} has {_arity702} parameters"
+                    f" — consider grouping parameters into a config/options object"
+                )
+
+    # S708: Widely-used class — focused method's parent class is imported in 5+ files.
+    # A method inside a widely-imported class has amplified blast radius;
+    # even a small signature change affects every file that instantiates or inherits the class.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim708 = _seed_syms[0]
+        if (
+            not _is_test_file(_prim708.file_path)
+            and _prim708.kind.value == "method"
+            and _prim708.parent_id is not None
+        ):
+            _parent708 = graph.symbols.get(_prim708.parent_id)
+            if _parent708 is not None:
+                _class_importers708 = [
+                    f for f in graph.importers_of(_parent708.file_path)
+                    if f != _parent708.file_path
+                ]
+                if len(_class_importers708) >= 5:
+                    lines.append(
+                        f"\nwidely-used class: {_parent708.name} is imported by"
+                        f" {len(_class_importers708)} files"
+                        f" — method changes affect all class consumers; check all call sites"
+                    )
+
+    # S714: Query resolves to test file — the focused symbol lives in a test file, not source.
+    # Agents querying test files directly may miss the real implementation; test files
+    # describe expected behavior — redirect to the source counterpart for implementation details.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim714 = _seed_syms[0]
+        if _is_test_file(_prim714.file_path):
+            _src714 = _prim714.file_path.replace("\\", "/").rsplit("/", 1)[-1]
+            lines.append(
+                f"\nquery is a test file: {_src714} is a test file"
+                f" — look at the source counterpart for implementation details"
+            )
+
+    # S720: Deprecated caller — a caller of the focused symbol has a deprecated name.
+    # If active code is being called by deprecated functions, the focused symbol may be on a
+    # removal path — callers marked old/legacy/deprecated signal incomplete migration.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim720 = _seed_syms[0]
+        if not _is_test_file(_prim720.file_path):
+            _callers720 = graph.callers_of(_prim720.id)
+            _dep_callers720 = [
+                c for c in _callers720
+                if any(kw in c.name.lower() for kw in ("old", "legacy", "deprecated"))
+            ]
+            if _dep_callers720:
+                _dc_names720 = ", ".join(c.name for c in _dep_callers720[:2])
+                lines.append(
+                    f"\ndeprecated caller: {_prim720.name} is called by deprecated code ({_dc_names720})"
+                    f" — this symbol may be on a removal path; check if it should be migrated"
+                )
+
+    # S726: Multiple inheritance — the focused class inherits from 2 or more base classes.
+    # Multiple inheritance creates complex MRO chains and is a common source of subtle bugs;
+    # method resolution order surprises are hard to debug and test.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim726 = _seed_syms[0]
+        if (
+            _prim726.kind.value == "class"
+            and not _is_test_file(_prim726.file_path)
+            and _prim726.signature is not None
+        ):
+            _sig726 = _prim726.signature
+            _paren_start726 = _sig726.find("(")
+            _paren_end726 = _sig726.find(")")
+            if _paren_start726 != -1 and _paren_end726 != -1:
+                _bases726 = _sig726[_paren_start726 + 1:_paren_end726].strip()
+                if _bases726.count(",") >= 1:
+                    lines.append(
+                        f"\nmultiple inheritance: {_prim726.name} inherits from multiple base classes"
+                        f" ({_bases726}) — complex MRO; verify method resolution order is intentional"
+                    )
+
+    # S732: Large class — focused class has 10 or more methods and properties.
+    # Large classes often violate single responsibility; they become maintenance burdens
+    # and are hard to test in isolation — consider splitting into focused collaborators.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim732 = _seed_syms[0]
+        if (
+            _prim732.kind.value == "class"
+            and not _is_test_file(_prim732.file_path)
+        ):
+            _children732 = graph.children_of(_prim732.id)
+            _methods732 = [c for c in _children732 if c.kind.value in ("method", "property", "function")]
+            if len(_methods732) >= 10:
+                lines.append(
+                    f"\nlarge class: {_prim732.name} has {len(_methods732)} methods/properties"
+                    f" — god class candidate; consider splitting into focused collaborators"
+                )
+
+    # S738: Module-level variable — focused symbol is a global variable/constant imported widely.
+    # Mutable module-level state shared across many files creates hidden coupling;
+    # any change to the value ripples to every importer without a clear interface contract.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim738 = _seed_syms[0]
+        if (
+            _prim738.kind.value in ("variable", "constant")
+            and not _is_test_file(_prim738.file_path)
+            and _prim738.parent_id is None
+        ):
+            _file_importers738 = [
+                f for f in graph.importers_of(_prim738.file_path)
+                if f != _prim738.file_path
+            ]
+            if len(_file_importers738) >= 3:
+                lines.append(
+                    f"\nmodule-level variable: {_prim738.name} is a global variable in a file"
+                    f" imported by {len(_file_importers738)} modules"
+                    f" — shared mutable state can cause hidden coupling across all importers"
+                )
+
+    # S744: Test-only importer — focused symbol's file is imported exclusively by test files.
+    # A source file imported only by tests is unreachable from production code; the file
+    # may be dead, a test-only utility, or missing a production integration point.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim744 = _seed_syms[0]
+        if not _is_test_file(_prim744.file_path):
+            _importers744 = graph.importers_of(_prim744.file_path)
+            if _importers744 and all(_is_test_file(f) for f in _importers744):
+                lines.append(
+                    f"\ntest-only importer: {_prim744.file_path.replace('\\\\', '/').rsplit('/', 1)[-1]}"
+                    f" is imported only by test files"
+                    f" — production code doesn't use this file; verify it's not dead"
+                )
+
+    # S750: No docstring and widely called — focused function/method lacks a docstring but has many callers.
+    # Widely-called functions without documentation force every caller to read the source;
+    # adding a docstring reduces onboarding friction and prevents misuse.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim750 = _seed_syms[0]
+        if (
+            _prim750.kind.value in ("function", "method")
+            and not _is_test_file(_prim750.file_path)
+            and not _prim750.doc
+        ):
+            _callers750 = [c for c in graph.callers_of(_prim750.id) if c.file_path != _prim750.file_path]
+            if len(_callers750) >= 5:
+                lines.append(
+                    f"\nno docstring: {_prim750.name} is called from {len(_callers750)} files but has no docstring"
+                    f" — widely-used function without docs; add a docstring to reduce caller friction"
+                )
+
+    # S756: Classmethod focus — focused method takes cls as first param (classmethod convention).
+    # Classmethods share state through the class itself rather than through instances;
+    # changes can affect all instances and subclass behavior simultaneously.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim756 = _seed_syms[0]
+        if (
+            _prim756.kind.value in ("function", "method", "classmethod")
+            and _prim756.parent_id is not None
+            and not _is_test_file(_prim756.file_path)
+            and _prim756.signature is not None
+            and ("(cls," in _prim756.signature or _prim756.signature.endswith("(cls)") or "(cls):" in _prim756.signature)
+        ):
+            lines.append(
+                f"\nclassmethod focus: {_prim756.name} takes cls as first parameter — operates on class-level state;"
+                f" changes affect all instances and subclasses simultaneously"
+            )
+
+    # S762: Async focus — focused function is defined with async def (async execution boundary).
+    # Async functions introduce an execution boundary requiring await at every call site;
+    # adding or removing async changes callers — they must add/remove await accordingly.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim762 = _seed_syms[0]
+        if (
+            _prim762.kind.value in ("function", "method")
+            and not _is_test_file(_prim762.file_path)
+            and _prim762.signature is not None
+            and _prim762.signature.lstrip().startswith("async def")
+        ):
+            lines.append(
+                f"\nasync focus: {_prim762.name} is an async function — callers must await it;"
+                f" adding or removing async changes all call sites"
+            )
+
+    # S768: Exported but uncalled — focused symbol is exported but has no cross-file callers.
+    # A public symbol with no callers may be dead code, a pending API, or only consumed
+    # via dynamic access (getattr, plugin loading) — worth verifying before removing.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim768 = _seed_syms[0]
+        if (
+            _prim768.exported
+            and not _is_test_file(_prim768.file_path)
+            and _prim768.parent_id is None
+        ):
+            _cross768 = [c for c in graph.callers_of(_prim768.id) if c.file_path != _prim768.file_path]
+            if not _cross768:
+                lines.append(
+                    f"\nexported but uncalled: {_prim768.name} is public but has no cross-file callers"
+                    f" — may be dead code or a pending API; verify before removing"
+                )
+
+    # S774: Near-isolated symbol — focused symbol's file has only 2 top-level symbols
+    # and the sibling has no cross-file callers either.
+    # Two-symbol files where both symbols are uncalled are strong deletion candidates.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim774 = _seed_syms[0]
+        if not _is_test_file(_prim774.file_path):
+            _file774 = graph.files.get(_prim774.file_path)
+            if _file774:
+                _top_syms774 = [
+                    graph.symbols[sid] for sid in _file774.symbols
+                    if sid in graph.symbols and graph.symbols[sid].parent_id is None
+                ]
+                if len(_top_syms774) == 2:
+                    _sibling774 = next(
+                        (s for s in _top_syms774 if s.id != _prim774.id), None
+                    )
+                    if _sibling774:
+                        _sibling_cross774 = [
+                            c for c in graph.callers_of(_sibling774.id)
+                            if c.file_path != _prim774.file_path
+                        ]
+                        if not _sibling_cross774:
+                            lines.append(
+                                f"\nnear-isolated: {_prim774.file_path.rsplit('/', 1)[-1]} has only"
+                                f" {_prim774.name} and {_sibling774.name} — sibling has no callers;"
+                                f" consider removing the whole file"
+                            )
+
+    # S780: Multi-file symbol — focused symbol name appears in 3+ distinct files.
+    # When a name is reused across many files, callers may invoke the wrong implementation;
+    # resolving the query returns the most-relevant match but ambiguity is a refactoring risk.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim780 = _seed_syms[0]
+        _same_name780 = set(
+            s.file_path for s in graph.symbols.values()
+            if s.name == _prim780.name and s.file_path != _prim780.file_path
+        )
+        if len(_same_name780) >= 2:
+            lines.append(
+                f"\nmulti-file symbol: {_prim780.name} appears in {len(_same_name780) + 1} files"
+                f" — name collision risk; callers may import the wrong implementation"
+            )
+
+    # S786: Dunder method focus — focused symbol is a dunder (special) method.
+    # Dunder methods define Python protocol behavior (__init__, __call__, __iter__, etc.);
+    # changing them affects how the object participates in Python's built-in operations.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim786 = _seed_syms[0]
+        if (
+            _prim786.kind.value in ("function", "method")
+            and _prim786.parent_id is not None
+            and _prim786.name.startswith("__") and _prim786.name.endswith("__")
+            and not _is_test_file(_prim786.file_path)
+        ):
+            lines.append(
+                f"\ndunder method: {_prim786.name} is a Python protocol method"
+                f" — changes affect built-in operations (iteration, comparison, context managers, etc.)"
+            )
+
+    # S792: Long function — focused function spans 50+ lines.
+    # Functions longer than 50 lines are hard to read in one mental pass;
+    # they often mix concerns and are difficult to test or refactor safely.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim792 = _seed_syms[0]
+        if (
+            _prim792.kind.value in ("function", "method")
+            and not _is_test_file(_prim792.file_path)
+            and _prim792.line_start is not None
+            and _prim792.line_end is not None
+            and _prim792.line_end - _prim792.line_start >= 50
+        ):
+            _len792 = _prim792.line_end - _prim792.line_start + 1
+            lines.append(
+                f"\nlong function: {_prim792.name} is {_len792} lines"
+                f" — difficult to read and test; consider splitting into focused sub-functions"
+            )
+
+    # S798: Underscore-prefixed but exported — focused symbol has _ prefix suggesting private
+    # but is accessible from other files (callers exist outside its own file).
+    # Underscore-prefixed symbols are conventionally private; external callers violate
+    # the intended encapsulation boundary.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim798 = _seed_syms[0]
+        if (
+            _prim798.name.startswith("_") and not _prim798.name.startswith("__")
+            and not _is_test_file(_prim798.file_path)
+        ):
+            _ext_callers798 = [c for c in graph.callers_of(_prim798.id) if c.file_path != _prim798.file_path]
+            if _ext_callers798:
+                lines.append(
+                    f"\nprivate but called externally: {_prim798.name} has _ prefix (private convention)"
+                    f" but is called from {len(_ext_callers798)} external file(s)"
+                    f" — encapsulation violation; consider making it public or restricting callers"
+                )
+
+    # S804: Entry point focus — focused symbol is a well-known entry point name.
+    # Entry point functions initialize the entire application; changing them can break
+    # startup sequencing, CLI argument parsing, and any framework-level setup.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim804 = _seed_syms[0]
+        _ep_names804 = frozenset(("main", "run", "start", "app", "entry", "create_app", "cli", "serve"))
+        if (
+            _prim804.kind.value in ("function", "method")
+            and _prim804.parent_id is None
+            and _prim804.name in _ep_names804
+            and not _is_test_file(_prim804.file_path)
+        ):
+            lines.append(
+                f"\nentry point focus: {_prim804.name} is a well-known entry point"
+                f" — changes affect startup sequencing and all initialization logic"
+            )
+
+    # S810: Deprecated symbol focus — focused symbol has a deprecation notice in its docstring.
+    # Deprecated symbols signal intentional abandonment; callers should migrate to the replacement.
+    # Changing deprecated code is risky because the migration path is already prescribed.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim810 = _seed_syms[0]
+        _doc810 = (_prim810.doc or "").lower()
+        if "deprecated" in _doc810 and not _is_test_file(_prim810.file_path):
+            lines.append(
+                f"\ndeprecated symbol: {_prim810.name} has a deprecation notice in its docstring"
+                f" — verify all callers have migrated to the replacement before modifying"
+            )
+
+    # S816: Zero-argument function focus — focused function takes no parameters at all.
+    # Parameter-free functions can only read from global/module state or constants;
+    # they are implicitly coupled to their environment and hard to test in isolation.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim816 = _seed_syms[0]
+        if (
+            _prim816.kind.value in ("function", "method")
+            and _prim816.parent_id is None
+            and not _is_test_file(_prim816.file_path)
+        ):
+            # Use stored signature (relative file_path, so linecache would fail)
+            _sig816 = (_prim816.signature or "").strip()
+            if _sig816 and _sig816.startswith("def ") and ("()" in _sig816 or "( )" in _sig816):
+                lines.append(
+                    f"\nzero-argument function: {_prim816.name} takes no parameters"
+                    f" — implicitly couples to global/module state; hard to test in isolation"
+                )
+
+    # S822: Dense module focus — focused symbol lives in a file with 10+ top-level symbols.
+    # Dense modules accumulate responsibilities over time; the focused symbol may be hard
+    # to find and modify without understanding the full module context.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim822 = _seed_syms[0]
+        if not _is_test_file(_prim822.file_path):
+            _fi822 = graph.files.get(_prim822.file_path)
+            if _fi822:
+                _top_syms822 = [
+                    sid for sid in _fi822.symbols
+                    if sid in graph.symbols and graph.symbols[sid].parent_id is None
+                ]
+                if len(_top_syms822) >= 10:
+                    lines.append(
+                        f"\ndense module: {_prim822.file_path.rsplit('/', 1)[-1]} has {len(_top_syms822)} top-level symbols"
+                        f" — large module accumulating responsibilities; consider splitting"
+                    )
+
+    # S828: Long name focus — focused symbol has an unusually long name (30+ chars).
+    # Very long names often indicate over-specific responsibilities or naming by accident;
+    # they make callers verbose and are harder to refactor consistently.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim828 = _seed_syms[0]
+        if len(_prim828.name) >= 30 and not _is_test_file(_prim828.file_path):
+            lines.append(
+                f"\nlong symbol name: {_prim828.name} has {len(_prim828.name)} characters"
+                f" — overly specific name; callers become verbose and renaming is error-prone"
+            )
+
+    # S834: Deep path focus — focused symbol lives 4+ directories deep in the file tree.
+    # Deeply nested symbols indicate complex module hierarchies; navigating to them
+    # requires understanding multiple package levels, increasing onboarding friction.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim834 = _seed_syms[0]
+        _depth834 = len(_prim834.file_path.replace("\\", "/").split("/")) - 1
+        if _depth834 >= 4 and not _is_test_file(_prim834.file_path):
+            lines.append(
+                f"\ndeep path: {_prim834.name} is {_depth834} levels deep in the directory tree"
+                f" — deeply nested symbol; difficult to discover and increases import path verbosity"
+            )
+
+    # S840: Generator function focus — focused function is named as a generator (iter_/generate_/yield_).
+    # Generator-prefixed functions have iterator protocol semantics; callers must handle
+    # exhaustion and cannot call them like ordinary functions returning a value.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim840 = _seed_syms[0]
+        _gen_prefixes840 = ("generate_", "iter_", "yield_", "gen_", "stream_")
+        if (
+            _prim840.kind.value in ("function", "method")
+            and not _is_test_file(_prim840.file_path)
+            and any(_prim840.name.lower().startswith(p) for p in _gen_prefixes840)
+        ):
+            lines.append(
+                f"\ngenerator function: {_prim840.name} appears to be a generator (iterator-style name)"
+                f" — callers must iterate or wrap in list(); cannot be called like a plain function"
+            )
+
+    # S846: Many children focus — focused symbol has 10+ child symbols.
+    # A class or module with many children is likely a God object or catch-all namespace;
+    # callers depend on all its children implicitly, making it a high-impact change target.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim846 = _seed_syms[0]
+        if not _is_test_file(_prim846.file_path):
+            _children846 = [
+                s for s in graph.symbols.values()
+                if s.parent_id == _prim846.id
+            ]
+            if len(_children846) >= 10:
+                lines.append(
+                    f"\nmany children: {_prim846.name} has {len(_children846)} child symbols"
+                    f" — large namespace; callers depend on many internal symbols, increasing coupling"
+                )
+
+    # S852: Operator overload focus — focused method overloads a Python operator.
+    # Operator-overloaded methods change the semantics of standard operators for instances;
+    # callers using + / == / < etc. are implicitly coupled to this method's behavior.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim852 = _seed_syms[0]
+        _op_dunders852 = frozenset({
+            "__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__",
+            "__add__", "__sub__", "__mul__", "__truediv__", "__floordiv__",
+            "__mod__", "__pow__", "__and__", "__or__", "__xor__", "__lshift__",
+            "__rshift__", "__iadd__", "__isub__", "__imul__", "__itruediv__",
+            "__radd__", "__rsub__", "__rmul__",
+        })
+        if (
+            _prim852.kind.value == "method"
+            and not _is_test_file(_prim852.file_path)
+            and _prim852.name in _op_dunders852
+        ):
+            lines.append(
+                f"\noperator overload: {_prim852.name} overloads a Python operator"
+                f" — callers using operators (+, ==, < etc.) implicitly invoke this method"
+            )
+
+    # S858: Abstract method focus — focused method lives in an abstract/base class.
+    # Abstract methods define contracts that all subclasses must implement; changing their
+    # signatures requires updating every concrete implementation in the hierarchy.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim858 = _seed_syms[0]
+        if (
+            _prim858.kind.value == "method"
+            and not _is_test_file(_prim858.file_path)
+            and _prim858.parent_id is not None
+        ):
+            _parent858 = graph.symbols.get(_prim858.parent_id)
+            if _parent858 and (
+                _parent858.name.startswith("Abstract")
+                or _parent858.name.startswith("Base")
+                or "ABC" in _parent858.name
+            ):
+                lines.append(
+                    f"\nabstract method: {_prim858.name} is in abstract class {_parent858.name}"
+                    f" — signature changes require updating all concrete subclass implementations"
+                )
+
+    # S864: High-arity function — focused function has 7+ parameters.
+    # Functions with many parameters are hard to call correctly; they usually indicate
+    # a missing abstraction that should be a config object, dataclass, or separate builder.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim864 = _seed_syms[0]
+        if _prim864.kind.value in ("function", "method") and not _is_test_file(_prim864.file_path):
+            _sig864 = _prim864.signature or ""
+            _open864 = _sig864.find("(")
+            _close864 = _sig864.rfind(")")
+            if _open864 != -1 and _close864 != -1:
+                _raw864 = _sig864[_open864 + 1:_close864]
+                _params864 = [
+                    p.strip().split(":")[0].split("=")[0].strip()
+                    for p in _raw864.split(",")
+                    if p.strip() and p.strip().split(":")[0].split("=")[0].strip() not in ("self", "cls", "*", "**")
+                    and not p.strip().startswith("*")
+                ]
+                if len(_params864) >= 7:
+                    lines.append(
+                        f"\nhigh arity: {_prim864.name} has {len(_params864)} parameters"
+                        f" — too many parameters; consider a config object or builder pattern"
+                    )
 
     return lines
 
