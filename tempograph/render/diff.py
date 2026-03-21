@@ -1521,6 +1521,23 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — check for required migrations and audit all queries against changed fields"
         )
 
+    # S528: Complexity spike — diff touches the highest-complexity function in the repo.
+    # Modifying the most complex symbol in the codebase is the highest-risk single change possible;
+    # it has the most execution paths to test and is often already the most brittle part of the system.
+    if graph.symbols:
+        _s528_top = max(
+            (s for s in graph.symbols.values() if not _is_test_file(s.file_path) and s.complexity),
+            key=lambda s: s.complexity or 0,
+            default=None,
+        )
+        if _s528_top and (_s528_top.complexity or 0) >= 10:
+            _normalized528 = [f.replace("\\", "/") for f in changed_files]
+            if _s528_top.file_path.replace("\\", "/") in _normalized528:
+                lines.append(
+                    f"complexity spike: diff touches {_s528_top.name} (complexity {_s528_top.complexity})"
+                    f" — highest-complexity symbol in repo; most execution paths to test; proceed carefully"
+                )
+
     # S522: Init file in diff — diff includes __init__.py package init files.
     # __init__.py changes alter a package's public re-export surface; removing or renaming
     # an exported name here breaks all direct consumers without any symbol-level change.

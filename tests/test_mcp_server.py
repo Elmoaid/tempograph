@@ -25511,3 +25511,232 @@ class TestDeadExceptionClassesS524:
         assert "dead exception classes" not in out, (
             f"'dead exception classes' must not appear when error class is used; got:\n{out}"
         )
+
+
+# ── S525: Name collision focused ──────────────────────────────────────────────
+
+class TestNameCollisionFocusedS525:
+    """S525: Same function name in 3+ source files emits name collision signal."""
+
+    def test_name_collision_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        # Three files each defining a function with the same name
+        for i in range(3):
+            (tmp_path / f"module_{i}.py").write_text(
+                f"def process(x):\n    return x + {i}\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="process")
+        assert "name collision" in out, (
+            f"Expected 'name collision' signal for symbol defined in 3 files; got:\n{out}"
+        )
+
+    def test_name_collision_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text(
+            "def process(x):\n    return x * 2\n"
+        )
+        (tmp_path / "other.py").write_text(
+            "def transform(x):\n    return x + 1\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="process")
+        assert "name collision" not in out, (
+            f"'name collision' must not appear when name exists in only 1 source file; got:\n{out}"
+        )
+
+
+# ── S526: Dense codebase overview ─────────────────────────────────────────────
+
+class TestDenseCodebaseOverviewS526:
+    """S526: 5+ source files with avg 200+ lines emits dense codebase signal."""
+
+    def test_dense_codebase_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # 5 files with 210 lines each
+        body = "\n".join(f"def fn_{j}(x): return x + {j}" for j in range(210))
+        for i in range(5):
+            (tmp_path / f"module_{i}.py").write_text(body)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "dense codebase" in out, (
+            f"Expected 'dense codebase' signal for avg 210-line files; got:\n{out}"
+        )
+
+    def test_dense_codebase_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # 5 files with only 5 lines each — well below 200 avg
+        for i in range(5):
+            (tmp_path / f"mod_{i}.py").write_text(
+                f"def fn_{i}(x): return x\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "dense codebase" not in out, (
+            f"'dense codebase' must not appear for small files; got:\n{out}"
+        )
+
+
+# ── S527: Wide export surface blast ───────────────────────────────────────────
+
+class TestWideExportSurfaceBlastS527:
+    """S527: Blast target with 20+ exported symbols emits wide export surface signal."""
+
+    def test_wide_export_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        # File with 22 exported functions
+        fns = "\n".join(f"def helper_{i}(x):\n    return x + {i}" for i in range(22))
+        (tmp_path / "api.py").write_text(fns + "\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="api.py")
+        assert "wide export surface" in out, (
+            f"Expected 'wide export surface' for file with 22 exports; got:\n{out}"
+        )
+
+    def test_wide_export_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        # File with only 5 exported functions
+        fns = "\n".join(f"def helper_{i}(x):\n    return x + {i}" for i in range(5))
+        (tmp_path / "utils.py").write_text(fns + "\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="utils.py")
+        assert "wide export surface" not in out, (
+            f"'wide export surface' must not appear for file with only 5 exports; got:\n{out}"
+        )
+# ── S528: Complexity spike diff ───────────────────────────────────────────────
+
+class TestComplexitySpikeDiffS528:
+    """S528: Diff touching the highest-complexity function emits complexity spike signal."""
+
+    def test_complexity_spike_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        # Write a complex function (many branches = high cyclomatic complexity)
+        branches = "\n".join(
+            f"    elif x == {i}: return {i}" for i in range(2, 12)
+        )
+        (tmp_path / "processor.py").write_text(
+            f"def big_switch(x):\n"
+            f"    if x == 0: return 0\n"
+            f"    elif x == 1: return 1\n"
+            f"{branches}\n"
+            f"    return -1\n"
+        )
+        (tmp_path / "simple.py").write_text("def run(): return 1\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["processor.py"])
+        assert "complexity spike" in out, (
+            f"Expected 'complexity spike' for diff touching highest-complexity fn; got:\n{out}"
+        )
+
+    def test_complexity_spike_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "complex.py").write_text(
+            "def big_fn(x):\n"
+            + "\n".join(f"    if x == {i}: return {i}" for i in range(15))
+            + "\n    return -1\n"
+        )
+        (tmp_path / "simple.py").write_text("def run(): return 1\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        # Diff only simple.py — not the complex function's file
+        out = render_diff_context(g, ["simple.py"])
+        assert "complexity spike" not in out, (
+            f"'complexity spike' must not appear when diff avoids the complex file; got:\n{out}"
+        )
+
+
+# ── S529: Long hotspot hotspots ───────────────────────────────────────────────
+
+class TestLongHotspotS529:
+    """S529: Top hotspot function 50+ lines emits long hotspot signal."""
+
+    def test_long_hotspot_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        # Create a 60-line function
+        body = "\n".join(f"    x_{i} = i * {i}" for i in range(55))
+        (tmp_path / "core.py").write_text(
+            f"def process_all(data):\n{body}\n    return data\n"
+        )
+        callers = "".join(
+            f"from core import process_all\ndef caller_{i}(): return process_all({i})\n"
+            for i in range(5)
+        )
+        (tmp_path / "callers.py").write_text(callers)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "long hotspot" in out, (
+            f"Expected 'long hotspot' for a 55-line most-called function; got:\n{out}"
+        )
+
+    def test_long_hotspot_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text(
+            "def process(data): return data\n"
+        )
+        callers = "".join(
+            f"from core import process\ndef caller_{i}(): return process({i})\n"
+            for i in range(5)
+        )
+        (tmp_path / "callers.py").write_text(callers)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "long hotspot" not in out, (
+            f"'long hotspot' must not appear for a short hotspot function; got:\n{out}"
+        )
+
+
+# ── S530: Dead module constants dead ──────────────────────────────────────────
+
+class TestDeadModuleConstantsS530:
+    """S530: 3+ unused SCREAMING_SNAKE_CASE module-level constants emit dead constants signal."""
+
+    def test_dead_constants_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "config.py").write_text(
+            "MAX_RETRIES = 5\n"
+            "DEFAULT_TIMEOUT = 30\n"
+            "BATCH_SIZE = 100\n"
+            "OLD_RATE_LIMIT = 50\n"
+        )
+        (tmp_path / "main.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead constants" in out, (
+            f"Expected 'dead constants' for unused SCREAMING_SNAKE constants; got:\n{out}"
+        )
+
+    def test_dead_constants_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "config.py").write_text("MAX_RETRIES = 5\n")
+        (tmp_path / "main.py").write_text(
+            "from config import MAX_RETRIES\n"
+            "def run(): return MAX_RETRIES\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead constants" not in out, (
+            f"'dead constants' must not appear when config.py is imported; got:\n{out}"
+        )

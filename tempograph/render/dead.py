@@ -1765,6 +1765,29 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — stale helpers mislead about test coverage; remove to clarify actual test scope"
         )
 
+    # S530: Dead module constants — SCREAMING_SNAKE_CASE names at module level with 0 callers.
+    # Unused module-level constants accumulate from feature flags, thresholds, and magic values
+    # that were never cleaned up; they mislead about the codebase's active configuration surface.
+    _s530_dead_constants = [
+        sym for sym in graph.symbols.values()
+        if not _is_test_file(sym.file_path)
+        and sym.kind.value == "variable"
+        and sym.name == sym.name.upper()
+        and "_" in sym.name
+        and len(sym.name) >= 3
+        and not sym.parent_id
+        and not graph.callers_of(sym.id)
+        and not graph.importers_of(sym.file_path)
+    ]
+    if len(_s530_dead_constants) >= 3:
+        _const_names530 = ", ".join(s.name for s in _s530_dead_constants[:3])
+        if len(_s530_dead_constants) > 3:
+            _const_names530 += f" +{len(_s530_dead_constants) - 3} more"
+        lines.append(
+            f"dead constants: {len(_s530_dead_constants)} unused SCREAMING_SNAKE constant(s) ({_const_names530})"
+            f" — stale config values mislead about active thresholds; audit before deleting"
+        )
+
     # S524: Dead exception classes — custom exception classes with 0 callers in non-imported files.
     # Unused exception classes bloat the error hierarchy and mislead about what errors a module raises;
     # they often result from copy-pasted exception hierarchies that were never wired up.
