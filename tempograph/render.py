@@ -2863,6 +2863,14 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             _ut_str += f" +{len(_unchanged_tests) - 3} more"
         lines.append(f"Unchanged tests: {_ut_str} — consider updating")
 
+    # S78: Tests in diff — when test files ARE included in the diff, confirm them.
+    # The "good news" companion to S65: agents get a clear ✓ when tests are present.
+    # Only shown when 1-4 test files are in the diff (otherwise obvious from file list).
+    _tests_in_diff = [fp.rsplit("/", 1)[-1] for fp in normalized if _is_test_file(fp)]
+    if 1 <= len(_tests_in_diff) <= 4:
+        _tdf_str = ", ".join(_tests_in_diff)
+        lines.append(f"Tests in diff: {_tdf_str} ✓")
+
     return "\n".join(lines)
 
 

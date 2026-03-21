@@ -7869,3 +7869,34 @@ class TestDiffExportedSymbolsListing:
         assert "Exported:" not in out, (
             f"'Exported:' must not appear when 9 exported symbols; got:\n{out}"
         )
+
+
+class TestDiffTestsInDiff:
+    """S78: Diff mode shows 'Tests in diff: test_foo.py ✓' when test files are in the diff."""
+
+    def test_tests_in_diff_shown_when_test_file_included(self, tmp_path):
+        """Diff containing a test file → 'Tests in diff:' confirmation shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_diff_context
+
+        (tmp_path / "api.py").write_text("def process(): pass\n")
+        (tmp_path / "test_api.py").write_text("from api import process\ndef test_process(): assert process() is None\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["api.py", "test_api.py"])
+        assert "Tests in diff:" in out, (
+            f"Expected 'Tests in diff:' when test file is in diff; got:\n{out}"
+        )
+        assert "test_api.py" in out, f"Expected test filename in tests-in-diff; got:\n{out}"
+
+    def test_tests_in_diff_absent_when_no_test_files(self, tmp_path):
+        """Diff with only source files → no 'Tests in diff:' line."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_diff_context
+
+        (tmp_path / "api.py").write_text("def process(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["api.py", "utils.py"])
+        assert "Tests in diff:" not in out, (
+            f"'Tests in diff:' must not appear when no test files in diff; got:\n{out}"
+        )
