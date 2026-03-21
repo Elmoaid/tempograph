@@ -7988,6 +7988,142 @@ class TestOverviewAbstractionsCount:
         )
 
 
+class TestFocusAsyncAnnotation:
+    """S81: Focus seed shows [async] for async functions/methods."""
+
+    def test_async_function_shows_annotation(self, tmp_path):
+        """Async function → '[async]' appears in focus header."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "handler.py").write_text(
+            "async def fetch_data(url: str) -> dict:\n    pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "fetch_data")
+        assert "[async]" in out, (
+            f"Expected '[async]' annotation for async function; got:\n{out}"
+        )
+
+    def test_sync_function_no_annotation(self, tmp_path):
+        """Sync function → no '[async]' annotation."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "handler.py").write_text(
+            "def fetch_data(url: str) -> dict:\n    pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "fetch_data")
+        assert "[async]" not in out, (
+            f"'[async]' must not appear for sync function; got:\n{out}"
+        )
+
+
+class TestFocusImplementsAnnotation:
+    """S83: Focus shows 'implements:' sub-line for class seeds that inherit from a known parent."""
+
+    def test_implements_shown_for_class_with_parent(self, tmp_path):
+        """Class inheriting from Base → 'implements: Base' sub-line shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "models.py").write_text(
+            "class Base:\n    def setup(self): pass\n\n"
+            "class Child(Base):\n    def run(self): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "Child")
+        assert "implements:" in out, (
+            f"Expected 'implements:' sub-line for Child(Base); got:\n{out}"
+        )
+        assert "Base" in out, f"Expected parent name 'Base' in implements line; got:\n{out}"
+
+    def test_implements_absent_for_root_class(self, tmp_path):
+        """Class with no parent → no 'implements:' sub-line."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "models.py").write_text(
+            "class Standalone:\n    def work(self): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "Standalone")
+        assert "implements:" not in out, (
+            f"'implements:' must not appear for root class; got:\n{out}"
+        )
+
+
+class TestOverviewHighCoupling:
+    """S82: Overview shows 'high-coupling:' when files import 8+ source files."""
+
+    def test_high_coupling_shown_when_two_hub_files(self, tmp_path):
+        """Two files each importing 8+ others → 'high coupling:' line shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        # Create 10 small source files
+        for i in range(10):
+            (tmp_path / f"mod_{i}.py").write_text(f"def fn_{i}(): pass\n")
+        # hub_a.py imports all 10
+        imports_a = "\n".join(f"from mod_{i} import fn_{i}" for i in range(10))
+        (tmp_path / "hub_a.py").write_text(imports_a + "\n")
+        # hub_b.py imports 9
+        imports_b = "\n".join(f"from mod_{i} import fn_{i}" for i in range(9))
+        (tmp_path / "hub_b.py").write_text(imports_b + "\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "high-coupling:" in out, (
+            f"Expected 'high-coupling:' when two hub files; got:\n{out}"
+        )
+
+    def test_high_coupling_absent_for_small_files(self, tmp_path):
+        """Files importing only 3 others → no 'high-coupling:' line."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        for i in range(4):
+            (tmp_path / f"mod_{i}.py").write_text(f"def fn_{i}(): pass\n")
+        imports = "\n".join(f"from mod_{i} import fn_{i}" for i in range(3))
+        (tmp_path / "small.py").write_text(imports + "\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "high-coupling:" not in out, (
+            f"'high-coupling:' must not appear when only 3 imports; got:\n{out}"
+        )
+
+
+class TestOverviewAsyncSurface:
+    """S84: Overview shows 'async surface:' when 3+ exported async functions exist."""
+
+    def test_async_surface_shown_when_many_async_fns(self, tmp_path):
+        """4 async functions → 'async surface:' line shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        code = "\n".join(f"async def handler_{i}(): pass" for i in range(4))
+        (tmp_path / "api.py").write_text(code + "\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "async surface:" in out, (
+            f"Expected 'async surface:' for 4 async functions; got:\n{out}"
+        )
+
+    def test_async_surface_absent_when_few_async_fns(self, tmp_path):
+        """Only 2 async functions → no 'async surface:' (below threshold of 3)."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "api.py").write_text(
+            "async def a(): pass\nasync def b(): pass\ndef c(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "async surface:" not in out, (
+            f"'async surface:' must not appear when only 2 async fns; got:\n{out}"
+        )
+
+
 class TestFocusFileSiblings:
     """S78: Focus depth-0 — 'in this file: N others (...)' sibling context.
 
@@ -8111,4 +8247,45 @@ class TestDiffChangeRiskVerdict:
         )
         assert "low" in out, (
             f"Expected low risk for isolated unexported symbols; got:\n{out}"
+        )
+
+
+class TestFocusTestScenarios:
+    """S81: Focus depth-0 — 'scenarios: test_foo, test_bar' from test callers.
+
+    Shows the names of test functions that call the seed symbol.
+    Helps agents understand existing test coverage before writing new tests.
+    Absent when no test callers exist.
+    """
+
+    def test_scenarios_shown_when_test_callers_exist(self, tmp_path):
+        """Function called from named test functions → scenarios line appears."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "core.py").write_text("def process(x): return x\n")
+        (tmp_path / "test_core.py").write_text(
+            "from core import process\n"
+            "def test_basic_case(): assert process(1) == 1\n"
+            "def test_zero_input(): assert process(0) == 0\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process")
+        assert "scenarios:" in out, (
+            f"Expected 'scenarios:' line when test callers exist; got:\n{out}"
+        )
+        assert "test_basic_case" in out or "test_zero_input" in out, (
+            f"Expected test function names in scenarios; got:\n{out}"
+        )
+
+    def test_scenarios_absent_when_no_test_callers(self, tmp_path):
+        """Function with no test callers → no scenarios line."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "utils.py").write_text("def helper(x): return x\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper")
+        assert "scenarios:" not in out, (
+            f"'scenarios:' must not appear when no test callers; got:\n{out}"
         )

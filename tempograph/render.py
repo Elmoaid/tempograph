@@ -567,24 +567,6 @@ def render_overview(graph: Tempo) -> str:
                 _dh_parts = [f"{fp.rsplit('/', 1)[-1]} ({n})" for fp, n in _debt_hot]
                 lines.append(f"debt hot: {', '.join(_dh_parts)}")
 
-    # S82: High coupling — source files that import 8+ other source files.
-    # These fragile hub files are expensive to test and the first to break during refactors.
-    # Only shown when 2+ such files exist (single offender is noise).
-    _coupling_candidates: list[tuple[int, str]] = []
-    for _fp in _src_fps:
-        if _is_test_file(_fp) or not graph.files[_fp].symbols:
-            continue
-        _out_imports = len({
-            e.target_id for e in graph.edges
-            if e.kind == EdgeKind.IMPORTS and e.source_id == _fp and e.target_id in graph.files
-        })
-        if _out_imports >= 8:
-            _coupling_candidates.append((_out_imports, _fp))
-    if len(_coupling_candidates) >= 2:
-        _coupling_candidates.sort(key=lambda x: -x[0])
-        _coupling_parts = [f"{fp.rsplit('/', 1)[-1]} ({n} imports)" for n, fp in _coupling_candidates[:3]]
-        lines.append(f"high coupling: {', '.join(_coupling_parts)}")
-
     # S84: Async surface — count exported async functions to signal async-heavy codebases.
     # Helps agents understand whether the project needs coroutine/event-loop awareness.
     # Only shown when 3+ exported async functions exist (prevents false signal on tiny projects).
@@ -1796,6 +1778,17 @@ def _build_symbol_block_lines(
         if _test_callers:
             _t_files = sorted({c.file_path.rsplit("/", 1)[-1] for c in _test_callers})
             block_lines.append(f"{indent}  tested: {', '.join(_t_files[:3])}")
+            # S81: Show test scenario names — what cases are already covered.
+            # Agents use this to avoid writing duplicate tests or spotting gaps.
+            _scenario_names = sorted({
+                c.name for c in _test_callers
+                if c.name.startswith("test_") and c.kind.value in ("function", "method", "test")
+            })
+            if _scenario_names:
+                _sc_str = ", ".join(_scenario_names[:3])
+                if len(_scenario_names) > 3:
+                    _sc_str += f" +{len(_scenario_names) - 3} more"
+                block_lines.append(f"{indent}  scenarios: {_sc_str}")
         elif sym.exported:
             block_lines.append(f"{indent}  no tests — exported but never called from a test file")
     # Container annotation for methods: show parent class with caller count.
