@@ -261,6 +261,28 @@ def file_last_modified_days(repo: str, file_path: str) -> int | None:
     return int((time.time() - ct) / 86400)
 
 
+def symbol_last_modified_days(repo: str, file_path: str, line_start: int) -> int | None:
+    """Return days since the line at ``line_start`` in ``file_path`` was last committed.
+
+    Tries line-level ``git log -L`` first (precise), falls back to file-level
+    ``git log -- <file>`` (fast).  Returns None when git is unavailable or the
+    file has no history.
+    """
+    # Line-level attempt
+    out = _run_git(
+        repo, "log", "-1", "--format=%ct",
+        f"-L{line_start},{line_start}:{file_path}",
+    )
+    if out:
+        for line in out.splitlines():
+            line = line.strip()
+            if line.isdigit():
+                return int((time.time() - int(line)) / 86400)
+
+    # Fallback: file-level (faster, always works if file is tracked)
+    return file_last_modified_days(repo, file_path)
+
+
 def recent_file_commits(repo: str, file_path: str, n: int = 3) -> list[dict]:
     """Return the last n commits that touched file_path.
 

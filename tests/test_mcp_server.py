@@ -3362,3 +3362,39 @@ class TestFileBlastCountRanking:
         assert all("test" not in l for l in lines_with_blast), (
             f"'test' label should be absent when no test dependents; blast lines: {lines_with_blast}"
         )
+
+
+class TestDeadCodeAgeAnnotation:
+    """Tests for per-symbol [age: Nd/Xm/1y+] annotations in dead code output."""
+
+    def test_dead_code_age_annotation(self, tmp_path):
+        """Mock file_last_modified_days returning 45 days -> [age: 1m] appears."""
+        from unittest.mock import patch
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        (tmp_path / "orphan.py").write_text("def orphan_func():\n    return 42\n")
+        g = build_graph(tmp_path, use_cache=False)
+
+        with patch("tempograph.git.file_last_modified_days", return_value=45):
+            out = render_dead_code(g, include_low=True)
+
+        assert "[age: 1m]" in out, (
+            f"Expected [age: 1m] for 45-day-old dead code; got:\n{out}"
+        )
+
+    def test_dead_code_no_age_when_git_unavailable(self, tmp_path):
+        """When file_last_modified_days returns None, no [age:] annotation appears."""
+        from unittest.mock import patch
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        (tmp_path / "orphan.py").write_text("def orphan_func():\n    return 42\n")
+        g = build_graph(tmp_path, use_cache=False)
+
+        with patch("tempograph.git.file_last_modified_days", return_value=None):
+            out = render_dead_code(g, include_low=True)
+
+        assert "[age:" not in out, (
+            f"Expected no [age:] when git unavailable; got:\n{out}"
+        )

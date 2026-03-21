@@ -1814,7 +1814,7 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
     if include_low:
         tiers.append(("LOW CONFIDENCE (likely false positives)", low))
 
-    # "Last touched N days ago" annotation per file — cached to avoid redundant git calls.
+    # Per-file git caches — avoids redundant git calls across symbols in the same file.
     from .git import file_last_modified_days as _file_last_modified_days  # noqa: PLC0415
     _touched_cache: dict[str, int | None] = {}
 
@@ -1825,6 +1825,20 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         if days is None:
             return ""
         return f" — last touched: {days} days ago"
+
+    def _format_age(days: int | None) -> str:
+        if days is None:
+            return ""
+        if days >= 365:
+            return " [age: 1y+]"
+        if days >= 30:
+            return f" [age: {days // 30}m]"
+        return f" [age: {days}d]"
+
+    def _sym_age(sym: Symbol) -> str:
+        if sym.file_path not in _touched_cache:
+            _touched_cache[sym.file_path] = _file_last_modified_days(graph.root, sym.file_path)
+        return _format_age(_touched_cache[sym.file_path])
 
     for label, tier in tiers:
         if not tier:
@@ -1840,7 +1854,8 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             for sym, conf in sorted(by_file[fp], key=lambda x: x[0].line_start):
                 lc = sym.line_count
                 total_lines += lc
-                lines.append(f"    {sym.kind.value} {sym.qualified_name} (L{sym.line_start}-{sym.line_end}, {lc} lines) [confidence: {conf}]")
+                age = _sym_age(sym)
+                lines.append(f"    {sym.kind.value} {sym.qualified_name} (L{sym.line_start}-{sym.line_end}, {lc} lines) [confidence: {conf}]{age}")
             lines.append("")
 
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
