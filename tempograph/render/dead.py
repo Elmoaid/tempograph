@@ -3338,6 +3338,26 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — removed automation paths; verify any data cleanup or notification side effects are still handled"
         )
 
+    # S971: Dead converters — unused convert_/transform_/map_/parse_ prefixed functions.
+    # Dead converters indicate data transformation pipelines that were removed or replaced;
+    # if callers now skip conversion steps, data format mismatches may silently corrupt output.
+    _conv_prefixes971 = ("convert_", "transform_", "map_", "parse_", "translate_", "normalize_")
+    _dead_converters971 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().startswith(p) for p in _conv_prefixes971)
+    ]
+    if _dead_converters971:
+        _conv_names971 = ", ".join(s.name for s in _dead_converters971[:3])
+        if len(_dead_converters971) > 3:
+            _conv_names971 += f" +{len(_dead_converters971) - 3} more"
+        lines.append(
+            f"dead converters: {len(_dead_converters971)} unused data transformation function(s) ({_conv_names971})"
+            f" — removed conversion steps may leave callers passing unformatted data silently"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

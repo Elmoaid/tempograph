@@ -2857,5 +2857,21 @@ def _collect_hotspots_signals(
                     f" — extreme fan-in; breaking changes here cause simultaneous failures across many subsystems"
                 )
 
+    # S970: Exported hotspot — the top hotspot is a public exported function.
+    # Exported functions are API surface; internal refactors that seem safe may break
+    # external consumers who rely on the exact signature or behavior.
+    if scores:
+        _top970 = scores[0][1]
+        if (
+            _top970 is not None
+            and not _is_test_file(_top970.file_path)
+            and getattr(_top970, "exported", False)
+            and _top970.kind.value in ("function", "method")
+        ):
+            out.append(
+                f"\nexported hotspot: {_top970.name} is a public exported function"
+                f" — API surface; signature or behavior changes may break external consumers"
+            )
+
     return out
 
