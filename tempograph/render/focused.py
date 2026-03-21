@@ -3722,6 +3722,24 @@ def _signals_focused_fn_advanced(
                 f" — difficult to read and test; consider splitting into focused sub-functions"
             )
 
+    # S798: Underscore-prefixed but exported — focused symbol has _ prefix suggesting private
+    # but is accessible from other files (callers exist outside its own file).
+    # Underscore-prefixed symbols are conventionally private; external callers violate
+    # the intended encapsulation boundary.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim798 = _seed_syms[0]
+        if (
+            _prim798.name.startswith("_") and not _prim798.name.startswith("__")
+            and not _is_test_file(_prim798.file_path)
+        ):
+            _ext_callers798 = [c for c in graph.callers_of(_prim798.id) if c.file_path != _prim798.file_path]
+            if _ext_callers798:
+                lines.append(
+                    f"\nprivate but called externally: {_prim798.name} has _ prefix (private convention)"
+                    f" but is called from {len(_ext_callers798)} external file(s)"
+                    f" — encapsulation violation; consider making it public or restricting callers"
+                )
+
     return lines
 
 

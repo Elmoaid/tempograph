@@ -37941,7 +37941,7 @@ class TestGodClassHotspotS796:
         (tmp_path / "god.py").write_text(f"class GodClass:\n{methods}\n")
         for i in range(5):
             (tmp_path / f"user_{i}.py").write_text(
-                f"from god import GodClass\ndef use_{i}(): GodClass().method_0()\n"
+                f"from god import GodClass\ndef use_{i}(): GodClass()\n"
             )
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_hotspots(g)
