@@ -2410,6 +2410,26 @@ def _signals_async_oop(
             f" — all symbols are private; agents cannot identify the public API surface"
         )
 
+    # S577: Orphan test — test file with no corresponding source file in the graph.
+    # Test files without a matching source file often result from source renames or
+    # deletions; tests are wired to nothing and silently provide false coverage confidence.
+    _s577_test_fps = [fp for fp in graph.files if _is_test_file(fp)]
+    _s577_src_stems = {
+        fp.replace("\\", "/").rsplit("/", 1)[-1].replace(".py", "")
+        for fp in graph.files
+        if not _is_test_file(fp)
+    }
+    _s577_orphans = [
+        fp for fp in _s577_test_fps
+        if fp.replace("\\", "/").rsplit("/", 1)[-1].replace("test_", "").replace("_test.py", ".py").replace(".py", "") not in _s577_src_stems
+    ]
+    if _s577_orphans:
+        _orph_names577 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s577_orphans[:3])
+        lines.append(
+            f"orphan tests: {len(_s577_orphans)} test file(s) with no matching source ({_orph_names577})"
+            f" — source was renamed or deleted; tests cover nothing and create false confidence"
+        )
+
     return lines
 
 

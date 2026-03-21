@@ -1684,4 +1684,24 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — __init__.py changes alter the package's public API; re-export additions/removals break downstream importers"
         )
 
+    # S579: Binary or media file in diff — diff includes image, font, or compiled binary files.
+    # Binary files cannot be meaningfully reviewed in text-based code review; large binary
+    # changes can bloat the repo and are irreversible once merged.
+    _binary_exts579 = (
+        ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg", ".webp",
+        ".ttf", ".woff", ".woff2", ".eot",
+        ".exe", ".dll", ".so", ".dylib", ".pyc",
+        ".zip", ".tar", ".gz", ".pdf",
+    )
+    _binary_files579 = [
+        f for f in changed_files
+        if any(f.lower().endswith(e) for e in _binary_exts579)
+    ]
+    if _binary_files579:
+        _bin_name579 = _binary_files579[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"binary file changed: {_bin_name579} ({len(_binary_files579)} binary/media file(s))"
+            f" — cannot be meaningfully reviewed; large binaries bloat the repo permanently"
+        )
+
     return "\n".join(lines)
