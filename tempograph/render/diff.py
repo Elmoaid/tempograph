@@ -854,4 +854,22 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" ({_s276_n} widely-called symbols) — extra care needed; this file changes often"
             )
 
+
+    # S282: Tests removed — diff includes removal of test files (test_*.py or *_test.py).
+    # Removing tests while changing code is a coverage regression; signal for teams
+    # to verify the removed tests are no longer needed (not hiding failures).
+    _s282_removed_tests = [
+        fp for fp in changed_files
+        if _is_test_file(fp)
+    ]
+    if _s282_removed_tests:
+        _removed_names282 = [fp.rsplit("/", 1)[-1] for fp in _s282_removed_tests[:3]]
+        _removed_str282 = ", ".join(_removed_names282)
+        if len(_s282_removed_tests) > 3:
+            _removed_str282 += f" +{len(_s282_removed_tests) - 3} more"
+        lines.append(
+            f"tests in diff: {_removed_str282}"
+            f" — test files modified; verify coverage isn't regressing"
+        )
+
     return "\n".join(lines)

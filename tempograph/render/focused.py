@@ -2123,6 +2123,29 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                     f" — may be dead code or an unused base class"
                 )
 
+    # S281: Undocumented public function — exported fn/method with 3+ callers has no docstring.
+    # Public functions without documentation create maintenance risk; callers must infer
+    # behavior from implementation, making changes more dangerous.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim281 = _seed_syms[0]
+        if (
+            _prim281.kind.value in ("function", "method")
+            and _prim281.exported
+            and not _is_test_file(_prim281.file_path)
+        ):
+            _sig281 = _prim281.signature or ""
+            _has_doc281 = '"""' in _sig281 or "'''" in _sig281
+            if not _has_doc281:
+                _ext_callers281 = [
+                    c for c in graph.callers_of(_prim281.id)
+                    if c.file_path != _prim281.file_path
+                ]
+                if len(_ext_callers281) >= 3:
+                    lines.append(
+                        f"\nundocumented: {_prim281.name} is public with {len(_ext_callers281)} callers"
+                        f" but has no docstring — callers must infer behavior from code"
+                    )
+
     # S244: Property accessor — focused symbol is a @property method.
     # Callers access it like an attribute (no parentheses); renaming or changing type is
     # a breaking change even if the source looks like a function change.

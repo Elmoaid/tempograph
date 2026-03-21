@@ -808,6 +808,26 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                 f" — changes here affect the entire test suite"
             )
 
+
+    # S284: Cross-package blast — blast target is imported by files in 3+ top-level directories.
+    # When a file's importers span many packages, a change creates a coordinated multi-team
+    # blast; each package team must review and validate the impact.
+    _s284_importer_dirs: set[str] = set()
+    for _imp284 in graph.importers_of(file_path):
+        if _imp284 in graph.files and _imp284 != file_path:
+            _dir284 = _imp284.split("/")[0] if "/" in _imp284 else "."
+            if not _dir284.startswith("."):
+                _s284_importer_dirs.add(_dir284)
+    if len(_s284_importer_dirs) >= 3:
+        _dirs284 = sorted(_s284_importer_dirs)[:3]
+        _dir_str284 = ", ".join(_dirs284)
+        if len(_s284_importer_dirs) > 3:
+            _dir_str284 += f" +{len(_s284_importer_dirs) - 3} more"
+        lines.append(
+            f"cross-package blast: imported by {len(_s284_importer_dirs)} packages ({_dir_str284})"
+            f" — multi-team impact; coordinate changes across all consuming packages"
+        )
+
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
 
