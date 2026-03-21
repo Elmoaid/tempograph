@@ -215,7 +215,50 @@ def render_overview(graph: Tempo) -> str:
         _test_pct = int(_covered / len(_src_fps) * 100)
         lines.append(f"test coverage: {_covered}/{len(_src_fps)} source files ({_test_pct}%)")
 
-    # Module structure — just the shape, no noisy import counts
+    # Potentially unused modules: source files with 0 source importers AND no test coverage.
+    # Flags entire floating modules that nothing depends on and nothing tests — either dead
+    # features or undiscovered entry points agents should investigate.
+    # Only shown when project has 10+ source files AND has tests (otherwise too noisy).
+    _ENTRY_BASENAMES = {
+        "__init__.py", "__main__.py", "main.py", "app.py", "manage.py",
+        "cli.py", "server.py", "wsgi.py", "asgi.py", "run.py", "start.py",
+        "index.js", "index.ts", "index.tsx", "main.ts", "main.tsx", "app.ts",
+        "main.go", "main.rs", "lib.rs", "mod.rs",  # Rust crate/module roots
+        "main.swift", "Program.cs",
+    }
+    if len(_src_fps) >= 10 and _test_fps:
+        _unused_modules: list[str] = []
+        for _fp in _src_fps:
+            _basename = _fp.rsplit("/", 1)[-1]
+            if _basename in _ENTRY_BASENAMES:
+                continue  # skip known entry points and package markers
+            # Skip TypeScript type-only files (.types.ts, .d.ts) — we skip `import type`
+            # statements, so these always appear as having 0 importers (false positive).
+            if _basename.endswith(".types.ts") or _basename.endswith(".d.ts"):
+                continue
+            if len(graph.files[_fp].symbols) < 3:
+                continue  # too minimal to flag
+            _src_importers_fp = [i for i in graph.importers_of(_fp) if not _is_test_file(i)]
+            _test_importers_fp = [i for i in graph.importers_of(_fp) if _is_test_file(i)]
+            _test_callers_fp = any(
+                _is_test_file(c.file_path)
+                for sid in graph.files[_fp].symbols
+                for c in graph.callers_of(sid)
+            )
+            if not _src_importers_fp and not _test_importers_fp and not _test_callers_fp:
+                _unused_modules.append(_fp)
+        if len(_unused_modules) >= 2:
+            _parts = _fp.rsplit("/", 2)
+            def _short_fp(fp: str) -> str:
+                parts = fp.rsplit("/", 2)
+                return "/".join(parts[-2:]) if len(parts) >= 2 else fp
+            _um_names = [_short_fp(fp) for fp in _unused_modules[:4]]
+            _um_str = ", ".join(_um_names)
+            if len(_unused_modules) > 4:
+                _um_str += f" +{len(_unused_modules) - 4} more"
+            lines.append(f"potentially unused ({len(_unused_modules)}): {_um_str}")
+
+    # Module structure -- just the shape, no noisy import counts
     modules: dict[str, list[str]] = {}
     for fp in graph.files:
         parts = fp.split("/")
@@ -1154,6 +1197,12 @@ def _build_symbol_block_lines(
         if depth == 0 and not sym.exported and not graph.callers_of(sym.id):
             if _dead_code_confidence(sym, graph) >= 40:
                 warnings.append("POSSIBLY DEAD — 0 callers, not exported (run dead_code mode to confirm)")
+        # Test-only callers: symbol has callers but ALL are test files.
+        # Production code never calls this — likely test helper or fixture, not real API.
+        if depth == 0:
+            _callers = graph.callers_of(sym.id)
+            if len(_callers) >= 2 and all(_is_test_file(c.file_path) for c in _callers):
+                warnings.append("TEST-ONLY CALLERS — not called from production code")
         if warnings:
             block_lines.append(f"{indent}  ⚠ {', '.join(warnings)}")
 
@@ -2154,6 +2203,33 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         _cx_parts = [f"{sym.qualified_name} (cx={cx})" for cx, sym in _cx_syms[:3]]
         lines.append("")
         lines.append(f"Most complex: {', '.join(_cx_parts)}")
+
+    # Untested hotspots: high-scoring symbols in files with no test coverage.
+    # The riskiest code to modify: high coupling/complexity AND no safety net.
+    # Only shown when test files exist in the project (otherwise whole project lacks tests).
+    _all_test_fps_hs = {fp for fp in graph.files if _is_test_file(fp)}
+    if _all_test_fps_hs and scores:
+        _untested: list[tuple[float, Symbol]] = []
+        for _sc, _sym in scores[:top_n]:
+            if _is_test_file(_sym.file_path):
+                continue
+            # Only flag symbols with real cross-file exposure (≥2 cross-file callers)
+            _cross = len({
+                c.file_path for c in graph.callers_of(_sym.id)
+                if c.file_path != _sym.file_path
+            })
+            if _cross < 2:
+                continue
+            _base = _sym.file_path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+            if not any(_base in t for t in _all_test_fps_hs):
+                _untested.append((_sc, _sym))
+        if len(_untested) >= 1:
+            _uh_parts = [
+                f"{sym.qualified_name} ({sym.file_path.rsplit('/', 1)[-1]})"
+                for _, sym in _untested[:3]
+            ]
+            lines.append("")
+            lines.append(f"Untested hotspots: {', '.join(_uh_parts)}")
 
     # File concentration: which files dominate the hotspot list.
     # If one file has 5+ hotspots, agents should read it first — it's the bottleneck.
