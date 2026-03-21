@@ -3828,6 +3828,22 @@ def _signals_focused_fn_advanced(
                 f" — deeply nested symbol; difficult to discover and increases import path verbosity"
             )
 
+    # S840: Generator function focus — focused function is named as a generator (iter_/generate_/yield_).
+    # Generator-prefixed functions have iterator protocol semantics; callers must handle
+    # exhaustion and cannot call them like ordinary functions returning a value.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim840 = _seed_syms[0]
+        _gen_prefixes840 = ("generate_", "iter_", "yield_", "gen_", "stream_")
+        if (
+            _prim840.kind.value in ("function", "method")
+            and not _is_test_file(_prim840.file_path)
+            and any(_prim840.name.lower().startswith(p) for p in _gen_prefixes840)
+        ):
+            lines.append(
+                f"\ngenerator function: {_prim840.name} appears to be a generator (iterator-style name)"
+                f" — callers must iterate or wrap in list(); cannot be called like a plain function"
+            )
+
     return lines
 
 

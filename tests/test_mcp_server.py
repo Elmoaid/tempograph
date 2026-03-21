@@ -39960,3 +39960,245 @@ class TestDeadProtocolClassesS839:
             f"'dead protocol classes' must not appear when Protocol is subclassed and used; got:\n{out}"
         )
 
+
+
+# ── S840–S845 ──────────────────────────────────────────────────────────────────
+
+# ── S840: Generator function focus ────────────────────────────────────────────
+
+class TestGeneratorFunctionFocusS840:
+    """S840: Function with generator-style name emits generator-function signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "data.py").write_text(
+            "def generate_records(limit):\n    for i in range(limit): yield i\n"
+        )
+        (tmp_path / "caller.py").write_text(
+            "from data import generate_records\n"
+            "def run(): list(generate_records(10))\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "generate_records")
+        assert "generator function" in out, (
+            f"'generator function' expected for generate_-prefixed function; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "data.py").write_text(
+            "def compute_value(x): return x * 2\n"
+        )
+        (tmp_path / "caller.py").write_text(
+            "from data import compute_value\n"
+            "def run(): compute_value(5)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "compute_value")
+        assert "generator function" not in out, (
+            f"'generator function' must not appear for non-generator function; got:\n{out}"
+        )
+
+
+# ── S841: No async functions ──────────────────────────────────────────────────
+
+class TestNoAsyncFunctionsS841:
+    """S841: 10+ functions but none async emits no-async-functions signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        for i in range(12):
+            (tmp_path / f"module_{i}.py").write_text(
+                f"def sync_fn_{i}(x): return x + {i}\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no async functions" in out, (
+            f"'no async functions' expected when 10+ functions but none async; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        for i in range(10):
+            (tmp_path / f"module_{i}.py").write_text(
+                f"def sync_fn_{i}(x): return x\n"
+            )
+        (tmp_path / "async_module.py").write_text(
+            "async def fetch_data(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no async functions" not in out, (
+            f"'no async functions' must not appear when at least one async function exists; got:\n{out}"
+        )
+
+
+# ── S842: Constants file blast ────────────────────────────────────────────────
+
+class TestConstantsFileBlastS842:
+    """S842: Blast target named constants/config/settings emits constants-file-blast signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "constants.py").write_text(
+            "MAX_RETRIES = 3\nDEFAULT_TIMEOUT = 30\n"
+        )
+        (tmp_path / "runner.py").write_text(
+            "from constants import MAX_RETRIES\ndef run(): return MAX_RETRIES\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "constants.py")
+        assert "constants file blast" in out, (
+            f"'constants file blast' expected for constants.py; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "processor.py").write_text(
+            "def process(x): return x * 2\n"
+        )
+        (tmp_path / "runner.py").write_text(
+            "from processor import process\ndef run(): process(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "processor.py")
+        assert "constants file blast" not in out, (
+            f"'constants file blast' must not appear for non-constants file; got:\n{out}"
+        )
+
+
+# ── S843: Types-only diff ─────────────────────────────────────────────────────
+
+class TestTypesOnlyDiffS843:
+    """S843: All changed files contain only class defs emits types-only-diff signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "models.py").write_text(
+            "class User:\n    pass\nclass Order:\n    pass\n"
+        )
+        (tmp_path / "runner.py").write_text(
+            "from models import User\ndef run(): User()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["models.py"])
+        assert "types-only diff" in out, (
+            f"'types-only diff' expected when changed file has only class defs; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "service.py").write_text(
+            "class Service:\n    pass\n"
+            "def start_service(): pass\n"
+        )
+        (tmp_path / "runner.py").write_text(
+            "from service import start_service\ndef run(): start_service()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["service.py"])
+        assert "types-only diff" not in out, (
+            f"'types-only diff' must not appear when file has both classes and functions; got:\n{out}"
+        )
+
+
+# ── S844: Deprecated hotspot ──────────────────────────────────────────────────
+
+class TestDeprecatedHotspotS844:
+    """S844: Top hotspot with 'deprecated' in docstring emits deprecated-hotspot signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "legacy.py").write_text(
+            'def old_process(x):\n'
+            '    """Deprecated: use new_process instead."""\n'
+            '    return x\n'
+        )
+        for i in range(5):
+            (tmp_path / f"caller_{i}.py").write_text(
+                "from legacy import old_process\n"
+                f"def run_{i}(): old_process({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "deprecated hotspot" in out, (
+            f"'deprecated hotspot' expected when top hotspot docstring contains 'deprecated'; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "current.py").write_text(
+            'def active_fn(x):\n    """Active, modern implementation."""\n    return x\n'
+        )
+        for i in range(5):
+            (tmp_path / f"caller_{i}.py").write_text(
+                "from current import active_fn\n"
+                f"def run_{i}(): active_fn({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "deprecated hotspot" not in out, (
+            f"'deprecated hotspot' must not appear when hotspot is not deprecated; got:\n{out}"
+        )
+
+
+# ── S845: Dead event handler functions ────────────────────────────────────────
+
+class TestDeadEventHandlersS845:
+    """S845: Unused on_/handle_/_handler functions emits dead-event-handlers signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "events.py").write_text(
+            "def on_user_login(user): pass\n"
+            "def handle_payment_error(err): pass\n"
+            "def active_fn(): pass\n"
+        )
+        (tmp_path / "runner.py").write_text(
+            "from events import active_fn\n"
+            "def run(): active_fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead event handlers" in out, (
+            f"'dead event handlers' expected for unused on_/handle_ functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "events.py").write_text(
+            "def on_user_login(user): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from events import on_user_login\n"
+            "def setup(): on_user_login('admin')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead event handlers" not in out, (
+            f"'dead event handlers' must not appear when handler is called; got:\n{out}"
+        )
