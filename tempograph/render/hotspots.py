@@ -2438,6 +2438,26 @@ def _collect_hotspots_signals(
                         f" extract shared logic to a lower-level utility module"
                     )
 
+    # S802: Thin wrapper hotspot — top hotspot has only 1 callee (delegates entirely to one fn).
+    # A hotspot that only wraps one other function adds a call layer with no additional value;
+    # callers could invoke the inner function directly, reducing coupling.
+    if scores:
+        _top802 = scores[0][1]
+        if _top802 is not None and not _is_test_file(_top802.file_path):
+            _callers802 = graph.callers_of(_top802.id)
+            if len(_callers802) >= 4:
+                # Find callees: symbols where _top802 appears in their callers list
+                _callees802 = [
+                    s for s in graph.symbols.values()
+                    if any(c.id == _top802.id for c in graph.callers_of(s.id))
+                    and s.id != _top802.id
+                ]
+                if len(_callees802) == 1:
+                    out.append(
+                        f"\nthin wrapper hotspot: {_top802.name} is called by {len(_callers802)} consumers"
+                        f" but only calls {_callees802[0].name} — pure wrapper; callers could bypass it"
+                    )
+
     # S796: God class hotspot — top hotspot is a class with 10+ methods.
     # Classes with many methods are often god objects accumulating responsibilities;
     # when such a class is also a hotspot (many callers), refactoring is risky.
