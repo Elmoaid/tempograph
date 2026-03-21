@@ -119,6 +119,22 @@ def render_overview(graph: Tempo) -> str:
         parts.append(fi.language.value)
         lines.append(f"  {fi.path} ({', '.join(parts)})")
 
+    # Recently active: top commit-hot files give agents an activity signal at orientation time
+    try:
+        from .git import file_commit_counts as _file_commit_counts
+        _commit_counts = _file_commit_counts(graph.root)
+        _active = sorted(
+            [(fp, c) for fp, c in _commit_counts.items()
+             if fp in graph.files and not _is_test_file(fp)],
+            key=lambda x: -x[1],
+        )[:3]
+        if _active:
+            _act_str = ", ".join(f"{fp.rsplit('/', 1)[-1]} ({c})" for fp, c in _active)
+            lines.append("")
+            lines.append(f"recently active: {_act_str}")
+    except Exception:
+        pass
+
     # Module structure — just the shape, no noisy import counts
     modules: dict[str, list[str]] = {}
     for fp in graph.files:
@@ -813,6 +829,95 @@ def _render_monolith_section(graph, ordered: list, token_count: int, max_tokens:
     return "", 0
 
 
+def _build_symbol_block_lines(
+    sym: "Symbol",
+    depth: int,
+    orbit_note: str,
+    graph: "Tempo",
+    query_tokens: list[str],
+    staleness_cache: dict,
+) -> list[str]:
+    """Render one BFS symbol into display lines (header + annotations).
+
+    Returns a list of lines; caller joins them and checks token overflow."""
+    indent = "  " * depth if depth > 0 else ""
+    prefix = ["●", "  →", "    ·", "      "][min(depth, 3)]
+    loc = f"{sym.file_path}:{sym.line_start}-{sym.line_end}"
+    block_lines = [f"{prefix} {sym.kind.value} {sym.qualified_name} — {loc}{orbit_note}"]
+    if sym.signature and depth < 2:
+        block_lines.append(f"{indent}  sig: {sym.signature[:150]}")
+    if sym.doc and depth == 0:
+        block_lines.append(f"{indent}  doc: {sym.doc}")
+    if depth <= 1:
+        warnings = []
+        if sym.line_count > 500:
+            warnings.append(f"LARGE ({sym.line_count} lines — use grep, don't read)")
+        if sym.complexity > 50:
+            warnings.append(f"HIGH COMPLEXITY (cx={sym.complexity})")
+        if depth == 0 and not sym.exported and not graph.callers_of(sym.id):
+            if _dead_code_confidence(sym, graph) >= 40:
+                warnings.append("POSSIBLY DEAD — 0 callers, not exported (run dead_code mode to confirm)")
+        if warnings:
+            block_lines.append(f"{indent}  ⚠ {', '.join(warnings)}")
+
+        def _caller_priority(c: "Symbol") -> int:
+            path_lower = c.file_path.lower()
+            return 0 if query_tokens and any(tok in path_lower for tok in query_tokens) else 1
+
+        from .git import file_last_modified_days as _fld  # noqa: PLC0415
+
+        def _stale_annotation(file_path: str) -> str:
+            if file_path not in staleness_cache:
+                staleness_cache[file_path] = _fld(graph.root, file_path)
+            days = staleness_cache[file_path]
+            if days is None or days <= 30:
+                return ""
+            if days > 180:
+                return " [stale: 6m+]"
+            return f" [stale: {days}d]"
+
+        callers = graph.callers_of(sym.id)
+        if callers:
+            callers_sorted = sorted(callers, key=_caller_priority)
+            kw_callers = [c for c in callers_sorted if _caller_priority(c) == 0]
+            other_callers = [c for c in callers_sorted if _caller_priority(c) != 0]
+            hot_other = [c for c in other_callers if c.file_path in graph.hot_files]
+            cold_other = [c for c in other_callers if c.file_path not in graph.hot_files]
+            max_other = 3 if kw_callers else (8 if depth == 0 else 5)
+            shown_other = (hot_other + cold_other)[:max_other]
+            shown_callers = kw_callers + shown_other
+            shown_count = len(kw_callers) + max_other
+            caller_strs = []
+            for c in shown_callers:
+                if c.file_path in graph.hot_files:
+                    caller_strs.append(f"{c.qualified_name} [hot]")
+                else:
+                    caller_strs.append(c.qualified_name + _stale_annotation(c.file_path))
+            block_lines.append(f"{indent}  called by: {', '.join(caller_strs)}")
+            if len(callers) > shown_count:
+                block_lines[-1] += f" (+{len(callers) - shown_count} more)"
+        callees = graph.callees_of(sym.id)
+        if callees:
+            shown = 8 if depth == 0 else 5
+            hot_callees = [c for c in callees if c.file_path in graph.hot_files]
+            cold_callees = [c for c in callees if c.file_path not in graph.hot_files]
+            ordered_callees = (hot_callees + cold_callees)[:shown]
+            callee_strs = [
+                f"{c.qualified_name} [hot]" if c.file_path in graph.hot_files else c.qualified_name
+                for c in ordered_callees
+            ]
+            block_lines.append(f"{indent}  calls: {', '.join(callee_strs)}")
+            if len(callees) > shown:
+                block_lines[-1] += f" (+{len(callees) - shown} more)"
+        if depth == 0:
+            children = graph.children_of(sym.id)
+            if children:
+                block_lines.append(
+                    f"{indent}  contains: {', '.join(f'{c.kind.value[:4]} {c.name}' for c in children[:10])}"
+                )
+    return block_lines
+
+
 def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     """Task-focused rendering with BFS graph traversal.
     Starts from search results, then follows call/render/import edges
@@ -861,11 +966,6 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
             ordered, seen_ids = _ext_ordered, _ext_seen
             _depth_extended = True
 
-    def _caller_priority(sym: Symbol) -> int:
-        """0 = keyword match in path (show first), 1 = no match (show after)."""
-        path_lower = sym.file_path.lower()
-        return 0 if query_tokens and any(tok in path_lower for tok in query_tokens) else 1
-
     _focus_header = f"Focus: {query}"
     if _depth_extended:
         _focus_header += f"  [depth +1 — sparse ({len(ordered)} nodes)]"
@@ -873,83 +973,14 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     seen_files: set[str] = set()
     token_count = 0
 
-    # Staleness annotations for caller files: cache git lookups per file_path.
-    from .git import file_last_modified_days as _file_last_modified_days  # noqa: PLC0415
     _staleness_cache: dict[str, int | None] = {}
 
-    def _stale_annotation(file_path: str) -> str:
-        if file_path not in _staleness_cache:
-            _staleness_cache[file_path] = _file_last_modified_days(graph.root, file_path)
-        days = _staleness_cache[file_path]
-        if days is None or days <= 30:
-            return ""
-        if days > 180:
-            return " [stale: 6m+]"
-        return f" [stale: {days}d]"
-
     for sym, depth in ordered:
-        indent = "  " * depth if depth > 0 else ""
-        prefix = ["●", "  →", "    ·", "      "][min(depth, 3)]
-        loc = f"{sym.file_path}:{sym.line_start}-{sym.line_end}"
         orbit_note = ""
         if sym.id in orbit_seed_meta and depth == 1:
             _orb_fp, _orb_freq = orbit_seed_meta[sym.id]
             orbit_note = f"  [orbit {_orb_freq:.0%}]"
-        block_lines = [f"{prefix} {sym.kind.value} {sym.qualified_name} — {loc}{orbit_note}"]
-        if sym.signature and depth < 2:
-            block_lines.append(f"{indent}  sig: {sym.signature[:150]}")
-        if sym.doc and depth == 0:
-            block_lines.append(f"{indent}  doc: {sym.doc}")
-        if depth <= 1:
-            warnings = []
-            if sym.line_count > 500:
-                warnings.append(f"LARGE ({sym.line_count} lines — use grep, don't read)")
-            if sym.complexity > 50:
-                warnings.append(f"HIGH COMPLEXITY (cx={sym.complexity})")
-            if depth == 0 and not sym.exported and not graph.callers_of(sym.id):
-                if _dead_code_confidence(sym, graph) >= 40:
-                    warnings.append("POSSIBLY DEAD — 0 callers, not exported (run dead_code mode to confirm)")
-            if warnings:
-                block_lines.append(f"{indent}  ⚠ {', '.join(warnings)}")
-            callers = graph.callers_of(sym.id)
-            if callers:
-                callers_sorted = sorted(callers, key=_caller_priority)
-                kw_callers = [c for c in callers_sorted if _caller_priority(c) == 0]
-                other_callers = [c for c in callers_sorted if _caller_priority(c) != 0]
-                hot_other = [c for c in other_callers if c.file_path in graph.hot_files]
-                cold_other = [c for c in other_callers if c.file_path not in graph.hot_files]
-                # Keyword callers exist → cap other callers at 3; else show up to 8.
-                max_other = 3 if kw_callers else (8 if depth == 0 else 5)
-                shown_other = (hot_other + cold_other)[:max_other]
-                shown_callers = kw_callers + shown_other
-                shown_count = len(kw_callers) + max_other
-                caller_strs = []
-                for c in shown_callers:
-                    if c.file_path in graph.hot_files:
-                        caller_strs.append(f"{c.qualified_name} [hot]")
-                    else:
-                        caller_strs.append(c.qualified_name + _stale_annotation(c.file_path))
-                block_lines.append(f"{indent}  called by: {', '.join(caller_strs)}")
-                if len(callers) > shown_count:
-                    block_lines[-1] += f" (+{len(callers) - shown_count} more)"
-            callees = graph.callees_of(sym.id)
-            if callees:
-                shown = 8 if depth == 0 else 5
-                hot_callees = [c for c in callees if c.file_path in graph.hot_files]
-                cold_callees = [c for c in callees if c.file_path not in graph.hot_files]
-                ordered_callees = (hot_callees + cold_callees)[:shown]
-                callee_strs = [
-                    f"{c.qualified_name} [hot]" if c.file_path in graph.hot_files else c.qualified_name
-                    for c in ordered_callees
-                ]
-                block_lines.append(f"{indent}  calls: {', '.join(callee_strs)}")
-                if len(callees) > shown:
-                    block_lines[-1] += f" (+{len(callees) - shown} more)"
-            if depth == 0:
-                children = graph.children_of(sym.id)
-                if children:
-                    block_lines.append(f"{indent}  contains: {', '.join(f'{c.kind.value[:4]} {c.name}' for c in children[:10])}")
-
+        block_lines = _build_symbol_block_lines(sym, depth, orbit_note, graph, query_tokens, _staleness_cache)
         block = "\n".join(block_lines)
         should_break, block_tokens = _handle_overflow(lines, ordered, block, token_count, max_tokens)
         if should_break:
