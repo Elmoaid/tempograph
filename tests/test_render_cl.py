@@ -2,6 +2,8 @@
 import pytest
 from tempograph.prepare import _is_change_localization, render_prepare
 from tempograph.render import _extract_cl_keywords, _extract_focus_files, _is_docs_branch_task
+from tempograph.render import _bfs_expand, _sym_importance
+from tempograph.types import Edge, EdgeKind, FileInfo, Language, Symbol, SymbolKind, Tempo
 
 
 class TestExtractClKeywords:
@@ -493,3 +495,108 @@ class TestPathFallbackTemplateFilter:
         # The source schema file should be present if path fallback triggers
         if "KEY FILES" in result:
             assert "schemas.py" in result, "Source schemas.py should appear in path fallback"
+
+
+class TestBfsImportanceSorting:
+    """BFS importance-weighted ordering: hub nodes survive cap truncation."""
+
+    @staticmethod
+    def _sym(fpath, name, line=1, exported=True):
+        return Symbol(
+            id=f"{fpath}::{name}", name=name, qualified_name=name,
+            kind=SymbolKind.FUNCTION, language=Language.PYTHON,
+            file_path=fpath, line_start=line, line_end=line + 2,
+            signature=f"def {name}()", exported=exported, complexity=1,
+            byte_size=30,
+        )
+
+    def _build_graph(self, syms, edges, hot_files=None):
+        all_syms = {s.id: s for s in syms}
+        files: dict[str, FileInfo] = {}
+        for s in syms:
+            if s.file_path not in files:
+                files[s.file_path] = FileInfo(
+                    path=s.file_path, language=Language.PYTHON,
+                    line_count=20, byte_size=400,
+                    symbols=[],
+                )
+            files[s.file_path].symbols.append(s.id)
+        g = Tempo(root="/tmp/fake", files=files, symbols=all_syms, edges=edges,
+                  hot_files=hot_files or set())
+        g.build_indexes()
+        return g
+
+    def test_high_importance_nodes_survive_cap(self):
+        """When BFS truncates at 50 nodes, high-importance hub nodes appear
+        before low-importance orphan nodes at the same depth."""
+        seed = self._sym("seed.py", "entry")
+
+        # hub_fn has 6 cross-file callers → importance = 6*2 + 1(exported) = 13
+        hub = self._sym("hub.py", "hub_fn")
+        hub_callers = [self._sym(f"caller_{i}.py", f"c{i}") for i in range(6)]
+
+        # orphan_fn has 0 callers → importance = 0 + 1(exported) = 1
+        orphan = self._sym("orphan.py", "orphan_fn")
+
+        edges = (
+            # seed calls both hub and orphan (both become depth 1)
+            [Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=hub.id, line=2),
+             Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=orphan.id, line=3)]
+            # 6 cross-file callers for hub
+            + [Edge(kind=EdgeKind.CALLS, source_id=c.id, target_id=hub.id, line=1)
+               for c in hub_callers]
+        )
+        all_syms = [seed, hub, orphan] + hub_callers
+        graph = self._build_graph(all_syms, edges)
+
+        ordered, _ = _bfs_expand(graph, [seed], {seed.file_path})
+        names = [sym.name for sym, _ in ordered]
+
+        assert names[0] == "entry", "Seed must be first"
+        hub_idx = names.index("hub_fn")
+        orphan_idx = names.index("orphan_fn")
+        assert hub_idx < orphan_idx, (
+            f"hub_fn (importance=13) must appear before orphan_fn (importance=1) "
+            f"at the same depth; got hub@{hub_idx}, orphan@{orphan_idx}"
+        )
+
+    def test_zero_caller_orphans_appear_last_within_depth(self):
+        """Nodes with no cross-file callers and not exported rank lowest
+        within their depth level."""
+        seed = self._sym("seed.py", "main")
+
+        # Three callees at depth 1, varying importance
+        popular = self._sym("pop.py", "popular_fn", exported=True)
+        medium = self._sym("med.py", "medium_fn", exported=True)
+        orphan = self._sym("orphan.py", "orphan_fn", exported=False)
+
+        # popular has 4 cross-file callers → importance = 4*2 + 1 = 9
+        pop_callers = [self._sym(f"u{i}.py", f"user_{i}") for i in range(4)]
+        # medium has 1 cross-file caller → importance = 1*2 + 1 = 3
+        med_caller = self._sym("m1.py", "m_user")
+        # orphan has 0 callers, not exported → importance = 0
+
+        edges = (
+            [Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=popular.id, line=1),
+             Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=medium.id, line=2),
+             Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=orphan.id, line=3)]
+            + [Edge(kind=EdgeKind.CALLS, source_id=c.id, target_id=popular.id, line=1)
+               for c in pop_callers]
+            + [Edge(kind=EdgeKind.CALLS, source_id=med_caller.id, target_id=medium.id, line=1)]
+        )
+        all_syms = [seed, popular, medium, orphan] + pop_callers + [med_caller]
+        graph = self._build_graph(all_syms, edges)
+
+        ordered, _ = _bfs_expand(graph, [seed], {seed.file_path})
+        depth1 = [(sym.name, d) for sym, d in ordered if d == 1]
+        depth1_names = [name for name, _ in depth1]
+
+        assert depth1_names.index("popular_fn") < depth1_names.index("orphan_fn"), (
+            f"popular_fn (importance=9) must precede orphan_fn (importance=0); got {depth1_names}"
+        )
+        assert depth1_names.index("medium_fn") < depth1_names.index("orphan_fn"), (
+            f"medium_fn (importance=3) must precede orphan_fn (importance=0); got {depth1_names}"
+        )
+        assert depth1_names.index("popular_fn") < depth1_names.index("medium_fn"), (
+            f"popular_fn (importance=9) must precede medium_fn (importance=3); got {depth1_names}"
+        )
