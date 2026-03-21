@@ -1061,4 +1061,15 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 )
                 break
 
+
+    # S283: Untested hotspot — top hotspot file has no test coverage AND repo has no tests at all.
+    # The riskiest combination: high-churn code with zero test infrastructure.
+    _s283_any_tests = any(_is_test_file(fp) for fp in graph.files)
+    if not _s283_any_tests and scores:
+        _s283_top = next((sym for _, sym in scores[:3] if not _is_test_file(sym.file_path)), None)
+        if _s283_top:
+            lines.append(
+                f"\nuntested repo: no test files found — all hotspot churn is completely unprotected"
+            )
+
     return "\n".join(lines)  # ALWAYS return here — never inside a conditional block

@@ -1566,6 +1566,20 @@ def render_overview(graph: Tempo) -> str:
             f" — complex OOP; watch for deep inheritance and god classes"
         )
 
+
+    # S280: Entry point overload — 5+ distinct entry point files detected.
+    # Many entry points suggest a multi-mode application (CLI + server + worker);
+    # each entry point has its own startup path that must be maintained independently.
+    if len(_s220_entry_files) >= 5:
+        _ep_names280 = [fp.rsplit("/", 1)[-1] for fp in _s220_entry_files[:5]]
+        _ep_str280 = ", ".join(_ep_names280)
+        if len(_s220_entry_files) > 5:
+            _ep_str280 += f" +{len(_s220_entry_files) - 5} more"
+        lines.append(
+            f"entry point overload: {len(_s220_entry_files)} entry points ({_ep_str280})"
+            f" — multi-mode app; each startup path must be maintained separately"
+        )
+
         # Suggest directories to exclude — detect likely noise
     noisy = _detect_noisy_dirs(graph, modules)
     if noisy:
