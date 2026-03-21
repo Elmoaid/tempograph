@@ -2794,6 +2794,22 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                 lines.append(f"    {loc}")
         lines.append("")
 
+    # S91: Untested exports — exported functions/methods with no test callers.
+    # Agents need to know which symbols lack a safety net before making changes.
+    # Only shown when 2+ qualify (single untested export is too common to be signal).
+    _untested_exports = [
+        sym for sym in symbols
+        if sym.exported and sym.kind.value in ("function", "method")
+        and not any(_is_test_file(c.file_path) for c in graph.callers_of(sym.id))
+    ]
+    if len(_untested_exports) >= 2:
+        _ue_names = [s.name for s in _untested_exports[:5]]
+        _ue_str = ", ".join(_ue_names)
+        if len(_untested_exports) > 5:
+            _ue_str += f" +{len(_untested_exports) - 5} more"
+        lines.append(f"Untested exports ({len(_untested_exports)}): {_ue_str} — no test coverage")
+        lines.append("")
+
     # Render edges (components that render components from this file)
     render_targets = set()
     for sym in symbols:
