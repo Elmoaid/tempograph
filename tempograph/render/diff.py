@@ -241,6 +241,24 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — package public API changed; verify re-exports and downstream consumers"
         )
 
+    # S669: Documentation file in diff — diff includes a .md, .rst, or .txt file.
+    # Docs changes alongside code changes signal an intentional API or behavior update;
+    # docs-only diffs with no code changes may indicate stale documentation being corrected.
+    _doc_exts669 = {".md", ".rst", ".txt"}
+    _doc_files669 = [
+        f for f in changed_files
+        if "." in f.rsplit("/", 1)[-1]
+        and f.rsplit("/", 1)[-1].rsplit(".", 1)[-1].lower() in {"md", "rst", "txt"}
+    ]
+    if _doc_files669:
+        _doc_names669 = ", ".join(f.rsplit("/", 1)[-1] for f in _doc_files669[:2])
+        if len(_doc_files669) > 2:
+            _doc_names669 += f" +{len(_doc_files669) - 2} more"
+        lines.append(
+            f"docs in diff: {_doc_names669} ({len(_doc_files669)} doc file(s))"
+            f" — verify code and docs stay in sync; doc-only diffs may lag actual behavior"
+        )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 

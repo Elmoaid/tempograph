@@ -2690,6 +2690,16 @@ def _signals_async_oop(
             f" — long import paths and review-invisible files; consider flattening package structure"
         )
 
+    # S667: No tests detected — repo has no test files at all (high risk for any change).
+    # Repos without tests have no safety net; any modification is an untested change
+    # and regressions will only surface at runtime.
+    _has_tests667 = any(_is_test_file(fp) for fp in graph.files)
+    if not _has_tests667 and len(graph.files) >= 3:
+        lines.append(
+            "no tests detected: no test files found in this repo"
+            " — all changes are untested; add a test suite before refactoring"
+        )
+
     return lines
 
 

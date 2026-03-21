@@ -2095,5 +2095,17 @@ def _collect_hotspots_signals(
                     f" and calls nothing — pure data processor or implicit state manipulation"
                 )
 
+    # S670: Hotspot concentration — top 3 hotspots are all in the same file.
+    # When multiple top hotspots share a file, that file is a global bottleneck;
+    # changes anywhere in it risk cascading effects and warrant extra review focus.
+    if len(scores) >= 3:
+        _top3_files670 = [s[1].file_path for s in scores[:3] if s[1] is not None]
+        _non_test670 = [fp for fp in _top3_files670 if not _is_test_file(fp)]
+        if len(_non_test670) == 3 and len(set(_non_test670)) == 1:
+            out.append(
+                f"\nhotspot concentration: top 3 hotspots all in {_non_test670[0].rsplit('/', 1)[-1]}"
+                f" — single-file bottleneck; changes here have outsized blast radius"
+            )
+
     return out
 

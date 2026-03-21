@@ -31356,3 +31356,248 @@ class TestDeadAnnotatedFunctionsS665:
         assert "dead annotated functions" not in out, (
             f"'dead annotated functions' must not appear when annotated fn is called; got:\n{out}"
         )
+
+
+# ── S666: High fan-out (focused) ──────────────────────────────────────────────
+
+class TestHighFanOutS666:
+    """S666: Focused symbol that calls 5+ others emits high-fan-out signal."""
+
+    def test_high_fanout_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        # helpers.py defines 5 leaf functions
+        (tmp_path / "helpers.py").write_text(
+            "def alpha(): pass\n"
+            "def beta(): pass\n"
+            "def gamma(): pass\n"
+            "def delta(): pass\n"
+            "def epsilon(): pass\n"
+        )
+        # hub.py calls all 5
+        (tmp_path / "hub.py").write_text(
+            "from helpers import alpha, beta, gamma, delta, epsilon\n"
+            "def orchestrate():\n"
+            "    alpha(); beta(); gamma(); delta(); epsilon()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "orchestrate")
+        assert "high fan-out" in out, (
+            f"Expected 'high fan-out' for fn calling 5 symbols; got:\n{out}"
+        )
+
+    def test_high_fanout_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def helper(): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from utils import helper\n"
+            "def simple(): return helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "simple")
+        assert "high fan-out" not in out, (
+            f"'high fan-out' must not appear for fn with 1 callee; got:\n{out}"
+        )
+
+
+# ── S667: No tests detected (overview) ───────────────────────────────────────
+
+class TestNoTestsDetectedS667:
+    """S667: Repo with no test files emits no-tests-detected signal."""
+
+    def test_no_tests_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        (tmp_path / "models.py").write_text("class User: pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no tests detected" in out, (
+            f"Expected 'no tests detected' for repo with no test files; got:\n{out}"
+        )
+
+    def test_no_tests_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "test_app.py").write_text(
+            "from app import run\ndef test_run(): assert run() is None\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no tests detected" not in out, (
+            f"'no tests detected' must not appear when test files exist; got:\n{out}"
+        )
+
+
+# ── S668: Single importer (blast) ─────────────────────────────────────────────
+
+class TestSingleImporterS668:
+    """S668: Blast target with exactly 1 external importer emits single-importer signal."""
+
+    def test_single_importer_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "helper.py").write_text("def do_work(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from helper import do_work\ndef main(): do_work()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "helper.py")
+        assert "single importer" in out, (
+            f"Expected 'single importer' for file with 1 importer; got:\n{out}"
+        )
+
+    def test_single_importer_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "helper.py").write_text("def do_work(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from helper import do_work\ndef main(): do_work()\n"
+        )
+        (tmp_path / "cli.py").write_text(
+            "from helper import do_work\ndef cli_run(): do_work()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "helper.py")
+        assert "single importer" not in out, (
+            f"'single importer' must not appear when 2 importers exist; got:\n{out}"
+        )
+
+
+# ── S669: Documentation file in diff ──────────────────────────────────────────
+
+class TestDocsInDiffS669:
+    """S669: Diff including a .md/.rst/.txt file emits docs-in-diff signal."""
+
+    def test_docs_in_diff_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "README.md").write_text("# My App\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "README.md"])
+        assert "docs in diff" in out, (
+            f"Expected 'docs in diff' when .md is in changed files; got:\n{out}"
+        )
+
+    def test_docs_in_diff_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "utils.py"])
+        assert "docs in diff" not in out, (
+            f"'docs in diff' must not appear for code-only diff; got:\n{out}"
+        )
+
+
+# ── S670: Hotspot concentration ────────────────────────────────────────────────
+
+class TestHotspotConcentrationS670:
+    """S670: Top 3 hotspots all in the same file emits hotspot-concentration signal."""
+
+    def test_hotspot_concentration_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        # hub.py has 3 functions each called from 4 external files
+        (tmp_path / "hub.py").write_text(
+            "def alpha(x): return x + 1\n"
+            "def beta(x): return x * 2\n"
+            "def gamma(x): return x - 1\n"
+        )
+        for i in range(4):
+            (tmp_path / f"client_{i}.py").write_text(
+                f"from hub import alpha, beta, gamma\n"
+                f"def use_{i}(): alpha({i}); beta({i}); gamma({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "hotspot concentration" in out, (
+            f"Expected 'hotspot concentration' when top 3 hotspots share a file; got:\n{out}"
+        )
+
+    def test_hotspot_concentration_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        # Hotspots spread across different files
+        for i in range(3):
+            (tmp_path / f"mod_{i}.py").write_text(
+                f"def key_fn_{i}(x): return x + {i}\n"
+            )
+        for i in range(4):
+            (tmp_path / f"user_{i}.py").write_text(
+                f"from mod_0 import key_fn_0\n"
+                f"from mod_1 import key_fn_1\n"
+                f"from mod_2 import key_fn_2\n"
+                f"def task_{i}(): key_fn_0({i}); key_fn_1({i}); key_fn_2({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "hotspot concentration" not in out, (
+            f"'hotspot concentration' must not appear when hotspots span different files; got:\n{out}"
+        )
+
+
+# ── S671: Dead module ──────────────────────────────────────────────────────────
+
+class TestDeadModuleS671:
+    """S671: File where all exported symbols are dead emits dead-module signal."""
+
+    def test_dead_module_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        # legacy.py has 2 functions, neither imported by anything
+        (tmp_path / "legacy.py").write_text(
+            "def old_process(x): return x\n"
+            "def old_helper(y): return y\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead module" in out, (
+            f"Expected 'dead module' when entire file is unused; got:\n{out}"
+        )
+
+    def test_dead_module_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        # utils.py has active (called) and unused (not called) — mixed, so NOT a dead module
+        (tmp_path / "utils.py").write_text(
+            "def active(): pass\n"
+            "def unused(): pass\n"
+        )
+        # consumer.py calls active, making utils.active live
+        (tmp_path / "consumer.py").write_text(
+            "from utils import active\ndef run(): active()\n"
+        )
+        # runner.py calls consumer.run, keeping consumer live too
+        (tmp_path / "runner.py").write_text(
+            "from consumer import run\ndef main(): run()\n"
+        )
+        # entry.py calls runner.main
+        (tmp_path / "entry.py").write_text(
+            "from runner import main\nmain()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead module" not in out, (
+            f"'dead module' must not appear when files have at least 1 live symbol; got:\n{out}"
+        )

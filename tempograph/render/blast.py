@@ -1804,6 +1804,18 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — large file has high coupling density; careful scoping of your change is needed"
         )
 
+    # S668: Single importer — blast target has exactly 1 external importer.
+    # A module with only one consumer is lightly coupled; it may be removable
+    # or could be inlined into its only caller to reduce indirection.
+    _importers668 = graph.importers_of(_fp589)
+    _ext_importers668 = [f for f in _importers668 if f != _fp589]
+    if len(_ext_importers668) == 1:
+        lines.append(
+            f"single importer: {_fp589.rsplit('/', 1)[-1]} is only imported by"
+            f" {_ext_importers668[0].rsplit('/', 1)[-1]}"
+            f" — consider inlining or merging to reduce file count"
+        )
+
     return "\n".join(lines)
 
 
