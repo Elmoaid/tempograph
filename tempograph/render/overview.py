@@ -2220,6 +2220,25 @@ def _signals_async_oop(
             f" — add mypy/pyright before refactoring to surface implicit contract violations"
         )
 
+    # S489: God module — a single file holds 30%+ of all source symbols.
+    # Concentrating logic in one file raises merge conflict probability and
+    # increases cognitive load; any change requires understanding the whole module.
+    _s489_src_syms = [
+        s for s in graph.symbols.values()
+        if not _is_test_file(s.file_path) and s.kind.value in ("function", "method", "class")
+    ]
+    if len(_s489_src_syms) >= 20:
+        from collections import Counter as _Counter489  # noqa: PLC0415
+        _s489_counts = _Counter489(s.file_path for s in _s489_src_syms)
+        _s489_top_fp, _s489_top_n = _s489_counts.most_common(1)[0]
+        _s489_ratio = _s489_top_n / len(_s489_src_syms)
+        if _s489_ratio >= 0.30:
+            lines.append(
+                f"god module: {_s489_top_fp.rsplit('/', 1)[-1]} holds {int(_s489_ratio * 100)}%"
+                f" of source symbols ({_s489_top_n}/{len(_s489_src_syms)})"
+                f" — high merge-conflict risk; consider splitting by responsibility"
+            )
+
     return lines
 
 

@@ -1669,6 +1669,28 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" but are never used with `with` — teardown logic is untested"
         )
 
+    # S493: Dead event handlers — on_*/handle_*/listen_* functions with 0 callers.
+    # Event handler functions that are never called suggest a wiring was accidentally lost;
+    # they look like entry points but lead nowhere, creating silent gaps in event coverage.
+    _s493_handler_prefixes = (
+        "on_", "handle_", "listen_", "when_", "on_event_", "receive_", "dispatch_",
+    )
+    _s493_dead_handlers = [
+        sym for sym, conf in scored
+        if conf >= 40
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s493_handler_prefixes)
+    ]
+    if len(_s493_dead_handlers) >= 2:
+        _h_names493 = ", ".join(s.name for s in _s493_dead_handlers[:3])
+        if len(_s493_dead_handlers) > 3:
+            _h_names493 += f" +{len(_s493_dead_handlers) - 3} more"
+        lines.append(
+            f"dead event handlers: {len(_s493_dead_handlers)} unused handler fn(s) ({_h_names493})"
+            f" — may indicate event wiring was accidentally lost; verify these are truly unreachable"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

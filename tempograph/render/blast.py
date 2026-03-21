@@ -1413,6 +1413,23 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — field renames or type changes silently break all consumers; update together"
         )
 
+    # S490: High-complexity blast target — the blast file contains a function with cx ≥ 15.
+    # Highly complex functions are harder to modify safely; changes carry higher regression risk
+    # than in simple files, and ripple effects are harder to reason about.
+    _s490_syms = [s for s in graph.symbols.values() if s.file_path == file_path]
+    _s490_complex = [
+        s for s in _s490_syms
+        if s.kind.value in ("function", "method")
+        and s.complexity is not None
+        and s.complexity >= 15
+    ]
+    if _s490_complex:
+        _top490 = max(_s490_complex, key=lambda s: s.complexity or 0)
+        lines.append(
+            f"high complexity: {_top490.name} has cyclomatic complexity {_top490.complexity}"
+            f" — complex functions carry higher regression risk; add tests before modifying"
+        )
+
     return "\n".join(lines)
 
 

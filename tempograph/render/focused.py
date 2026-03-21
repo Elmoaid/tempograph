@@ -2764,6 +2764,31 @@ def _signals_focused_fn_advanced(
                     f" verify super() chains are preserved"
                 )
 
+    # S488: Operator overload — focused class defines comparison or arithmetic operators.
+    # Changing __eq__, __hash__, __lt__, or arithmetic dunder methods affects all containers
+    # (dicts, sets, sorted()) that rely on the class's ordering or equality semantics.
+    _op_names488 = {
+        "__eq__", "__hash__", "__lt__", "__le__", "__gt__", "__ge__",
+        "__add__", "__sub__", "__mul__", "__truediv__", "__mod__",
+        "__radd__", "__rsub__", "__rmul__",
+    }
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim488 = next((s for s in _seed_syms if s.kind.value == "class"), None)
+        if _prim488:
+            _ops488 = [
+                s for s in graph.symbols.values()
+                if s.file_path == _prim488.file_path
+                and s.kind.value == "method"
+                and s.name in _op_names488
+            ]
+            if _ops488:
+                _op_list488 = ", ".join(s.name for s in _ops488[:4])
+                lines.append(
+                    f"\noperator overloads: {_prim488.name} defines {_op_list488}"
+                    f" — changing operator semantics affects dicts, sets, and sorted() behavior;"
+                    f" verify all collection usage is compatible"
+                )
+
     # S350: Orphaned symbol — focused symbol has 0 callers and the file is not imported anywhere.
     # Zero-caller symbols in unimported files may be dead code that was never wired up
     # during a refactor; modifying them has no effect unless the file is imported first.

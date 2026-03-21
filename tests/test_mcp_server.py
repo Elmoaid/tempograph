@@ -23807,3 +23807,246 @@ class TestDeadDebugHelpersS480:
         assert "dead debug helpers" not in out, (
             f"'dead debug helpers' must not appear when debug fns are called; got:\n{out}"
         )
+
+
+# ── S488: Operator overloads focused ─────────────────────────────────────────
+
+class TestOperatorOverloadFocusedS488:
+    """S488: Focused class with __eq__/__lt__/etc. emits the signal."""
+
+    def test_operator_overload_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "models.py").write_text(
+            "class Point:\n"
+            "    def __init__(self, x, y): self.x, self.y = x, y\n"
+            "    def __eq__(self, other): return self.x == other.x and self.y == other.y\n"
+            "    def __hash__(self): return hash((self.x, self.y))\n"
+            "    def __lt__(self, other): return self.x < other.x\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from models import Point\ndef run(): return Point(1, 2)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="Point")
+        assert "operator overloads" in out, (
+            f"Expected 'operator overloads' signal for Point with __eq__/__hash__/__lt__; got:\n{out}"
+        )
+
+    def test_operator_overload_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "models.py").write_text(
+            "class Simple:\n"
+            "    def __init__(self, x): self.x = x\n"
+            "    def value(self): return self.x\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from models import Simple\ndef run(): return Simple(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="Simple")
+        assert "operator overloads" not in out, (
+            f"'operator overloads' must not appear for class without operator dunder methods; got:\n{out}"
+        )
+
+
+# ── S489: God module overview ─────────────────────────────────────────────────
+
+class TestGodModuleOverviewS489:
+    """S489: Single file holds 30%+ of source symbols emits the signal."""
+
+    def test_god_module_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # One big file with 20+ symbols, 2 small files
+        big = "\n".join(f"def fn_{i}(): pass" for i in range(25))
+        (tmp_path / "mega.py").write_text(big)
+        (tmp_path / "a.py").write_text("def x(): pass\ndef y(): pass\n")
+        (tmp_path / "b.py").write_text("def p(): pass\ndef q(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "god module" in out, (
+            f"Expected 'god module' signal for mega.py holding 25/29 symbols; got:\n{out}"
+        )
+
+    def test_god_module_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # Evenly distributed symbols
+        for name in ("alpha", "beta", "gamma", "delta", "epsilon"):
+            fns = "\n".join(f"def fn_{name}_{i}(): pass" for i in range(5))
+            (tmp_path / f"{name}.py").write_text(fns)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "god module" not in out, (
+            f"'god module' must not appear when symbols are evenly distributed; got:\n{out}"
+        )
+
+
+# ── S490: High-complexity blast target ────────────────────────────────────────
+
+class TestHighComplexityBlastS490:
+    """S490: Blast target with cx≥15 function emits the signal."""
+
+    def test_high_complexity_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        # Write a function with many branches to drive up complexity
+        branches = "\n    ".join(
+            f"if x == {i}:\n        return {i}" for i in range(20)
+        )
+        (tmp_path / "router.py").write_text(
+            f"def dispatch(x):\n    {branches}\n    return -1\n"
+        )
+        (tmp_path / "client.py").write_text(
+            "from router import dispatch\ndef run(x): return dispatch(x)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="router.py")
+        assert "high complexity" in out, (
+            f"Expected 'high complexity' signal for high-cx dispatch fn; got:\n{out}"
+        )
+
+    def test_high_complexity_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "simple.py").write_text(
+            "def add(a, b): return a + b\n"
+            "def sub(a, b): return a - b\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from simple import add\ndef run(): return add(1, 2)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="simple.py")
+        assert "high complexity" not in out, (
+            f"'high complexity' must not appear for low-complexity file; got:\n{out}"
+        )
+
+
+# ── S491: Fixture touched diff ────────────────────────────────────────────────
+
+class TestFixtureTouchedDiffS491:
+    """S491: Diff that includes conftest.py emits the signal."""
+
+    def test_fixture_touched_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "conftest.py").write_text(
+            "import pytest\n"
+            "@pytest.fixture\ndef db(): return {}\n"
+        )
+        (tmp_path / "test_service.py").write_text(
+            "def test_run(db): assert db == {}\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["conftest.py"])
+        assert "fixture touched" in out, (
+            f"Expected 'fixture touched' signal for conftest.py; got:\n{out}"
+        )
+
+    def test_fixture_touched_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def helper(x): return x\n")
+        (tmp_path / "main.py").write_text(
+            "from utils import helper\ndef run(): return helper(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["utils.py"])
+        assert "fixture touched" not in out, (
+            f"'fixture touched' must not appear for non-fixture file; got:\n{out}"
+        )
+
+
+# ── S492: Solo file hotspot ───────────────────────────────────────────────────
+
+class TestSoloFileHotspotS492:
+    """S492: Top hotspot is the only file in its directory emits the signal."""
+
+    def test_solo_file_hotspot_shown(self, tmp_path):
+        import os
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        subdir = tmp_path / "engine"
+        subdir.mkdir()
+        (subdir / "core.py").write_text("def compute(x):\n    return x * 2\n")
+        callers = "\n".join(
+            f"from engine.core import compute\ndef caller_{i}(): compute({i})\n"
+            for i in range(6)
+        )
+        (tmp_path / "callers.py").write_text(callers)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "solo file" in out, (
+            f"Expected 'solo file' signal for core.py alone in engine/; got:\n{out}"
+        )
+
+    def test_solo_file_hotspot_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "engine.py").write_text("def compute(x):\n    return x * 2\n")
+        (tmp_path / "utils.py").write_text("def helper(x):\n    return x\n")
+        callers = "\n".join(
+            f"from engine import compute\ndef caller_{i}(): compute({i})\n"
+            for i in range(4)
+        )
+        (tmp_path / "callers.py").write_text(callers)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "solo file" not in out, (
+            f"'solo file' must not appear when file is in root (no dir prefix); got:\n{out}"
+        )
+
+
+# ── S493: Dead event handlers ─────────────────────────────────────────────────
+
+class TestDeadEventHandlersS493:
+    """S493: 2+ on_*/handle_* functions with 0 callers emits the signal."""
+
+    def test_dead_event_handlers_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "handlers.py").write_text(
+            "def on_connect(client): pass\n"
+            "def on_disconnect(client): pass\n"
+            "def on_message(client, msg): pass\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "def run(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead event handlers" in out, (
+            f"Expected 'dead event handlers' for unused on_* fns; got:\n{out}"
+        )
+
+    def test_dead_event_handlers_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "handlers.py").write_text(
+            "def on_connect(client): pass\n"
+            "def on_disconnect(client): pass\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from handlers import on_connect, on_disconnect\n"
+            "def run(): on_connect({}); on_disconnect({})\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead event handlers" not in out, (
+            f"'dead event handlers' must not appear when handlers are called; got:\n{out}"
+        )

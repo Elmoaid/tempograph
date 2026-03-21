@@ -1640,5 +1640,25 @@ def _collect_hotspots_signals(
                     f" — the most-called file in the repo has zero dedicated test coverage"
                 )
 
+    # S492: Solo file hotspot — top hotspot is the only file in its directory.
+    # A solo file has no sibling modules to share load with; there is no natural place
+    # to extract helpers, so the file will keep growing and complexity will compound.
+    if scores:
+        _top492 = scores[0][1]
+        if not _is_test_file(_top492.file_path):
+            _dir492 = _top492.file_path.rsplit("/", 1)[0] if "/" in _top492.file_path else ""
+            if _dir492:
+                _siblings492 = [
+                    fp for fp in graph.files
+                    if not _is_test_file(fp)
+                    and fp != _top492.file_path
+                    and (fp.rsplit("/", 1)[0] if "/" in fp else "") == _dir492
+                ]
+                if not _siblings492:
+                    out.append(
+                        f"\nsolo file: {_top492.file_path.rsplit('/', 1)[-1]} is the only source file in {_dir492}/"
+                        f" — no siblings to share load; complexity will compound with each change"
+                    )
+
     return out
 

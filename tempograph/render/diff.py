@@ -1464,4 +1464,20 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — changes cascade to all subclasses; check every derivative for compatibility"
         )
 
+    # S491: Diff touches a test fixture file — conftest.py or shared fixture module in diff.
+    # Fixture changes are invisible to individual tests but propagate to every consumer;
+    # a subtle fixture change can flip hundreds of test results without a clear error.
+    _s491_fixture_names = ("conftest.py", "fixtures.py", "test_helpers.py", "test_utils.py")
+    _s491_fixture_files = [
+        f for f in changed_files
+        if any(f.rsplit("/", 1)[-1].lower() == fn for fn in _s491_fixture_names)
+        or f.rsplit("/", 1)[-1].lower().endswith("_fixtures.py")
+    ]
+    if _s491_fixture_files:
+        _fix_name491 = _s491_fixture_files[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"fixture touched: {_fix_name491} is a shared test fixture"
+            f" — changes propagate silently to all dependent tests; run the full test suite"
+        )
+
     return "\n".join(lines)
