@@ -655,4 +655,25 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — high review surface, consider splitting"
         )
 
+    # S222: Dependency file change — diff includes a package manifest or lockfile.
+    # Changes to requirements.txt, package.json, pyproject.toml, go.mod etc. update dependencies,
+    # which may introduce breaking changes or transitive security issues.
+    # Only shown when 1+ dependency file is in the diff.
+    _s222_dep_names = {
+        "requirements.txt", "requirements.in", "package.json", "package-lock.json",
+        "yarn.lock", "pyproject.toml", "poetry.lock", "go.mod", "go.sum",
+        "Pipfile", "Pipfile.lock", "Cargo.toml", "Cargo.lock",
+    }
+    _s222_dep_files = [
+        fp for fp in changed_files
+        if fp.rsplit("/", 1)[-1] in _s222_dep_names
+    ]
+    if _s222_dep_files:
+        _dep_names = [fp.rsplit("/", 1)[-1] for fp in _s222_dep_files[:3]]
+        _dep_str = ", ".join(_dep_names)
+        lines.append(
+            f"dependency change: {_dep_str} in diff"
+            f" — check for transitive breaking changes or security advisories"
+        )
+
     return "\n".join(lines)

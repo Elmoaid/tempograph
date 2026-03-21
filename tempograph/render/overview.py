@@ -1290,7 +1290,26 @@ def render_overview(graph: Tempo) -> str:
             f" — not imported or called from anywhere"
         )
 
-    # S213: High test ratio — more than 60% of source files are test files.
+    # S226: Monolithic file — a source file containing >= 50 tracked symbols.
+    # A file with 50+ symbols is hard to navigate and often violates single-responsibility.
+    # Only shown when 1+ non-test source file has >= 50 tracked symbols.
+    _s226_mono: list[tuple[int, str]] = []
+    for _fp226 in graph.files:
+        if _is_test_file(_fp226):
+            continue
+        _n_syms226 = sum(1 for s in graph.symbols.values() if s.file_path == _fp226)
+        if _n_syms226 >= 50:
+            _s226_mono.append((_n_syms226, _fp226))
+    if _s226_mono:
+        _s226_mono.sort(reverse=True)
+        _s226_top = _s226_mono[0]
+        _s226_base = _s226_top[1].rsplit("/", 1)[-1]
+        lines.append(
+            f"monolithic file: {_s226_base} has {_s226_top[0]} symbols"
+            f" — consider splitting into focused modules"
+        )
+
+        # S213: High test ratio — more than 60% of source files are test files.
     # Test-heavy repos are healthy, but very high ratios may indicate missing source coverage.
     # Positive signal: only shown when ratio >= 60% and there are 5+ total files.
     _all_files213 = [fp for fp in graph.files if graph.files[fp].language.value in _CODE_LANGS]

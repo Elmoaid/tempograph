@@ -594,9 +594,15 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
     # S219: Call concentration — ≥75% of external CALLS callers reference the same exported symbol.
     # When callers overwhelmingly use one specific symbol, the real blast bottleneck is narrower
     # than the file-level view suggests. Helps agents focus review on that one symbol.
-    # Only shown when 4+ non-test external CALLS callers exist and concentration >= 75%.
+    # Only shown when 4+ distinct non-test external caller files exist and concentration >= 75%.
     _s219_exp_ids = {s.id for s in symbols if s.exported and s.kind.value in ("function", "method")}
-    if len(external_callers) >= 4 and _s219_exp_ids:
+    _s219_unique_callers = {
+        loc.split(":")[0]
+        for locs in external_callers.values()
+        for loc in locs
+        if not _is_test_file(loc.split(":")[0])
+    }
+    if len(_s219_unique_callers) >= 4 and _s219_exp_ids:
         _s219_counts: dict[str, int] = {}
         for _e219 in graph.edges:
             if _e219.kind is EdgeKind.CALLS and _e219.target_id in _s219_exp_ids:
@@ -615,6 +621,15 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                     f"call concentration: {_s219_pct}% of callers use {_s219_name}"
                     f" — that symbol is the real blast bottleneck"
                 )
+
+    # S224: Test file blast — the blast target is a test file.
+    # Test files typically have few or no production importers; changes are lower risk.
+    # Positive signal: flagged as safe to refactor/delete without coordinating production code.
+    if _is_test_file(file_path):
+        lines.append(
+            f"test file blast: {file_path.rsplit('/', 1)[-1]} is a test file"
+            f" — no production code depends on this; safe to modify independently"
+        )
 
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
