@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { RefreshCw, PanelRightClose, PanelRight, Shield, Package, HelpCircle } from "lucide-react";
+import { RefreshCw, PanelRightClose, PanelRight, Shield, Package, HelpCircle, Moon, Sun } from "lucide-react";
 
 interface Stats {
   files: string;
@@ -17,6 +17,8 @@ interface TopBarProps {
   onToggleRight: () => void;
   loading: boolean;
   onRefresh: () => void;
+  theme: "dark" | "light";
+  onToggleTheme: () => void;
 }
 
 const SHORTCUTS = [
@@ -29,7 +31,7 @@ const SHORTCUTS = [
   { keys: ["⌘1–9"], desc: "Switch mode" },
 ];
 
-export function TopBar({ stats, showClaude, onToggleClaude, showSnapshots, onToggleSnapshots, rightHidden, onToggleRight, loading, onRefresh }: TopBarProps) {
+export function TopBar({ stats, showClaude, onToggleClaude, showSnapshots, onToggleSnapshots, rightHidden, onToggleRight, loading, onRefresh, theme, onToggleTheme }: TopBarProps) {
   const [showShortcuts, setShowShortcuts] = useState(false);
 
   return (
@@ -117,6 +119,15 @@ export function TopBar({ stats, showClaude, onToggleClaude, showSnapshots, onTog
             </>
           )}
         </div>
+        <button
+          className="btn btn-ghost"
+          onClick={onToggleTheme}
+          style={{ padding: "4px 8px" }}
+          title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+          aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+        >
+          {theme === "dark" ? <Sun size={12} /> : <Moon size={12} />}
+        </button>
         <button
           className="btn btn-ghost"
           onClick={onToggleRight}

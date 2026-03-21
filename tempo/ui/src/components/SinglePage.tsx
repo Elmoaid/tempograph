@@ -25,6 +25,8 @@ interface Props {
   setActiveIdx: (i: number) => void;
   addWorkspace: (path: string) => void;
   removeWorkspace: (i: number) => void;
+  theme: "dark" | "light";
+  onToggleTheme: () => void;
 }
 
 function parsePlugins(output: string): PluginInfo[] {
@@ -40,7 +42,7 @@ function parseStats(output: string) {
   return m ? { files: m[1], symbols: m[2], lines: m[3] } : null;
 }
 
-export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addWorkspace, removeWorkspace }: Props) {
+export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addWorkspace, removeWorkspace, theme, onToggleTheme }: Props) {
   const [loading, setLoading] = useState(false);
   const [showClaude, setShowClaude] = useState(false);
   const [showSnapshots, setShowSnapshots] = useState(false);
@@ -226,6 +228,8 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
         }}
         loading={loading}
         onRefresh={() => loadAll(repoPath, true)}
+        theme={theme}
+        onToggleTheme={onToggleTheme}
       />
 
       <WorkspaceTabs
