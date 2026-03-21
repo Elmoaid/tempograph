@@ -457,6 +457,36 @@ class GraphDB:
 
         return stats
 
+    def load_indexes(self, edge_count: int) -> dict | None:
+        """Load cached build_indexes result if edge_count matches. Returns None on miss."""
+        import pickle
+        try:
+            row = self._conn.execute(
+                "SELECT value FROM meta WHERE key='indexes_cache'"
+            ).fetchone()
+            if row is None:
+                return None
+            blob = json.loads(row["value"])
+            if blob.get("edge_count") != edge_count:
+                return None
+            return pickle.loads(bytes.fromhex(blob["data"]))
+        except Exception:
+            return None
+
+    def save_indexes(self, indexes: dict, edge_count: int) -> None:
+        """Persist build_indexes result for warm build fast-path."""
+        import pickle
+        try:
+            data = pickle.dumps(indexes).hex()
+            blob = json.dumps({"edge_count": edge_count, "data": data})
+            self._conn.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('indexes_cache', ?)",
+                (blob,),
+            )
+            self._conn.commit()
+        except Exception:
+            pass
+
     def close(self) -> None:
         self._conn.close()
 

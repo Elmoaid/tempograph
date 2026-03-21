@@ -1,5 +1,5 @@
-import { useState, type RefObject } from "react";
-import { Play, Loader2 } from "lucide-react";
+import { useState, useRef, useEffect, type RefObject } from "react";
+import { Play, Loader2, ChevronDown } from "lucide-react";
 
 interface ArgsInputProps {
   value: string;
@@ -19,8 +19,22 @@ export function ArgsInput({
   onChange, onRun, onHistoryOpen, onHistorySelect,
 }: ArgsInputProps) {
   const [historyIdx, setHistoryIdx] = useState(-1);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   const closeHistory = () => { onHistoryOpen(false); setHistoryIdx(-1); };
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!historyOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        onHistoryOpen(false);
+        setHistoryIdx(-1);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [historyOpen, onHistoryOpen]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (!historyOpen || history.length === 0) {
@@ -48,9 +62,14 @@ export function ArgsInput({
     }
   };
 
+  const toggleDropdown = () => {
+    if (history.length === 0) return;
+    if (historyOpen) { closeHistory(); } else { onHistoryOpen(true); setHistoryIdx(-1); }
+  };
+
   return (
-    <div style={{ display: "flex", gap: 6, marginBottom: 8, position: "relative" }}>
-      <div style={{ flex: 1, position: "relative" }}>
+    <div ref={containerRef} style={{ display: "flex", gap: 6, marginBottom: 8, position: "relative" }}>
+      <div style={{ flex: 1, position: "relative", display: "flex" }}>
         <input
           ref={argsInputRef}
           className="input"
@@ -62,10 +81,29 @@ export function ArgsInput({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={handleKeyDown}
-          onFocus={() => { if (history.length > 0) onHistoryOpen(true); }}
-          onBlur={() => setTimeout(() => { closeHistory(); }, 150)}
-          style={{ width: "100%" }}
+          style={{ width: "100%", borderTopRightRadius: history.length > 0 ? 0 : undefined, borderBottomRightRadius: history.length > 0 ? 0 : undefined }}
         />
+        {history.length > 0 && (
+          <button
+            type="button"
+            onClick={toggleDropdown}
+            title="Query history"
+            aria-label="Toggle query history"
+            aria-expanded={historyOpen}
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "center",
+              width: 24, flexShrink: 0,
+              background: "var(--bg-tertiary)", border: "1px solid var(--border)",
+              borderLeft: "none", borderRadius: "0 5px 5px 0",
+              color: "var(--text-tertiary)", cursor: "pointer",
+              transition: "color 0.15s, background 0.15s",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text-primary)"; e.currentTarget.style.background = "var(--bg-hover)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-tertiary)"; e.currentTarget.style.background = "var(--bg-tertiary)"; }}
+          >
+            <ChevronDown size={11} aria-hidden="true" style={{ transform: historyOpen ? "rotate(180deg)" : undefined, transition: "transform 0.15s" }} />
+          </button>
+        )}
         {historyOpen && history.length > 0 && (
           <div
             role="listbox"
