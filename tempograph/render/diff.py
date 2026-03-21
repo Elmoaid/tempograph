@@ -1589,4 +1589,32 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — do not manually edit generated files; update the generator input and re-run codegen"
         )
 
+    # S540: Test-only diff — diff contains exclusively test files with no source changes.
+    # A test-only diff may still signal risk: test removals can silently drop coverage;
+    # fixture changes affect all tests that share them; infra changes alter how ALL tests run.
+    if changed_files:
+        _s540_test_count = sum(1 for f in changed_files if _is_test_file(f))
+        if _s540_test_count == len(changed_files):
+            lines.append(
+                f"test-only diff: {_s540_test_count} test file(s) changed, no source files touched"
+                f" — verify tests still cover intended source behavior; shared fixture changes affect many tests"
+            )
+
+    # S543: Unindexed files in diff — 2+ changed files are not present in the graph.
+    # Files absent from the graph were deleted, renamed, or never indexed; they can't be analyzed
+    # statically — confirm removals are intentional and no consumers were missed.
+    _graph_fps = {fp.replace("\\", "/") for fp in graph.files}
+    _unindexed540 = [
+        f for f in changed_files
+        if f.replace("\\", "/") not in _graph_fps and not _is_test_file(f)
+    ]
+    if len(_unindexed540) >= 2:
+        _ui_names540 = ", ".join(f.rsplit("/", 1)[-1] for f in _unindexed540[:3])
+        if len(_unindexed540) > 3:
+            _ui_names540 += f" +{len(_unindexed540) - 3} more"
+        lines.append(
+            f"unindexed files: {len(_unindexed540)} changed file(s) not in graph ({_ui_names540})"
+            f" — deleted or renamed; confirm removals are intentional and consumers were updated"
+        )
+
     return "\n".join(lines)

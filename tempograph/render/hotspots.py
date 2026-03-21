@@ -1760,5 +1760,31 @@ def _collect_hotspots_signals(
                     f" — active callers block removal; plan migration path before it accumulates more callers"
                 )
 
+    # S541: Single-file hotspot cluster — top 3 hotspots all live in the same file.
+    # When the most-called symbols concentrate in one file, that file is a load-bearing monolith:
+    # any change to it risks cross-cutting breakage; it is both highest-value and highest-risk to refactor.
+    if len(scores) >= 3:
+        _top3_files541 = {s.file_path for _, s in scores[:3] if not _is_test_file(s.file_path)}
+        if len(_top3_files541) == 1:
+            _cluster_file541 = next(iter(_top3_files541)).rsplit("/", 1)[-1]
+            out.append(
+                f"\nhotspot cluster: top 3 hotspots all live in {_cluster_file541}"
+                f" — concentrated complexity; that file is load-bearing; consider splitting by responsibility"
+            )
+
+    # S544: Interface file hotspot — top hotspot lives in an abstract/interface/base/protocol file.
+    # Interface-level symbols define contracts for many concrete implementations; changes cascade
+    # to all implementors and must be coordinated across the full class hierarchy.
+    if scores:
+        _top541b = scores[0][1]
+        if not _is_test_file(_top541b.file_path) and _top541b.kind.value in ("function", "method"):
+            _fp541b = _top541b.file_path.lower().replace("\\", "/")
+            _iface_markers541 = ("abstract", "interface", "base", "protocol", "mixin", "abc")
+            if any(m in _fp541b for m in _iface_markers541):
+                out.append(
+                    f"\ninterface file hotspot: {_top541b.name} is the top hotspot in an abstract/interface file"
+                    f" — changes cascade to all implementing classes; coordinate with implementors"
+                )
+
     return out
 

@@ -26003,3 +26003,342 @@ class TestDeadAbstractClassS536:
         assert "dead abstract classes" not in out, (
             f"'dead abstract classes' must not appear when abstract class is imported; got:\n{out}"
         )
+
+
+# ── S537: Exported from private module focused ────────────────────────────────
+
+class TestPrivateModuleFocusedS537:
+    """S537: Exported symbol in _-prefixed file emits private module signal."""
+
+    def test_private_module_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        # Exported function in a _-prefixed file
+        (tmp_path / "_internal.py").write_text(
+            "def process(x):\n    return x * 2\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="process")
+        assert "private module" in out, (
+            f"Expected 'private module' for exported fn in _internal.py; got:\n{out}"
+        )
+
+    def test_private_module_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def process(x):\n    return x * 2\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="process")
+        assert "private module" not in out, (
+            f"'private module' must not appear for public-file symbol; got:\n{out}"
+        )
+
+
+# ── S538: Flat module structure overview ──────────────────────────────────────
+
+class TestFlatStructureOverviewS538:
+    """S538: 8+ source files all at root level (no subdirs) emits flat structure signal."""
+
+    def test_flat_structure_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # 9 flat source files, no subdirectories
+        for i in range(9):
+            (tmp_path / f"module_{i}.py").write_text(
+                f"def fn_{i}(): return {i}\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "flat structure" in out, (
+            f"Expected 'flat structure' for 9 root-only source files; got:\n{out}"
+        )
+
+    def test_flat_structure_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # Files in subdirectories → structured
+        subdir = tmp_path / "core"
+        subdir.mkdir()
+        for i in range(9):
+            (subdir / f"module_{i}.py").write_text(
+                f"def fn_{i}(): return {i}\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "flat structure" not in out, (
+            f"'flat structure' must not appear when files are in subdirectories; got:\n{out}"
+        )
+
+
+# ── S539: Circular import blast ───────────────────────────────────────────────
+
+class TestCircularImportBlastS539:
+    """S539: Blast target in a circular import cycle emits circular import blast signal."""
+
+    def test_circular_blast_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        # alpha.py imports beta, beta imports alpha → circular
+        (tmp_path / "alpha.py").write_text(
+            "from beta import beta_fn\ndef alpha_fn(): return 1\n"
+        )
+        (tmp_path / "beta.py").write_text(
+            "from alpha import alpha_fn\ndef beta_fn(): return 2\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="alpha.py")
+        assert "circular import" in out, (
+            f"Expected 'circular import blast' for circular alpha↔beta; got:\n{out}"
+        )
+
+    def test_circular_blast_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        # No import relationship at all — definitely no cycle
+        (tmp_path / "alpha.py").write_text("def alpha_fn(): return 1\n")
+        (tmp_path / "beta.py").write_text("def beta_fn(): return 2\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="alpha.py")
+        assert "circular import blast:" not in out, (
+            f"'circular import blast:' must not appear for independent files; got:\n{out}"
+        )
+
+
+# ── S540: Test-only diff ───────────────────────────────────────────────────────
+
+class TestTestOnlyDiffS540:
+    """S540: Diff containing only test files emits test-only diff signal."""
+
+    def test_test_only_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def process(x): return x\n")
+        (tmp_path / "test_core.py").write_text(
+            "def test_process():\n    from core import process\n    assert process(1) == 1\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["test_core.py"])
+        assert "test-only diff" in out, (
+            f"Expected 'test-only diff' when only test files in diff; got:\n{out}"
+        )
+
+    def test_test_only_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def process(x): return x\n")
+        (tmp_path / "test_core.py").write_text(
+            "def test_process():\n    from core import process\n    assert process(1) == 1\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        # Mix of source + test → not test-only
+        out = render_diff_context(g, ["core.py", "test_core.py"])
+        assert "test-only diff" not in out, (
+            f"'test-only diff' must not appear when source files are also in diff; got:\n{out}"
+        )
+
+
+# ── S541: Single-file hotspot cluster ────────────────────────────────────────
+
+class TestHotspotClusterS541:
+    """S541: Top 3 hotspots in the same file emits hotspot cluster signal."""
+
+    def test_hotspot_cluster_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        # All heavy functions in one file, called from many places
+        (tmp_path / "core.py").write_text(
+            "def alpha(): return 1\n"
+            "def beta(): return 2\n"
+            "def gamma(): return 3\n"
+        )
+        callers_src = "\n".join(
+            f"from core import alpha, beta, gamma\n"
+            f"def caller_{i}(): return alpha() + beta() + gamma()"
+            for i in range(5)
+        )
+        (tmp_path / "callers.py").write_text(callers_src)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "hotspot cluster" in out, (
+            f"Expected 'hotspot cluster' when top 3 hotspots are in same file; got:\n{out}"
+        )
+
+    def test_hotspot_cluster_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        # Each file has one heavily-called function → spread across files
+        for name in ("a", "b", "c"):
+            (tmp_path / f"{name}.py").write_text(f"def fn_{name}(): return 1\n")
+        callers_src = (
+            "from a import fn_a\nfrom b import fn_b\nfrom c import fn_c\n"
+            + "\n".join(
+                f"def caller_{i}(): return fn_a() + fn_b() + fn_c()"
+                for i in range(5)
+            )
+        )
+        (tmp_path / "main.py").write_text(callers_src)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "hotspot cluster" not in out, (
+            f"'hotspot cluster' must not appear when hotspots spread across files; got:\n{out}"
+        )
+
+
+# ── S542: Dead value objects dead ─────────────────────────────────────────────
+
+class TestDeadValueObjectsS542:
+    """S542: Unused data/schema/payload class emits dead value objects signal."""
+
+    def test_dead_vo_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "models.py").write_text(
+            "class UserPayload:\n    pass\n"
+            "class OrderSchema:\n    pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead value objects" in out, (
+            f"Expected 'dead value objects' for unused Payload/Schema classes; got:\n{out}"
+        )
+
+    def test_dead_vo_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "models.py").write_text(
+            "class UserPayload:\n    pass\n"
+        )
+        (tmp_path / "handler.py").write_text(
+            "from models import UserPayload\n"
+            "def handle(): return UserPayload()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead value objects" not in out, (
+            f"'dead value objects' must not appear when payload class is imported; got:\n{out}"
+        )
+
+# ── S543: Unindexed files in diff ─────────────────────────────────────────────
+
+class TestUnindexedFilesInDiffS543:
+    """S543: 2+ changed files not in graph emits unindexed files signal."""
+
+    def test_unindexed_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): return 1\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["deleted_a.py", "deleted_b.py", "app.py"])
+        assert "unindexed files" in out, (
+            f"Expected 'unindexed files' for 2 paths not in graph; got:\n{out}"
+        )
+
+    def test_unindexed_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def helper(): return 1\n")
+        (tmp_path / "app.py").write_text(
+            "from utils import helper\ndef run(): return helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["utils.py", "app.py"])
+        assert "unindexed files" not in out, (
+            f"'unindexed files' must not appear when all changed files are in graph; got:\n{out}"
+        )
+
+
+# ── S544: Interface file hotspot ──────────────────────────────────────────────
+
+class TestInterfaceFileHotspotS544:
+    """S544: Top hotspot symbol in abstract/interface/base file emits interface hotspot signal."""
+
+    def test_interface_hotspot_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "abstract_base.py").write_text(
+            "def validate(data): return bool(data)\n"
+        )
+        callers = "".join(
+            f"from abstract_base import validate\ndef check_{i}(x): return validate(x)\n"
+            for i in range(5)
+        )
+        (tmp_path / "validators.py").write_text(callers)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "interface file hotspot" in out, (
+            f"Expected 'interface file hotspot' for hotspot in abstract_base.py; got:\n{out}"
+        )
+
+    def test_interface_hotspot_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text(
+            "def validate(data): return bool(data)\n"
+        )
+        callers = "".join(
+            f"from core import validate\ndef check_{i}(x): return validate(x)\n"
+            for i in range(5)
+        )
+        (tmp_path / "validators.py").write_text(callers)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "interface file hotspot" not in out, (
+            f"'interface file hotspot' must not appear for hotspot in core.py; got:\n{out}"
+        )
+
+
+# ── S545: Dead value objects dead ─────────────────────────────────────────────
+
+class TestDeadDataclassS545:
+    """S545: Unused dataclass in non-imported file emits dead dataclasses signal."""
+
+    def test_dead_dataclass_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "models.py").write_text(
+            "from dataclasses import dataclass\n"
+            "@dataclass\nclass UserRequest:\n    name: str\n    email: str\n"
+            "@dataclass\nclass JobQueue:\n    task: str\n    priority: int\n"
+        )
+        (tmp_path / "main.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead dataclasses" in out, (
+            f"Expected 'dead dataclasses' for unused @dataclass classes; got:\n{out}"
+        )
+
+    def test_dead_dataclass_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "models.py").write_text(
+            "from dataclasses import dataclass\n"
+            "@dataclass\nclass Config:\n    host: str\n    port: int\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from models import Config\ndef run(): return Config(host='x', port=8080)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead dataclasses" not in out, (
+            f"'dead dataclasses' must not appear when models.py is imported; got:\n{out}"
+        )
