@@ -1124,6 +1124,29 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — check if registered in migration history; remove from both code and migration registry"
         )
 
+    # S360: Dead event handlers — on_*/handle_*/listen_* functions with 0 callers.
+    # Event handlers that are never called may have been unregistered but not deleted;
+    # they can mislead future developers into thinking certain events are handled.
+    _s360_ev_prefixes = (
+        "on_", "handle_", "listen_", "when_", "after_", "before_",
+        "on_event_", "event_handler_", "process_event_",
+    )
+    _s360_dead_ev = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s360_ev_prefixes)
+    ]
+    if len(_s360_dead_ev) >= 2:
+        _ev_names360 = ", ".join(s.name for s in _s360_dead_ev[:3])
+        if len(_s360_dead_ev) > 3:
+            _ev_names360 += f" +{len(_s360_dead_ev) - 3} more"
+        lines.append(
+            f"dead event handlers: {len(_s360_dead_ev)} unregistered handler(s) ({_ev_names360})"
+            f" — may mislead developers into thinking events are handled; deregister or remove"
+        )
+
     # S354: Dead factory functions — create_*/make_*/build_* functions with 0 callers.
     # Factory functions that are never called may represent abandoned creation patterns
     # or forgotten constructor alternatives; they can be removed safely once verified unused.

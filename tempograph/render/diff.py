@@ -1052,6 +1052,24 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — profile before and after; cache TTL/key changes can cause latency spikes"
         )
 
+    # S357: I18n/locale diff — diff touches internationalization or locale files.
+    # Locale file changes affect user-visible strings across all language builds;
+    # missing translations in one locale can cause blank labels or broken UI in that region.
+    _s357_i18n_patterns = (
+        "locale", "i18n", "l10n", "translation", "messages", "strings",
+        "lang_", "_lang", ".po", ".pot", ".ftl",
+    )
+    _s357_i18n_files = [
+        f for f in changed_files
+        if any(p in f.lower() for p in _s357_i18n_patterns)
+    ]
+    if _s357_i18n_files:
+        _i18n_names357 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s357_i18n_files[:2])
+        lines.append(
+            f"i18n change: {_i18n_names357} in diff"
+            f" — locale changes affect all language builds; verify completeness across all supported locales"
+        )
+
     # S351: Config-change diff — diff modifies YAML/TOML/INI/JSON configuration files.
     # Configuration changes often have no test coverage; a typo or wrong key silently changes
     # runtime behavior in ways that only surface in staging/production environments.
