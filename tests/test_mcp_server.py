@@ -27805,3 +27805,180 @@ class TestLowComplexityHotspotS585:
         assert "low-complexity hotspot" not in out, (
             f"'low-complexity hotspot' must not appear for function with 1 caller; got:\n{out}"
         )
+
+
+# ── S581: Many parameters focused ─────────────────────────────────────────────
+
+class TestManyParametersFocusedS581:
+    """S581: Function with 6+ parameters emits many parameters signal."""
+
+    def test_many_params_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "api.py").write_text(
+            "def create_order(user_id, product_id, quantity, address, payment, discount, notes):\n"
+            "    return {'ok': True}\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "create_order")
+        assert "many parameters" in out, (
+            f"Expected 'many parameters' for 7-param function; got:\n{out}"
+        )
+
+    def test_many_params_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "api.py").write_text(
+            "def get_user(user_id, include_email=False):\n"
+            "    return {'id': user_id}\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "get_user")
+        assert "many parameters" not in out, (
+            f"'many parameters' must not appear for 2-param function; got:\n{out}"
+        )
+
+
+# ── S582: No cross-file imports overview ──────────────────────────────────────
+
+class TestNoCrossFileImportsOverviewS582:
+    """S582: 5+ source files with zero import edges emits no cross-file imports signal."""
+
+    def test_no_imports_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        for name in ["alpha", "beta", "gamma", "delta", "epsilon"]:
+            (tmp_path / f"{name}.py").write_text(f"def {name}_fn(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no cross-file imports" in out, (
+            f"Expected 'no cross-file imports' for 5 isolated files; got:\n{out}"
+        )
+
+    def test_no_imports_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def core(): pass\n")
+        (tmp_path / "service.py").write_text("from core import core\ndef svc(): core()\n")
+        (tmp_path / "utils.py").write_text("def util(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no cross-file imports" not in out, (
+            f"'no cross-file imports' must not appear when imports exist; got:\n{out}"
+        )
+
+
+# ── S583: High-caller symbol blast ────────────────────────────────────────────
+
+class TestHighCallerSymbolBlastS583:
+    """S583: Blast target with 10+ callers emits high-caller symbol signal."""
+
+    def test_high_caller_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def dispatch(event): return event\n")
+        callers = "\n".join(
+            f"from core import dispatch\ndef handler_{i}(): return dispatch('{i}')"
+            for i in range(11)
+        )
+        (tmp_path / "handlers.py").write_text(callers + "\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "core.py")
+        assert "high-caller symbol" in out, (
+            f"Expected 'high-caller symbol' for dispatch with 11+ callers; got:\n{out}"
+        )
+
+    def test_high_caller_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "util.py").write_text("def fmt(x): return str(x)\n")
+        (tmp_path / "main.py").write_text("from util import fmt\ndef run(): fmt(1)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "util.py")
+        assert "high-caller symbol" not in out, (
+            f"'high-caller symbol' must not appear for function with 1 caller; got:\n{out}"
+        )
+
+
+# ── S584: Version file in diff ─────────────────────────────────────────────────
+
+class TestVersionFileDiffS584:
+    """S584: Diff including version.py emits version file in diff signal."""
+
+    def test_version_file_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["app.py", "version.py"])
+        assert "version file in diff" in out, (
+            f"Expected 'version file in diff' when version.py is in diff; got:\n{out}"
+        )
+
+    def test_version_file_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["app.py", "utils.py"])
+        assert "version file in diff" not in out, (
+            f"'version file in diff' must not appear for non-version files; got:\n{out}"
+        )
+
+
+# ── S585: Low-complexity hotspot ──────────────────────────────────────────────
+
+class TestLowComplexityHotspotS585:
+    """S585: Heavily-called function with complexity < 3 emits low-complexity hotspot signal."""
+
+    def test_low_complexity_hotspot_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "router.py").write_text(
+            "def route(req): return dispatch(req)\n"
+            "def dispatch(req): return req\n"
+        )
+        (tmp_path / "handler_a.py").write_text(
+            "from router import route\ndef handle_a(): return route('a')\n"
+        )
+        (tmp_path / "handler_b.py").write_text(
+            "from router import route\ndef handle_b(): return route('b')\n"
+        )
+        (tmp_path / "handler_c.py").write_text(
+            "from router import route\ndef handle_c(): return route('c')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "low-complexity hotspot" in out, (
+            f"Expected 'low-complexity hotspot' for trivial shim with 3+ callers; got:\n{out}"
+        )
+
+    def test_low_complexity_hotspot_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "engine.py").write_text(
+            "def process(data):\n"
+            "    if not data: return None\n"
+            "    if data.get('type') == 'a': return data['a']\n"
+            "    elif data.get('type') == 'b': return data['b']\n"
+            "    else: return data\n"
+        )
+        (tmp_path / "worker.py").write_text(
+            "from engine import process\ndef run(): return process({'type': 'a', 'a': 1})\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "low-complexity hotspot" not in out, (
+            f"'low-complexity hotspot' must not appear for high-complexity hotspot; got:\n{out}"
+        )
