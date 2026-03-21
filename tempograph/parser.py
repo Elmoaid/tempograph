@@ -23,7 +23,7 @@ from .types import (
     EXTENSION_TO_LANGUAGE,
 )
 from .lang._utils import _node_text, _first_comment_above, _extract_signature
-from .lang import PythonHandlerMixin, JSHandlerMixin, GoHandlerMixin, JavaHandlerMixin, CsharpHandlerMixin, RubyHandlerMixin, ZigHandlerMixin, CHandlerMixin, RustHandlerMixin, SwiftHandlerMixin
+from .lang import PythonHandlerMixin, JSHandlerMixin, GoHandlerMixin, JavaHandlerMixin, CsharpHandlerMixin, RubyHandlerMixin, ZigHandlerMixin, CHandlerMixin, RustHandlerMixin, SwiftHandlerMixin, PHPHandlerMixin, KotlinHandlerMixin, DartHandlerMixin, ElixirHandlerMixin, ScalaHandlerMixin, OCamlHandlerMixin, FSharpHandlerMixin, HaskellHandlerMixin
 
 # Build tree-sitter languages
 _LANGUAGES: dict[Language, TSLanguage] = {}
@@ -67,7 +67,7 @@ _LANGUAGE_PACK_NAMES: dict[Language, str] = {
 }
 
 
-class FileParser(PythonHandlerMixin, JSHandlerMixin, GoHandlerMixin, JavaHandlerMixin, CsharpHandlerMixin, RubyHandlerMixin, ZigHandlerMixin, CHandlerMixin, RustHandlerMixin, SwiftHandlerMixin):
+class FileParser(PythonHandlerMixin, JSHandlerMixin, GoHandlerMixin, JavaHandlerMixin, CsharpHandlerMixin, RubyHandlerMixin, ZigHandlerMixin, CHandlerMixin, RustHandlerMixin, SwiftHandlerMixin, PHPHandlerMixin, KotlinHandlerMixin, DartHandlerMixin, ElixirHandlerMixin, ScalaHandlerMixin, OCamlHandlerMixin, FSharpHandlerMixin, HaskellHandlerMixin):
     """Parse a single source file and extract symbols + edges."""
 
     def __init__(self, file_path: str, language: Language, source: bytes, *, is_tauri: bool = False):
@@ -265,6 +265,13 @@ class FileParser(PythonHandlerMixin, JSHandlerMixin, GoHandlerMixin, JavaHandler
                                     method_name = _node_text(method_name_node, self.source)
                                     method_id = f"{self.file_path}::{name}.{method_name}"
                                     method_sig = _node_text(child, self.source).split("\n")[0][:200]
+                                    # Detect private/protected visibility modifiers
+                                    _exported = True
+                                    for mc in child.children:
+                                        if mc.type in ("visibility_modifier", "access_modifier"):
+                                            if _node_text(mc, self.source).lower() in ("private", "protected"):
+                                                _exported = False
+                                            break
                                     method_sym = Symbol(
                                         id=method_id, name=method_name,
                                         qualified_name=f"{name}.{method_name}",
@@ -273,7 +280,7 @@ class FileParser(PythonHandlerMixin, JSHandlerMixin, GoHandlerMixin, JavaHandler
                                         line_start=child.start_point[0] + 1,
                                         line_end=child.end_point[0] + 1,
                                         signature=method_sig, parent_id=sym_id,
-                                        exported=True,
+                                        exported=_exported,
                                         complexity=self._compute_complexity(child),
                                         byte_size=child.end_byte - child.start_byte,
                                     )
