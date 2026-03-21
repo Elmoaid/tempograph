@@ -1959,6 +1959,21 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                     f" — underscore naming convention violated"
                 )
 
+    # S221: Recursive function — the focused symbol calls itself directly.
+    # Recursive fns have loop invariants and base-case contracts that break non-obviously.
+    # Only shown when seed is a fn/method that appears in its own callees.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim221 = _seed_syms[0]
+        if _prim221.kind.value in ("function", "method"):
+            _is_recursive221 = any(
+                c.id == _prim221.id for c in graph.callees_of(_prim221.id)
+            )
+            if _is_recursive221:
+                lines.append(
+                    f"\nrecursive fn: {_prim221.name} calls itself"
+                    f" — changes must preserve loop invariants and base cases"
+                )
+
     return "\n".join(lines)
 
 

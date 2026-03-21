@@ -417,6 +417,27 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — abandoned initialization paths"
         )
 
+        # S225: Dead validators — validate_*/check_* functions with 0 callers (conf >= 40).
+    # Dead validators suggest removed feature gates or abandoned data integrity checks.
+    # Only shown when 2+ such dead validator functions found.
+    _s225_val_patterns = ("validate_", "check_", "verify_", "assert_", "ensure_")
+    _s225_dead_vals = [
+        sym for sym, conf in scored
+        if conf >= 40
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.startswith(p) for p in _s225_val_patterns)
+    ]
+    if len(_s225_dead_vals) >= 2:
+        _val_names = [s.name for s in _s225_dead_vals[:3]]
+        _val_str = ", ".join(_val_names)
+        if len(_s225_dead_vals) > 3:
+            _val_str += f" +{len(_s225_dead_vals) - 3} more"
+        lines.append(
+            f"dead validators: {len(_s225_dead_vals)} unused validate/check fn(s) ({_val_str})"
+            f" — removed feature gates or abandoned integrity checks"
+        )
+
         # S196: Dead fixtures — setup_*/teardown_* functions that are dead.
     # Test fixture functions with 0 callers are often orphaned test infrastructure.
     # Only shown when 2+ such dead fixture functions found.

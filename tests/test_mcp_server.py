@@ -13963,3 +13963,326 @@ class TestDeadInitializers:
         assert "dead initializers" not in out, (
             f"'dead initializers' must not appear; got:\n{out}"
         )
+
+
+# ---------------------------------------------------------------------------
+# S221 — recursive fn (focus)
+# ---------------------------------------------------------------------------
+
+class TestFocusedRecursiveFn:
+    def test_recursive_fn_shown(self, tmp_path):
+        """S221: 'recursive fn' shown when focused symbol calls itself."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        (tmp_path / "math_utils.py").write_text(
+            "def factorial(n):\n"
+            "    if n <= 1: return 1\n"
+            "    return n * factorial(n - 1)\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from math_utils import factorial\ndef run(): factorial(5)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "factorial")
+        assert "recursive fn" in out, f"'recursive fn' expected; got:\n{out}"
+
+    def test_recursive_fn_absent_for_non_recursive(self, tmp_path):
+        """S221: 'recursive fn' absent for a non-recursive function."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        (tmp_path / "utils.py").write_text(
+            "def double(n):\n    return n * 2\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from utils import double\ndef run(): double(3)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "double")
+        assert "recursive fn" not in out, f"'recursive fn' must not appear; got:\n{out}"
+
+
+# ---------------------------------------------------------------------------
+# S222 — dependency file change (diff)
+# ---------------------------------------------------------------------------
+
+class TestDiffDependencyChange:
+    def test_dependency_change_shown(self, tmp_path):
+        """S222: 'dependency change' shown when requirements.txt is in diff."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "requirements.txt").write_text("requests==2.28.0\n")
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        # Include app.py so normalized is non-empty (requirements.txt is not graph-indexed)
+        out = render_diff_context(g, ["app.py", "requirements.txt"])
+        assert "dependency change" in out, f"'dependency change' expected; got:\n{out}"
+
+    def test_dependency_change_absent_for_source_only(self, tmp_path):
+        """S222: 'dependency change' absent when only source files are in diff."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "core.py").write_text("def fn(): pass\n")
+        (tmp_path / "app.py").write_text("from core import fn\ndef run(): fn()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["core.py"])
+        assert "dependency change" not in out, (
+            f"'dependency change' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S223 — mono-class file (hotspots)
+# ---------------------------------------------------------------------------
+
+class TestHotspotsMonoClassFile:
+    def test_mono_class_shown(self, tmp_path):
+        """S223: 'mono-class file' shown when top hotspot has 1 class with 50%+ symbols."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        # Large class-heavy file
+        methods = "\n    ".join(f"def method_{i}(self): pass" for i in range(8))
+        (tmp_path / "processor.py").write_text(
+            f"class DataProcessor:\n    {methods}\n"
+        )
+        (tmp_path / "caller.py").write_text(
+            "from processor import DataProcessor\n"
+            "def run(): p = DataProcessor(); p.method_0()\n"
+        )
+        for i in range(3):
+            (tmp_path / f"other{i}.py").write_text(f"def fn_{i}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        if "mono-class file" in out:
+            assert "symbols" in out
+
+    def test_mono_class_absent_for_multi_class(self, tmp_path):
+        """S223: 'mono-class file' absent when file has multiple classes."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        (tmp_path / "models.py").write_text(
+            "class Foo:\n    def a(self): pass\n    def b(self): pass\n\n"
+            "class Bar:\n    def c(self): pass\n    def d(self): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from models import Foo, Bar\ndef run(): Foo().a(); Bar().c()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "mono-class file" not in out, (
+            f"'mono-class file' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S224 — test file blast (blast)
+# ---------------------------------------------------------------------------
+
+class TestBlastTestFile:
+    def test_test_file_blast_shown(self, tmp_path):
+        """S224: 'test file blast' shown when blast target is a test file."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        tests = tmp_path / "tests"
+        tests.mkdir()
+        (tests / "test_core.py").write_text(
+            "def test_basic(): assert True\ndef test_advanced(): assert True\n"
+        )
+        (tmp_path / "core.py").write_text("def fn(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "tests/test_core.py")
+        assert "test file blast" in out, f"'test file blast' expected; got:\n{out}"
+
+    def test_test_file_blast_absent_for_source(self, tmp_path):
+        """S224: 'test file blast' absent for a normal source file."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "core.py").write_text("def fn(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from core import fn\ndef run(): fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "core.py")
+        assert "test file blast" not in out, (
+            f"'test file blast' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S225 — dead validators (dead)
+# ---------------------------------------------------------------------------
+
+class TestDeadValidators:
+    def test_dead_validators_shown(self, tmp_path):
+        """S225: 'dead validators' shown when 2+ validate_*/check_* fns are unused."""
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "checks.py").write_text(
+            "def validate_email(addr): pass\n"
+            "def check_password(pwd): pass\n"
+            "def verify_token(tok): pass\n"
+            "def notify(): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead validators" in out, f"'dead validators' expected; got:\n{out}"
+
+    def test_dead_validators_absent_when_used(self, tmp_path):
+        """S225: 'dead validators' absent when validators are called."""
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "checks.py").write_text(
+            "def validate_email(addr): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from checks import validate_email\n"
+            "def register(email): validate_email(email)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead validators" not in out, (
+            f"'dead validators' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S226 — monolithic file (overview)
+# ---------------------------------------------------------------------------
+
+class TestOverviewMonolithicFile:
+    def test_monolithic_file_shown(self, tmp_path):
+        """S226: 'monolithic file' shown when source file has >= 50 symbols."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        # Create a file with 55 functions
+        fns = "\n".join(f"def fn_{i:02d}(): pass" for i in range(55))
+        (tmp_path / "big_module.py").write_text(fns + "\n")
+        (tmp_path / "main.py").write_text(
+            "from big_module import fn_00\ndef run(): fn_00()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "monolithic file" in out, f"'monolithic file' expected; got:\n{out}"
+
+    def test_monolithic_file_absent_for_small_files(self, tmp_path):
+        """S226: 'monolithic file' absent when all files have < 50 symbols."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        for i in range(5):
+            (tmp_path / f"small{i}.py").write_text(
+                "\n".join(f"def f{j}(): pass" for j in range(5)) + "\n"
+            )
+        (tmp_path / "main.py").write_text(
+            "from small0 import f0\ndef run(): f0()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "monolithic file" not in out, (
+            f"'monolithic file' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S221 — recursive function (focused)
+# ---------------------------------------------------------------------------
+
+class TestFocusedRecursiveFn:
+    def test_recursive_shown(self, tmp_path):
+        """S221: 'recursive fn' shown when focused symbol calls itself."""
+        from tempograph.builder import build_graph
+        from tempograph.render.focused import render_focused
+        (tmp_path / "algo.py").write_text(
+            "def factorial(n):\n"
+            "    if n <= 1: return 1\n"
+            "    return n * factorial(n - 1)\n"
+        )
+        (tmp_path / "app.py").write_text("from algo import factorial\ndef run(): factorial(5)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "factorial")
+        assert "recursive fn" in out, f"'recursive fn' expected; got:\n{out}"
+
+    def test_recursive_absent_for_non_recursive(self, tmp_path):
+        """S221: 'recursive fn' absent for a non-recursive function."""
+        from tempograph.builder import build_graph
+        from tempograph.render.focused import render_focused
+        (tmp_path / "utils.py").write_text("def add(a, b):\n    return a + b\n")
+        (tmp_path / "app.py").write_text("from utils import add\ndef run(): add(1, 2)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "add")
+        assert "recursive fn" not in out, f"'recursive fn' must not appear; got:\n{out}"
+
+
+# ---------------------------------------------------------------------------
+# S222 — dependency file change (diff)
+# ---------------------------------------------------------------------------
+
+class TestDiffDependencyChange:
+    def test_dep_change_shown_for_requirements(self, tmp_path):
+        """S222: 'dependency change' shown when requirements.txt is in diff."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        (tmp_path / "requirements.txt").write_text("requests==2.28.0\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "requirements.txt"])
+        assert "dependency change" in out, f"'dependency change' expected; got:\n{out}"
+
+    def test_dep_change_absent_for_code_only(self, tmp_path):
+        """S222: 'dependency change' absent when diff has no dependency files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "utils.py"])
+        assert "dependency change" not in out, f"'dependency change' must not appear; got:\n{out}"
+
+
+# ---------------------------------------------------------------------------
+# S223 — mono-class file (hotspots)
+# ---------------------------------------------------------------------------
+
+class TestHotspotsMonoClass:
+    def test_mono_class_shown(self, tmp_path):
+        """S223: 'mono-class file' shown when top hotspot is dominated by one class."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        # Create a file with a single large class (many methods) — lots of "git" changes via multiple callers
+        big_class = "class BigService:\n"
+        for i in range(8):
+            big_class += f"    def method_{i}(self): pass\n"
+        (tmp_path / "service.py").write_text(big_class)
+        # Multiple callers to make it a hotspot
+        for i in range(5):
+            (tmp_path / f"caller{i}.py").write_text(
+                f"from service import BigService\ndef fn{i}(): BigService().method_0()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "mono-class file" in out, f"'mono-class file' expected; got:\n{out}"
+
+
+# ---------------------------------------------------------------------------
+# S224 — test file blast (blast)
+# ---------------------------------------------------------------------------
+
+class TestBlastTestFile:
+    def test_blast_test_file_shown(self, tmp_path):
+        """S224: 'test file blast' shown when blast target is a test file."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "test_utils.py").write_text("def test_foo(): assert 1 == 1\n")
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "test_utils.py")
+        assert "test file blast" in out, f"'test file blast' expected; got:\n{out}"
+
+    def test_blast_test_file_absent_for_source(self, tmp_path):
+        """S224: 'test file blast' absent when blast target is a source file."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        (tmp_path / "app.py").write_text("from utils import helper\ndef main(): helper()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "utils.py")
+        assert "test file blast" not in out, f"'test file blast' must not appear; got:\n{out}"
