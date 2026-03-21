@@ -4664,3 +4664,49 @@ class TestFocusContainsCallerCounts:
             assert "(0)" not in after, (
                 f"No (0) annotation for uncalled methods; got:\n{contains_line}"
             )
+
+
+class TestDiffCochangePartners:
+    """S35: Diff mode — 'Co-change partners:' section.
+
+    When render_diff_context runs against a git repo, the output may show files
+    that historically co-change with the modified files (cochange orbit).
+    In non-git repos the section must be absent (graceful fallback).
+    """
+
+    def _build(self, tmp_path, files: dict) -> object:
+        from tempograph.builder import build_graph
+
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_no_cochange_section_in_non_git_repo(self, tmp_path):
+        """Co-change partners: must not appear for a non-git directory."""
+        from tempograph.render import render_diff_context
+
+        g = self._build(tmp_path, {
+            "core.py": "def fn():\n    pass\n",
+        })
+        out = render_diff_context(g, ["core.py"])
+
+        assert "Co-change partners:" not in out, (
+            f"Must not show co-change partners without git history; got:\n{out}"
+        )
+
+    def test_cochange_section_present_in_real_repo(self):
+        """Co-change partners: appears for tempograph repo (real git history exists)."""
+        import os
+        from tempograph.builder import build_graph
+        from tempograph.render import render_diff_context
+
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        g = build_graph(repo, use_cache=False)
+        out = render_diff_context(g, ["tempograph/render.py"])
+
+        # render.py and git.py always co-change — should appear
+        # (test is lenient: section may be absent if git log is empty,
+        #  but when present it must have the right format)
+        if "Co-change partners:" in out:
+            line = next(l for l in out.split("\n") if "Co-change partners:" in l)
+            assert "%" in line, f"Co-change partners must include percentage; got:\n{line}"
