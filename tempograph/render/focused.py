@@ -2263,6 +2263,41 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                     f" — dual blast radius; importers of the facade are also affected"
                 )
 
+    # S314: High caller count — focused symbol is called from 10+ distinct files.
+    # Symbols with very high caller counts are de-facto stable APIs;
+    # even minor behavior changes (not just signatures) can break unknown callers.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim314 = _seed_syms[0]
+        _callers314 = graph.callers_of(_prim314.id)
+        _caller_files314 = {c.file_path for c in _callers314 if c.file_path != _prim314.file_path}
+        if len(_caller_files314) >= 10:
+            lines.append(
+                f"\nhigh caller count: {_prim314.name} called from {len(_caller_files314)} files"
+                f" — de-facto stable API; behavior changes break callers even without signature change"
+            )
+
+    # S320: Multiple inheritance — focused class inherits from 2+ distinct base classes.
+    # Multiple inheritance (mixin-heavy or diamond) creates fragile MRO dependencies;
+    # adding or reordering base classes changes behavior in non-obvious ways.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim320 = next((s for s in _seed_syms if s.kind.value == "class"), None)
+        if _prim320:
+            _bases320 = [
+                e for e in graph.edges
+                if e.kind.value == "inherits" and e.source_id == _prim320.id
+            ]
+            if len(_bases320) >= 2:
+                _base_names320 = [
+                    graph.symbols[e.target_id].name
+                    for e in _bases320[:3]
+                    if e.target_id in graph.symbols
+                ]
+                lines.append(
+                    f"\nmultiple inheritance: {_prim320.name} inherits from"
+                    f" {len(_bases320)} bases ({', '.join(_base_names320)})"
+                    f" — MRO-sensitive; reordering bases changes behavior"
+                )
+
     return "\n".join(lines)
 
 

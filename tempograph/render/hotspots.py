@@ -1145,4 +1145,32 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                     f" imported by {len(_importer_files305)} files; churn ripples widely"
                 )
 
+    # S312: Score-dominant hotspot — top hotspot file accounts for 40%+ of total hotspot score.
+    # One file dominating the score means all change energy is concentrated there;
+    # it's the single biggest risk point in the codebase right now.
+    if scores and len(scores) >= 3:
+        _total_score312 = sum(sc for sc, _ in scores)
+        _top_score312 = scores[0][0]
+        if _total_score312 > 0 and (_top_score312 / _total_score312) >= 0.40:
+            _top_sym312 = scores[0][1]
+            _pct312 = int(100 * _top_score312 / _total_score312)
+            if not _is_test_file(_top_sym312.file_path):
+                lines.append(
+                    f"\nscore-dominant hotspot: {_top_sym312.file_path.rsplit('/', 1)[-1]}"
+                    f" — {_pct312}% of total hotspot risk; highest-priority stabilization target"
+                )
+
+    # S318: Non-primary-language hotspot — top hotspot symbol lives in a non-Python/JS/TS file.
+    # Hotspots in secondary languages (Go, Rust, C) often involve cross-language FFI
+    # or specialized subsystems that require domain expertise to safely modify.
+    _PRIMARY_LANGS318 = {"python", "javascript", "typescript"}
+    if scores:
+        _top318 = scores[0][1]
+        _lang318 = _top318.language.value.lower() if _top318.language else ""
+        if _lang318 and _lang318 not in _PRIMARY_LANGS318 and not _is_test_file(_top318.file_path):
+            lines.append(
+                f"\nnon-primary-language hotspot: {_top318.file_path.rsplit('/', 1)[-1]}"
+                f" ({_lang318}) — hotspot in secondary language; domain expertise required"
+            )
+
     return "\n".join(lines)  # ALWAYS return here — never inside a conditional block

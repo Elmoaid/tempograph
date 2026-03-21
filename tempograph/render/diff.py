@@ -943,4 +943,38 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             " — no code impact; skip full test suite, focus on link/prose review"
         )
 
+    # S313: Healthy test ratio — diff has more test lines added than production lines.
+    # Diffs that improve test coverage more than they add production code signal
+    # healthy TDD discipline and reduce future regression risk.
+    _s313_test_files = [f for f in changed_files if _is_test_file(f)]
+    _s313_prod_files = [f for f in changed_files if not _is_test_file(f)
+                        and not any(f.lower().endswith(ext) for ext in {".md", ".rst", ".txt"})]
+    if len(_s313_test_files) >= 2 and len(_s313_prod_files) >= 1:
+        _ratio313 = len(_s313_test_files) / max(len(_s313_prod_files), 1)
+        if _ratio313 >= 1.5:
+            lines.append(
+                f"healthy test ratio: {len(_s313_test_files)} test file(s) vs"
+                f" {len(_s313_prod_files)} prod file(s)"
+                f" — strong test coverage for this diff; good TDD signal"
+            )
+
+    # S319: Dependency update — diff includes package manifest or lock file changes.
+    # Dependency updates introduce transitive changes that are invisible in the diff;
+    # a passing test suite doesn't guarantee all transitive behavior is unchanged.
+    _s319_dep_names = {
+        "requirements.txt", "requirements-dev.txt", "pyproject.toml", "setup.cfg",
+        "package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+        "go.sum", "go.mod", "Cargo.lock", "Gemfile.lock", "poetry.lock",
+    }
+    _s319_dep_files = [
+        f for f in changed_files
+        if f.rsplit("/", 1)[-1] in _s319_dep_names
+    ]
+    if _s319_dep_files:
+        _dep_names319 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s319_dep_files[:2])
+        lines.append(
+            f"dependency update: {_dep_names319} in diff"
+            f" — transitive changes invisible; re-run full test suite including integration tests"
+        )
+
     return "\n".join(lines)
