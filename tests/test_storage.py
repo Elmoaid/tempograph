@@ -52,6 +52,21 @@ class TestGraphDB:
         assert len(edges) == 1
         assert edges[0].kind == EdgeKind.CALLS
 
+    def test_load_all_lazy_edges(self, db):
+        """lazy_edges=True returns files+symbols but empty edges list."""
+        sym = _make_symbol("main.py", "main")
+        edge = _make_edge("main.py::main", "utils.py::helper")
+        db.update_file("main.py", "abc123", "python", 50, 1000, [sym], [edge], ["import utils"])
+
+        files, symbols, edges = db.load_all(lazy_edges=True)
+        assert "main.py" in files
+        assert "main.py::main" in symbols
+        assert len(edges) == 0  # edges skipped
+
+        # Normal load still works after lazy load
+        _, _, edges_full = db.load_all(lazy_edges=False)
+        assert len(edges_full) == 1
+
     def test_hash_check(self, db):
         db.update_file("main.py", "hash1", "python", 10, 100, [], [], [])
         assert db.file_hash_matches("main.py", "hash1")

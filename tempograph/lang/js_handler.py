@@ -47,6 +47,8 @@ class JSHandlerMixin:
                 self._handle_js_type_alias(child)
             elif t == "enum_declaration":
                 self._handle_js_enum(child)
+            elif t == "internal_module":
+                self._handle_js_namespace(child)
             elif t == "expression_statement":
                 self._handle_js_ts(child)
             elif t == "assignment_expression":
@@ -100,6 +102,8 @@ class JSHandlerMixin:
                 self._handle_js_type_alias(child, exported=True)
             elif t == "enum_declaration":
                 self._handle_js_enum(child, exported=True)
+            elif t == "internal_module":
+                self._handle_js_namespace(child, exported=True)
             elif t == "identifier":
                 # `export default settle` — mark pre-defined symbol as exported
                 self._cjs_exports.add(_node_text(child, self.source))
@@ -417,6 +421,38 @@ class JSHandlerMixin:
                         if target and target[0].isupper():
                             self.edges.append(Edge(EdgeKind.INHERITS, sym_id, target, node.start_point[0] + 1))
 
+        # Extract interface members (method signatures and property signatures)
+        body = node.child_by_field_name("body")
+        if body:
+            self._symbol_stack.append(sym_id)
+            for child in body.children:
+                if child.type in ("method_signature", "property_signature"):
+                    member_name_node = child.child_by_field_name("name")
+                    if not member_name_node:
+                        # property_identifier is a direct child (not via field_name on all versions)
+                        member_name_node = next(
+                            (c for c in child.children if c.type == "property_identifier"), None
+                        )
+                    if not member_name_node:
+                        continue
+                    member_name = _node_text(member_name_node, self.source)
+                    member_id = self._make_id(member_name)
+                    kind = SymbolKind.METHOD if child.type == "method_signature" else SymbolKind.PROPERTY
+                    member_sym = Symbol(
+                        id=member_id, name=member_name,
+                        qualified_name=f"{name}.{member_name}",
+                        kind=kind, language=self.language,
+                        file_path=self.file_path,
+                        line_start=child.start_point[0] + 1,
+                        line_end=child.end_point[0] + 1,
+                        exported=exported,
+                        parent_id=sym_id,
+                        byte_size=child.end_byte - child.start_byte,
+                    )
+                    self.symbols.append(member_sym)
+                    self.edges.append(Edge(EdgeKind.CONTAINS, sym_id, member_id, child.start_point[0] + 1))
+            self._symbol_stack.pop()
+
     def _handle_js_type_alias(self, node: Node, *, exported: bool = False) -> None:
         name_node = node.child_by_field_name("name")
         if not name_node:
@@ -452,6 +488,36 @@ class JSHandlerMixin:
             byte_size=node.end_byte - node.start_byte,
         )
         self.symbols.append(sym)
+
+    def _handle_js_namespace(self, node: Node, *, exported: bool = False) -> None:
+        """Handle TypeScript namespace declarations (internal_module nodes)."""
+        name_node = next(
+            (c for c in node.children if c.type == "identifier"), None
+        )
+        if not name_node:
+            return
+        name = _node_text(name_node, self.source)
+        sym_id = self._make_id(name)
+        sym = Symbol(
+            id=sym_id, name=name, qualified_name=name,
+            kind=SymbolKind.MODULE, language=self.language,
+            file_path=self.file_path,
+            line_start=node.start_point[0] + 1,
+            line_end=node.end_point[0] + 1,
+            exported=exported,
+            parent_id=self._current_parent_id(),
+            byte_size=node.end_byte - node.start_byte,
+        )
+        self.symbols.append(sym)
+        if self._current_parent_id():
+            self.edges.append(Edge(EdgeKind.CONTAINS, self._current_parent_id(), sym_id, node.start_point[0] + 1))
+
+        # Recurse into namespace body using the same dispatch logic
+        body = node.child_by_field_name("body")
+        if body:
+            self._symbol_stack.append(sym_id)
+            self._handle_js_ts(body)
+            self._symbol_stack.pop()
 
     def _scan_jsx_renders(self, node: Node, from_id: str) -> None:
         """Scan for JSX component references like <FooBar />."""

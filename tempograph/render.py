@@ -119,7 +119,175 @@ def render_overview(graph: Tempo) -> str:
         parts.append(fi.language.value)
         lines.append(f"  {fi.path} ({', '.join(parts)})")
 
-    # Module structure — just the shape, no noisy import counts
+    # Recently active: top commit-hot SOURCE files (excludes docs/config/tests)
+    _SRC_EXTS = {".py", ".js", ".ts", ".jsx", ".tsx", ".go", ".rs", ".java",
+                 ".rb", ".cpp", ".c", ".h", ".cs", ".swift", ".kt", ".php"}
+    try:
+        from .git import file_commit_counts as _file_commit_counts
+        _commit_counts = _file_commit_counts(graph.root)
+        _active = sorted(
+            [(fp, c) for fp, c in _commit_counts.items()
+             if fp in graph.files and not _is_test_file(fp)
+             and Path(fp).suffix in _SRC_EXTS],
+            key=lambda x: -x[1],
+        )[:3]
+        if _active:
+            segs_list = [fp.replace("\\", "/").split("/") for fp, _ in _active]
+            short = ["/".join(s[-2:]) if len(s) > 1 else s[-1] for s in segs_list]
+            _act_str = ", ".join(f"{sh} ({c})" for sh, (_, c) in zip(short, _active))
+            lines.append("")
+            lines.append(f"recently active: {_act_str}")
+    except Exception:
+        _commit_counts = {}
+
+    # High-risk files: high-churn source files with no matching test file.
+    # Actively changing code with no test coverage — most likely to introduce regressions.
+    # Only shown when test files exist (otherwise the whole project lacks tests).
+    _test_fps_for_risk = {fp for fp in graph.files if _is_test_file(fp)}
+    if _commit_counts and _test_fps_for_risk:
+        _high_risk = sorted(
+            [
+                (fp, c) for fp, c in _commit_counts.items()
+                if fp in graph.files
+                and not _is_test_file(fp)
+                and c >= 5
+                and graph.files[fp].symbols
+                and Path(fp).suffix in _SRC_EXTS
+                and not any(fp.rsplit("/", 1)[-1].rsplit(".", 1)[0] in t for t in _test_fps_for_risk)
+            ],
+            key=lambda x: -x[1],
+        )
+        if _high_risk:
+            _hr_parts = [f"{fp.rsplit('/', 1)[-1]} ({c})" for fp, c in _high_risk[:3]]
+            lines.append(f"high risk (no tests): {', '.join(_hr_parts)}")
+
+    # Hot symbols: top 3 source functions by unique cross-file caller files.
+    # Helps agents immediately identify the highest-traffic API surfaces.
+    _hot_syms: list[tuple[int, str, str]] = []  # (unique_caller_files, name, file)
+    for sym in graph.symbols.values():
+        if sym.kind.value not in ("function", "method") or _is_test_file(sym.file_path):
+            continue
+        cross_files = {
+            c.file_path for c in graph.callers_of(sym.id)
+            if c.file_path != sym.file_path and not _is_test_file(c.file_path)
+        }
+        if len(cross_files) >= 3:
+            _hot_syms.append((len(cross_files), sym.qualified_name, sym.file_path))
+    if _hot_syms:
+        _hot_syms.sort(key=lambda x: -x[0])
+        _hot_parts = [f"{name} ({n})" for n, name, _ in _hot_syms[:3]]
+        lines.append("")
+        lines.append(f"hot symbols: {', '.join(_hot_parts)}")
+
+    # Top imported: files most imported by other source files — true infrastructure files.
+    # Distinct from hot symbols (call frequency) and hot files (commit count).
+    _importer_counts: dict[str, int] = {}
+    for fp in graph.files:
+        if _is_test_file(fp):
+            continue
+        importers = [
+            i for i in graph.importers_of(fp)
+            if i in graph.files and not _is_test_file(i) and i != fp
+        ]
+        if importers:
+            _importer_counts[fp] = len(set(importers))
+    if _importer_counts:
+        _top_imported = sorted(_importer_counts.items(), key=lambda x: -x[1])[:3]
+        _min_importers = 3
+        _top_imported = [(fp, n) for fp, n in _top_imported if n >= _min_importers]
+        if _top_imported:
+            _ti_parts = [
+                f"{fp.rsplit('/', 1)[-1]} ({n})" for fp, n in _top_imported
+            ]
+            lines.append("")
+            lines.append(f"top imported: {', '.join(_ti_parts)}")
+
+    # Test coverage ratio: source files with a matching test file (name-pattern match).
+    # Signals overall project health — agents use this to identify undertested areas.
+    # Only count code files with symbols (excludes docs, config, markdown).
+    _src_fps = [fp for fp in graph.files if not _is_test_file(fp) and graph.files[fp].symbols]
+    _test_fps = {fp for fp in graph.files if _is_test_file(fp)}
+    if _src_fps and _test_fps:
+        _covered = sum(
+            1 for fp in _src_fps
+            if any(fp.rsplit("/", 1)[-1].rsplit(".", 1)[0] in t for t in _test_fps)
+        )
+        _test_pct = int(_covered / len(_src_fps) * 100)
+        lines.append(f"test coverage: {_covered}/{len(_src_fps)} source files ({_test_pct}%)")
+
+    # Potentially unused modules: source files with 0 source importers AND no test coverage.
+    # Flags entire floating modules that nothing depends on and nothing tests — either dead
+    # features or undiscovered entry points agents should investigate.
+    # Only shown when project has 10+ source files AND has tests (otherwise too noisy).
+    _ENTRY_BASENAMES = {
+        "__init__.py", "__main__.py", "main.py", "app.py", "manage.py",
+        "cli.py", "server.py", "wsgi.py", "asgi.py", "run.py", "start.py",
+        "index.js", "index.ts", "index.tsx", "main.ts", "main.tsx", "app.ts",
+        "main.go", "main.rs", "lib.rs", "mod.rs",  # Rust crate/module roots
+        "main.swift", "Program.cs",
+    }
+    if len(_src_fps) >= 10 and _test_fps:
+        _unused_modules: list[str] = []
+        for _fp in _src_fps:
+            _basename = _fp.rsplit("/", 1)[-1]
+            if _basename in _ENTRY_BASENAMES:
+                continue  # skip known entry points and package markers
+            # Skip TypeScript type-only files (.types.ts, .d.ts) — we skip `import type`
+            # statements, so these always appear as having 0 importers (false positive).
+            if _basename.endswith(".types.ts") or _basename.endswith(".d.ts"):
+                continue
+            if len(graph.files[_fp].symbols) < 3:
+                continue  # too minimal to flag
+            _src_importers_fp = [i for i in graph.importers_of(_fp) if not _is_test_file(i)]
+            _test_importers_fp = [i for i in graph.importers_of(_fp) if _is_test_file(i)]
+            _test_callers_fp = any(
+                _is_test_file(c.file_path)
+                for sid in graph.files[_fp].symbols
+                for c in graph.callers_of(sid)
+            )
+            if not _src_importers_fp and not _test_importers_fp and not _test_callers_fp:
+                _unused_modules.append(_fp)
+        if len(_unused_modules) >= 2:
+            _parts = _fp.rsplit("/", 2)
+            def _short_fp(fp: str) -> str:
+                parts = fp.rsplit("/", 2)
+                return "/".join(parts[-2:]) if len(parts) >= 2 else fp
+            _um_names = [_short_fp(fp) for fp in _unused_modules[:4]]
+            _um_str = ", ".join(_um_names)
+            if len(_unused_modules) > 4:
+                _um_str += f" +{len(_unused_modules) - 4} more"
+            lines.append(f"potentially unused ({len(_unused_modules)}): {_um_str}")
+
+    # Tech debt markers: TODO/FIXME/HACK/XXX comment counts in source files.
+    # Quick signal for known issues, shortcuts, and incomplete work.
+    # Only source-code files with symbols; capped to avoid I/O cost on huge repos.
+    import re as _re  # noqa: PLC0415
+    _TD_PAT = _re.compile(r'\b(TODO|FIXME|HACK|XXX)\b')
+    _td_counts: dict[str, int] = {}
+    _td_file_count = 0
+    for _fp in _src_fps[:200]:  # cap at 200 to keep I/O bounded
+        if Path(_fp).suffix not in _SRC_EXTS:
+            continue
+        try:
+            _content = (Path(graph.root) / _fp).read_text(errors="replace")
+            _matches = _TD_PAT.findall(_content)
+            if _matches:
+                _td_file_count += 1
+                for _m in _matches:
+                    _td_counts[_m] = _td_counts.get(_m, 0) + 1
+        except Exception:
+            pass
+    if _td_counts:
+        _td_total = sum(_td_counts.values())
+        if _td_total >= 3:
+            _td_parts = [
+                f"{_td_counts[k]} {k}s"
+                for k in ("TODO", "FIXME", "HACK", "XXX")
+                if _td_counts.get(k, 0) > 0
+            ]
+            lines.append(f"tech debt: {_td_total} markers in {_td_file_count} files ({', '.join(_td_parts)})")
+
+    # Module structure -- just the shape, no noisy import counts
     modules: dict[str, list[str]] = {}
     for fp in graph.files:
         parts = fp.split("/")
@@ -304,8 +472,10 @@ def render_symbols(graph: Tempo, *, max_tokens: int = 8000) -> str:
             block_text = "\n".join(file_block)
             block_tokens = count_tokens(block_text)
             if token_count + block_tokens > max_tokens:
-                remaining = len(by_file) - len([l for l in lines if l.startswith("──")])
-                lines.append(f"... truncated ({remaining} more files, {sum(len(v) for k, v in by_file.items() if k >= file_path)} more symbols)")
+                rendered_files = sum(1 for l in lines if l.startswith("──"))
+                remaining_files = len(by_file) - rendered_files
+                remaining_symbols = sum(len(v) for k, v in by_file.items() if k >= file_path)
+                lines.append(f"... and {remaining_symbols} more symbols in {remaining_files} files (increase max_tokens to see all)")
                 break
             token_count += block_tokens
         lines.extend(file_block)
@@ -573,6 +743,19 @@ def _collect_seeds(
     return seeds, seed_files, query_tokens
 
 
+def _sym_importance(graph: "Tempo", sym: Symbol) -> int:
+    """Structural importance score for BFS prioritisation.
+
+    Score = cross_file_callers * 2 + (1 if exported) + (2 if hot_file).
+    Uses raw ``_callers`` index to avoid creating Symbol objects per lookup."""
+    caller_ids = graph._callers.get(sym.id, [])
+    cross = sum(
+        1 for cid in caller_ids
+        if cid in graph.symbols and graph.symbols[cid].file_path != sym.file_path
+    )
+    return cross * 2 + (1 if sym.exported else 0) + (2 if sym.file_path in graph.hot_files else 0)
+
+
 def _bfs_expand(
     graph: Tempo,
     seeds: list[Symbol],
@@ -591,48 +774,74 @@ def _bfs_expand(
     expand the BFS into git-coupled files that aren't reachable via call edges.
 
     max_depth overrides the hot-seeds heuristic when provided (used by adaptive
-    sparse-neighborhood expansion in render_focused)."""
+    sparse-neighborhood expansion in render_focused).
+
+    Within each depth level, candidates are sorted by structural importance so
+    that when the 50-node cap truncates, hub nodes (many cross-file callers,
+    exported, in hot files) survive over orphan/internal-only nodes."""
     _hot_seeds = any(s.file_path in graph.hot_files for s in seeds)
     _bfs_max_depth = max_depth if max_depth is not None else (4 if _hot_seeds else 3)
     seen_ids: set[str] = set()
-    queue: list[tuple[Symbol, int]] = [(s, 0) for s in seeds]
+    ordered: list[tuple[Symbol, int]] = []
+
+    # Level-by-level BFS: collect all candidates per depth, sort by importance,
+    # then expand.  This guarantees depth ordering (BFS topology unchanged)
+    # while ensuring high-importance nodes within a depth are visited first.
+    current_level: list[tuple[Symbol, int]] = [(s, 0) for s in seeds]
     if secondary_seeds:
         primary_ids = {s.id for s in seeds}
         for s in secondary_seeds:
             if s.id not in primary_ids:
-                queue.append((s, 1))
-    ordered: list[tuple[Symbol, int]] = []
+                current_level.append((s, 1))
 
-    def _enqueue(candidate: Symbol, depth: int) -> None:
-        if candidate.id in seen_ids:
-            return
-        # Cross-file edges get priority when seeds are in monolith files
-        if seed_files and candidate.file_path not in seed_files:
-            queue.insert(0, (candidate, depth))
-        else:
-            queue.append((candidate, depth))
+    # Pre-compute importance scores once per candidate (cache across levels)
+    _imp_cache: dict[str, int] = {}
 
-    while queue and len(ordered) < 50:
-        sym, depth = queue.pop(0)
-        if sym.id in seen_ids:
-            continue
-        seen_ids.add(sym.id)
-        ordered.append((sym, depth))
+    def _cached_importance(sym: Symbol) -> int:
+        score = _imp_cache.get(sym.id)
+        if score is None:
+            score = _sym_importance(graph, sym)
+            _imp_cache[sym.id] = score
+        return score
 
-        if depth < _bfs_max_depth:
-            # More context at shallow depths, less at deeper
-            caller_limit = 8 if depth == 0 else 5 if depth == 1 else 3
-            callee_limit = 8 if depth == 0 else 5 if depth == 1 else 3
-            # Hot-first traversal: prefer recently-modified symbols when the
-            # 50-node cap forces truncation, so hot-file nodes win the slots.
-            _hot_key = lambda s: s.file_path not in graph.hot_files  # False(0)=hot first
-            for caller in sorted(graph.callers_of(sym.id), key=_hot_key)[:caller_limit]:
-                _enqueue(caller, depth + 1)
-            for callee in sorted(graph.callees_of(sym.id), key=_hot_key)[:callee_limit]:
-                _enqueue(callee, depth + 1)
-            if depth < 2:
-                for child in graph.children_of(sym.id)[:5]:
-                    _enqueue(child, depth + 1)
+    while current_level and len(ordered) < 50:
+        # Deduplicate and remove already-seen before sorting
+        deduped: list[tuple[Symbol, int]] = []
+        for sym, d in current_level:
+            if sym.id not in seen_ids:
+                deduped.append((sym, d))
+                seen_ids.add(sym.id)
+
+        # Sort within this batch: lower depth first (preserves BFS layering),
+        # then cross-file nodes first, then by descending importance.
+        deduped.sort(key=lambda pair: (
+            pair[1],                                                  # depth ascending
+            pair[0].file_path in seed_files if seed_files else True,  # cross-file first
+            -_cached_importance(pair[0]),                              # importance descending
+        ))
+
+        next_level: list[tuple[Symbol, int]] = []
+        for sym, depth in deduped:
+            if len(ordered) >= 50:
+                break
+            ordered.append((sym, depth))
+
+            if depth < _bfs_max_depth:
+                caller_limit = 8 if depth == 0 else 5 if depth == 1 else 3
+                callee_limit = 8 if depth == 0 else 5 if depth == 1 else 3
+                _imp_key = lambda s: -_cached_importance(s)
+                for caller in sorted(graph.callers_of(sym.id), key=_imp_key)[:caller_limit]:
+                    if caller.id not in seen_ids:
+                        next_level.append((caller, depth + 1))
+                for callee in sorted(graph.callees_of(sym.id), key=_imp_key)[:callee_limit]:
+                    if callee.id not in seen_ids:
+                        next_level.append((callee, depth + 1))
+                if depth < 2:
+                    for child in graph.children_of(sym.id)[:5]:
+                        if child.id not in seen_ids:
+                            next_level.append((child, depth + 1))
+
+        current_level = next_level
 
     return ordered, seen_ids
 
@@ -643,19 +852,490 @@ def _handle_overflow(
     block: str,
     token_count: int,
     max_tokens: int,
+    *,
+    graph: "Tempo | None" = None,
+    current_idx: int = 0,
 ) -> tuple[bool, int]:
     """Check whether adding block would exceed the token budget.
 
     Returns (should_break, block_tokens).
     When should_break is True a truncation message has already been appended
-    to lines — the caller should stop the rendering loop immediately."""
+    to lines — the caller should stop the rendering loop immediately.
+
+    If graph is provided, lists up to 5 high-importance (score >= 3) dropped
+    symbol names so agents know which hub symbols were truncated."""
     block_tokens = count_tokens(block)
     if token_count + block_tokens > max_tokens:
         remaining = len(ordered) - len([l for l in lines if l and not l.startswith("...")])
         if remaining > 0:
-            lines.append(f"... truncated ({remaining} more symbols)")
+            hi_names: list[tuple[int, str]] = []
+            if graph is not None:
+                for sym_d, _depth in ordered[current_idx:]:
+                    imp = _sym_importance(graph, sym_d)
+                    if imp >= 3:
+                        hi_names.append((imp, sym_d.name))
+                hi_names.sort(key=lambda x: -x[0])
+            if hi_names:
+                names = ", ".join(n for _, n in hi_names[:5])
+                lines.append(f"... ({remaining} more symbols — high-importance: {names})")
+            else:
+                lines.append(f"... truncated ({remaining} more symbols)")
         return True, block_tokens
     return False, block_tokens
+
+
+
+def _render_cochange_section(graph, seed_file_paths: list[str]) -> str:
+    """Build the 'Co-changed with (basename):' section for render_focused."""
+    if not graph.root or not seed_file_paths:
+        return ""
+    try:
+        from .git import cochange_pairs
+        pairs = cochange_pairs(graph.root, seed_file_paths[0])
+        if pairs:
+            basename = Path(seed_file_paths[0]).name
+            parts = [f"\nCo-changed with ({basename}):"]
+            for p in pairs:
+                parts.append(f"  \u2022 {p['path']} \u2014 {p['count']} commits together")
+            return "\n".join(parts)
+    except Exception:
+        pass
+    return ""
+
+
+def _render_all_callers_section(
+    graph, seeds: list, callsite_lines: dict, token_count: int = 0, max_tokens: int = 0
+) -> str:
+    """Complete callers section — all callers of seed symbols, grouped by file.
+
+    Shows which source files call the seed symbol and where (line numbers).
+    Useful for rename/refactor impact: agents see every call site at once.
+    Test callers are excluded (already shown in Tests section).
+    Triggered when total source callers >= 2. Capped at 5 files / 3 names each."""
+
+    # Collect all source (non-test) callers across all seeds
+    by_file: dict[str, list[tuple[str, str, int]]] = {}  # file → [(caller_name, caller_id, seed_id)]
+    for seed in seeds:
+        for caller in graph.callers_of(seed.id):
+            if _is_test_file(caller.file_path):
+                continue
+            entry = (caller.name, caller.id, seed.id)
+            by_file.setdefault(caller.file_path, []).append(entry)
+
+    if not by_file:
+        return ""
+
+    total = sum(len(v) for v in by_file.values())
+    if total < 2:
+        return ""
+
+    # Sort files by number of callers (most first), take top 5
+    sorted_files = sorted(by_file.items(), key=lambda kv: -len(kv[1]))
+    n_files_total = len(sorted_files)
+    shown_files = sorted_files[:5]
+    hidden_files = n_files_total - len(shown_files)
+
+    parts = [f"\nCallers ({total} in {n_files_total} file{'s' if n_files_total != 1 else ''}):"]
+    for fp, entries in shown_files:
+        # De-duplicate by caller name, preserve order
+        seen_names: set[str] = set()
+        unique: list[tuple[str, str, str]] = []
+        for name, cid, sid in entries:
+            if name not in seen_names:
+                seen_names.add(name)
+                unique.append((name, cid, sid))
+
+        shown = unique[:3]
+        overflow = len(unique) - len(shown)
+
+        caller_strs = []
+        for name, cid, sid in shown:
+            lines_list = callsite_lines.get((cid, sid), [])
+            if lines_list:
+                loc = f"[line {lines_list[0]}]" if len(lines_list) == 1 else f"[lines {', '.join(str(l) for l in lines_list[:2])}]"
+                caller_strs.append(f"{name} {loc}")
+            else:
+                caller_strs.append(name)
+
+        suffix = f", +{overflow} more" if overflow else ""
+        parts.append(f"  {fp}: {', '.join(caller_strs)}{suffix}")
+
+    if hidden_files:
+        parts.append(f"  ... and {hidden_files} more file{'s' if hidden_files != 1 else ''}")
+
+    return "\n".join(parts)
+
+
+def _render_hot_callers_section(
+    graph, seeds: list, token_count: int, max_tokens: int
+) -> str:
+    """Build the 'Hot callers:' section — callers of seed symbols in recently-modified files.
+
+    Helps agents understand which callers are actively being changed, critical
+    context for avoiding merge conflicts and understanding in-progress work.
+    Does NOT filter by seen_ids: even callers already shown in BFS benefit from
+    the focused summary (the inline [hot] tag is easy to miss in long output)."""
+    if token_count > max_tokens - 80 or not graph.hot_files:
+        return ""
+
+    hot_entries: list[tuple[str, str, int]] = []  # (caller_name, file_path, line)
+    seen_files_dedup: set[str] = set()
+    for seed in seeds:
+        for caller in graph.callers_of(seed.id):
+            if caller.file_path in graph.hot_files and caller.file_path not in seen_files_dedup:
+                hot_entries.append((caller.name, caller.file_path, caller.line_start))
+                seen_files_dedup.add(caller.file_path)
+
+    if not hot_entries:
+        return ""
+
+    # Sort by file path for stable output, cap at 5
+    hot_entries.sort(key=lambda e: e[1])
+    hot_entries = hot_entries[:5]
+
+    parts = ["\nHot callers:"]
+    for name, fp, line in hot_entries:
+        basename = Path(fp).name
+        parts.append(f"  {name} ({basename}:{line}) \u2014 last seen in hot file")
+    return "\n".join(parts)
+
+
+def _render_dependency_files_section(
+    graph, ordered: list[tuple], seen_files: set[str], token_count: int, max_tokens: int
+) -> str:
+    """Build the 'Depends on:' section — outgoing dependency files for seed symbols.
+
+    Collects callees of depth-0 (seed) symbols, groups by file, and shows
+    up to 3 callee names per file. Skipped when fewer than 2 dependency files
+    remain after filtering the seed's own file."""
+    if token_count > max_tokens - 50:
+        return ""
+
+    seed_files = {sym.file_path for sym, depth in ordered if depth == 0}
+    dep_map: dict[str, list[str]] = {}
+    for sym, depth in ordered:
+        if depth != 0:
+            continue
+        for callee in graph.callees_of(sym.id):
+            fp = callee.file_path
+            if fp in seed_files:
+                continue
+            if fp not in dep_map:
+                dep_map[fp] = []
+            if callee.name not in dep_map[fp]:
+                dep_map[fp].append(callee.name)
+
+    if len(dep_map) < 2:
+        return ""
+
+    sorted_deps = sorted(dep_map.items(), key=lambda x: -len(x[1]))[:6]
+    parts = ["\nDepends on:"]
+    for fp, names in sorted_deps:
+        shown = ", ".join(names[:3])
+        if len(names) > 3:
+            shown += f", +{len(names) - 3} more"
+        parts.append(f"  {fp} ({shown})")
+    return "\n".join(parts)
+
+
+def _render_recent_changes_section(graph, seed_file_paths: list[str]) -> str:
+    """Build the 'Recent changes (basename):' section for render_focused."""
+    if not graph.root or not seed_file_paths:
+        return ""
+    try:
+        from .git import recent_file_commits
+        primary_file = seed_file_paths[0]
+        commits = recent_file_commits(graph.root, primary_file)
+        if commits:
+            basename = Path(primary_file).name
+            parts = [f"\nRecent changes ({basename}):"]
+            for c in commits:
+                parts.append(f"  \u2022 {c['days_ago']}d ago: {c['message']}")
+            return "\n".join(parts)
+    except Exception:
+        pass
+    return ""
+
+
+def _render_volatility_section(graph, seed_file_paths: list[str], token_count: int, max_tokens: int) -> str:
+    """Build the 'Volatile:' section for render_focused."""
+    if not graph.root or not seed_file_paths:
+        return ""
+    try:
+        from .git import file_commit_counts
+        churn = file_commit_counts(graph.root)
+        _VOLATILE_THRESHOLD = 10
+        volatile = [(fp, churn.get(fp, 0)) for fp in seed_file_paths
+                     if churn.get(fp, 0) >= _VOLATILE_THRESHOLD]
+        if volatile:
+            parts = [f"{fp} ({count}/200 commits)" for fp, count in volatile]
+            return f"\nVolatile: {', '.join(parts)} \u2014 high-churn file(s), re-read before editing"
+    except Exception:
+        pass
+    return ""
+
+
+def _render_cochange_orbit_section(graph, seed_file_paths: list[str], seen_files: set[str],
+                                    token_count: int, max_tokens: int) -> str:
+    """Build the 'Co-change orbit:' section for render_focused."""
+    orbit = _cochange_orbit(graph.root, seed_file_paths, seen_files)
+    if not orbit or token_count >= max_tokens - 80:
+        return ""
+
+    def _recency_label(days: int) -> str:
+        if days < 45:
+            return "recent"
+        elif days < 120:
+            return "aging"
+        return "stale"
+
+    orbit_parts = [f"{fp} ({score:.0%} {_recency_label(days)})" for fp, score, days in orbit]
+    return (f"\nCo-change orbit: {', '.join(orbit_parts)}\n"
+            "  (files that historically change with these \u2014 check if your change affects them)")
+
+
+def _render_blast_risk_section(graph, ordered: list, token_count: int, max_tokens: int) -> str:
+    """Build the 'High impact:' blast risk badge for render_focused."""
+    _BLAST_FILE_THRESHOLD = 5
+    _blast_hits: list[tuple] = []
+    for _bs, _bd in ordered[:5]:
+        if _bd != 0:
+            continue
+        _ext_files = {c.file_path for c in graph.callers_of(_bs.id) if c.file_path != _bs.file_path}
+        if len(_ext_files) > _BLAST_FILE_THRESHOLD:
+            _blast_hits.append((_bs, len(_ext_files)))
+    if _blast_hits and token_count < max_tokens - 60:
+        _blast_hits.sort(key=lambda x: -x[1])
+        _top_sym, _top_count = _blast_hits[0]
+        return f"\nHigh impact: {_top_count} files depend on {_top_sym.qualified_name} \u2014 run blast mode before editing"
+    return ""
+
+
+def _render_related_files_section(graph, ordered: list, seen_files: set[str]) -> str:
+    """Build the 'Related files:' section for render_focused."""
+    related = _find_related_files(graph, [s for s, _ in ordered[:10]])
+    unseen = related - seen_files
+    if not unseen:
+        return ""
+    parts = ["\nRelated files:"]
+    for fp in sorted(unseen)[:10]:
+        fi = graph.files.get(fp)
+        if fi:
+            tag = " [grep-only]" if fi.line_count > 500 else ""
+            parts.append(f"  {fp} ({fi.line_count} lines){tag}")
+    return "\n".join(parts)
+
+
+def _render_file_context_section(graph, seen_files: set[str], seen_ids: set[str],
+                                  token_count: int, max_tokens: int) -> tuple[str, int]:
+    """Build the 'Also in these files:' section for render_focused.
+    Returns (section_text, token_cost)."""
+    file_context: list[str] = []
+    for fp in sorted(seen_files):
+        fi = graph.files.get(fp)
+        if not fi or len(fi.symbols) < 3:
+            continue
+        file_syms = [graph.symbols[sid] for sid in fi.symbols if sid in graph.symbols and sid not in seen_ids]
+        important = [s for s in file_syms if s.exported and s.kind in (
+            SymbolKind.FUNCTION, SymbolKind.CLASS, SymbolKind.COMPONENT, SymbolKind.HOOK
+        )][:5]
+        if important:
+            names = ", ".join(f"{s.name} L{s.line_start}" for s in important)
+            file_context.append(f"  {fp}: also has {names}")
+    if file_context:
+        ctx_block = "\nAlso in these files:\n" + "\n".join(file_context)
+        ctx_tokens = count_tokens(ctx_block)
+        if token_count + ctx_tokens <= max_tokens:
+            return ctx_block, ctx_tokens
+    return "", 0
+
+
+def _render_monolith_section(graph, ordered: list, token_count: int, max_tokens: int) -> tuple[str, int]:
+    """Build monolith neighborhood sections for render_focused.
+    Returns (section_text, token_cost)."""
+    parts: list[str] = []
+    total_tokens = 0
+    for sym, depth in ordered:
+        if depth > 0:
+            break
+        fi = graph.files.get(sym.file_path)
+        if not fi or fi.line_count < _MONOLITH_THRESHOLD:
+            continue
+        neighborhood = _monolith_neighborhood(graph, sym)
+        if neighborhood:
+            nb_block = "\n".join(neighborhood)
+            nb_tokens = count_tokens(nb_block)
+            if token_count + total_tokens + nb_tokens <= max_tokens:
+                parts.append("")
+                parts.extend(neighborhood)
+                total_tokens += nb_tokens
+    if parts:
+        return "\n".join(parts), total_tokens
+    return "", 0
+
+
+def _build_symbol_block_lines(
+    sym: "Symbol",
+    depth: int,
+    orbit_note: str,
+    graph: "Tempo",
+    query_tokens: list[str],
+    staleness_cache: dict,
+    callsite_lines: "dict[tuple[str,str], list[int]] | None" = None,
+) -> list[str]:
+    """Render one BFS symbol into display lines (header + annotations).
+
+    Returns a list of lines; caller joins them and checks token overflow."""
+    indent = "  " * depth if depth > 0 else ""
+    prefix = ["●", "  →", "    ·", "      "][min(depth, 3)]
+    loc = f"{sym.file_path}:{sym.line_start}-{sym.line_end}"
+    # Blast annotation for depth-0 seed: number of unique files that call this symbol.
+    # Gives agents immediate risk context — "[blast: 7 files]" = 7 files need review.
+    _blast_ann = ""
+    _age_ann = ""
+    if depth == 0:
+        _blast_files = {c.file_path for c in graph.callers_of(sym.id) if c.file_path != sym.file_path}
+        if len(_blast_files) >= 3:
+            _blast_ann = f" [blast: {len(_blast_files)} files]"
+        # Symbol-level age: when was this specific function last changed?
+        # Uses git log -L for per-line precision; falls back to file-level.
+        # Skipped for symbols changed < 8 days ago (not actionable — treat as "fresh").
+        try:
+            from .git import symbol_last_modified_days as _sld  # noqa: PLC0415
+            _days = _sld(graph.root, sym.file_path, sym.line_start)
+            if _days is not None and _days >= 8:
+                if _days >= 365:
+                    _age_ann = " [age: 1y+]"
+                elif _days >= 30:
+                    _age_ann = f" [age: {_days // 30}m]"
+                else:
+                    _age_ann = f" [age: {_days}d]"
+        except Exception:
+            pass
+    block_lines = [f"{prefix} {sym.kind.value} {sym.qualified_name}{_blast_ann}{_age_ann} — {loc}{orbit_note}"]
+    # Container annotation for methods: show parent class with caller count.
+    # Helps agents understand the class context of the focused method.
+    if depth == 0 and sym.kind.value == "method" and "::" in sym.id:
+        _name_part = sym.id.split("::", 1)[1]
+        if "." in _name_part:
+            _class_id = sym.id.rsplit(".", 1)[0]  # "file.py::ClassName"
+            _class_sym = graph.symbols.get(_class_id)
+            if _class_sym:
+                _c_callers = len(graph.callers_of(_class_id))
+                _c_methods = len([c for c in graph.children_of(_class_id) if c.kind.value == "method"])
+                _c_ann = f"{_c_callers} callers" if _c_callers else "no callers"
+                block_lines.append(f"{indent}  container: {_class_sym.kind.value} {_class_sym.name} ({_c_ann}, {_c_methods} methods)")
+    if sym.signature and depth < 2:
+        block_lines.append(f"{indent}  sig: {sym.signature[:150]}")
+    if sym.doc and depth == 0:
+        block_lines.append(f"{indent}  doc: {sym.doc}")
+    if depth <= 1:
+        warnings = []
+        if sym.line_count > 500:
+            warnings.append(f"LARGE ({sym.line_count} lines — use grep, don't read)")
+        if sym.complexity > 50:
+            warnings.append(f"HIGH COMPLEXITY (cx={sym.complexity})")
+        if depth == 0 and not sym.exported and not graph.callers_of(sym.id):
+            if _dead_code_confidence(sym, graph) >= 40:
+                warnings.append("POSSIBLY DEAD — 0 callers, not exported (run dead_code mode to confirm)")
+        # Test-only callers: symbol has callers but ALL are test files.
+        # Production code never calls this — likely test helper or fixture, not real API.
+        if depth == 0:
+            _callers = graph.callers_of(sym.id)
+            if len(_callers) >= 2 and all(_is_test_file(c.file_path) for c in _callers):
+                warnings.append("TEST-ONLY CALLERS — not called from production code")
+        if warnings:
+            block_lines.append(f"{indent}  ⚠ {', '.join(warnings)}")
+
+        def _caller_priority(c: "Symbol") -> int:
+            path_lower = c.file_path.lower()
+            return 0 if query_tokens and any(tok in path_lower for tok in query_tokens) else 1
+
+        from .git import file_last_modified_days as _fld  # noqa: PLC0415
+
+        def _stale_annotation(file_path: str) -> str:
+            if file_path not in staleness_cache:
+                staleness_cache[file_path] = _fld(graph.root, file_path)
+            days = staleness_cache[file_path]
+            if days is None or days <= 30:
+                return ""
+            if days > 180:
+                return " [stale: 6m+]"
+            return f" [stale: {days}d]"
+
+        callers = graph.callers_of(sym.id)
+        if callers:
+            callers_sorted = sorted(callers, key=_caller_priority)
+            kw_callers = [c for c in callers_sorted if _caller_priority(c) == 0]
+            other_callers = [c for c in callers_sorted if _caller_priority(c) != 0]
+            hot_other = [c for c in other_callers if c.file_path in graph.hot_files]
+            cold_other = [c for c in other_callers if c.file_path not in graph.hot_files]
+            max_other = 3 if kw_callers else (8 if depth == 0 else 5)
+            shown_other = (hot_other + cold_other)[:max_other]
+            shown_callers = kw_callers + shown_other
+            shown_count = len(kw_callers) + max_other
+            caller_strs = []
+            for c in shown_callers:
+                _cl = (callsite_lines or {}).get((c.id, sym.id), [])
+                if len(_cl) == 1:
+                    _line_ann = f" [line {_cl[0]}]"
+                elif len(_cl) >= 2:
+                    _line_ann = f" [lines {_cl[0]}, {_cl[1]}]"
+                else:
+                    _line_ann = ""
+                if c.file_path in graph.hot_files:
+                    caller_strs.append(f"{c.qualified_name}{_line_ann} [hot]")
+                else:
+                    caller_strs.append(c.qualified_name + _line_ann + _stale_annotation(c.file_path))
+            block_lines.append(f"{indent}  called by: {', '.join(caller_strs)}")
+            if len(callers) > shown_count:
+                block_lines[-1] += f" (+{len(callers) - shown_count} more)"
+        callees = graph.callees_of(sym.id)
+        if callees:
+            shown = 8 if depth == 0 else 5
+            hot_callees = [c for c in callees if c.file_path in graph.hot_files]
+            cold_callees = [c for c in callees if c.file_path not in graph.hot_files]
+            ordered_callees = (hot_callees + cold_callees)[:shown]
+            callee_strs = []
+            for c in ordered_callees:
+                _hot_ann = " [hot]" if c.file_path in graph.hot_files else ""
+                _cb_ann = ""
+                if depth == 0:
+                    _cb_files = len({
+                        cr.file_path for cr in graph.callers_of(c.id)
+                        if cr.file_path != c.file_path
+                    })
+                    if _cb_files >= 3:
+                        _cb_ann = f" [blast: {_cb_files}]"
+                callee_strs.append(f"{c.qualified_name}{_hot_ann}{_cb_ann}")
+            block_lines.append(f"{indent}  calls: {', '.join(callee_strs)}")
+            if len(callees) > shown:
+                block_lines[-1] += f" (+{len(callees) - shown} more)"
+        if depth == 0:
+            children = graph.children_of(sym.id)
+            if children:
+                _child_strs = []
+                for c in children[:10]:
+                    _c_callers = len(graph.callers_of(c.id))
+                    _c_ann = f" ({_c_callers})" if _c_callers >= 1 else ""
+                    _child_strs.append(f"{c.kind.value[:4]} {c.name}{_c_ann}")
+                block_lines.append(f"{indent}  contains: {', '.join(_child_strs)}")
+
+            # Implementors: classes/traits that extend or implement this symbol.
+            # Shown only for CLASS/INTERFACE seeds to surface the inheritance fanout.
+            if sym.kind in (SymbolKind.CLASS, SymbolKind.INTERFACE):
+                _subtypes = graph.subtypes_of(sym.name)
+                if _subtypes:
+                    _sub_strs = [
+                        f"{s.qualified_name} ({s.file_path.rsplit('/', 1)[-1]}:{s.line_start})"
+                        for s in _subtypes[:8]
+                    ]
+                    _overflow_sub = len(_subtypes) - 8
+                    _sub_line = f"{indent}  implementors: {', '.join(_sub_strs)}"
+                    if _overflow_sub > 0:
+                        _sub_line += f" (+{_overflow_sub} more)"
+                    block_lines.append(_sub_line)
+    return block_lines
 
 
 def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
@@ -664,10 +1344,31 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     to build a connected subgraph relevant to the query.
 
     For monolith files (>1000 lines), adds intra-file neighborhood context
-    and biases BFS toward cross-file edges to avoid getting trapped in one file."""
-    seeds, seed_files, query_tokens = _collect_seeds(graph, query)
-    if not seeds:
-        return _suggest_alternatives(graph, query) or f"No symbols matching '{query}'"
+    and biases BFS toward cross-file edges to avoid getting trapped in one file.
+
+    Supports multi-symbol focus via '|' separator: "authMiddleware | loginHandler"
+    merges seeds from each query and runs a single combined BFS."""
+    # Multi-symbol: split on '|', collect seeds for each query, merge results.
+    _parts = [p.strip() for p in query.split("|") if p.strip()] if "|" in query else [query]
+    if len(_parts) > 1:
+        _seen_seed_ids: set[str] = set()
+        seeds: list[Symbol] = []
+        seed_files: set[str] = set()
+        query_tokens: list[str] = []
+        for _part in _parts:
+            _s, _sf, _qt = _collect_seeds(graph, _part)
+            for _sym in _s:
+                if _sym.id not in _seen_seed_ids:
+                    seeds.append(_sym)
+                    _seen_seed_ids.add(_sym.id)
+            seed_files |= _sf
+            query_tokens.extend(t for t in _qt if t not in query_tokens)
+        if not seeds:
+            return _suggest_alternatives(graph, query) or f"No symbols matching '{query}'"
+    else:
+        seeds, seed_files, query_tokens = _collect_seeds(graph, query)
+        if not seeds:
+            return _suggest_alternatives(graph, query) or f"No symbols matching '{query}'"
 
     # Orbit-BFS seeding: inject symbols from git-coupled files as depth-1 seeds.
     # Call graph misses test files (they call INTO src, not tracked as callers).
@@ -706,97 +1407,32 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
             ordered, seen_ids = _ext_ordered, _ext_seen
             _depth_extended = True
 
-    def _caller_priority(sym: Symbol) -> int:
-        """0 = keyword match in path (show first), 1 = no match (show after)."""
-        path_lower = sym.file_path.lower()
-        return 0 if query_tokens and any(tok in path_lower for tok in query_tokens) else 1
-
-    _focus_header = f"Focus: {query}"
+    _focus_header = f"Focus: {' | '.join(_parts)}" if len(_parts) > 1 else f"Focus: {query}"
     if _depth_extended:
         _focus_header += f"  [depth +1 — sparse ({len(ordered)} nodes)]"
     lines = [_focus_header, ""]
     seen_files: set[str] = set()
     token_count = 0
 
-    # Staleness annotations for caller files: cache git lookups per file_path.
-    from .git import file_last_modified_days as _file_last_modified_days  # noqa: PLC0415
+    # Callsite line index: (caller_id, callee_id) → sorted non-zero line numbers.
+    _callsite_lines: dict[tuple[str, str], list[int]] = {}
+    for _edge in graph.edges:
+        if _edge.kind is EdgeKind.CALLS and _edge.line > 0:
+            _key = (_edge.source_id, _edge.target_id)
+            _callsite_lines.setdefault(_key, []).append(_edge.line)
+    for _key in _callsite_lines:
+        _callsite_lines[_key] = sorted(set(_callsite_lines[_key]))
+
     _staleness_cache: dict[str, int | None] = {}
 
-    def _stale_annotation(file_path: str) -> str:
-        if file_path not in _staleness_cache:
-            _staleness_cache[file_path] = _file_last_modified_days(graph.root, file_path)
-        days = _staleness_cache[file_path]
-        if days is None or days <= 30:
-            return ""
-        if days > 180:
-            return " [stale: 6m+]"
-        return f" [stale: {days}d]"
-
-    for sym, depth in ordered:
-        indent = "  " * depth if depth > 0 else ""
-        prefix = ["●", "  →", "    ·", "      "][min(depth, 3)]
-        loc = f"{sym.file_path}:{sym.line_start}-{sym.line_end}"
+    for _sym_idx, (sym, depth) in enumerate(ordered):
         orbit_note = ""
         if sym.id in orbit_seed_meta and depth == 1:
             _orb_fp, _orb_freq = orbit_seed_meta[sym.id]
             orbit_note = f"  [orbit {_orb_freq:.0%}]"
-        block_lines = [f"{prefix} {sym.kind.value} {sym.qualified_name} — {loc}{orbit_note}"]
-        if sym.signature and depth < 2:
-            block_lines.append(f"{indent}  sig: {sym.signature[:150]}")
-        if sym.doc and depth == 0:
-            block_lines.append(f"{indent}  doc: {sym.doc}")
-        if depth <= 1:
-            warnings = []
-            if sym.line_count > 500:
-                warnings.append(f"LARGE ({sym.line_count} lines — use grep, don't read)")
-            if sym.complexity > 50:
-                warnings.append(f"HIGH COMPLEXITY (cx={sym.complexity})")
-            if depth == 0 and not sym.exported and not graph.callers_of(sym.id):
-                if _dead_code_confidence(sym, graph) >= 40:
-                    warnings.append("POSSIBLY DEAD — 0 callers, not exported (run dead_code mode to confirm)")
-            if warnings:
-                block_lines.append(f"{indent}  ⚠ {', '.join(warnings)}")
-            callers = graph.callers_of(sym.id)
-            if callers:
-                callers_sorted = sorted(callers, key=_caller_priority)
-                kw_callers = [c for c in callers_sorted if _caller_priority(c) == 0]
-                other_callers = [c for c in callers_sorted if _caller_priority(c) != 0]
-                hot_other = [c for c in other_callers if c.file_path in graph.hot_files]
-                cold_other = [c for c in other_callers if c.file_path not in graph.hot_files]
-                # Keyword callers exist → cap other callers at 3; else show up to 8.
-                max_other = 3 if kw_callers else (8 if depth == 0 else 5)
-                shown_other = (hot_other + cold_other)[:max_other]
-                shown_callers = kw_callers + shown_other
-                shown_count = len(kw_callers) + max_other
-                caller_strs = []
-                for c in shown_callers:
-                    if c.file_path in graph.hot_files:
-                        caller_strs.append(f"{c.qualified_name} [hot]")
-                    else:
-                        caller_strs.append(c.qualified_name + _stale_annotation(c.file_path))
-                block_lines.append(f"{indent}  called by: {', '.join(caller_strs)}")
-                if len(callers) > shown_count:
-                    block_lines[-1] += f" (+{len(callers) - shown_count} more)"
-            callees = graph.callees_of(sym.id)
-            if callees:
-                shown = 8 if depth == 0 else 5
-                hot_callees = [c for c in callees if c.file_path in graph.hot_files]
-                cold_callees = [c for c in callees if c.file_path not in graph.hot_files]
-                ordered_callees = (hot_callees + cold_callees)[:shown]
-                callee_strs = [
-                    f"{c.qualified_name} [hot]" if c.file_path in graph.hot_files else c.qualified_name
-                    for c in ordered_callees
-                ]
-                block_lines.append(f"{indent}  calls: {', '.join(callee_strs)}")
-                if len(callees) > shown:
-                    block_lines[-1] += f" (+{len(callees) - shown} more)"
-            if depth == 0:
-                children = graph.children_of(sym.id)
-                if children:
-                    block_lines.append(f"{indent}  contains: {', '.join(f'{c.kind.value[:4]} {c.name}' for c in children[:10])}")
-
+        block_lines = _build_symbol_block_lines(sym, depth, orbit_note, graph, query_tokens, _staleness_cache, _callsite_lines)
         block = "\n".join(block_lines)
-        should_break, block_tokens = _handle_overflow(lines, ordered, block, token_count, max_tokens)
+        should_break, block_tokens = _handle_overflow(lines, ordered, block, token_count, max_tokens, graph=graph, current_idx=_sym_idx)
         if should_break:
             break
         lines.append(block)
@@ -804,115 +1440,104 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
         seen_files.add(sym.file_path)
 
     # File context: for each file touched, show key co-located symbols
-    file_context: list[str] = []
-    for fp in sorted(seen_files):
-        fi = graph.files.get(fp)
-        if not fi or len(fi.symbols) < 3:
-            continue
-        file_syms = [graph.symbols[sid] for sid in fi.symbols if sid in graph.symbols and sid not in seen_ids]
-        important = [s for s in file_syms if s.exported and s.kind in (
-            SymbolKind.FUNCTION, SymbolKind.CLASS, SymbolKind.COMPONENT, SymbolKind.HOOK
-        )][:5]
-        if important:
-            names = ", ".join(f"{s.name} L{s.line_start}" for s in important)
-            file_context.append(f"  {fp}: also has {names}")
-
-    if file_context:
-        ctx_block = "\nAlso in these files:\n" + "\n".join(file_context)
-        ctx_tokens = count_tokens(ctx_block)
-        if token_count + ctx_tokens <= max_tokens:
-            lines.append(ctx_block)
-            token_count += ctx_tokens
+    ctx_block, ctx_tokens = _render_file_context_section(graph, seen_files, seen_ids, token_count, max_tokens)
+    if ctx_block:
+        lines.append(ctx_block)
+        token_count += ctx_tokens
 
     # Monolith neighborhood: for seed symbols in large files, show nearby symbols
-    for sym, depth in ordered:
-        if depth > 0:
-            break  # only seeds
-        fi = graph.files.get(sym.file_path)
-        if not fi or fi.line_count < _MONOLITH_THRESHOLD:
-            continue
-        neighborhood = _monolith_neighborhood(graph, sym)
-        if neighborhood:
-            nb_block = "\n".join(neighborhood)
-            nb_tokens = count_tokens(nb_block)
-            if token_count + nb_tokens <= max_tokens:
-                lines.append("")
-                lines.extend(neighborhood)
-                token_count += nb_tokens
+    mono_block, mono_tokens = _render_monolith_section(graph, ordered, token_count, max_tokens)
+    if mono_block:
+        lines.append(mono_block)
+        token_count += mono_tokens
 
     # Related files with size warnings
-    related = _find_related_files(graph, [s for s, _ in ordered[:10]])
-    if related - seen_files:
-        lines.append("")
-        lines.append("Related files:")
-        for fp in sorted(related - seen_files)[:10]:
-            fi = graph.files.get(fp)
-            if fi:
-                tag = " [grep-only]" if fi.line_count > 500 else ""
-                lines.append(f"  {fp} ({fi.line_count} lines){tag}")
+    related_section = _render_related_files_section(graph, ordered, seen_files)
+    if related_section:
+        lines.append(related_section)
 
     # Blast risk badge: count unique downstream files for seed symbols.
-    # Concrete file counts ("12 files depend on this") change agent behavior at the right moment.
-    # Vague "check downstream impact" hints get ignored. Specific numbers don't.
-    _BLAST_FILE_THRESHOLD = 5
-    _blast_hits: list[tuple[Symbol, int]] = []
-    for _bs, _bd in ordered[:5]:
-        if _bd != 0:
-            continue
-        _ext_files = {c.file_path for c in graph.callers_of(_bs.id) if c.file_path != _bs.file_path}
-        if len(_ext_files) > _BLAST_FILE_THRESHOLD:
-            _blast_hits.append((_bs, len(_ext_files)))
-    if _blast_hits and token_count < max_tokens - 60:
-        _blast_hits.sort(key=lambda x: -x[1])
-        _top_sym, _top_count = _blast_hits[0]
-        lines.append(f"\nHigh impact: {_top_count} files depend on {_top_sym.qualified_name} — run blast mode before editing")
+    blast_section = _render_blast_risk_section(graph, ordered, token_count, max_tokens)
+    if blast_section:
+        lines.append(blast_section)
 
     # Co-change orbit: git history reveals which files change together with seed files.
-    # Structural call graph = what's connected. Co-change orbit = what historically moves together.
-    # These are different signals. A file with 50 callers might co-change with only 2 partners.
     seed_file_paths = [s.file_path for s, d in ordered if d == 0]
-    orbit = _cochange_orbit(graph.root, seed_file_paths, seen_files)
-    if orbit and token_count < max_tokens - 80:
-        def _recency_label(days: int) -> str:
-            if days < 45:
-                return "recent"
-            elif days < 120:
-                return "aging"
-            return "stale"
-        orbit_parts = [f"{fp} ({score:.0%} {_recency_label(days)})" for fp, score, days in orbit]
-        lines.append(f"\nCo-change orbit: {', '.join(orbit_parts)}")
-        lines.append("  (files that historically change with these — check if your change affects them)")
+    orbit_section = _render_cochange_orbit_section(graph, seed_file_paths, seen_files, token_count, max_tokens)
+    if orbit_section:
+        lines.append(orbit_section)
 
     # File volatility: flag seed files that are actively changing.
-    # Volatile files mean context may lag behind recent edits — agents should re-read before modifying.
-    # Only fires for files with high churn (≥10/200 commits). No annotation for normal/stable files.
-    if graph.root and seed_file_paths and token_count < max_tokens - 60:
-        try:
-            from .git import file_commit_counts
-            churn = file_commit_counts(graph.root)
-            _VOLATILE_THRESHOLD = 10
-            volatile = [(fp, churn.get(fp, 0)) for fp in seed_file_paths
-                        if churn.get(fp, 0) >= _VOLATILE_THRESHOLD]
-            if volatile:
-                parts = [f"{fp} ({count}/200 commits)" for fp, count in volatile]
-                lines.append(f"\nVolatile: {', '.join(parts)} — high-churn file(s), re-read before editing")
-        except Exception:
-            pass
+    volatile_section = _render_volatility_section(graph, seed_file_paths, token_count, max_tokens)
+    if volatile_section:
+        lines.append(volatile_section)
 
     # Recent changes: show last 3 commits for the primary seed file.
-    # Gives agents the change narrative — "was this file touched 3 days ago or 6 months ago?"
-    if graph.root and seed_file_paths:
-        try:
-            from .git import recent_file_commits
-            primary_file = seed_file_paths[0]
-            commits = recent_file_commits(graph.root, primary_file)
-            if commits:
-                basename = Path(primary_file).name
-                lines.append(f"\nRecent changes ({basename}):")
-                for c in commits:
-                    lines.append(f"  • {c['days_ago']}d ago: {c['message']}")
-        except Exception:
-            pass
+    recent_section = _render_recent_changes_section(graph, seed_file_paths)
+    if recent_section:
+        lines.append(recent_section)
+
+    # Co-change suggestions: which source files historically move with the primary file?
+    cochange_section = _render_cochange_section(graph, seed_file_paths)
+    if cochange_section:
+        lines.append(cochange_section)
+
+    # Test coverage section: which test files call the primary seed symbols?
+    # Only consider depth-0 (seed) symbols to avoid noise from BFS expansion.
+    if token_count < max_tokens - 40:
+        _test_callers: dict[str, int] = {}
+        _has_source_callers = False
+        for _ts, _td in ordered:
+            if _td != 0:
+                continue
+            for caller in graph.callers_of(_ts.id):
+                if _is_test_file(caller.file_path):
+                    _test_callers[caller.file_path] = _test_callers.get(caller.file_path, 0) + 1
+                else:
+                    _has_source_callers = True
+        if _test_callers:
+            lines.append("\nTests:")
+            for _tfp, _tcount in sorted(_test_callers.items()):
+                lines.append(f"  {_tfp} ({_tcount} caller{'s' if _tcount != 1 else ''})")
+        elif _has_source_callers:
+            lines.append("\nTests: none")
+
+    # All callers: complete caller list grouped by file (for rename/refactor impact).
+    _seed_syms = [sym for sym, d in ordered if d == 0]
+    callers_section = _render_all_callers_section(graph, _seed_syms, _callsite_lines, token_count, max_tokens)
+    if callers_section:
+        lines.append(callers_section)
+
+    # Outgoing dependency files: what files do the seed symbols depend on?
+    dep_section = _render_dependency_files_section(graph, ordered, seen_files, token_count, max_tokens)
+    if dep_section:
+        lines.append(dep_section)
+
+    # Hot callers: callers of seed symbols that live in recently-modified files.
+    hot_section = _render_hot_callers_section(graph, _seed_syms, token_count, max_tokens)
+    if hot_section:
+        lines.append(hot_section)
+
+    # File siblings: other notable symbols in the primary seed's file.
+    # Shows agents what else is in the file without requiring a blast query.
+    # Only shown when token budget allows and siblings have callers (i.e. are live code).
+    if _seed_syms and token_count < max_tokens - 80:
+        _prim = _seed_syms[0]
+        _fi = graph.files.get(_prim.file_path)
+        if _fi and len(_fi.symbols) > 2:
+            _prim_children = {c.id for c in graph.children_of(_prim.id)}
+            _sibs: list[tuple[int, "Symbol"]] = []
+            for _sid in _fi.symbols:
+                if _sid == _prim.id or _sid in _prim_children or _sid not in graph.symbols:
+                    continue
+                _s = graph.symbols[_sid]
+                _nc = len(graph.callers_of(_sid))
+                if _nc >= 1:
+                    _sibs.append((_nc, _s))
+            _sibs.sort(key=lambda x: -x[0])
+            if _sibs[:4]:
+                _sb_parts = [f"{s.name} ({n})" for n, s in _sibs[:4]]
+                lines.append(f"\nIn {_prim.file_path.rsplit('/', 1)[-1]}: {', '.join(_sb_parts)}")
 
     return "\n".join(lines)
 
@@ -1122,8 +1747,36 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
     importers = graph.importers_of(file_path)
     if importers:
         lines.append(f"Directly imported by ({len(importers)}):")
-        for imp in sorted(importers):
-            lines.append(f"  {imp}")
+        # Build index: importer_file → [caller symbol names that call INTO blast target]
+        _target_sym_ids = set(fi.symbols)
+        _importer_users: dict[str, list[str]] = {}
+        for edge in graph.edges:
+            if edge.kind is EdgeKind.CALLS and edge.target_id in _target_sym_ids:
+                caller = graph.symbols.get(edge.source_id)
+                if caller and caller.file_path in set(importers):
+                    _importer_users.setdefault(caller.file_path, []).append(caller.name)
+        _all_test_fps = {fp for fp in graph.files if _is_test_file(fp)}
+        _src_importers = [imp for imp in importers if not _is_test_file(imp)]
+        # Sort by call count descending: most-dependent callers appear first.
+        # Ties broken by file path for stable output.
+        _sorted_importers = sorted(
+            importers, key=lambda imp: (-len(_importer_users.get(imp, [])), imp)
+        )
+        for imp in _sorted_importers:
+            users = _importer_users.get(imp, [])
+            unique_users = list(dict.fromkeys(users))[:3]  # deduplicate, cap at 3
+            if unique_users:
+                lines.append(f"  {imp} — used by: {', '.join(unique_users)}")
+            else:
+                lines.append(f"  {imp}")
+        # Refactor safety: how many source importers have test coverage?
+        if _src_importers and _all_test_fps:
+            _tested = sum(
+                1 for imp in _src_importers
+                if any(imp.rsplit("/", 1)[-1].rsplit(".", 1)[0] in t for t in _all_test_fps)
+            )
+            _pct = int(_tested / len(_src_importers) * 100)
+            lines.append(f"  refactor safety: {_tested}/{len(_src_importers)} caller files tested ({_pct}%)")
         lines.append("")
 
     # Symbols in this file that are called externally
@@ -1154,6 +1807,61 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
         lines.append("Component render relationships:")
         for rt in sorted(render_targets):
             lines.append(f"  {rt}")
+
+    # Transitive import cascade — BFS over import graph (cap: 5 levels, 200 files)
+    if importers:
+        _visited: set[str] = {file_path}
+        _by_depth: dict[int, int] = {}
+        _queue: list[tuple[str, int]] = [(fp, 1) for fp in importers]
+        while _queue:
+            fp, depth = _queue.pop(0)
+            if fp in _visited or depth > 5:
+                continue
+            if sum(_by_depth.values()) >= 200:
+                break
+            _visited.add(fp)
+            _by_depth[depth] = _by_depth.get(depth, 0) + 1
+            _queue.extend((nfp, depth + 1) for nfp in graph.importers_of(fp) if nfp not in _visited)
+        if len(_by_depth) > 1:  # only show when cascade goes beyond direct importers
+            _total = sum(_by_depth.values())
+            _max_d = max(_by_depth.keys())
+            _depth_str = ", ".join(f"d{d}:{_by_depth[d]}" for d in sorted(_by_depth.keys()))
+            lines.append(f"Transitive cascade: {_total} file(s) up to depth {_max_d} ({_depth_str})")
+            lines.append("")
+
+    # Test files: collect test files that directly call symbols in this file
+    # or directly import this file. Shows agents exactly which tests to run.
+    _blast_tests: dict[str, int] = {}  # test_file_path → symbol call count
+    for sym in symbols:
+        for caller in graph.callers_of(sym.id):
+            if caller.file_path != file_path and _is_test_file(caller.file_path):
+                _blast_tests[caller.file_path] = _blast_tests.get(caller.file_path, 0) + 1
+    # Also include test files that directly import this file
+    for imp in importers:
+        if _is_test_file(imp):
+            _blast_tests.setdefault(imp, 0)
+    if _blast_tests:
+        _sorted_tests = sorted(_blast_tests.items(), key=lambda x: -x[1])
+        _shown = _sorted_tests[:5]
+        lines.append(f"Tests to run ({len(_blast_tests)}):")
+        for _tfp, _cnt in _shown:
+            _lbl = f" ({_cnt} call{'s' if _cnt != 1 else ''})" if _cnt else ""
+            lines.append(f"  {_tfp}{_lbl}")
+        if len(_blast_tests) > 5:
+            lines.append(f"  ... and {len(_blast_tests) - 5} more")
+        lines.append("")
+
+    # Co-change partners: files that historically changed together with this file.
+    # Based on git history — not code structure. Helps agents know what else needs
+    # updating when this file changes, even if there's no import/call relationship.
+    _cc_orbit = _cochange_orbit(graph.root, [file_path], {file_path})
+    if _cc_orbit:
+        _cc_parts = []
+        for _cc_fp, _cc_score, _cc_days in _cc_orbit[:4]:
+            _cc_age = "recent" if _cc_days < 45 else ("aging" if _cc_days < 120 else "stale")
+            _cc_parts.append(f"{_cc_fp.rsplit('/', 1)[-1]} ({_cc_score:.0%} {_cc_age})")
+        lines.append(f"Co-change partners: {', '.join(_cc_parts)}")
+        lines.append("")
 
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
@@ -1307,6 +2015,50 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 lines.append(ri)
             lines.append("")
             token_count = count_tokens("\n".join(lines))
+    # Tests to run: test files that directly call symbols from the changed file(s).
+    # Sorted by call count — most-covered test files first.
+    if token_count < max_tokens - 60:
+        _test_caller_counts: dict[str, int] = {}
+        for sym in affected_symbols:
+            for caller in graph.callers_of(sym.id):
+                if _is_test_file(caller.file_path):
+                    _test_caller_counts[caller.file_path] = _test_caller_counts.get(caller.file_path, 0) + 1
+        if _test_caller_counts:
+            _sorted_tests = sorted(_test_caller_counts.items(), key=lambda x: -x[1])
+            _test_parts = [f"{fp.rsplit('/', 1)[-1]} ({n})" for fp, n in _sorted_tests[:5]]
+            _overflow = len(_test_caller_counts) - 5
+            _tests_line = f"Tests to run ({len(_test_caller_counts)}): {', '.join(_test_parts)}"
+            if _overflow > 0:
+                _tests_line += f" +{_overflow} more"
+            lines.append(_tests_line)
+            lines.append("")
+            token_count = count_tokens("\n".join(lines))
+
+    # Co-change partners missing from diff.
+    # Warns the agent when a file that historically co-changes with a changed file is absent —
+    # classic sign of an incomplete changeset (e.g. touched auth.py but not session.py).
+    if graph.root and token_count < max_tokens - 80:
+        try:
+            from .git import cochange_pairs as _cpairs
+            _missing: dict[str, int] = {}  # partner_path → count (deduped)
+            for fp in sorted(normalized):
+                for p in _cpairs(graph.root, fp, n=5, min_count=5):
+                    partner = p["path"]
+                    if partner not in normalized and partner not in _missing and partner in graph.files:
+                        _missing[partner] = p["count"]
+            if _missing:
+                _sorted_missing = sorted(_missing.items(), key=lambda x: -x[1])
+                _warn_parts = [f"{p.rsplit('/', 1)[-1]} ({c}x)" for p, c in _sorted_missing[:3]]
+                _overflow_warn = len(_sorted_missing) - 3
+                _warn_line = f"Co-change warning: {', '.join(_warn_parts)} often change with this diff — missing from changeset"
+                if _overflow_warn > 0:
+                    _warn_line += f" (+{_overflow_warn} more)"
+                lines.append(_warn_line)
+                lines.append("")
+                token_count = count_tokens("\n".join(lines))
+        except Exception:
+            pass
+
     if max_tokens - token_count > 500:
         lines.append("Key symbols in changed files:")
         for sym in affected_symbols:
@@ -1314,7 +2066,11 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 continue
             if sym.parent_id and sym.kind == SymbolKind.FUNCTION:
                 continue
-            entry = f"  {sym.kind.value} {sym.qualified_name} L{sym.line_start}-{sym.line_end}"
+            # Cross-file caller count: tells agents how widely this symbol is used.
+            # Changes to high-caller symbols need broader review + testing.
+            _cross_callers = len({c.file_path for c in graph.callers_of(sym.id) if c.file_path != sym.file_path})
+            _caller_ann = f" [callers: {_cross_callers}]" if _cross_callers > 0 else ""
+            entry = f"  {sym.kind.value} {sym.qualified_name}{_caller_ann} L{sym.line_start}-{sym.line_end}"
             if sym.signature:
                 entry += f"\n    {sym.signature[:120]}"
             entry_tokens = count_tokens(entry)
@@ -1327,17 +2083,36 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
     return "\n".join(lines)
 
 
-def _file_blast_count(graph: Tempo, file_path: str) -> int:
-    """Count unique external files that depend on this file (importers + external callers).
+def _classify_file(path: str) -> str:
+    """Classify a file as 'test', 'config', or 'source' by filename patterns."""
+    import os
+    name = os.path.basename(path)
+    if (name.startswith("test_") or name.endswith("_test.py")
+            or name == "conftest.py" or ".test." in name or ".spec." in name):
+        return "test"
+    _CONFIG_NAMES = {
+        "setup.py", "setup.cfg", "pyproject.toml", "package.json",
+        "package-lock.json", "yarn.lock", "Makefile", "makefile",
+        "CMakeLists.txt", "tox.ini", "pytest.ini", ".flake8",
+        "requirements.txt", "Cargo.toml", "go.mod", "pom.xml",
+        "build.gradle", "Gemfile", "tsconfig.json",
+    }
+    if name in _CONFIG_NAMES or ".config." in name:
+        return "config"
+    return "source"
 
-    This is the file-level blast radius: if file_path changes, how many other
-    files are directly affected? Captures both import-level and call-level coupling
-    that per-symbol cross_file misses (a file with 10 small helpers each called
-    once from different files has high file-blast but low per-symbol cross_file).
+
+def _file_blast_info(graph: Tempo, file_path: str) -> dict[str, int]:
+    """Count external dependent files categorized as source/test/config.
+
+    Returns dict with keys: "total", "source", "test", "config".
+    This is the file-level blast radius with category context: agents care whether
+    their change breaks prod code (source), test infrastructure (test), or build
+    tooling (config). Same total, different risk profile.
     """
     fi = graph.files.get(file_path)
     if not fi:
-        return 0
+        return {"total": 0, "source": 0, "test": 0, "config": 0}
     dependent_files: set[str] = set()
     # Direct importers
     for imp in graph.importers_of(file_path):
@@ -1350,7 +2125,22 @@ def _file_blast_count(graph: Tempo, file_path: str) -> int:
         for caller in graph.callers_of(sym_id):
             if caller.file_path and caller.file_path != file_path:
                 dependent_files.add(caller.file_path)
-    return len(dependent_files)
+    counts: dict[str, int] = {"source": 0, "test": 0, "config": 0}
+    for f in dependent_files:
+        counts[_classify_file(f)] += 1
+    counts["total"] = len(dependent_files)
+    return counts
+
+
+def _file_blast_count(graph: Tempo, file_path: str) -> int:
+    """Count unique external files that depend on this file (importers + external callers).
+
+    This is the file-level blast radius: if file_path changes, how many other
+    files are directly affected? Captures both import-level and call-level coupling
+    that per-symbol cross_file misses (a file with 10 small helpers each called
+    once from different files has high file-blast but low per-symbol cross_file).
+    """
+    return _file_blast_info(graph, file_path)["total"]
 
 
 def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
@@ -1363,15 +2153,20 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
 
     # Load change velocity: files in active churn carry coordination risk
     velocity: dict[str, float] = {}
+    velocity_14: dict[str, float] = {}
     try:
         from .git import file_change_velocity
         velocity = file_change_velocity(graph.root)
+        velocity_14 = file_change_velocity(graph.root, recent_days=14)
     except Exception:
         pass
 
-    # Blast count cache: file_path → number of external dependent files
+    # Blast info cache: file_path → categorized dependent file counts
     # Computed once per file, not per symbol, to avoid redundant traversal
-    blast_cache: dict[str, int] = {}
+    blast_cache: dict[str, dict[str, int]] = {}
+
+    # Pre-check for test files once; avoids O(symbols × files) per-symbol check
+    _any_tests_in_project = any(_is_test_file(fp) for fp in graph.files)
 
     scores: list[tuple[float, Symbol]] = []
 
@@ -1411,8 +2206,8 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         # Cached per file since many symbols share the same file_path.
         if sym.file_path:
             if sym.file_path not in blast_cache:
-                blast_cache[sym.file_path] = _file_blast_count(graph, sym.file_path)
-            bc = blast_cache[sym.file_path]
+                blast_cache[sym.file_path] = _file_blast_info(graph, sym.file_path)
+            bc = blast_cache[sym.file_path]["total"]
             if bc > 0:
                 score *= 1.0 + math.log2(1.0 + bc) * 0.1
 
@@ -1459,16 +2254,91 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         if velocity and sym.file_path:
             cpw = velocity.get(sym.file_path, 0.0)
             if cpw >= 5.0:
+                cpw14 = velocity_14.get(sym.file_path, 0.0)
+                if cpw14 > 0 and cpw >= cpw14 * 1.5:
+                    _trend = " ↑"
+                elif cpw14 > 1.0 and cpw < cpw14 * 0.5:
+                    _trend = " ↓"
+                else:
+                    _trend = ""
                 warnings.append(
-                    f"active churn: {cpw:.0f} commits/week — re-read before editing"
+                    f"active churn: {cpw:.0f} commits/week{_trend} — re-read before editing"
                 )
         # File blast count warning: many external dependents = high coordination cost
         if sym.file_path and sym.file_path in blast_cache:
-            bc = blast_cache[sym.file_path]
+            binfo = blast_cache[sym.file_path]
+            bc = binfo["total"]
             if bc >= 20:
-                warnings.append(f"blast: {bc} files depend on this — changes need broad review")
+                parts = [f"{binfo[cat]} {cat}" for cat in ("source", "test", "config") if binfo.get(cat, 0) > 0]
+                breakdown = f" ({', '.join(parts)})" if parts else ""
+                warnings.append(f"blast: {bc} files depend{breakdown} — changes need broad review")
+        # Test coverage warning: high-blast symbols with no test coverage at all.
+        # Only flag when: (a) project has tests, (b) symbol is widely used cross-file,
+        # (c) no test file imports or calls this symbol's file.
+        # Avoids noise: if tests import the file, at least some coverage exists.
+        if cross_files >= 5 and _any_tests_in_project and sym.file_path:
+            _test_importers = [i for i in graph.importers_of(sym.file_path) if _is_test_file(i)]
+            _test_callers_sym = [c for c in graph.callers_of(sym.id) if _is_test_file(c.file_path)]
+            if not _test_importers and not _test_callers_sym:
+                warnings.append("no test coverage — high blast, no safety net")
         if warnings:
             lines.append(f"    → {'; '.join(warnings)}")
+
+    # High-complexity summary: top symbols by raw cyclomatic complexity.
+    # Separate from overall hotspot rank — a rarely-called function with cx=200
+    # is still a refactor target even if it doesn't score high by coupling.
+    _cx_syms = [
+        (sym.complexity, sym)
+        for _, sym in scores
+        if sym.complexity >= 20 and not _is_test_file(sym.file_path)
+    ]
+    if len(_cx_syms) >= 2:
+        _cx_syms.sort(key=lambda x: -x[0])
+        _cx_parts = [f"{sym.qualified_name} (cx={cx})" for cx, sym in _cx_syms[:3]]
+        lines.append("")
+        lines.append(f"Most complex: {', '.join(_cx_parts)}")
+
+    # Untested hotspots: high-scoring symbols in files with no test coverage.
+    # The riskiest code to modify: high coupling/complexity AND no safety net.
+    # Only shown when test files exist in the project (otherwise whole project lacks tests).
+    _all_test_fps_hs = {fp for fp in graph.files if _is_test_file(fp)}
+    if _all_test_fps_hs and scores:
+        _untested: list[tuple[float, Symbol]] = []
+        for _sc, _sym in scores[:top_n]:
+            if _is_test_file(_sym.file_path):
+                continue
+            # Only flag symbols with real cross-file exposure (≥2 cross-file callers)
+            _cross = len({
+                c.file_path for c in graph.callers_of(_sym.id)
+                if c.file_path != _sym.file_path
+            })
+            if _cross < 2:
+                continue
+            _base = _sym.file_path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+            if not any(_base in t for t in _all_test_fps_hs):
+                _untested.append((_sc, _sym))
+        if len(_untested) >= 1:
+            _uh_parts = [
+                f"{sym.qualified_name} ({sym.file_path.rsplit('/', 1)[-1]})"
+                for _, sym in _untested[:3]
+            ]
+            lines.append("")
+            lines.append(f"Untested hotspots: {', '.join(_uh_parts)}")
+
+    # File concentration: which files dominate the hotspot list.
+    # If one file has 5+ hotspots, agents should read it first — it's the bottleneck.
+    if len(scores) >= 5:
+        _file_counts: dict[str, int] = {}
+        for _, sym in scores[:top_n]:
+            _file_counts[sym.file_path] = _file_counts.get(sym.file_path, 0) + 1
+        _top_conc = sorted(_file_counts.items(), key=lambda x: -x[1])[:2]
+        _conc_parts = [
+            f"{fp.rsplit('/', 1)[-1]} ({n}/{min(len(scores), top_n)})"
+            for fp, n in _top_conc if n >= 3
+        ]
+        if _conc_parts:
+            lines.append("")
+            lines.append(f"Hotspot concentration: {', '.join(_conc_parts)}")
 
     return "\n".join(lines)
 
@@ -1682,13 +2552,77 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
     medium = [(s, c) for s, c in scored if 40 <= c < 70]
     low = [(s, c) for s, c in scored if c < 40]
 
-    lines = [f"Potential dead code ({len(dead)} symbols):", ""]
+    lines = [f"Potential dead code ({len(dead)} symbols):"]
+
+    # Quick wins: top files with the most HIGH confidence dead symbols.
+    # Shows agents where to start cleanup without reading the full list.
+    if high:
+        _qw_counts: dict[str, int] = {}
+        for sym, _ in high:
+            _qw_counts[sym.file_path] = _qw_counts.get(sym.file_path, 0) + 1
+        _qw_sorted = sorted(_qw_counts.items(), key=lambda x: -x[1])[:2]
+        _qw_parts = [
+            f"{fp.rsplit('/', 1)[-1]} ({n} high-conf)" for fp, n in _qw_sorted
+        ]
+        lines.append(f"Quick wins: {', '.join(_qw_parts)}")
+
+    # Orphan files: files where ALL exported symbols are dead → delete the whole file.
+    # More actionable than quick wins: one `rm` instead of N symbol deletions.
+    _dead_sym_ids = {sym.id for sym, _ in scored}
+    _orphan_files: list[tuple[str, int, int]] = []  # (file_path, sym_count, line_count)
+    for _fp in {sym.file_path for sym, _ in scored}:
+        if _is_test_file(_fp):
+            continue
+        _fi = graph.files.get(_fp)
+        if not _fi:
+            continue
+        _exported = [
+            graph.symbols[sid] for sid in _fi.symbols
+            if sid in graph.symbols and graph.symbols[sid].exported
+        ]
+        if _exported and all(sym.id in _dead_sym_ids for sym in _exported):
+            _orphan_files.append((_fp, len(_exported), sum(sym.line_count for sym in _exported)))
+    if _orphan_files:
+        _orphan_files.sort(key=lambda x: -x[2])
+        _o_parts = [
+            f"{fp.rsplit('/', 1)[-1]} ({n} syms, {lc} lines)"
+            for fp, n, lc in _orphan_files[:3]
+        ]
+        lines.append(f"Orphan files (all-dead): {', '.join(_o_parts)}")
+
+    lines.append("")
     total_lines = 0
 
     tiers = [("HIGH CONFIDENCE (safe to remove)", high),
              ("MEDIUM CONFIDENCE (review before removing)", medium)]
     if include_low:
         tiers.append(("LOW CONFIDENCE (likely false positives)", low))
+
+    # Per-file git caches — avoids redundant git calls across symbols in the same file.
+    from .git import file_last_modified_days as _file_last_modified_days  # noqa: PLC0415
+    _touched_cache: dict[str, int | None] = {}
+
+    def _last_touched(file_path: str) -> str:
+        if file_path not in _touched_cache:
+            _touched_cache[file_path] = _file_last_modified_days(graph.root, file_path)
+        days = _touched_cache[file_path]
+        if days is None:
+            return ""
+        return f" — last touched: {days} days ago"
+
+    def _format_age(days: int | None) -> str:
+        if days is None:
+            return ""
+        if days >= 365:
+            return " [age: 1y+]"
+        if days >= 30:
+            return f" [age: {days // 30}m]"
+        return f" [age: {days}d]"
+
+    def _sym_age(sym: Symbol) -> str:
+        if sym.file_path not in _touched_cache:
+            _touched_cache[sym.file_path] = _file_last_modified_days(graph.root, sym.file_path)
+        return _format_age(_touched_cache[sym.file_path])
 
     for label, tier in tiers:
         if not tier:
@@ -1699,12 +2633,21 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         by_file: dict[str, list[tuple[Symbol, int]]] = {}
         for sym, conf in shown:
             by_file.setdefault(sym.file_path, []).append((sym, conf))
-        for fp in sorted(by_file):
-            lines.append(f"  {fp}:")
-            for sym, conf in sorted(by_file[fp], key=lambda x: x[0].line_start):
+        # Sort files: most dead symbols first (most-contaminated first)
+        sorted_files = sorted(by_file.items(), key=lambda x: -len(x[1]))
+        for fp, file_syms in sorted_files:
+            n = len(file_syms)
+            sym_label = f"{n} dead symbol{'s' if n != 1 else ''}"
+            lines.append(f"  {fp} ({sym_label}){_last_touched(fp)}:")
+            by_line = sorted(file_syms, key=lambda x: x[0].line_start)
+            shown_syms = by_line[:10]
+            for sym, conf in shown_syms:
                 lc = sym.line_count
                 total_lines += lc
-                lines.append(f"    {sym.kind.value} {sym.qualified_name} (L{sym.line_start}-{sym.line_end}, {lc} lines) [confidence: {conf}]")
+                age = _sym_age(sym)
+                lines.append(f"    {sym.kind.value} {sym.qualified_name} (L{sym.line_start}-{sym.line_end}, {lc} lines) [confidence: {conf}]{age}")
+            if len(by_line) > 10:
+                lines.append(f"    ... and {len(by_line) - 10} more")
             lines.append("")
 
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")

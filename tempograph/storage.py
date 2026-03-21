@@ -40,7 +40,17 @@ class GraphDB:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.row_factory = sqlite3.Row
+        self._batching = False
         self._init_schema()
+
+    def begin_batch(self) -> None:
+        """Start a batch — suppresses per-call commits until end_batch()."""
+        self._batching = True
+
+    def end_batch(self) -> None:
+        """End a batch — commits all pending writes in one transaction."""
+        self._batching = False
+        self._conn.commit()
 
     def _init_schema(self) -> None:
         cur = self._conn.cursor()
@@ -139,7 +149,8 @@ class GraphDB:
         self._conn.execute(
             "UPDATE files SET mtime_ns = ? WHERE path = ?", (mtime_ns, rel_path)
         )
-        self._conn.commit()
+        if not self._batching:
+            self._conn.commit()
 
     def file_hash_matches(self, rel_path: str, file_hash: str) -> bool:
         row = self._conn.execute(
@@ -204,7 +215,8 @@ class GraphDB:
                 [(e.kind.value, e.source_id, e.target_id, e.line) for e in file_edges],
             )
 
-        self._conn.commit()
+        if not self._batching:
+            self._conn.commit()
 
     def remove_stale_files(self, current_files: set[str]) -> int:
         """Remove files from DB that no longer exist on disk. Returns count removed."""
@@ -219,15 +231,19 @@ class GraphDB:
             self._conn.execute("DELETE FROM symbols WHERE file_path = ?", (path,))
             self._conn.execute("DELETE FROM edges WHERE source_id LIKE ?", (path + "::%",))
             self._conn.execute("DELETE FROM files WHERE path = ?", (path,))
-        self._conn.commit()
+        if not self._batching:
+            self._conn.commit()
         return len(stale)
 
-    def load_all(self) -> tuple[dict[str, FileInfo], dict[str, Symbol], list[Edge]]:
+    def load_all(self, *, lazy_edges: bool = False) -> tuple[dict[str, FileInfo], dict[str, Symbol], list[Edge]]:
         """Load entire graph from DB into memory.
 
         Uses tuple positional access instead of sqlite3.Row dict access to avoid
         per-field string key lookups. Benchmarked savings: ~3.7ms on 290 files /
         1510 symbols / 7211 edges (20% improvement over dict-access baseline).
+
+        lazy_edges: skip edge loading entirely — useful for modes that only need
+        files + symbols (overview, dead_code, hotspots). Saves ~10ms on load_all.
         """
         orig_factory = self._conn.row_factory
         self._conn.row_factory = None  # raw tuples: faster positional access
@@ -247,10 +263,10 @@ class GraphDB:
                 "FROM symbols"
             ).fetchall()
 
-            # edges: kind(0) source_id(1) target_id(2) line(3)
+            # edges: kind(0) source_id(1) target_id(2) line(3) — skipped when lazy_edges=True
             edge_rows = self._conn.execute(
                 "SELECT kind, source_id, target_id, line FROM edges"
-            ).fetchall()
+            ).fetchall() if not lazy_edges else []
         finally:
             self._conn.row_factory = orig_factory
 
@@ -334,7 +350,8 @@ class GraphDB:
             "INSERT INTO symbol_vectors (embedding, symbol_id) VALUES (?, ?)",
             (json.dumps(embedding), symbol_id),
         )
-        self._conn.commit()
+        if not self._batching:
+            self._conn.commit()
 
     def upsert_vectors_batch(self, items: list[tuple[str, list[float]]]) -> None:
         """Batch upsert symbol embeddings. items = [(symbol_id, embedding), ...]"""
@@ -349,7 +366,8 @@ class GraphDB:
             "INSERT INTO symbol_vectors (embedding, symbol_id) VALUES (?, ?)",
             [(json.dumps(emb), sid) for sid, emb in items],
         )
-        self._conn.commit()
+        if not self._batching:
+            self._conn.commit()
 
     def search_vectors(self, query_embedding: list[float], limit: int = 20) -> list[tuple[float, str]]:
         """Vector similarity search. Returns (distance, symbol_id) pairs."""
