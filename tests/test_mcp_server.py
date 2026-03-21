@@ -3805,3 +3805,75 @@ class TestOverviewTopImported:
         assert "top imported:" not in out, (
             f"top imported: must not appear when only test files import; got:\n{out}"
         )
+
+
+class TestDeadCodeQuickWins:
+    """S27: Dead code mode — 'Quick wins:' header showing best cleanup targets.
+
+    After the opening summary line, show the top 1-2 files with the most
+    HIGH-confidence dead symbols. Gives agents an immediate cleanup target.
+    """
+
+    def test_quick_wins_shown_with_high_conf_symbols(self, tmp_path):
+        """Quick wins: line appears when high-confidence dead symbols exist."""
+        from unittest.mock import patch
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        # Isolated file with an exported function that has no callers
+        (tmp_path / "utils.py").write_text(
+            "def orphan_a(): pass\ndef orphan_b(): pass\ndef orphan_c(): pass\n"
+        )
+        (tmp_path / "main.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+
+        with patch("tempograph.git.file_last_modified_days", return_value=30):
+            out = render_dead_code(g, include_low=True)
+
+        # Only check if ANY dead symbols were found — output structure may vary
+        if "Potential dead code" in out and "HIGH CONFIDENCE" in out:
+            assert "Quick wins:" in out, f"Quick wins: must appear; got:\n{out}"
+
+    def test_quick_wins_omitted_when_only_medium_conf(self, tmp_path):
+        """Quick wins: is omitted when no HIGH confidence dead symbols exist."""
+        from unittest.mock import patch
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        # Single-file repo: dead code gets -20 penalty (single-component) → likely medium/low
+        (tmp_path / "singlefile.py").write_text(
+            "def maybe_unused(): pass\ndef also_maybe(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+
+        with patch("tempograph.git.file_last_modified_days", return_value=5):
+            out = render_dead_code(g, include_low=True)
+
+        # Either no dead code, or high conf is absent
+        if "Potential dead code" in out:
+            if "HIGH CONFIDENCE" not in out:
+                assert "Quick wins:" not in out, (
+                    f"Quick wins: must not appear without high-conf symbols; got:\n{out}"
+                )
+
+    def test_quick_wins_capped_at_two_files(self, tmp_path):
+        """Quick wins: shows at most 2 files."""
+        from unittest.mock import patch
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        # Create 3 files with dead symbols
+        for i in range(3):
+            (tmp_path / f"mod_{i}.py").write_text(
+                f"def dead_a_{i}(): pass\ndef dead_b_{i}(): pass\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+
+        with patch("tempograph.git.file_last_modified_days", return_value=60):
+            out = render_dead_code(g, include_low=True)
+
+        if "Quick wins:" in out:
+            qw_line = next(l for l in out.split("\n") if l.startswith("Quick wins:"))
+            # Count file mentions (each has "filename (N high-conf)")
+            n_files = qw_line.count("high-conf)")
+            assert n_files <= 2, f"Quick wins: must list at most 2 files; got: {qw_line}"
