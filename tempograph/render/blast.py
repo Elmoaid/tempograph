@@ -26,9 +26,7 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                 "   Re-run without --exclude to index it, or run "
                 "`tempograph . --mode overview` to see what is currently indexed."
             )
-        # S419: Type stub blast — blast target is a .pyi stub file (not indexed by graph).
-        # Type stub files define the public API contract; changing a stub silently breaks
-        # type checks in all importers even when the runtime code hasn't changed.
+        # Early-exit for type stub files not indexed by graph (see S419 in main signals).
         if file_path.lower().endswith(".pyi"):
             return (
                 f"type stub blast: {file_path.rsplit('/', 1)[-1]} is a type stub"
@@ -1232,8 +1230,216 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — stub changes break type checks without runtime errors; update callers together"
         )
 
+    # S425: Constants-file blast — blast target is a file containing only constants.
+    # Constants files are deceptively high-impact; they're imported everywhere but rarely
+    # changed, so developers underestimate how many files will recompile or reload.
+    _s425_syms = [s for s in graph.symbols.values() if s.file_path == file_path]
+    _s425_is_const_file = (
+        len(_s425_syms) >= 3
+        and all(s.kind.value in ("variable", "constant") for s in _s425_syms)
+    )
+    if _s425_is_const_file and len(importers) >= 3:
+        lines.append(
+            f"constants-file blast: {file_path.rsplit('/', 1)[-1]} defines"
+            f" {len(_s425_syms)} constant(s) imported by {len(importers)} file(s)"
+            f" — constants files are silently high-impact; all importers pick up changes immediately"
+        )
+
+    # S431: Event emitter blast — blast target file contains event emit/dispatch functions.
+    # Event emitters have hidden blast radius — subscribers don't show up as direct importers,
+    # so all the subscribers are affected but invisible in a normal dependency trace.
+    _s431_event_patterns = (
+        "emit_", "dispatch_", "publish_", "fire_event_",
+        "trigger_", "broadcast_", "send_event_",
+    )
+    _s431_event_syms = [
+        s for s in graph.symbols.values()
+        if s.file_path == file_path
+        and s.kind.value in ("function", "method")
+        and any(s.name.lower().startswith(p) for p in _s431_event_patterns)
+    ]
+    if len(_s431_event_syms) >= 2:
+        _ev_names431 = ", ".join(s.name for s in _s431_event_syms[:3])
+        lines.append(
+            f"event emitter blast: {file_path.rsplit('/', 1)[-1]} has {len(_s431_event_syms)}"
+            f" event dispatch fn(s) ({_ev_names431})"
+            f" — subscribers are invisible in dependency trace; grep for event names to find all consumers"
+        )
+
+    # S437: Circular import risk — blast target has a mutual import relationship.
+    # File A imports from B while B imports from A creates a circular dependency;
+    # any change can trigger import errors at runtime (especially in Python) and
+    # makes refactoring extremely fragile since both files must change together.
+    _s437_outbound_files = {
+        e.target_id for e in graph.edges
+        if e.kind.value == "imports" and e.source_id == file_path
+        and e.target_id != file_path
+    }
+    _s437_circular = [fp for fp in _s437_outbound_files if file_path in graph.importers_of(fp)]
+    if _s437_circular:
+        _circ_name437 = _s437_circular[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"circular import risk: {file_path.rsplit('/', 1)[-1]} ↔ {_circ_name437}"
+            f" have mutual imports"
+            f" — any change in either file can trigger import errors; refactor to break the cycle"
+        )
+
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
+
+    # S443: Public API file — blast target exports functions/classes used across 5+ files.
+    # Files that form the public API of a module have implicit contracts with all consumers;
+    # removing or renaming any export is a breaking change even if internal callers look fine.
+    _s443_exported = [s for s in symbols if s.exported]
+    _s443_consumer_files: set[str] = set()
+    for _sym443 in _s443_exported:
+        for _e443 in graph.edges:
+            if _e443.kind.value == "calls" and _e443.target_id == _sym443.id:
+                _caller443 = graph.symbols.get(_e443.source_id)
+                if _caller443 and _caller443.file_path != file_path:
+                    _s443_consumer_files.add(_caller443.file_path)
+    if len(_s443_consumer_files) >= 5:
+        lines.append(
+            f"public API file: {len(_s443_exported)} exported symbol(s)"
+            f" consumed by {len(_s443_consumer_files)} files"
+            f" — any signature change is a breaking change; version or deprecate before removing"
+        )
+
+    # S449: Multi-package blast — blast target is imported across 3+ distinct package directories.
+    # When a file is used across many packages, it is an implicit shared library; any
+    # incompatible change requires synchronized updates in every depending package.
+    _s449_importer_dirs: set[str] = set()
+    for _imp449 in importers:
+        _dir449 = _imp449.rsplit("/", 1)[0] if "/" in _imp449 else ""
+        _s449_importer_dirs.add(_dir449)
+    if len(_s449_importer_dirs) >= 3:
+        lines.append(
+            f"multi-package blast: imported from {len(_s449_importer_dirs)} distinct directories"
+            f" — treat as shared library; incompatible changes require coordinated updates across all packages"
+        )
+
+    # S453: Middleware blast — blast target is a middleware or interceptor component.
+    # Middleware sits in the request/response pipeline and processes every call;
+    # any bug or performance regression has a global impact, not just one feature.
+    _s453_mw_keywords = ("middleware", "interceptor", "filter", "pipeline", "decorator", "hook")
+    _s453_mw_name = file_path.lower().replace("\\", "/")
+    _s453_is_mw = any(kw in _s453_mw_name for kw in _s453_mw_keywords)
+    if _s453_is_mw and importers:
+        lines.append(
+            f"middleware blast: {file_path.rsplit('/', 1)[-1]} is a middleware/interceptor"
+            f" used by {len(importers)} file(s)"
+            f" — bugs or performance regressions affect every request through this pipeline"
+        )
+
+    # S459: Core utility blast — blast target has 20+ exported functions used across 5+ files.
+    # A file acting as a utility hub is a de-facto shared library; any breaking change
+    # (renaming a function, changing a return type) ripples through every consumer.
+    _s459_exported_fns = [
+        s for s in graph.symbols.values()
+        if s.file_path == file_path
+        and s.kind.value in ("function", "method")
+        and s.exported
+    ]
+    if len(_s459_exported_fns) >= 20 and len(importers) >= 5:
+        lines.append(
+            f"utility hub blast: {file_path.rsplit('/', 1)[-1]} exports {len(_s459_exported_fns)}"
+            f" functions used by {len(importers)} files"
+            f" — treat as a shared library; any breaking change needs broad coordination"
+        )
+
+    # S467: Test-only importer — blast target is only imported from test files.
+    # If a file is only imported from tests, it may be a test helper or dead production code;
+    # deleting it only breaks tests, but its presence suggests it was intended for production use.
+    _s467_all_importers = graph.importers_of(file_path)
+    _s467_non_test = [fp for fp in _s467_all_importers if not _is_test_file(fp)]
+    _s467_test = [fp for fp in _s467_all_importers if _is_test_file(fp)]
+    if _s467_test and not _s467_non_test and not _is_test_file(file_path):
+        lines.append(
+            f"test-only importer: {file_path.rsplit('/', 1)[-1]} is only imported from test files"
+            f" ({len(_s467_test)} test file(s))"
+            f" — may be an unused helper; verify before keeping or deleting"
+        )
+
+    # S473: Constants-only blast — blast target contains only constant/variable definitions.
+    # Pure constants files are the broadest implicit dependency: every consumer
+    # is silently coupled to every constant's value, name, and type simultaneously.
+    if symbols:
+        _s473_non_const = [
+            s for s in symbols
+            if s.kind.value not in ("variable", "constant", "property")
+        ]
+        if not _s473_non_const and len(symbols) >= 5 and importers:
+            lines.append(
+                f"constants-only blast: {file_path.rsplit('/', 1)[-1]} contains only {len(symbols)} constant/variable definitions"
+                f" imported by {len(importers)} file(s)"
+                f" — renaming or removing any constant silently breaks all consumers"
+            )
+
+    # S479: Bridge file blast — blast target imports from one component and is imported by another.
+    # Bridge files couple two otherwise-independent modules; removing or splitting them
+    # breaks both sides simultaneously, requiring coordinated changes across the boundary.
+    _s479_outbound_dirs: set[str] = set()
+    for _e479 in graph.edges:
+        if _e479.kind.value == "imports" and _e479.source_id == file_path:
+            _dir479 = _e479.target_id.rsplit("/", 1)[0] if "/" in _e479.target_id else ""
+            if _dir479 and _dir479 != (file_path.rsplit("/", 1)[0] if "/" in file_path else ""):
+                _s479_outbound_dirs.add(_dir479)
+    _s479_inbound_dirs: set[str] = set()
+    for _imp479 in importers:
+        _dir479 = _imp479.rsplit("/", 1)[0] if "/" in _imp479 else ""
+        if _dir479 and _dir479 != (file_path.rsplit("/", 1)[0] if "/" in file_path else ""):
+            _s479_inbound_dirs.add(_dir479)
+    if _s479_outbound_dirs and _s479_inbound_dirs and not _s479_outbound_dirs & _s479_inbound_dirs:
+        lines.append(
+            f"bridge file: {file_path.rsplit('/', 1)[-1]} connects"
+            f" {len(_s479_outbound_dirs)} outbound module(s) ↔ {len(_s479_inbound_dirs)} inbound module(s)"
+            f" — removing it requires coordinated changes on both sides of the boundary"
+        )
+
+    # S484: Data model blast — blast target defines dataclasses, NamedTuples, or TypedDicts.
+    # Data model files are imported everywhere for type annotations and destructuring;
+    # renaming a field or changing its type breaks all downstream consumers silently.
+    _s484_model_markers = ("dataclass", "NamedTuple", "TypedDict", "dataclasses")
+    _s484_file_imports = next(
+        (fi.imports for fp, fi in graph.files.items() if fp == file_path), []
+    ) or []
+    _s484_is_model = any(
+        any(m in imp for m in _s484_model_markers) for imp in _s484_file_imports
+    )
+    if _s484_is_model and importers:
+        lines.append(
+            f"data model blast: {file_path.rsplit('/', 1)[-1]} defines typed data models"
+            f" imported by {len(importers)} file(s)"
+            f" — field renames or type changes silently break all consumers; update together"
+        )
+
+    # S490: High-complexity blast target — the blast file contains a function with cx ≥ 15.
+    # Highly complex functions are harder to modify safely; changes carry higher regression risk
+    # than in simple files, and ripple effects are harder to reason about.
+    _s490_syms = [s for s in graph.symbols.values() if s.file_path == file_path]
+    _s490_complex = [
+        s for s in _s490_syms
+        if s.kind.value in ("function", "method")
+        and s.complexity is not None
+        and s.complexity >= 15
+    ]
+    if _s490_complex:
+        _top490 = max(_s490_complex, key=lambda s: s.complexity or 0)
+        lines.append(
+            f"high complexity: {_top490.name} has cyclomatic complexity {_top490.complexity}"
+            f" — complex functions carry higher regression risk; add tests before modifying"
+        )
+
+    # S496: Package init blast — blast target is a package __init__.py.
+    # Init files define the public interface of a package; any change to imports or re-exports
+    # silently breaks every consumer that relies on the package's public API.
+    _basename496 = file_path.rsplit("/", 1)[-1]
+    if _basename496 == "__init__.py" and importers:
+        lines.append(
+            f"package init blast: {file_path} is a package interface"
+            f" used by {len(importers)} file(s)"
+            f" — changes to __init__.py re-exports propagate to all consumers; review every import"
+        )
 
     return "\n".join(lines)
 

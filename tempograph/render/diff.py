@@ -19,8 +19,38 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                     normalized.add(fp)
                     break
 
+    # S447: Config-only change — all changed files are settings/config files.
+    # Moved here (before early return) so it fires even when config files are not
+    # in the graph (config files are often not parsed as source files).
+    _s447_config_keywords = ("config", "settings", "conf", "env", "dotenv", "secrets", "options")
+    _s447_non_config = [
+        f for f in changed_files
+        if not any(kw in f.rsplit("/", 1)[-1].lower() for kw in _s447_config_keywords)
+        and f.rsplit("/", 1)[-1].lower() not in (".env", ".env.example")
+    ]
+    if changed_files and not _s447_non_config:
+        _cfg_names447 = ", ".join(f.rsplit("/", 1)[-1] for f in changed_files[:2])
+        lines.append(
+            f"config-only diff: all {len(changed_files)} changed file(s) are configuration ({_cfg_names447})"
+            f" — config changes affect runtime behavior silently; verify flag interactions and defaults"
+        )
+
+    # S477: Multi-module diff — diff spans 5+ distinct top-level directories.
+    # Moved before early return so it fires even when changed files aren't in the graph.
+    _s477_top_dirs: set[str] = set()
+    for _f477 in changed_files:
+        _parts477 = _f477.replace("\\", "/").split("/")
+        _top477 = _parts477[0] if _parts477 else ""
+        if _top477 and _top477 != ".":
+            _s477_top_dirs.add(_top477)
+    if len(_s477_top_dirs) >= 5:
+        lines.append(
+            f"multi-module diff: changes span {len(_s477_top_dirs)} top-level directories"
+            f" — split into focused PRs per module to reduce review complexity"
+        )
+
     if not normalized:
-        return f"None of the changed files found in graph: {changed_files}"
+        return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 
     affected_symbols: list[Symbol] = []
     for fp in sorted(normalized):
@@ -1270,6 +1300,193 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
         lines.append(
             f"feature flag change: {_ff_names417} in diff"
             f" — flag changes affect runtime behavior instantly; test with both flag states"
+        )
+
+    # S423: Test-only diff — all changed files are test files.
+    # A diff that modifies only tests (no production code) is unusual; it may indicate
+    # test-only fixes after a regression or orphaned test cleanup work.
+    if changed_files:
+        _s423_all_test = all(_is_test_file(f) for f in changed_files)
+        if _s423_all_test and len(changed_files) >= 1:
+            _test_names423 = ", ".join(f.rsplit("/", 1)[-1] for f in changed_files[:2])
+            lines.append(
+                f"test-only diff: {_test_names423} — all {len(changed_files)} changed file(s) are tests"
+                f" — verify matching production changes aren't missing from this diff"
+            )
+
+    # S429: Infrastructure file in diff — diff touches Dockerfile, CI/CD, or infra config.
+    # Infrastructure file changes affect the deployment environment, not just the code;
+    # a wrong config can break all deployments or expose the service to the internet.
+    _s429_infra_names = (
+        "dockerfile", "docker-compose", "docker_compose", ".github",
+        "kubernetes", "k8s", "terraform", "ansible", "ci.yml",
+        "pipeline.yml", ".circleci", "jenkinsfile",
+    )
+    _s429_infra_files = [
+        f for f in changed_files
+        if any(w in f.lower().replace("-", "_") for w in _s429_infra_names)
+    ]
+    if _s429_infra_files:
+        _infra_names429 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s429_infra_files[:2])
+        lines.append(
+            f"infra change: {_infra_names429} in diff"
+            f" — deployment environment changes; test in staging before deploying to production"
+        )
+
+    # S435: Version bump in diff — diff touches version or changelog files.
+    # Version bumps should be synchronised with the actual change scope; bumping a version
+    # without updating dependencies or changelogs (or vice versa) causes silent drift and
+    # misleads consumers of the package about what changed.
+    _s435_version_names = (
+        "version", "changelog", "changes", "history", "release",
+    )
+    _s435_version_files_exact = ("version.py", "VERSION", "version.txt", "_version.py")
+    _s435_version_files = [
+        f for f in changed_files
+        if (
+            f.rsplit("/", 1)[-1].lower() in {n.lower() for n in _s435_version_files_exact}
+            or any(
+                w in f.rsplit("/", 1)[-1].lower()
+                for w in _s435_version_names
+            )
+        )
+    ]
+    if _s435_version_files:
+        _ver_names435 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s435_version_files[:2])
+        lines.append(
+            f"version bump: {_ver_names435} in diff"
+            f" — ensure changelog, dependencies, and semver scope are all in sync"
+        )
+
+    # S441: Serialization file in diff — diff touches serialization/deserialization logic.
+    # Serialization changes are wire-protocol changes; any consumer (client, queue consumer,
+    # stored data) that expects the old shape will silently corrupt on the new format.
+    _s441_serial_keywords = ("serial", "deserial", "marshal", "unmarshal", "encode", "decode", "codec")
+    _s441_serial_files = [
+        f for f in changed_files
+        if any(kw in f.rsplit("/", 1)[-1].lower() for kw in _s441_serial_keywords)
+    ]
+    if _s441_serial_files:
+        _ser_name441 = _s441_serial_files[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"serialization change: {_ser_name441} in diff"
+            f" — wire-format changes break all existing consumers; bump version or add migration"
+        )
+
+    # S454: Auth/security diff — diff touches authentication, authorization, or cryptography code.
+    # Auth changes are high-risk: a logic error can grant unauthorized access or lock out
+    # legitimate users. These files need security review even for seemingly minor changes.
+    _s454_auth_keywords = (
+        "auth", "login", "logout", "password", "token", "session", "permission",
+        "credential", "secret", "jwt", "oauth", "crypto", "encrypt", "hash",
+        "access_control", "acl", "rbac",
+    )
+    _s454_auth_files = [
+        f for f in changed_files
+        if any(kw in f.lower().replace("-", "_") for kw in _s454_auth_keywords)
+    ]
+    if _s454_auth_files:
+        _auth_names454 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s454_auth_files[:2])
+        lines.append(
+            f"auth/security change: {_auth_names454} in diff"
+            f" — authentication/cryptography logic; requires security review before merging"
+        )
+
+    # S460: Schema migration in diff — diff touches database migration files.
+    # Migrations are irreversible in production; an incorrect migration can corrupt
+    # the database, and a rolled-back deploy may leave the schema in a broken state.
+    _s460_migration_words = ("migration", "migrate", "alembic", "flyway", "liquibase", "schema")
+    _s460_migration_files = [
+        f for f in changed_files
+        if any(w in f.lower().replace("-", "_") for w in _s460_migration_words)
+        or "/migrations/" in f.replace("\\", "/")
+        or "/migrate/" in f.replace("\\", "/")
+    ]
+    if _s460_migration_files:
+        _mig_names460 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s460_migration_files[:2])
+        lines.append(
+            f"schema migration: {_mig_names460} in diff"
+            f" — database schema changes are irreversible in production; test rollback path"
+        )
+
+    # S465: Large file touched — diff includes a file with 500+ lines.
+    # Large files concentrate risk; any change is adjacent to unrelated logic,
+    # increasing the chance of accidental breakage or merge conflicts.
+    _s465_large_touched = [
+        fp for fp in normalized
+        if fp in graph.files and graph.files[fp].line_count and graph.files[fp].line_count >= 500
+    ]
+    if _s465_large_touched:
+        _lg_name465 = _s465_large_touched[0].rsplit("/", 1)[-1]
+        _lg_lines465 = graph.files[_s465_large_touched[0]].line_count
+        lines.append(
+            f"large file touched: {_lg_name465} ({_lg_lines465:,} lines)"
+            f" — changes are adjacent to unrelated logic; review surrounding context carefully"
+        )
+
+    # S471: Dependency update in diff — diff includes a lock file or requirements file.
+    # Lock file changes indicate transitive dependency upgrades; any indirect dependency
+    # could introduce incompatible APIs or security vulnerabilities without being obvious from the diff.
+    _s471_lock_names = (
+        "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+        "requirements.txt", "requirements-dev.txt", "pipfile.lock",
+        "poetry.lock", "cargo.lock", "go.sum", "gemfile.lock",
+    )
+    _s471_lock_files = [
+        f for f in changed_files
+        if f.rsplit("/", 1)[-1].lower() in {n.lower() for n in _s471_lock_names}
+        or f.rsplit("/", 1)[-1].lower().startswith("requirements")
+    ]
+    if _s471_lock_files:
+        _lock_name471 = _s471_lock_files[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"dependency update: {_lock_name471} in diff"
+            f" — transitive dependency upgrades may introduce incompatible APIs or vulnerabilities"
+        )
+
+    # S485: Base class touched — diff contains a file that defines a Base* or Abstract* class.
+    # Changes to base classes cascade to every subclass; a renamed method or added required
+    # argument breaks all derivatives that don't override it.
+    _s485_base_prefixes = ("Base", "Abstract", "Mixin", "Interface")
+    _s485_base_files: list[str] = []
+    for _fp485 in changed_files:
+        _syms485 = [
+            s for s in graph.symbols.values()
+            if s.file_path == _fp485 and s.kind.value == "class"
+            and any(s.name.startswith(p) for p in _s485_base_prefixes)
+        ]
+        if _syms485:
+            _s485_base_files.append(_fp485)
+    if _s485_base_files:
+        _names485 = ", ".join(f.rsplit("/", 1)[-1] for f in _s485_base_files[:3])
+        lines.append(
+            f"base class touched: {_names485} defines a base/abstract class"
+            f" — changes cascade to all subclasses; check every derivative for compatibility"
+        )
+
+    # S491: Diff touches a test fixture file — conftest.py or shared fixture module in diff.
+    # Fixture changes are invisible to individual tests but propagate to every consumer;
+    # a subtle fixture change can flip hundreds of test results without a clear error.
+    _s491_fixture_names = ("conftest.py", "fixtures.py", "test_helpers.py", "test_utils.py")
+    _s491_fixture_files = [
+        f for f in changed_files
+        if any(f.rsplit("/", 1)[-1].lower() == fn for fn in _s491_fixture_names)
+        or f.rsplit("/", 1)[-1].lower().endswith("_fixtures.py")
+    ]
+    if _s491_fixture_files:
+        _fix_name491 = _s491_fixture_files[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"fixture touched: {_fix_name491} is a shared test fixture"
+            f" — changes propagate silently to all dependent tests; run the full test suite"
+        )
+
+    # S497: Large diff surface — diff spans 10+ files.
+    # Very wide diffs are hard to review atomically; reviewers miss interactions between distant
+    # changes and the probability of a hidden regression grows with diff breadth.
+    if len(changed_files) >= 10:
+        lines.append(
+            f"large diff: {len(changed_files)} files changed"
+            f" — wide diffs increase review blind-spots; consider splitting into smaller PRs"
         )
 
     return "\n".join(lines)

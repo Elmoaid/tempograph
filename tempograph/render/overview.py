@@ -1565,8 +1565,6 @@ def _signals_structure(
             f" — many unimplemented functions; callers may depend on behavior that doesn't exist"
         )
 
-    # S316: Async-heavy — 5+ source files use async def patterns.
-
     # S330: Data-pipeline codebase — 5+ files contain pipeline/processor/etl/transform patterns.
     # Pipeline architectures require understanding the data contract between stages;
     # changes to intermediate formats or schema break all downstream stages.
@@ -1874,6 +1872,47 @@ def _signals_structure(
             f" — shared init logic (config, logging) may diverge; centralize startup orchestration"
         )
 
+    # S421: Flat codebase — all source files are at the root level with no subdirectory structure.
+    # A flat layout becomes unnavigable past ~10 files; adding subdirectory organization
+    # forces explicit module boundaries and prevents circular import tangles.
+    _s421_src_files = [
+        fp for fp in graph.files
+        if graph.files[fp].language.value in _CODE_LANGS
+        and not _is_test_file(fp)
+    ]
+    _s421_subdirs = {
+        fp.rsplit("/", 1)[0] for fp in _s421_src_files
+        if "/" in fp
+    }
+    if len(_s421_src_files) >= 8 and len(_s421_subdirs) == 0:
+        lines.append(
+            f"flat codebase: {len(_s421_src_files)} source files all at root with no subdirectory structure"
+            f" — consider grouping by domain; flat layouts become unnavigable past ~10 files"
+        )
+
+    # S427: High method-to-class ratio — classes average 10+ methods each.
+    # Classes with many methods are doing too much; long method lists indicate
+    # low cohesion and a class that should be split into specialized collaborators.
+    _s427_classes = [
+        s for s in graph.symbols.values()
+        if s.kind.value == "class" and not _is_test_file(s.file_path)
+    ]
+    if len(_s427_classes) >= 2:
+        _s427_method_counts = []
+        for cls in _s427_classes:
+            _method_count = sum(
+                1 for s in graph.symbols.values()
+                if s.parent_id == cls.id and s.kind.value == "method"
+            )
+            _s427_method_counts.append(_method_count)
+        _s427_avg_methods = sum(_s427_method_counts) / len(_s427_method_counts)
+        if _s427_avg_methods >= 10:
+            lines.append(
+                f"high method density: {len(_s427_classes)} classes averaging"
+                f" {_s427_avg_methods:.0f} methods each"
+                f" — large class surface areas; split by Single Responsibility Principle"
+            )
+
     return lines
 
 
@@ -1897,6 +1936,53 @@ def _signals_async_oop(
         _async_files = len({s.file_path for s in _async_syms})
         lines.append(f"async surface: {len(_async_syms)} exported async functions in {_async_files} files")
 
+    # S433: No async code — service-sized codebase with no async def functions.
+    # A sync-only codebase cannot handle concurrent I/O efficiently; any blocking call
+    # stalls the entire thread, making async adoption a potential future rewrite.
+    _s433_src_files = [
+        fp for fp in graph.files
+        if not _is_test_file(fp)
+        and any(fp.endswith(ext) for ext in (".py", ".js", ".ts", ".jsx", ".tsx"))
+    ]
+    if len(_s433_src_files) >= 10 and len(_async_syms) == 0:
+        lines.append(
+            f"sync-only: {len(_s433_src_files)} source files with no async def functions"
+            f" — all I/O is blocking; async adoption requires rewriting call sites"
+        )
+
+    # S439: Deep inheritance — codebase has 4+ levels of class inheritance.
+    # Deep hierarchies hide behavior: the effective method set of a leaf class requires
+    # tracing up 4+ classes, and each level is a potential override site.
+    _s439_inherits: dict[str, list[str]] = {}
+    for _e439 in graph.edges:
+        if _e439.kind.value == "inherits":
+            _s439_inherits.setdefault(_e439.source_id, []).append(_e439.target_id)
+    _s439_max_depth = 0
+    _s439_deepest: str = ""
+    for _cls439_id, _parents439 in _s439_inherits.items():
+        _depth439 = 0
+        _cur439_ids = [_cls439_id]
+        _seen439: set[str] = {_cls439_id}
+        while True:
+            _next439: list[str] = []
+            for _cid439 in _cur439_ids:
+                for _pid439 in _s439_inherits.get(_cid439, []):
+                    if _pid439 not in _seen439:
+                        _next439.append(_pid439)
+                        _seen439.add(_pid439)
+            if not _next439:
+                break
+            _depth439 += 1
+            _cur439_ids = _next439
+        if _depth439 > _s439_max_depth:
+            _s439_max_depth = _depth439
+            _cls439_sym = graph.symbols.get(_cls439_id)
+            _s439_deepest = _cls439_sym.name if _cls439_sym else _cls439_id
+    if _s439_max_depth >= 3:
+        lines.append(
+            f"deep inheritance: {_s439_max_depth + 1} levels deep (e.g. {_s439_deepest})"
+            f" — override resolution requires tracing up {_s439_max_depth + 1} classes; prefer composition"
+        )
 
     # S243: Framework/library detected — codebase imports a well-known web framework or library.
     # Shown to orient agents: know what routing, ORM, and middleware patterns to expect.
@@ -1992,6 +2078,181 @@ def _signals_async_oop(
             f" — event-loop semantics apply; avoid introducing blocking calls"
         )
 
+    # S445: Multi-language codebase — source files span 3+ programming languages.
+    # Polyglot codebases require language-specific tooling for each component; a change
+    # that looks simple in one layer may require coordinated changes in every other language.
+    _s445_langs = {
+        graph.files[fp].language.value
+        for fp in graph.files
+        if not _is_test_file(fp)
+        and graph.files[fp].language.value in _CODE_LANGS
+    }
+    if len(_s445_langs) >= 3:
+        _lang_list445 = ", ".join(sorted(_s445_langs)[:5])
+        lines.append(
+            f"multi-language: {len(_s445_langs)} languages in use ({_lang_list445})"
+            f" — cross-language changes need coordinated builds and tooling per layer"
+        )
+
+    # S452: Test-thin codebase — test lines are under 20% of source lines.
+    # Low test coverage relative to source means most changes are unverified;
+    # the lower the ratio, the higher the risk of silent regressions.
+    _s452_src_lines = sum(
+        graph.files[fp].line_count for fp in graph.files
+        if not _is_test_file(fp) and any(fp.endswith(ext) for ext in (".py", ".js", ".ts", ".jsx", ".tsx", ".go", ".rs", ".java", ".rb"))
+        and graph.files[fp].line_count
+    )
+    _s452_test_lines = sum(
+        graph.files[fp].line_count for fp in graph.files
+        if _is_test_file(fp) and graph.files[fp].line_count
+    )
+    if _s452_src_lines > 500 and _s452_test_lines < _s452_src_lines * 0.2:
+        _ratio452 = int(_s452_test_lines / _s452_src_lines * 100) if _s452_src_lines else 0
+        lines.append(
+            f"test-thin: test code is only {_ratio452}% of source ({_s452_test_lines:,} vs {_s452_src_lines:,} lines)"
+            f" — most changes are unverified; add tests before refactoring"
+        )
+
+    # S458: Monorepo structure — multiple independent packages with their own package files.
+    # Monorepos host multiple services in one repo; a change to a shared library
+    # requires updating every consumer service and re-testing each independently.
+    _s458_pkg_files = (
+        "setup.py", "setup.cfg", "pyproject.toml", "package.json",
+        "cargo.toml", "go.mod", "pom.xml", "build.gradle",
+    )
+    _s458_pkg_dirs: set[str] = set()
+    for _fp458 in graph.files:
+        _fname458 = _fp458.rsplit("/", 1)[-1].lower()
+        if _fname458 in _s458_pkg_files:
+            _dir458 = _fp458.rsplit("/", 1)[0] if "/" in _fp458 else "."
+            _s458_pkg_dirs.add(_dir458)
+    if len(_s458_pkg_dirs) >= 3:
+        lines.append(
+            f"monorepo: {len(_s458_pkg_dirs)} independent package roots detected"
+            f" — shared-library changes require updating every consumer; test each service independently"
+        )
+
+    # S463: No entry points — codebase has no main()/cli()/entry() function.
+    # A library with no entry points is entirely consumed by callers; there is no
+    # single place to trace the full execution path end-to-end for integration testing.
+    _s463_entry_names = {"main", "cli", "run", "start", "entry", "app", "serve", "launch"}
+    _s463_entry_syms = [
+        s for s in graph.symbols.values()
+        if s.name.lower() in _s463_entry_names
+        and s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+    ]
+    _s463_src_files = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_s463_src_files) >= 5 and not _s463_entry_syms:
+        lines.append(
+            f"no entry points: {len(_s463_src_files)} source files with no main/cli/run function"
+            f" — library-only; no single execution path to trace for integration testing"
+        )
+
+    # S469: Shallow test suite — all test functions are trivially short (< 10 lines).
+    # Tiny test functions are likely smoke tests or assertion-only stubs;
+    # they prove the code runs but don't verify complex behavior or edge cases.
+    _s469_test_fns = [
+        s for s in graph.symbols.values()
+        if _is_test_file(s.file_path)
+        and s.kind.value in ("function", "method", "test")
+        and s.name.startswith("test_")
+        and s.line_start is not None and s.line_end is not None
+    ]
+    _s469_short_fns = [
+        s for s in _s469_test_fns
+        if (s.line_end - s.line_start) < 10
+    ]
+    if len(_s469_test_fns) >= 10 and len(_s469_short_fns) == len(_s469_test_fns):
+        lines.append(
+            f"shallow tests: all {len(_s469_test_fns)} test functions are under 10 lines"
+            f" — likely smoke tests only; complex behavior and edge cases are untested"
+        )
+
+    # S481: High dead-code ratio — 30%+ of functions appear unreferenced.
+    # A high percentage of unreachable code inflates maintenance surface;
+    # every change must consider whether any dead branch accidentally becomes live.
+    _s481_src_syms = [
+        s for s in graph.symbols.values()
+        if not _is_test_file(s.file_path) and s.kind.value in ("function", "method")
+    ]
+    _s481_unreferenced = [
+        s for s in _s481_src_syms
+        if not graph.callers_of(s.id) and not graph.importers_of(s.file_path)
+    ]
+    if len(_s481_src_syms) >= 20:
+        _dead_ratio481 = len(_s481_unreferenced) / len(_s481_src_syms)
+        if _dead_ratio481 >= 0.30:
+            lines.append(
+                f"high dead-code ratio: {int(_dead_ratio481 * 100)}% of functions are unreferenced"
+                f" ({len(_s481_unreferenced)}/{len(_s481_src_syms)})"
+                f" — clean up dead code before adding features to reduce cognitive load"
+            )
+
+    # S483: No type annotations — 5+ source files have no typed function signatures.
+    # Untyped codebases make refactoring dangerous; callers rely on implicit contracts that
+    # aren't machine-checkable, so type errors only surface at runtime.
+    _s483_untyped: list[str] = []
+    for _fp483, _fi483 in graph.files.items():
+        if _is_test_file(_fp483) or _fi483.language.value != "python":
+            continue
+        _fns483 = [
+            s for s in graph.symbols.values()
+            if s.file_path == _fp483 and s.kind.value in ("function", "method")
+        ]
+        if not _fns483:
+            continue
+        _typed483 = [
+            s for s in _fns483
+            if s.signature and (
+                "->" in s.signature
+                or (
+                    "(" in s.signature
+                    and ":" in s.signature.split("(", 1)[1].rsplit(")", 1)[0]
+                )
+            )
+        ]
+        if len(_typed483) == 0:
+            _s483_untyped.append(_fp483)
+    if len(_s483_untyped) >= 5:
+        lines.append(
+            f"no type annotations: {len(_s483_untyped)} Python source file(s) have zero typed signatures"
+            f" — add mypy/pyright before refactoring to surface implicit contract violations"
+        )
+
+    # S489: God module — a single file holds 30%+ of all source symbols.
+    # Concentrating logic in one file raises merge conflict probability and
+    # increases cognitive load; any change requires understanding the whole module.
+    _s489_src_syms = [
+        s for s in graph.symbols.values()
+        if not _is_test_file(s.file_path) and s.kind.value in ("function", "method", "class")
+    ]
+    if len(_s489_src_syms) >= 20:
+        from collections import Counter as _Counter489  # noqa: PLC0415
+        _s489_counts = _Counter489(s.file_path for s in _s489_src_syms)
+        _s489_top_fp, _s489_top_n = _s489_counts.most_common(1)[0]
+        _s489_ratio = _s489_top_n / len(_s489_src_syms)
+        if _s489_ratio >= 0.30:
+            lines.append(
+                f"god module: {_s489_top_fp.rsplit('/', 1)[-1]} holds {int(_s489_ratio * 100)}%"
+                f" of source symbols ({_s489_top_n}/{len(_s489_src_syms)})"
+                f" — high merge-conflict risk; consider splitting by responsibility"
+            )
+
+    # S495: Star imports — 3+ source files use `from X import *`.
+    # Star imports pollute the namespace and make it impossible to trace where symbols come from;
+    # a name collision silently overrides the previous binding without any error.
+    _s495_star_files: list[str] = []
+    for _fp495, _fi495 in graph.files.items():
+        if _is_test_file(_fp495):
+            continue
+        if any("import *" in _imp for _imp in (_fi495.imports or [])):
+            _s495_star_files.append(_fp495)
+    if len(_s495_star_files) >= 3:
+        lines.append(
+            f"star imports: {len(_s495_star_files)} source file(s) use `import *`"
+            f" — wildcard imports hide symbol origins and risk silent name collisions"
+        )
 
     return lines
 

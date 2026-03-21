@@ -117,52 +117,90 @@ class TestPHPParser:
         assert len(imports) >= 1
         assert any("User" in imp for imp in imports)
 
-    def test_public_property_extracted(self):
+    # ── Class property tests ─────────────────────────────────
+
+    def test_public_property(self):
         symbols, edges, _ = self._parse(
-            "<?php\nclass User {\n    public $name;\n}"
+            "<?php\nclass User {\n    public string $name;\n}"
         )
         props = [s for s in symbols if s.kind == SymbolKind.VARIABLE]
         assert len(props) == 1
         assert props[0].name == "name"
         assert props[0].exported is True
 
-    def test_private_property_not_exported(self):
+    def test_protected_property_not_exported(self):
         symbols, _, _ = self._parse(
-            "<?php\nclass User {\n    private string $password;\n}"
+            "<?php\nclass User {\n    protected int $age;\n}"
         )
         props = [s for s in symbols if s.kind == SymbolKind.VARIABLE]
         assert len(props) == 1
-        assert props[0].name == "password"
+        assert props[0].name == "age"
         assert props[0].exported is False
 
-    def test_protected_property_not_exported(self):
+    def test_private_property_not_exported(self):
         symbols, _, _ = self._parse(
-            "<?php\nclass User {\n    protected $email;\n}"
+            "<?php\nclass User {\n    private $email;\n}"
         )
         props = [s for s in symbols if s.kind == SymbolKind.VARIABLE]
         assert len(props) == 1
         assert props[0].name == "email"
         assert props[0].exported is False
 
-    def test_property_contains_edge(self):
-        symbols, edges, _ = self._parse(
-            "<?php\nclass Repo {\n    public $db;\n}"
-        )
-        contains = [e for e in edges if e.kind == EdgeKind.CONTAINS]
-        assert any("db" in e.target_id for e in contains), f"No CONTAINS for db: {contains}"
-
-    def test_multiple_properties(self):
+    def test_property_type_annotation_in_signature(self):
         symbols, _, _ = self._parse(
-            "<?php\nclass Config {\n    public $host;\n    protected $port;\n    private $secret;\n}"
+            "<?php\nclass User {\n    public string $name;\n}"
         )
         props = [s for s in symbols if s.kind == SymbolKind.VARIABLE]
-        names = {p.name for p in props}
-        assert names == {"host", "port", "secret"}
+        assert props[0].signature == "$name: string"
 
-    def test_trait_property_extracted(self):
+    def test_untyped_property_signature(self):
         symbols, _, _ = self._parse(
-            "<?php\ntrait HasTimestamps {\n    public $created_at;\n}"
+            "<?php\nclass User {\n    private $raw;\n}"
+        )
+        props = [s for s in symbols if s.kind == SymbolKind.VARIABLE]
+        assert props[0].signature == "$raw"
+
+    def test_multiple_properties_extracted(self):
+        symbols, edges, _ = self._parse(
+            "<?php\nclass Model {\n    public string $name;\n    protected int $count;\n    private $cache;\n}"
+        )
+        props = [s for s in symbols if s.kind == SymbolKind.VARIABLE]
+        assert len(props) == 3
+        names = {p.name for p in props}
+        assert names == {"name", "count", "cache"}
+
+    def test_property_contains_edge(self):
+        symbols, edges, _ = self._parse(
+            "<?php\nclass Svc {\n    public string $host;\n}"
         )
         props = [s for s in symbols if s.kind == SymbolKind.VARIABLE]
         assert len(props) == 1
-        assert props[0].name == "created_at"
+        contains = [e for e in edges if e.kind == EdgeKind.CONTAINS]
+        assert any("host" in e.target_id for e in contains)
+
+    def test_static_property_exported(self):
+        symbols, _, _ = self._parse(
+            "<?php\nclass DB {\n    public static string $table = 'users';\n}"
+        )
+        props = [s for s in symbols if s.kind == SymbolKind.VARIABLE]
+        assert len(props) == 1
+        assert props[0].name == "table"
+        assert props[0].exported is True
+
+    def test_trait_property_extracted(self):
+        symbols, edges, _ = self._parse(
+            "<?php\ntrait Cacheable {\n    protected int $ttl;\n}"
+        )
+        props = [s for s in symbols if s.kind == SymbolKind.VARIABLE]
+        assert len(props) == 1
+        assert props[0].name == "ttl"
+        assert props[0].exported is False
+
+    def test_implements_multiple_interfaces(self):
+        symbols, edges, _ = self._parse(
+            "<?php\nclass Svc implements InterfaceA, InterfaceB {}"
+        )
+        impls = [e for e in edges if e.kind == EdgeKind.IMPLEMENTS]
+        targets = {e.target_id for e in impls}
+        assert "InterfaceA" in targets
+        assert "InterfaceB" in targets
