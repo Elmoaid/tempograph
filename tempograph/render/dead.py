@@ -1590,6 +1590,28 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — data export path may be missing; verify before deleting"
         )
 
+    # S474: Dead initializers — setup_*/initialize_*/init_* functions with 0 callers.
+    # Unused setup functions suggest an initialization path was planned but never wired up;
+    # the component may be operating without proper initialization, using default/zero values.
+    _s474_init_prefixes = (
+        "setup_", "initialize_", "init_", "bootstrap_", "configure_", "startup_",
+    )
+    _s474_dead_inits = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s474_init_prefixes)
+    ]
+    if len(_s474_dead_inits) >= 1:
+        _init_names474 = ", ".join(s.name for s in _s474_dead_inits[:3])
+        if len(_s474_dead_inits) > 3:
+            _init_names474 += f" +{len(_s474_dead_inits) - 3} more"
+        lines.append(
+            f"dead initializers: {len(_s474_dead_inits)} uncalled setup fn(s) ({_init_names474})"
+            f" — component may be running without initialization; verify defaults before deleting"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

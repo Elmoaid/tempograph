@@ -1410,4 +1410,24 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — changes are adjacent to unrelated logic; review surrounding context carefully"
         )
 
+    # S471: Dependency update in diff — diff includes a lock file or requirements file.
+    # Lock file changes indicate transitive dependency upgrades; any indirect dependency
+    # could introduce incompatible APIs or security vulnerabilities without being obvious from the diff.
+    _s471_lock_names = (
+        "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+        "requirements.txt", "requirements-dev.txt", "pipfile.lock",
+        "poetry.lock", "cargo.lock", "go.sum", "gemfile.lock",
+    )
+    _s471_lock_files = [
+        f for f in changed_files
+        if f.rsplit("/", 1)[-1].lower() in {n.lower() for n in _s471_lock_names}
+        or f.rsplit("/", 1)[-1].lower().startswith("requirements")
+    ]
+    if _s471_lock_files:
+        _lock_name471 = _s471_lock_files[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"dependency update: {_lock_name471} in diff"
+            f" — transitive dependency upgrades may introduce incompatible APIs or vulnerabilities"
+        )
+
     return "\n".join(lines)
