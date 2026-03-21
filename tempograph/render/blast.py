@@ -1000,6 +1000,34 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — changes here cascade through all dependent tests; run full test suite"
         )
 
+    # S371: Utility belt blast — blast target has 15+ exported symbols each imported by different files.
+    # A utility belt file is essentially an undifferentiated bag of helpers; it's hard to know
+    # which helpers are truly safe to modify without understanding all consumer patterns.
+    _s371_file_syms = [s for s in graph.symbols.values() if s.file_path == file_path]
+    if len(_s371_file_syms) >= 15 and len(importers) >= 5:
+        # Check that multiple importers each use different symbols (breadth of usage)
+        _s371_sym_ids = {s.id for s in _s371_file_syms}
+        _s371_importer_syms: dict[str, set[str]] = {}
+        for _e371 in graph.edges:
+            if (_e371.kind.value == "calls"
+                    and _e371.source_id in {
+                        s.id for s in graph.symbols.values()
+                        if not _is_test_file(s.file_path)
+                    }
+                    and _e371.target_id in _s371_sym_ids):
+                _src_file371 = next(
+                    (s.file_path for s in graph.symbols.values() if s.id == _e371.source_id),
+                    None
+                )
+                if _src_file371 and _src_file371 != file_path:
+                    _s371_importer_syms.setdefault(_src_file371, set()).add(_e371.target_id)
+        if len(_s371_importer_syms) >= 4:
+            lines.append(
+                f"utility belt: {len(_s371_file_syms)} symbols in {file_path.rsplit('/', 1)[-1]}"
+                f" used across {len(_s371_importer_syms)} files"
+                f" — undifferentiated helper bag; extract domain-specific modules to reduce blast radius"
+            )
+
     # S365: Middleware blast — blast target is a middleware/interceptor/decorator file.
     # Middleware wraps every request or operation in the stack; changes to it affect all
     # code paths simultaneously, including ones that have no tests exercising that path.

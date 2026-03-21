@@ -1244,6 +1244,23 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 f" — package interface is unstable; every importer of the package is affected"
             )
 
+    # S370: Divergent hotspot — top hotspot symbol is in a different file than the 2nd hotspot.
+    # When the top 2 hotspots live in different files/modules, risk is distributed rather than
+    # concentrated; both files need attention but in separate change operations.
+    if len(scores) >= 2:
+        _top370 = scores[0][1]
+        _sec370 = scores[1][1]
+        if (not _is_test_file(_top370.file_path) and not _is_test_file(_sec370.file_path)
+                and _top370.file_path != _sec370.file_path):
+            _dir_top370 = _top370.file_path.rsplit("/", 1)[0] if "/" in _top370.file_path else "."
+            _dir_sec370 = _sec370.file_path.rsplit("/", 1)[0] if "/" in _sec370.file_path else "."
+            if _dir_top370 != _dir_sec370:
+                lines.append(
+                    f"\ndivergent hotspots: top risks in different modules"
+                    f" ({_top370.file_path.rsplit('/', 1)[-1]} vs {_sec370.file_path.rsplit('/', 1)[-1]})"
+                    f" — risk is distributed; plan changes in both areas separately"
+                )
+
     # S364: Test support hotspot — top hotspot is a shared test helper/fixture/factory file.
     # High-churn test support files are themselves a testing risk; if conftest/factories
     # change frequently, dependent tests may break for reasons unrelated to the code under test.
