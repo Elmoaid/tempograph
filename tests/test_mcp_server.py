@@ -40438,3 +40438,240 @@ class TestDeadValidatorsS851:
         assert "dead validators" not in out, (
             f"'dead validators' must not appear when validate_ function is called; got:\n{out}"
         )
+
+
+# ── S852–S857 ──────────────────────────────────────────────────────────────────
+
+# ── S852: Operator overload focus ─────────────────────────────────────────────
+
+class TestOperatorOverloadFocusS852:
+    """S852: Focused method overloads Python operator emits operator-overload signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "vector.py").write_text(
+            "class Vector:\n    def __eq__(self, other): return True\n"
+        )
+        (tmp_path / "user.py").write_text(
+            "from vector import Vector\ndef run(): Vector() == Vector()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "__eq__")
+        assert "operator overload" in out, (
+            f"'operator overload' expected for __eq__ method; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "class Service:\n    def process(self, data): return data\n"
+        )
+        (tmp_path / "user.py").write_text(
+            "from service import Service\ndef run(): Service().process(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process")
+        assert "operator overload" not in out, (
+            f"'operator overload' must not appear for non-operator method; got:\n{out}"
+        )
+
+
+# ── S853: High dead ratio ─────────────────────────────────────────────────────
+
+class TestHighDeadRatioS853:
+    """S853: 40%+ exported symbols unused emits high-dead-ratio signal in overview."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        # 10 exported functions, only 2 called — 80% dead
+        for i in range(10):
+            (tmp_path / f"module_{i}.py").write_text(f"def exported_fn_{i}(): pass\n")
+        (tmp_path / "runner.py").write_text(
+            "from module_0 import exported_fn_0\n"
+            "from module_1 import exported_fn_1\n"
+            "def run(): exported_fn_0(); exported_fn_1()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "high dead ratio" in out, (
+            f"'high dead ratio' expected when 80% of exports are dead; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        for i in range(10):
+            (tmp_path / f"module_{i}.py").write_text(f"def exported_fn_{i}(): pass\n")
+        callers = "\n".join(
+            f"from module_{i} import exported_fn_{i}" for i in range(10)
+        )
+        (tmp_path / "runner.py").write_text(
+            callers + "\ndef run():\n" +
+            "\n".join(f"    exported_fn_{i}()" for i in range(10))
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "high dead ratio" not in out, (
+            f"'high dead ratio' must not appear when all exports are used; got:\n{out}"
+        )
+
+
+# ── S854: Test helper blast ───────────────────────────────────────────────────
+
+class TestTestHelperBlastS854:
+    """S854: Blast target is test_utils/conftest emits test-helper-blast signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "test_utils.py").write_text(
+            "def make_user(name): return {'name': name}\n"
+        )
+        (tmp_path / "test_auth.py").write_text(
+            "from test_utils import make_user\n"
+            "def test_login(): make_user('admin')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "test_utils.py")
+        assert "test helper blast" in out, (
+            f"'test helper blast' expected for test_utils.py; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "auth_service.py").write_text(
+            "def authenticate(user): return True\n"
+        )
+        (tmp_path / "handler.py").write_text(
+            "from auth_service import authenticate\n"
+            "def handle(): authenticate('user')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "auth_service.py")
+        assert "test helper blast" not in out, (
+            f"'test helper blast' must not appear for non-test-helper file; got:\n{out}"
+        )
+
+
+# ── S855: Legacy file in diff ─────────────────────────────────────────────────
+
+class TestLegacyFileInDiffS855:
+    """S855: Changed _old/_legacy/_deprecated file emits legacy-file-in-diff signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "processor_old.py").write_text("def process(x): return x\n")
+        (tmp_path / "runner.py").write_text(
+            "from processor_old import process\ndef run(): process(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["processor_old.py"])
+        assert "legacy file in diff" in out, (
+            f"'legacy file in diff' expected for _old suffixed file; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "processor.py").write_text("def process(x): return x\n")
+        (tmp_path / "runner.py").write_text(
+            "from processor import process\ndef run(): process(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["processor.py"])
+        assert "legacy file in diff" not in out, (
+            f"'legacy file in diff' must not appear for non-legacy file; got:\n{out}"
+        )
+
+
+# ── S856: Hotspot in legacy file ──────────────────────────────────────────────
+
+class TestLegacyFileHotspotS856:
+    """S856: Top hotspot in _old/_legacy file emits legacy-file-hotspot signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "auth_old.py").write_text("def authenticate(user): return True\n")
+        for i in range(6):
+            (tmp_path / f"handler_{i}.py").write_text(
+                "from auth_old import authenticate\n"
+                f"def handle_{i}(): authenticate('user')\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "legacy file hotspot" in out, (
+            f"'legacy file hotspot' expected when top hotspot is in _old file; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "auth.py").write_text("def authenticate(user): return True\n")
+        for i in range(6):
+            (tmp_path / f"handler_{i}.py").write_text(
+                "from auth import authenticate\n"
+                f"def handle_{i}(): authenticate('user')\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "legacy file hotspot" not in out, (
+            f"'legacy file hotspot' must not appear for non-legacy file; got:\n{out}"
+        )
+
+
+# ── S857: Dead factory functions ──────────────────────────────────────────────
+
+class TestDeadFactoriesS857:
+    """S857: Unused create_/make_/build_/spawn_ functions emits dead-factories signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "factory.py").write_text(
+            "def create_session(user): pass\n"
+            "def make_token(data): pass\n"
+            "def active_fn(): pass\n"
+        )
+        (tmp_path / "runner.py").write_text(
+            "from factory import active_fn\n"
+            "def run(): active_fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead factories" in out, (
+            f"'dead factories' expected for unused create_/make_ functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "factory.py").write_text(
+            "def create_session(user): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from factory import create_session\n"
+            "def run(): create_session('admin')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead factories" not in out, (
+            f"'dead factories' must not appear when create_ function is called; got:\n{out}"
+        )
