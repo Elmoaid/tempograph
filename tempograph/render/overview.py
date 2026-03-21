@@ -3016,6 +3016,18 @@ def _signals_async_oop(
                 f" — files are large; consider splitting into smaller, focused modules"
             )
 
+    # S781: Many small files — average source file is under 10 lines with 5+ source files.
+    # Over-fragmented codebases split logic into many tiny files, increasing navigation
+    # cost and import overhead; consider consolidating into fewer coherent modules.
+    _src_files781 = [fi for fp, fi in graph.files.items() if not _is_test_file(fp)]
+    if len(_src_files781) >= 5:
+        _avg_lines781 = sum(fi.line_count or 0 for fi in _src_files781) / len(_src_files781)
+        if _avg_lines781 < 10:
+            lines.append(
+                f"many small files: {len(_src_files781)} source files averaging {_avg_lines781:.1f} lines"
+                f" — over-fragmented; consider consolidating related modules"
+            )
+
     return lines
 
 

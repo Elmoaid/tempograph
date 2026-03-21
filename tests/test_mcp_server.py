@@ -36917,3 +36917,212 @@ class TestDeadDispatchFunctionsS779:
         assert "dead dispatch functions" not in out, (
             f"'dead dispatch functions' must not appear when dispatch is called; got:\n{out}"
         )
+
+
+# S780 – S785
+# ---------------------------------------------------------------------------
+
+# ── S780: Multi-file symbol ───────────────────────────────────────────────────
+
+class TestMultiFileSymbolS780:
+    """S780: Focused symbol name appears in 3+ files emits multi-file-symbol signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        for name in ("a", "b", "c"):
+            (tmp_path / f"module_{name}.py").write_text("def process(x): return x\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        # Focus on any "process" — it appears in 3 files
+        out = render_focused(g, "process")
+        assert "multi-file symbol" in out, (
+            f"Expected 'multi-file symbol' when name appears in 3 files; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def unique_function_xyz(x): return x\n")
+        (tmp_path / "app.py").write_text(
+            "from core import unique_function_xyz\ndef run(): unique_function_xyz(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "unique_function_xyz")
+        assert "multi-file symbol" not in out, (
+            f"'multi-file symbol' must not appear for uniquely named symbol; got:\n{out}"
+        )
+
+
+# ── S781: Many small files ─────────────────────────────────────────────────────
+
+class TestManySmallFilesS781:
+    """S781: 5+ source files averaging < 10 lines emits many-small-files signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        for name in ("a", "b", "c", "d", "e"):
+            (tmp_path / f"{name}.py").write_text(f"def fn_{name}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "many small files" in out, (
+            f"Expected 'many small files' when avg file size < 10 lines; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        for name in ("a", "b", "c", "d", "e"):
+            content = f"def fn_{name}(x): return x\n" + "# padding\n" * 15
+            (tmp_path / f"{name}.py").write_text(content)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "many small files" not in out, (
+            f"'many small files' must not appear for files with >= 10 avg lines; got:\n{out}"
+        )
+
+
+# ── S782: Test file blast ──────────────────────────────────────────────────────
+
+class TestTestFileBlastS782:
+    """S782: Blast target is a test file emits test-file-blast signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "test_utils.py").write_text(
+            "def make_fixture(): return {}\n"
+        )
+        (tmp_path / "test_a.py").write_text(
+            "from test_utils import make_fixture\ndef test_case(): make_fixture()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "test_utils.py")
+        assert "test file blast" in out, (
+            f"Expected 'test file blast' for test file target; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def process(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from core import process\ndef run(): process()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "core.py")
+        assert "test file blast" not in out, (
+            f"'test file blast' must not appear for source file targets; got:\n{out}"
+        )
+
+
+# ── S783: Unindexed files in diff ─────────────────────────────────────────────
+
+class TestUnindexedFilesInDiffS783:
+    """S783: Changed files not in graph emits unindexed-files-in-diff signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "existing.py").write_text("def fn(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        # new_module.py doesn't exist in graph yet
+        out = render_diff_context(g, changed_files=["new_module.py", "existing.py"])
+        assert "unindexed files in diff" in out, (
+            f"Expected 'unindexed files in diff' for new/unindexed file; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def fn(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["core.py"])
+        assert "unindexed files in diff" not in out, (
+            f"'unindexed files in diff' must not appear when all files are indexed; got:\n{out}"
+        )
+
+
+# ── S784: Package-local hotspot ───────────────────────────────────────────────
+
+class TestPackageLocalHotspotS784:
+    """S784: Top hotspot with 4+ callers all in same directory emits package-local-hotspot signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        # All callers in same directory as the hotspot
+        (tmp_path / "shared.py").write_text("def base_fn(): pass\n")
+        for i in range(5):
+            (tmp_path / f"consumer_{i}.py").write_text(
+                f"from shared import base_fn\ndef use_{i}(): base_fn()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "package-local hotspot" in out, (
+            f"Expected 'package-local hotspot' when all callers in same dir; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        # Callers spread across different subdirectories
+        (tmp_path / "core.py").write_text("def shared(): pass\n")
+        for name in ("alpha", "beta", "gamma", "delta", "epsilon"):
+            subdir = tmp_path / name
+            subdir.mkdir()
+            (subdir / "svc.py").write_text(
+                f"from core import shared\ndef go(): shared()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "package-local hotspot" not in out, (
+            f"'package-local hotspot' must not appear when callers span dirs; got:\n{out}"
+        )
+
+
+# ── S785: Dead properties ──────────────────────────────────────────────────────
+
+class TestDeadConstantsClusterS785:
+    """S785: 3+ dead constants from same file emits dead-constants-cluster signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "config.py").write_text(
+            "MAX_X = 10\nMAX_Y = 20\nMAX_Z = 30\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead constants cluster" in out, (
+            f"Expected 'dead constants cluster' for 3+ unused constants; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "config.py").write_text(
+            "MAX_X = 10\nMAX_Y = 20\nMAX_Z = 30\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from config import MAX_X, MAX_Y, MAX_Z\n"
+            "def run(): return MAX_X + MAX_Y + MAX_Z\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead constants cluster" not in out, (
+            f"'dead constants cluster' must not appear when constants are imported; got:\n{out}"
+        )

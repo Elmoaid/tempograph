@@ -2039,6 +2039,15 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — structural hub; breaking changes cascade to {len(_importers776)} dependents"
         )
 
+    # S782: Test file blast — the blast target is itself a test file.
+    # Running blast radius on a test file shows which other tests import it;
+    # changes to shared test utilities propagate to all dependent tests unexpectedly.
+    if _is_test_file(_fp589):
+        lines.append(
+            f"test file blast: {_fp589.rsplit('/', 1)[-1]} is a test file"
+            f" — changes here affect test suite coverage and may break dependent test files"
+        )
+
     return "\n".join(lines)
 
 

@@ -2398,5 +2398,25 @@ def _collect_hotspots_signals(
                 f" — top hotspot with high complexity; bugs here propagate to {len(graph.callers_of(_top778.id))} callers"
             )
 
+    # S784: Package-local hotspot — top hotspot is only called from within its own directory.
+    # A hotspot with all callers in the same package has high internal coupling but low
+    # external exposure; refactoring is contained but the package itself is tightly coupled.
+    if scores:
+        _top784 = scores[0][1]
+        if _top784 is not None and not _is_test_file(_top784.file_path):
+            _callers784 = graph.callers_of(_top784.id)
+            if len(_callers784) >= 4:
+                def _dir784(fp: str) -> str:
+                    n = fp.replace("\\", "/")
+                    return n.rsplit("/", 1)[0] if "/" in n else ""
+                _hot_dir784 = _dir784(_top784.file_path)
+                _caller_dirs784 = set(_dir784(c.file_path) for c in _callers784)
+                if len(_caller_dirs784) == 1 and _hot_dir784 in _caller_dirs784:
+                    out.append(
+                        f"\npackage-local hotspot: {_top784.name} has {len(_callers784)} callers"
+                        f" all within {_hot_dir784 or 'root'} — high internal coupling;"
+                        f" extract shared logic to a lower-level utility module"
+                    )
+
     return out
 

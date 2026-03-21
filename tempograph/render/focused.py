@@ -3673,6 +3673,21 @@ def _signals_focused_fn_advanced(
                                 f" consider removing the whole file"
                             )
 
+    # S780: Multi-file symbol — focused symbol name appears in 3+ distinct files.
+    # When a name is reused across many files, callers may invoke the wrong implementation;
+    # resolving the query returns the most-relevant match but ambiguity is a refactoring risk.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim780 = _seed_syms[0]
+        _same_name780 = set(
+            s.file_path for s in graph.symbols.values()
+            if s.name == _prim780.name and s.file_path != _prim780.file_path
+        )
+        if len(_same_name780) >= 2:
+            lines.append(
+                f"\nmulti-file symbol: {_prim780.name} appears in {len(_same_name780) + 1} files"
+                f" — name collision risk; callers may import the wrong implementation"
+            )
+
     return lines
 
 

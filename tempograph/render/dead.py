@@ -2675,6 +2675,28 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — abandoned control-flow logic; endpoint or feature was removed"
         )
 
+    # S785: Dead constants cluster — 3+ dead module-level constants in the same file.
+    # When multiple constants from the same file are all unused, the file may represent
+    # a removed feature's configuration; the entire constants file may be safe to delete.
+    _dead_consts785 = [
+        s for s in dead
+        if s.kind.value in ("constant", "variable")
+        and not _is_test_file(s.file_path)
+        and s.parent_id is None
+    ]
+    if len(_dead_consts785) >= 3:
+        from collections import Counter as _Counter785
+        _file_counts785 = _Counter785(s.file_path for s in _dead_consts785)
+        _top_file785, _top_count785 = _file_counts785.most_common(1)[0]
+        if _top_count785 >= 3:
+            _const_names785 = [s.name for s in _dead_consts785 if s.file_path == _top_file785][:3]
+            lines.append(
+                f"dead constants cluster: {_top_count785} unused constants in"
+                f" {_top_file785.rsplit('/', 1)[-1]}"
+                f" ({', '.join(_const_names785)}{'...' if _top_count785 > 3 else ''})"
+                f" — entire constants file may be safe to remove"
+            )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

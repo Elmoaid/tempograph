@@ -510,6 +510,18 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — package interface may change; check for broken star imports or re-exports"
         )
 
+    # S783: Unindexed files in diff — changed files not present in the graph (likely new/moved).
+    # Files not in the graph may be newly created or renamed; they lack call-graph context
+    # and their dependents cannot be determined until the graph is rebuilt.
+    if changed_files:
+        _unindexed783 = [f for f in changed_files if f not in graph.files and not _is_test_file(f)]
+        if _unindexed783:
+            lines.append(
+                f"unindexed files in diff: {len(_unindexed783)} changed file(s) not in graph"
+                f" ({', '.join(f.rsplit('/', 1)[-1] for f in _unindexed783[:2])})"
+                f" — likely new or renamed; re-index to get full blast radius"
+            )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 
