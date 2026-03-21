@@ -34525,3 +34525,211 @@ class TestDeadAsyncFunctionsS725:
         assert "dead async functions" not in out, (
             f"'dead async functions' must not appear when async fn is called; got:\n{out}"
         )
+
+
+# ---------------------------------------------------------------------------
+# S726 – S731
+# ---------------------------------------------------------------------------
+
+class TestMultipleInheritanceS726:
+    def test_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "bases.py").write_text(
+            "class Serializable: pass\n"
+            "class Loggable: pass\n"
+        )
+        (tmp_path / "models.py").write_text(
+            "from bases import Serializable, Loggable\n"
+            "class UserModel(Serializable, Loggable):\n"
+            "    def save(self): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "UserModel")
+        assert "multiple inheritance" in out, (
+            f"Expected 'multiple inheritance' for class with 2+ bases; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "base.py").write_text("class Base: pass\n")
+        (tmp_path / "models.py").write_text(
+            "from base import Base\n"
+            "class UserModel(Base):\n"
+            "    def save(self): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "UserModel")
+        assert "multiple inheritance" not in out, (
+            f"'multiple inheritance' must not appear for single-base class; got:\n{out}"
+        )
+
+
+class TestSingleFileRepoS727:
+    def test_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        (tmp_path / "everything.py").write_text(
+            "def parse(): pass\n"
+            "def validate(): pass\n"
+            "def render(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "single-file repo" in out, (
+            f"Expected 'single-file repo' when only one source file; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        (tmp_path / "parser.py").write_text("def parse(): pass\n")
+        (tmp_path / "validator.py").write_text("def validate(): pass\n")
+        (tmp_path / "renderer.py").write_text("def render(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "single-file repo" not in out, (
+            f"'single-file repo' must not appear for multi-file repo; got:\n{out}"
+        )
+
+
+class TestPackageInitBlastS728:
+    def test_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        subpkg = tmp_path / "mypkg"
+        subpkg.mkdir()
+        (subpkg / "__init__.py").write_text("def get_client(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from mypkg import get_client\ndef run(): get_client()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "mypkg/__init__.py")
+        assert "package init blast" in out, (
+            f"Expected 'package init blast' for __init__.py blast; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def process(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from core import process\ndef run(): process()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "core.py")
+        assert "package init blast" not in out, (
+            f"'package init blast' must not appear for regular source file; got:\n{out}"
+        )
+
+
+class TestMixedDiffS729:
+    def test_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def process(): pass\n")
+        (tmp_path / "test_core.py").write_text(
+            "from core import process\ndef test_process(): assert process() is None\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["core.py", "test_core.py"])
+        assert "mixed diff" in out, (
+            f"Expected 'mixed diff' when both source and test files changed; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def process(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["core.py", "utils.py"])
+        assert "mixed diff" not in out, (
+            f"'mixed diff' must not appear when diff has no test files; got:\n{out}"
+        )
+
+
+class TestNoTestCoverageHotspotS730:
+    def test_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        # process called by many non-test callers only
+        callers = "\n".join(
+            f"def caller{i}(): process()" for i in range(8)
+        )
+        (tmp_path / "core.py").write_text("def process(): pass\n")
+        (tmp_path / "consumers.py").write_text(
+            "from core import process\n" + callers + "\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "no test coverage" in out, (
+            f"Expected 'no test coverage' for hotspot with no test callers; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        callers = "\n".join(
+            f"def caller{i}(): process()" for i in range(6)
+        )
+        (tmp_path / "core.py").write_text("def process(): pass\n")
+        (tmp_path / "consumers.py").write_text(
+            "from core import process\n" + callers + "\n"
+        )
+        (tmp_path / "test_core.py").write_text(
+            "from core import process\ndef test_process(): process()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "no test coverage" not in out, (
+            f"'no test coverage' must not appear when test file calls hotspot; got:\n{out}"
+        )
+
+
+class TestDeadMigrationFunctionsS731:
+    def test_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "migrations.py").write_text(
+            "def migrate_users(): pass\n"
+            "def upgrade_schema(): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead migration functions" in out, (
+            f"Expected 'dead migration functions' for unused migrate/upgrade fns; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "migrations.py").write_text(
+            "def migrate_users(): pass\n"
+        )
+        (tmp_path / "runner.py").write_text(
+            "from migrations import migrate_users\n"
+            "def run(): migrate_users()\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from runner import run\ndef main(): run()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead migration functions" not in out, (
+            f"'dead migration functions' must not appear when migrate fn is called; got:\n{out}"
+        )
