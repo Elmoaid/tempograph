@@ -3200,6 +3200,23 @@ def _signals_focused_fn_advanced(
                     f" — consider making private; export contract is not exercised elsewhere"
                 )
 
+    # S624: Leaf function — focused symbol has callers but no callees (terminal node).
+    # Leaf functions are safe to refactor in isolation — they have no downstream dependencies.
+    # High-caller leaves are prime candidates for inlining or specialization.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim624 = _seed_syms[0]
+        if (
+            not _is_test_file(_prim624.file_path)
+            and _prim624.kind.value in ("function", "method")
+        ):
+            _callers624 = graph.callers_of(_prim624.id)
+            _callees624 = graph.callees_of(_prim624.id)
+            if len(_callers624) >= 3 and not _callees624:
+                lines.append(
+                    f"\nleaf function: {_prim624.name} has {len(_callers624)} callers and no callees"
+                    f" — terminal node; safe to refactor in isolation; high-caller leaves suit inlining"
+                )
+
     return lines
 
 

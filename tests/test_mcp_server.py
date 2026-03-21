@@ -29217,6 +29217,197 @@ class TestDeadAsyncFunctionS617:
         )
 
 
+class TestSingleFileConsumerFocusedS618:
+    """S618: Exported symbol called from exactly one non-test file emits single-file-consumer signal."""
+
+    def test_single_file_consumer_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from utils import helper\ndef main(): helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper")
+        assert "single-file consumer" in out, (
+            f"Expected 'single-file consumer' for exported fn with one caller file; got:\n{out}"
+        )
+
+    def test_single_file_consumer_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from utils import helper\ndef main(): helper()\n"
+        )
+        (tmp_path / "web.py").write_text(
+            "from utils import helper\ndef serve(): helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper")
+        assert "single-file consumer" not in out, (
+            f"'single-file consumer' must not appear when helper is used in 2 files; got:\n{out}"
+        )
+
+
+class TestLargeAverageFileOverviewS619:
+    """S619: Average source file >200 lines across 5+ files emits large-average-file signal."""
+
+    def test_large_average_file_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        for i in range(5):
+            (tmp_path / f"module_{i}.py").write_text("# line\n" * 210)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "large average file" in out, (
+            f"Expected 'large average file' for 5 files averaging 210 lines; got:\n{out}"
+        )
+
+    def test_large_average_file_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        for i in range(5):
+            (tmp_path / f"module_{i}.py").write_text("def fn(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "large average file" not in out, (
+            f"'large average file' must not appear for tiny files; got:\n{out}"
+        )
+
+
+class TestCrossPackageBlastS620:
+    """S620: Blast target imported from 3+ distinct top-level packages emits cross-package-blast signal."""
+
+    def test_cross_package_blast_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "shared.py").write_text("def fn(): pass\n")
+        for pkg in ("pkg_a", "pkg_b", "pkg_c"):
+            (tmp_path / pkg).mkdir()
+            (tmp_path / pkg / "consumer.py").write_text(
+                "from shared import fn\ndef use(): fn()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "shared.py")
+        assert "cross-package blast" in out, (
+            f"Expected 'cross-package blast' for file imported from 3 packages; got:\n{out}"
+        )
+
+    def test_cross_package_blast_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "shared.py").write_text("def fn(): pass\n")
+        for pkg in ("pkg_a", "pkg_b"):
+            (tmp_path / pkg).mkdir()
+            (tmp_path / pkg / "consumer.py").write_text(
+                "from shared import fn\ndef use(): fn()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "shared.py")
+        assert "cross-package blast" not in out, (
+            f"'cross-package blast' must not appear for file imported from only 2 packages; got:\n{out}"
+        )
+
+
+class TestTestFilesInDiffS621:
+    """S621: Test file in changed_files list emits test-files-in-diff signal."""
+
+    def test_test_files_in_diff_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "auth.py").write_text("def login(): pass\n")
+        (tmp_path / "test_auth.py").write_text("def test_login(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["auth.py", "test_auth.py"])
+        assert "test files in diff" in out, (
+            f"Expected 'test files in diff' when test_auth.py is in changed files; got:\n{out}"
+        )
+
+    def test_test_files_in_diff_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "auth.py").write_text("def login(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["auth.py", "utils.py"])
+        assert "test files in diff" not in out, (
+            f"'test files in diff' must not appear when no test files are changed; got:\n{out}"
+        )
+
+
+class TestGodClassHotspotS622:
+    """S622: Top hotspot is a class with 5+ methods emits god-class-hotspot signal."""
+
+    def test_god_class_hotspot_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        service_code = "class BigService:\n"
+        for i in range(5):
+            service_code += f"    def method_{i}(self): pass\n"
+        (tmp_path / "service.py").write_text(service_code)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "god-class hotspot" in out, (
+            f"Expected 'god-class hotspot' for class with 5 methods; got:\n{out}"
+        )
+
+    def test_god_class_hotspot_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        service_code = "class SmallService:\n"
+        for i in range(3):
+            service_code += f"    def method_{i}(self): pass\n"
+        (tmp_path / "service.py").write_text(service_code)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "god-class hotspot" not in out, (
+            f"'god-class hotspot' must not appear for class with only 3 methods; got:\n{out}"
+        )
+
+
+class TestDeadConstantsS623:
+    """S623: Dead SCREAMING_SNAKE_CASE module-level variable emits dead-constants signal."""
+
+    def test_dead_constants_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "config.py").write_text(
+            "MAX_RETRIES = 3\n"
+            "DEFAULT_TIMEOUT = 30\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead constants" in out, (
+            f"Expected 'dead constants' for unused SCREAMING_SNAKE_CASE variables; got:\n{out}"
+        )
+
+    def test_dead_constants_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        # lowercase variables don't match SCREAMING_SNAKE_CASE pattern
+        (tmp_path / "config.py").write_text(
+            "max_retries = 3\n"
+            "default_timeout = 30\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead constants" not in out, (
+            f"'dead constants' must not appear for lowercase variable names; got:\n{out}"
+        )
+
 # ── S618: Single-file consumer ────────────────────────────────────────────────
 
 class TestSingleFileConsumerS618:

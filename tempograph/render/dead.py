@@ -2158,6 +2158,24 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — orphaned configuration; remove or re-wire to avoid misleading future readers"
         )
 
+    # S629: Dead dataclass — unused class whose signature indicates `@dataclass` decoration.
+    # Dataclasses are data containers; an unused one suggests a data model was designed
+    # but the feature using it was never completed or was removed without cleanup.
+    _dead_dc629 = [
+        s for s in dead
+        if s.kind.value == "class"
+        and not _is_test_file(s.file_path)
+        and "dataclass" in (s.signature or "").lower()
+    ]
+    if _dead_dc629:
+        _dc_names629 = ", ".join(s.name for s in _dead_dc629[:3])
+        if len(_dead_dc629) > 3:
+            _dc_names629 += f" +{len(_dead_dc629) - 3} more"
+        lines.append(
+            f"dead dataclasses: {len(_dead_dc629)} unused @dataclass(es) ({_dc_names629})"
+            f" — data model for an incomplete feature; remove or wire into the active codebase"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

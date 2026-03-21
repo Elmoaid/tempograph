@@ -2549,6 +2549,33 @@ def _signals_async_oop(
                 f" — codebase favors monolithic files; navigation cost is elevated"
             )
 
+    # S625: High export ratio — 5+ source files where >70% of symbols are exported but no imports.
+    # A repo with many exported symbols but no cross-file imports may be a collection of
+    # independent modules with no shared entry point — harder to trace end-to-end.
+    _s625_src_files = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_s625_src_files) >= 5:
+        _s625_export_count = sum(
+            1 for s in graph.symbols.values()
+            if s.exported and not _is_test_file(s.file_path)
+        )
+        _s625_sym_count = sum(
+            1 for s in graph.symbols.values()
+            if not _is_test_file(s.file_path)
+        )
+        _s625_import_edges = [
+            e for e in graph.edges
+            if e.kind.value == "imports"
+            and not _is_test_file(e.source_id)
+            and not _is_test_file(e.target_id)
+        ]
+        if _s625_sym_count > 0 and not _s625_import_edges:
+            _export_pct625 = int(100 * _s625_export_count / _s625_sym_count)
+            if _export_pct625 >= 70:
+                lines.append(
+                    f"high export ratio: {_export_pct625}% of symbols exported but zero cross-file imports"
+                    f" — independent module collection; no shared entry point to trace end-to-end"
+                )
+
     return lines
 
 

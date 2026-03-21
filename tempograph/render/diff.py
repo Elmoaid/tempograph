@@ -118,6 +118,24 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — verify test removals don't silently drop coverage for modified areas"
         )
 
+    # S627: Config file in diff — diff includes a configuration file (.cfg, .ini, .toml, .yaml, .json).
+    # Config changes affect runtime behavior without touching code; they're easy to overlook
+    # in code review and can change feature flags, timeouts, or connection strings silently.
+    _config_exts627 = (".cfg", ".ini", ".toml", ".yaml", ".yml", ".json", ".conf", ".config")
+    _config_excludes627 = ("test", "spec", "fixture", "mock", "lock", "package-lock", "yarn.lock")
+    _config_files627 = [
+        f for f in changed_files
+        if any(f.lower().endswith(e) for e in _config_exts627)
+        and not any(x in f.lower() for x in _config_excludes627)
+        and not _is_test_file(f)
+    ]
+    if _config_files627:
+        _cfg_name627 = _config_files627[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"config in diff: {_cfg_name627} ({len(_config_files627)} config file(s) changed)"
+            f" — config changes silently affect runtime behavior; review for feature flags or credentials"
+        )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 

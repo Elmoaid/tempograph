@@ -1695,6 +1695,19 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — breaking change here requires coordinated updates in multiple packages"
         )
 
+    # S626: Utility module blast — blast target filename is utils.py, helpers.py, or similar.
+    # Utility modules are often shared grab-bags; changes cascade widely and utility debt
+    # accumulates because boundaries are unclear.
+    _util_names626 = ("utils.py", "helpers.py", "util.py", "helper.py", "common.py", "misc.py", "shared.py")
+    _fp_base626 = _fp589.rsplit("/", 1)[-1].lower()
+    if _fp_base626 in _util_names626:
+        _importer_count626 = len([fp for fp in importers if not _is_test_file(fp)])
+        lines.append(
+            f"utility module blast: {_fp589.rsplit('/', 1)[-1]} is a shared utility file"
+            f" with {_importer_count626} non-test importer(s)"
+            f" — utility modules accumulate mixed concerns; consider splitting by domain"
+        )
+
     return "\n".join(lines)
 
 
