@@ -1509,6 +1509,7 @@ def _build_symbol_block_lines(
     _hub_ann = ""
     _age_ann = ""
     _doc_ann = ""
+    _param_ann = ""
     if depth == 0:
         _blast_files = {c.file_path for c in graph.callers_of(sym.id) if c.file_path != sym.file_path}
         if len(_blast_files) >= 3:
