@@ -2891,5 +2891,18 @@ def _collect_hotspots_signals(
                     f" — crosses subsystem boundaries; signature changes require cross-team coordination"
                 )
 
+    # S982: Heavyweight hotspot — top hotspot has many callers AND many lines.
+    # Double pressure: widely used AND complex code means each change carries
+    # compounded risk from both broad blast radius and high implementation complexity.
+    if scores:
+        _top982 = scores[0][1]
+        if _top982 is not None and not _is_test_file(_top982.file_path):
+            _callers982 = [c for c in graph.callers_of(_top982.id) if not _is_test_file(c.file_path)]
+            if len(_callers982) >= 3 and _top982.line_count >= 50:
+                out.append(
+                    f"\nheavyweight hotspot: {_top982.name} has {len(_callers982)} callers and spans {_top982.line_count} lines"
+                    f" — widely used AND complex; changes carry compounded risk"
+                )
+
     return out
 

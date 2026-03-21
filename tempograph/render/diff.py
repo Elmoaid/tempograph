@@ -762,6 +762,30 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — version bumps may introduce breaking API changes or transitive conflicts; review changelogs"
             )
 
+    # S981: Security-sensitive file in diff — changed files touch auth or security code.
+    # Auth and security files carry high exploit risk; subtle changes can introduce
+    # vulnerabilities that pass all functional tests but are exploitable in production.
+    if changed_files:
+        _sec_kws981 = (
+            "auth", "authn", "authz", "authentication", "authorization",
+            "security", "crypto", "cryptography", "password", "passwd",
+            "secret", "jwt", "oauth", "tls", "ssl", "session",
+        )
+        _sec_files981 = []
+        for _sf981 in changed_files:
+            _sfname981 = _sf981.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+            if any(
+                _sfname981 == kw or _sfname981.startswith(kw + "_") or _sfname981.endswith("_" + kw)
+                for kw in _sec_kws981
+            ):
+                _sec_files981.append(_sf981)
+        if _sec_files981:
+            _sname981 = _sec_files981[0].replace("\\", "/").rsplit("/", 1)[-1]
+            lines.append(
+                f"security file in diff: {_sname981} touches authentication or security code"
+                f" — requires security review; subtle changes may introduce exploitable vulnerabilities"
+            )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 

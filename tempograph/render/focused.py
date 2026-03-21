@@ -4224,6 +4224,19 @@ def _signals_focused_fn_advanced(
                     f" — completely isolated; may be dead code or a missing registration/wire-up"
                 )
 
+    # S978: Single caller — focused symbol is called by exactly one other function.
+    # Single-caller symbols are often internal implementation details; the logic
+    # could be inlined at the call site, reducing indirection and coupling.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim978 = _seed_syms[0]
+        if not _is_test_file(_prim978.file_path) and _prim978.kind.value in ("function", "method"):
+            _callers978 = graph.callers_of(_prim978.id)
+            if len(_callers978) == 1:
+                lines.append(
+                    f"\nsingle caller: {_prim978.name} is only called by {_callers978[0].name}"
+                    f" — consider inlining; all logic changes affect only one call site"
+                )
+
     return lines
 
 
