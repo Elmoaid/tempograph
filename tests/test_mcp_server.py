@@ -41379,3 +41379,456 @@ class TestDeadModuleLevelConstantsS869:
         assert "dead constants" not in out, (
             f"'dead constants' must not appear when constant is imported; got:\n{out}"
         )
+
+
+# ── S870–S875 ──────────────────────────────────────────────────────────────────
+
+# ── S870: No-caller symbol focus ──────────────────────────────────────────────
+
+class TestNoCallerFocusS870:
+    """S870: Focused function with zero callers emits no-callers signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "util.py").write_text(
+            "def orphan_function(): return 42\n"
+        )
+        # No other file imports or calls orphan_function
+        (tmp_path / "app.py").write_text(
+            "def other(): return 1\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "orphan_function")
+        assert "no callers" in out, (
+            f"'no callers' expected for function with zero callers; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "util.py").write_text(
+            "def process(x): return x\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from util import process\ndef run(): process(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process")
+        assert "no callers" not in out, (
+            f"'no callers' must not appear when function has callers; got:\n{out}"
+        )
+
+
+# ── S871: No test files ────────────────────────────────────────────────────────
+
+class TestNoTestFilesS871:
+    """S871: 5+ source files but no test files emits no-test-files signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        for i in range(5):
+            (tmp_path / f"module_{i}.py").write_text(f"def fn_{i}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no test files" in out, (
+            f"'no test files' expected for repo with 5+ source files and no tests; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        for i in range(3):
+            (tmp_path / f"module_{i}.py").write_text(f"def fn_{i}(): pass\n")
+        (tmp_path / "test_module.py").write_text("def test_fn_0(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no test files" not in out, (
+            f"'no test files' must not appear when test files exist; got:\n{out}"
+        )
+
+
+# ── S872: Serializer/formatter blast ──────────────────────────────────────────
+
+class TestSerializerBlastS872:
+    """S872: Blast on serializer/formatter file emits serializer-blast signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "serializer.py").write_text(
+            "def to_json(obj): return str(obj)\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from serializer import to_json\ndef run(): to_json({'a': 1})\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "serializer.py")
+        assert "serializer blast" in out, (
+            f"'serializer blast' expected for serializer.py; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "processor.py").write_text(
+            "def compute(x): return x * 2\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from processor import compute\ndef run(): compute(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "processor.py")
+        assert "serializer blast" not in out, (
+            f"'serializer blast' must not appear for non-serializer file; got:\n{out}"
+        )
+
+
+# ── S873: Test-only diff ───────────────────────────────────────────────────────
+
+class TestTestOnlyDiffS873:
+    """S873: All changed files are test files emits test-only-diff signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "service.py").write_text("def process(): pass\n")
+        (tmp_path / "test_service.py").write_text(
+            "from service import process\ndef test_it(): process()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["test_service.py"])
+        assert "test-only diff" in out, (
+            f"'test-only diff' expected when only test files changed; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "service.py").write_text("def process(): pass\n")
+        (tmp_path / "test_service.py").write_text(
+            "from service import process\ndef test_it(): process()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["service.py"])
+        assert "test-only diff" not in out, (
+            f"'test-only diff' must not appear when source file is changed; got:\n{out}"
+        )
+
+
+# ── S874: Wide-file hotspot ────────────────────────────────────────────────────
+
+class TestWideFileHotspotS874:
+    """S874: Top hotspot called from 5+ files emits wide-file-hotspot signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "core.py").write_text(
+            "def shared_util(x): return x\n"
+        )
+        for i in range(6):
+            (tmp_path / f"module_{i}.py").write_text(
+                f"from core import shared_util\n"
+                f"def fn_{i}(): shared_util({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "wide-file hotspot" in out, (
+            f"'wide-file hotspot' expected for function called from 6 files; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "core.py").write_text(
+            "def helper(x): return x\n"
+        )
+        for i in range(2):
+            (tmp_path / f"module_{i}.py").write_text(
+                f"from core import helper\n"
+                f"def fn_{i}(): helper({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "wide-file hotspot" not in out, (
+            f"'wide-file hotspot' must not appear when callers are from fewer than 5 files; got:\n{out}"
+        )
+
+
+# ── S875: Dead type aliases ────────────────────────────────────────────────────
+
+class TestDeadTypeAliasesS875:
+    """S875: Unused *Type/*Types constant emits dead-type-aliases signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "typedefs.py").write_text(
+            "NodeType = 'string'\n"
+            "EventType = 'click'\n"
+        )
+        (tmp_path / "other.py").write_text(
+            "def helper(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead type aliases" in out, (
+            f"'dead type aliases' expected for unused *Type constants; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "typedefs.py").write_text(
+            "NodeType = 'string'\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from typedefs import NodeType\n"
+            "def get_type(): return NodeType\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead type aliases" not in out, (
+            f"'dead type aliases' must not appear when type alias is imported; got:\n{out}"
+        )
+
+
+# ── S870–S875 ──────────────────────────────────────────────────────────────────
+
+# ── S870: No-caller symbol focus ──────────────────────────────────────────────
+
+class TestNoCallerFocusS870:
+    """S870: Focused function with zero callers emits no-callers signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "orphan.py").write_text(
+            "def unused_processor(data): return data\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "unused_processor")
+        assert "no callers" in out, (
+            f"'no callers' expected for function with zero callers; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "def active_processor(data): return data\n"
+        )
+        (tmp_path / "runner.py").write_text(
+            "from service import active_processor\n"
+            "def run(): active_processor({})\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "active_processor")
+        assert "no callers" not in out, (
+            f"'no callers' must not appear for function with callers; got:\n{out}"
+        )
+
+
+# ── S871: No test files ────────────────────────────────────────────────────────
+
+class TestNoTestFilesS871:
+    """S871: 5+ source files but no test files emits no-test-files signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        for i in range(5):
+            (tmp_path / f"module_{i}.py").write_text(f"def fn_{i}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no test files" in out, (
+            f"'no test files' expected when no test files exist; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        for i in range(3):
+            (tmp_path / f"module_{i}.py").write_text(f"def fn_{i}(): pass\n")
+        (tmp_path / "test_module_0.py").write_text(
+            "from module_0 import fn_0\ndef test_fn_0(): fn_0()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no test files" not in out, (
+            f"'no test files' must not appear when test files exist; got:\n{out}"
+        )
+
+
+# ── S872: Serializer/formatter blast ──────────────────────────────────────────
+
+class TestSerializerBlastS872:
+    """S872: Blast target filename contains 'serial'/'format'/'codec' emits serializer-blast signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "user_serializer.py").write_text(
+            "def serialize(obj): return str(obj)\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from user_serializer import serialize\n"
+            "def run(): serialize({'name': 'Alice'})\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "user_serializer.py")
+        assert "serializer blast" in out, (
+            f"'serializer blast' expected for serializer-named file; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "user_store.py").write_text(
+            "def save(user): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from user_store import save\ndef run(): save({'name': 'Alice'})\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "user_store.py")
+        assert "serializer blast" not in out, (
+            f"'serializer blast' must not appear for non-serializer file; got:\n{out}"
+        )
+
+
+# ── S873: Test-only diff ───────────────────────────────────────────────────────
+
+class TestTestOnlyDiffS873:
+    """S873: All changed files are test files emits test-only-diff signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "auth.py").write_text("def login(u): return True\n")
+        (tmp_path / "test_auth.py").write_text(
+            "from auth import login\ndef test_login(): assert login('a')\n"
+        )
+        (tmp_path / "test_permissions.py").write_text(
+            "def test_empty(): assert True\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["test_auth.py", "test_permissions.py"])
+        assert "test-only diff" in out, (
+            f"'test-only diff' expected when all changed files are tests; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "auth.py").write_text("def login(u): return True\n")
+        (tmp_path / "test_auth.py").write_text(
+            "from auth import login\ndef test_login(): assert login('a')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["auth.py", "test_auth.py"])
+        assert "test-only diff" not in out, (
+            f"'test-only diff' must not appear when source files are also changed; got:\n{out}"
+        )
+
+
+# ── S874: Wide-file hotspot ───────────────────────────────────────────────────
+
+class TestWideFileHotspotS874:
+    """S874: Top hotspot called from 5+ distinct files emits wide-file-hotspot signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "emitter.py").write_text("def emit_event(msg): print(msg)\n")
+        for i in range(5):
+            (tmp_path / f"service_{i}.py").write_text(
+                "from emitter import emit_event\n"
+                f"def work_{i}(): emit_event('evt_{i}')\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "wide-file hotspot" in out, (
+            f"'wide-file hotspot' expected when top hotspot called from 5+ files; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "emitter.py").write_text("def emit_event(msg): print(msg)\n")
+        for i in range(3):
+            (tmp_path / f"service_{i}.py").write_text(
+                "from emitter import emit_event\n"
+                f"def work_{i}(): emit_event('evt_{i}')\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "wide-file hotspot" not in out, (
+            f"'wide-file hotspot' must not appear when top hotspot called from < 5 files; got:\n{out}"
+        )
+
+
+# ── S875: Dead type aliases ────────────────────────────────────────────────────
+
+class TestDeadTypeAliasesS875:
+    """S875: Unused symbols ending in 'Type' or starting with 'T_' emits dead-type-aliases signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "aliases.py").write_text(
+            "class UserType:\n    pass\n"
+            "class ResponseType:\n    pass\n"
+            "def get_user(): return UserType()\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from aliases import get_user\ndef run(): get_user()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead type aliases" in out, (
+            f"'dead type aliases' expected for unused UserType/ResponseType classes; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "config.py").write_text(
+            "def get_data(): return {}\n"
+            "def process(): return []\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from config import get_data\ndef run(): get_data()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead type aliases" not in out, (
+            f"'dead type aliases' must not appear when no Type-named symbols exist; got:\n{out}"
+        )
