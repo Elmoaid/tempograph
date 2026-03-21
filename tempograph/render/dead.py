@@ -1124,6 +1124,29 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — check if registered in migration history; remove from both code and migration registry"
         )
 
+    # S372: Dead serializers — to_dict/to_json/serialize/as_dict functions with 0 callers.
+    # Serializers that are never called may represent removed API endpoints or deprecated
+    # response formats; they can mislead developers about what the system exposes.
+    _s372_ser_names = (
+        "to_dict", "to_json", "serialize", "as_dict", "as_json",
+        "to_payload", "to_response", "marshal", "dump",
+    )
+    _s372_dead_sers = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower() == n or sym.name.lower().startswith(n + "_") for n in _s372_ser_names)
+    ]
+    if len(_s372_dead_sers) >= 2:
+        _ser_names372 = ", ".join(s.name for s in _s372_dead_sers[:3])
+        if len(_s372_dead_sers) > 3:
+            _ser_names372 += f" +{len(_s372_dead_sers) - 3} more"
+        lines.append(
+            f"dead serializers: {len(_s372_dead_sers)} unused serializer(s) ({_ser_names372})"
+            f" — may represent removed endpoints or deprecated formats; remove from public API surface"
+        )
+
     # S366: Dead property accessors — get_*/set_* pairs where both are unused.
     # Accessor pairs for removed properties are noisy dead code: two unused fns sharing a name root.
     # They often survive after the underlying attribute was removed or renamed.

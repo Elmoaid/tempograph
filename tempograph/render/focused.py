@@ -2374,6 +2374,29 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                     f" — callers may assume pure function; order-dependent bugs possible"
                 )
 
+    # S368: Generic symbol name — focused symbol has a very generic, collision-prone name.
+    # Generic names like "run", "process", "execute" increase search noise and make
+    # symbol lookup ambiguous; many unrelated symbols share these names across the codebase.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim368 = _seed_syms[0] if _seed_syms else None
+        if _prim368:
+            _generic_names368 = {
+                "run", "execute", "process", "handle", "call", "invoke",
+                "start", "stop", "init", "setup", "load", "save", "get", "set",
+                "update", "delete", "create", "parse", "format", "validate",
+            }
+            if _prim368.name.lower() in _generic_names368:
+                # Count how many symbols share this exact name
+                _same_name368 = [
+                    s for s in graph.symbols.values()
+                    if s.name.lower() == _prim368.name.lower() and s.id != _prim368.id
+                ]
+                if _same_name368:
+                    lines.append(
+                        f"\ngeneric name: '{_prim368.name}' shared by {len(_same_name368) + 1} symbols"
+                        f" — highly generic; refine to intent-revealing name to reduce search ambiguity"
+                    )
+
     # S362: Overloaded parameters — focused function/method has 8+ parameters.
     # Functions with 8+ parameters are hard to call correctly and indicate
     # missing abstractions; callers must remember argument order and often use positional args.

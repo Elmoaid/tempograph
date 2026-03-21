@@ -1052,6 +1052,22 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — profile before and after; cache TTL/key changes can cause latency spikes"
         )
 
+    # S369: Large file in diff — diff includes a file with 300+ symbols (dense file added/changed).
+    # A very dense changed file likely contains a large new module or refactored logic;
+    # reviewers should allocate extra time for careful review of this diff.
+    if changed_files:
+        _s369_dense: list[tuple[str, int]] = []
+        for _cf369 in changed_files:
+            _file_syms369 = [s for s in graph.symbols.values() if s.file_path == _cf369]
+            if len(_file_syms369) >= 20:  # 20+ symbols = dense file
+                _s369_dense.append((_cf369, len(_file_syms369)))
+        if _s369_dense:
+            _largest369 = max(_s369_dense, key=lambda x: x[1])
+            lines.append(
+                f"large file in diff: {_largest369[0].rsplit('/', 1)[-1]} has {_largest369[1]} symbols"
+                f" — dense file; allocate extra review time for thorough analysis"
+            )
+
     # S363: Test-only diff — all changed files are test files (no source touched).
     # A diff that only touches tests but no source may indicate:
     # - Snapshots/fixtures were updated without verifying the underlying behavior

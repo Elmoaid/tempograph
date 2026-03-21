@@ -1642,6 +1642,25 @@ def _signals_structure(
             )
 
 
+    # S367: Monorepo detection — multiple package manifests detected in different directories.
+    # Monorepos require coordinated changes across packages; a single logical change may need
+    # updates in multiple packages, each with its own dependency and test pipeline.
+    _s367_manifest_names = (
+        "package.json", "pyproject.toml", "go.mod", "Cargo.toml", "pom.xml",
+        "build.gradle", "Gemfile", "composer.json",
+    )
+    _s367_manifest_dirs: set[str] = set()
+    for _fp367 in graph.files:
+        _base367 = _fp367.rsplit("/", 1)[-1] if "/" in _fp367 else _fp367
+        if _base367 in _s367_manifest_names:
+            _dir367 = _fp367.rsplit("/", 1)[0] if "/" in _fp367 else "."
+            _s367_manifest_dirs.add(_dir367)
+    if len(_s367_manifest_dirs) >= 2:
+        lines.append(
+            f"monorepo: {len(_s367_manifest_dirs)} package manifests detected in separate directories"
+            f" — coordinated cross-package changes required; verify all affected packages"
+        )
+
     # S361: Framework detection — codebase uses a recognized web/app framework.
     # Knowing the framework informs code review expectations: Django has signals, Flask has
     # blueprints, FastAPI has dependency injection — each with their own change-impact patterns.
