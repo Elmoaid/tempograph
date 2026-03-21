@@ -1967,16 +1967,16 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             )
             _pct = int(_tested / len(_src_importers) * 100)
             lines.append(f"  refactor safety: {_tested}/{len(_src_importers)} caller files tested ({_pct}%)")
-        # S51: recently active callers — importers modified in last 30 days
+        # S51: recent callers — importers modified in last 14 days signal blast radius growing
         if _src_importers and graph.root:
             try:
                 from .git import file_last_modified_days as _fld  # noqa: PLC0415
                 _recent = [(imp, _fld(graph.root, imp)) for imp in _src_importers]
-                _recent = [(imp, d) for imp, d in _recent if d is not None and d <= 30]
+                _recent = [(imp, d) for imp, d in _recent if d is not None and d <= 14]
                 if len(_recent) >= 2:
                     _recent.sort(key=lambda x: x[1])
                     _rec_parts = [f"{imp.rsplit('/', 1)[-1]} ({d}d ago)" for imp, d in _recent[:3]]
-                    lines.append(f"  recently active: {', '.join(_rec_parts)}")
+                    lines.append(f"  Recent callers (14d): {', '.join(_rec_parts)}  ← blast radius growing")
             except Exception:
                 pass
         lines.append("")
@@ -2924,6 +2924,30 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         if len(_recently_dead) > 4:
             _rd_str += f" +{len(_recently_dead) - 4} more"
         lines.append(f"Recently dead ({len(_recently_dead)}): {_rd_str}")
+
+    # Transitively dead: non-dead symbols whose ALL callers are already dead.
+    # find_dead_code() only marks symbols with 0 external callers or unimported files.
+    # This catches functions only called by dead functions — "second-order" dead code.
+    _transitively_dead: list[Symbol] = []
+    for _td_sym in graph.symbols.values():
+        if _td_sym.id in _dead_sym_ids:
+            continue
+        if _is_test_file(_td_sym.file_path):
+            continue
+        _td_callers = graph.callers_of(_td_sym.id)
+        if not _td_callers:
+            continue  # Already in find_dead_code() results or 0-caller symbol
+        if all(c.id in _dead_sym_ids for c in _td_callers):
+            _transitively_dead.append(_td_sym)
+    if len(_transitively_dead) >= 1:
+        _trd_names = [
+            f"{s.name} ({s.file_path.rsplit('/', 1)[-1]})"
+            for s in _transitively_dead[:4]
+        ]
+        _trd_str = ", ".join(_trd_names)
+        if len(_transitively_dead) > 4:
+            _trd_str += f" +{len(_transitively_dead) - 4} more"
+        lines.append(f"Transitively dead ({len(_transitively_dead)}): {_trd_str} — only called by dead code")
 
     lines.append("")
     total_lines = 0
