@@ -1152,6 +1152,28 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — fixture changes break test isolation; run full test suite after any modification"
         )
 
+    # S401: Shared secrets blast — blast target file name or symbols suggest it holds credentials.
+    # Files containing API keys, secrets, or tokens that are imported widely are high-risk;
+    # a single accidental log statement or serialization call can leak credentials.
+    _secret_words401 = (
+        "secret", "credential", "api_key", "apikey", "token", "password",
+        "passwd", "auth_key", "private_key", "access_key",
+    )
+    _fp401_lower = file_path.lower().replace("-", "_")
+    _file_is_secret401 = any(w in _fp401_lower for w in _secret_words401)
+    _sym_has_secret401 = any(
+        any(w in s.name.lower() for w in _secret_words401)
+        for s in graph.symbols.values()
+        if s.file_path == file_path
+    )
+    _total_importers401 = len(importers)
+    if (_file_is_secret401 or _sym_has_secret401) and _total_importers401 >= 3:
+        lines.append(
+            f"secrets blast: {file_path.rsplit('/', 1)[-1]} contains credentials/tokens"
+            f" and is imported by {_total_importers401} file(s)"
+            f" — wide credential sharing increases leak surface; scope access via DI or env-only"
+        )
+
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
 

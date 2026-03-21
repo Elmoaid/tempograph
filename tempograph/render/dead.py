@@ -1317,6 +1317,29 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — may be unregistered from lifecycle hooks; false confidence in cleanup behavior"
         )
 
+    # S402: Dead background tasks — background_task_*/worker_*/celery_* functions with 0 callers.
+    # Background task functions that are never called may have been deregistered from a task
+    # queue without being deleted; they create dead worker slots and confuse task routing.
+    _s402_bg_prefixes = (
+        "background_task_", "worker_", "celery_", "task_",
+        "async_job_", "queue_", "job_",
+    )
+    _s402_dead_bg = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s402_bg_prefixes)
+    ]
+    if len(_s402_dead_bg) >= 2:
+        _bg_names402 = ", ".join(s.name for s in _s402_dead_bg[:3])
+        if len(_s402_dead_bg) > 3:
+            _bg_names402 += f" +{len(_s402_dead_bg) - 3} more"
+        lines.append(
+            f"dead background tasks: {len(_s402_dead_bg)} unused task fn(s) ({_bg_names402})"
+            f" — may be deregistered from task queue; dead worker slots confuse task routing"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
