@@ -14942,3 +14942,39 @@ class TestHotspotsTestFileHotspot:
         assert "test file hotspot" not in out, (
             f"'test file hotspot' must not appear for source hotspot; got:\n{out}"
         )
+
+
+# S243 — framework detected (overview)
+# ---------------------------------------------------------------------------
+
+class TestOverviewFrameworkDetected:
+    def test_framework_shown_for_flask_app(self, tmp_path):
+        """S243: 'frameworks' shown when source files import a known framework."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        (tmp_path / "app.py").write_text(
+            "from flask import Flask\napp = Flask(__name__)\n"
+        )
+        (tmp_path / "views.py").write_text(
+            "from flask import request\ndef get_user(): return request.args\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "frameworks:" in out, f"Expected 'frameworks:'; got:\n{out}"
+        assert "Flask" in out
+
+    def test_framework_absent_for_plain_python(self, tmp_path):
+        """S243: 'frameworks' absent when no known framework is imported."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        (tmp_path / "utils.py").write_text(
+            "import os\nimport json\ndef read(): return os.getcwd()\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from utils import read\ndef run(): return read()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "frameworks:" not in out, (
+            f"'frameworks' must not appear for plain Python; got:\n{out}"
+        )

@@ -1304,7 +1304,21 @@ def render_overview(graph: Tempo) -> str:
             f" — not imported or called from anywhere"
         )
 
-    # S227: High coupling — average number of imports per source file >= 5.
+    # S233: Undertested codebase — source files exist but fewer than 20% of all files are tests.
+    # A low test ratio for a non-trivial codebase is a coverage risk signal.
+    # Only shown when < 20% of 10+ files are tests (excluding trivial single-file repos).
+    _s233_all = [fp for fp in graph.files if graph.files[fp].language.value in _CODE_LANGS]
+    _s233_tests = [fp for fp in _s233_all if _is_test_file(fp)]
+    _s233_src = [fp for fp in _s233_all if not _is_test_file(fp)]
+    if len(_s233_all) >= 10 and _s233_src:
+        _s233_ratio = len(_s233_tests) / len(_s233_all) * 100
+        if _s233_ratio < 20:
+            lines.append(
+                f"undertested: {len(_s233_tests)}/{len(_s233_all)} files are tests"
+                f" ({_s233_ratio:.0f}%) — consider adding test coverage"
+            )
+
+        # S227: High coupling — average number of imports per source file >= 5.
     # High coupling means files are tightly interdependent; one change ripples widely.
     # Only shown when avg >= 5 and 5+ source files exist.
     _s227_src_fps = [fp for fp in graph.files if not _is_test_file(fp)]
@@ -1379,6 +1393,35 @@ def render_overview(graph: Tempo) -> str:
             f"multi-entry app: {len(_s220_entry_files)} entry points ({_s220_str})"
             f" — cross-cutting changes (config, auth, logging) must apply to all"
         )
+
+    # S243: Framework/library detected — codebase imports a well-known web framework or library.
+    # Shown to orient agents: know what routing, ORM, and middleware patterns to expect.
+    # Only shown when 1+ framework import found across source files.
+    _s243_frameworks: dict[str, str] = {
+        "flask": "Flask", "django": "Django", "fastapi": "FastAPI",
+        "starlette": "Starlette", "tornado": "Tornado", "aiohttp": "aiohttp",
+        "falcon": "Falcon", "bottle": "Bottle", "sanic": "Sanic",
+        "sqlalchemy": "SQLAlchemy", "alembic": "Alembic", "celery": "Celery",
+        "pydantic": "Pydantic",
+        "express": "Express", "koa": "Koa", "fastify": "Fastify",
+        "nestjs": "NestJS", "nextjs": "Next.js",
+    }
+    _s243_detected: list[str] = []
+    _s243_seen: set[str] = set()
+    for _fi243 in graph.files.values():
+        if _is_test_file(_fi243.language.value):
+            continue
+        for _imp243 in _fi243.imports:
+            _imp243_lower = _imp243.lower()
+            for _fw_key, _fw_label in _s243_frameworks.items():
+                if _fw_key not in _s243_seen and _fw_key in _imp243_lower:
+                    _s243_detected.append(_fw_label)
+                    _s243_seen.add(_fw_key)
+    if _s243_detected:
+        _s243_str = ", ".join(_s243_detected[:3])
+        if len(_s243_detected) > 3:
+            _s243_str += f" +{len(_s243_detected) - 3} more"
+        lines.append(f"frameworks: {_s243_str}")
 
         # Suggest directories to exclude — detect likely noise
     noisy = _detect_noisy_dirs(graph, modules)
