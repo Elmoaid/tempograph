@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { SinglePage } from "./components/SinglePage";
 import { detectRepo } from "./components/tempo";
+import { useTheme } from "./hooks/useTheme";
 import "./App.css";
 
 export interface TempoResult {
@@ -27,6 +28,7 @@ function saveWorkspaces(ws: string[]) {
 }
 
 function App() {
+  const [theme, toggleTheme] = useTheme();
   const [workspaces, setWorkspaces] = useState<string[]>(loadWorkspaces);
   const [activeIdx, setActiveIdx] = useState(0);
 
@@ -73,6 +75,8 @@ function App() {
       setActiveIdx={setActiveIdx}
       addWorkspace={addWorkspace}
       removeWorkspace={removeWorkspace}
+      theme={theme}
+      onToggleTheme={toggleTheme}
     />
   );
 }
