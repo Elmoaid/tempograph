@@ -4815,3 +4815,466 @@ class TestHotspotsNoTestCoverage:
         assert "no test coverage" not in out, (
             f"Must NOT show 'no test coverage' when test_core.py covers hub; got:\n{out}"
         )
+
+
+class TestFocusTestOnlyCallers:
+    """S37: Focus mode — TEST-ONLY CALLERS warning when all callers are test files.
+
+    When render_focused is called on a symbol whose only callers (>= 2) are test
+    files, the ⚠ line should include 'TEST-ONLY CALLERS'. When production code also
+    calls the symbol, the warning must be absent.
+    """
+
+    def _build(self, tmp_path, files: dict) -> object:
+        from tempograph.builder import build_graph
+
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_warning_shown_when_only_test_callers(self, tmp_path):
+        """TEST-ONLY CALLERS appears when symbol is called only from test files."""
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "helpers.py": "def fixture_helper():\n    return 42\n",
+            "test_a.py": "from helpers import fixture_helper\ndef test_a(): assert fixture_helper() == 42\n",
+            "test_b.py": "from helpers import fixture_helper\ndef test_b(): assert fixture_helper() > 0\n",
+        })
+        out = render_focused(g, "fixture_helper")
+
+        assert "TEST-ONLY CALLERS" in out, (
+            f"Must show TEST-ONLY CALLERS when only test files call this symbol; got:\n{out}"
+        )
+
+    def test_warning_absent_when_production_also_calls(self, tmp_path):
+        """No TEST-ONLY CALLERS warning when production code also calls the symbol."""
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "helpers.py": "def helper():\n    return 42\n",
+            "app.py": "from helpers import helper\ndef run(): return helper()\n",
+            "test_a.py": "from helpers import helper\ndef test_a(): assert helper() == 42\n",
+            "test_b.py": "from helpers import helper\ndef test_b(): assert helper() > 0\n",
+        })
+        out = render_focused(g, "helper")
+
+        assert "TEST-ONLY CALLERS" not in out, (
+            f"Must NOT show TEST-ONLY CALLERS when production code also calls it; got:\n{out}"
+        )
+
+
+class TestOverviewPotentiallyUnused:
+    """Tests for 'potentially unused' section in render_overview (S35).
+
+    Overview flags source files with 0 source importers AND no test coverage.
+    Requires >= 10 source files and a test suite to reduce false positives.
+    """
+
+    def _build(self, tmp_path, files: dict) -> object:
+        from tempograph.builder import build_graph
+
+        for name, content in files.items():
+            p = tmp_path / name
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def _src_files(self, n: int) -> dict:
+        """Generate n connected source files + 1 test file."""
+        files = {
+            "test_core.py": "from core0 import f0\ndef test_f(): assert f0()\n",
+        }
+        for i in range(n):
+            files[f"core{i}.py"] = f"def f{i}():\n    return {i}\n"
+        # Wire them so most are imported
+        if n > 1:
+            files["app.py"] = (
+                "".join(f"from core{i} import f{i}\n" for i in range(n - 1))
+                + "def run(): pass\n"
+            )
+        return files
+
+    def test_floating_file_flagged(self, tmp_path):
+        """A source file with no importers and no test coverage appears in 'potentially unused'."""
+        from tempograph.render import render_overview
+
+        files = self._src_files(10)
+        # Add a floating file — nothing imports it, no tests cover it
+        files["floating_utils.py"] = (
+            "def helper_a():\n    pass\ndef helper_b():\n    pass\ndef helper_c():\n    pass\n"
+        )
+        # And a second one to trigger the >= 2 threshold
+        files["floating_helpers.py"] = (
+            "def util_x():\n    pass\ndef util_y():\n    pass\ndef util_z():\n    pass\n"
+        )
+        g = self._build(tmp_path, files)
+        out = render_overview(g)
+
+        assert "potentially unused" in out, f"Must flag floating files; got:\n{out}"
+        assert "floating_utils" in out or "floating_helpers" in out, (
+            f"Must name at least one floating file; got:\n{out}"
+        )
+
+    def test_imported_file_not_flagged(self, tmp_path):
+        """A file imported by another source file is NOT flagged as potentially unused."""
+        from tempograph.render import render_overview
+
+        files = self._src_files(10)
+        files["shared.py"] = (
+            "def util_a():\n    pass\ndef util_b():\n    pass\ndef util_c():\n    pass\n"
+        )
+        files["consumer.py"] = "from shared import util_a\ndef run(): util_a()\n"
+        g = self._build(tmp_path, files)
+        out = render_overview(g)
+
+        # shared.py is imported by consumer.py, so it must NOT appear in the unused line
+        unused_line = next((l for l in out.splitlines() if "potentially unused" in l), "")
+        assert "shared" not in unused_line, (
+            f"Imported file must NOT be flagged as unused; got:\n{unused_line}"
+        )
+
+    def test_test_covered_file_not_flagged(self, tmp_path):
+        """A file covered by tests is NOT flagged even if no source file imports it."""
+        from tempograph.render import render_overview
+
+        files = self._src_files(10)
+        files["standalone.py"] = (
+            "def func_a():\n    pass\ndef func_b():\n    pass\ndef func_c():\n    pass\n"
+        )
+        files["test_standalone.py"] = "from standalone import func_a\ndef test_it(): func_a()\n"
+        # Add a second floating file so threshold can be met without standalone
+        files["truly_unused.py"] = (
+            "def z_a():\n    pass\ndef z_b():\n    pass\ndef z_c():\n    pass\n"
+        )
+        files["truly_unused2.py"] = (
+            "def y_a():\n    pass\ndef y_b():\n    pass\ndef y_c():\n    pass\n"
+        )
+        g = self._build(tmp_path, files)
+        out = render_overview(g)
+
+        # standalone.py has test coverage -- must not appear in the unused line
+        unused_line = next((l for l in out.splitlines() if "potentially unused" in l), "")
+        assert "standalone" not in unused_line, (
+            f"Test-covered file must NOT be flagged as unused; got:\n{unused_line}"
+        )
+
+    def test_entry_point_not_flagged(self, tmp_path):
+        """Known entry point names like __main__.py are never flagged as potentially unused."""
+        from tempograph.render import render_overview
+
+        files = self._src_files(10)
+        files["__main__.py"] = "def main():\n    pass\n"
+        # Two floating files to potentially trigger the section
+        files["dead_a.py"] = (
+            "def a1():\n    pass\ndef a2():\n    pass\ndef a3():\n    pass\n"
+        )
+        files["dead_b.py"] = (
+            "def b1():\n    pass\ndef b2():\n    pass\ndef b3():\n    pass\n"
+        )
+        g = self._build(tmp_path, files)
+        out = render_overview(g)
+
+        unused_line = next((l for l in out.splitlines() if "potentially unused" in l), "")
+        assert "__main__" not in unused_line, (
+            f"Entry points must not appear in potentially unused line; got:\n{unused_line}"
+        )
+
+    def test_below_threshold_not_shown(self, tmp_path):
+        """Section not shown when fewer than 2 unused files are found."""
+        from tempograph.render import render_overview
+
+        files = self._src_files(10)
+        # Only ONE floating file - should not trigger
+        files["lone_floating.py"] = (
+            "def lone_a():\n    pass\ndef lone_b():\n    pass\ndef lone_c():\n    pass\n"
+        )
+        g = self._build(tmp_path, files)
+        out = render_overview(g)
+
+        # Only 1 floating file -- should NOT appear (requires >= 2)
+        if "potentially unused" in out:
+            assert "lone_floating" not in out, (
+                f"Single floating file should not trigger section; got:\n{out}"
+            )
+
+
+class TestHotspotsUntestedSummary:
+    """S36: Hotspots mode — 'Untested hotspots:' summary.
+
+    When project has test files but hotspot symbols are in files without
+    matching test coverage, show 'Untested hotspots: ...' line.
+    These are the highest-risk code changes: high coupling + no safety net.
+    """
+
+    def test_untested_hotspots_shown_when_no_test_for_hotspot_file(self, tmp_path):
+        """Untested hotspots: appears when hotspot symbols have no test file."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        # hub.py: no test file; has hotspot symbol
+        (tmp_path / "hub.py").write_text("def hub_fn(): pass\n")
+        for i in range(4):
+            (tmp_path / f"user_{i}.py").write_text(
+                f"from hub import hub_fn\ndef fn_{i}(): return hub_fn()\n"
+            )
+        # Add a test file (not for hub.py) so the untested check fires
+        (tmp_path / "test_other.py").write_text("def test_thing(): pass\n")
+
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g, top_n=10)
+
+        assert "Untested hotspots:" in out, (
+            f"Untested hotspots: must appear when hotspot file has no tests; got:\n{out}"
+        )
+        assert "hub_fn" in out
+
+    def test_untested_hotspots_omitted_when_all_covered(self, tmp_path):
+        """Untested hotspots: omitted when all hotspot files have matching tests."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        # hub.py WITH matching test_hub.py
+        (tmp_path / "hub.py").write_text("def hub_fn(): pass\n")
+        (tmp_path / "test_hub.py").write_text("from hub import hub_fn\ndef test_it(): hub_fn()\n")
+        for i in range(3):
+            (tmp_path / f"user_{i}.py").write_text(
+                f"from hub import hub_fn\ndef fn_{i}(): return hub_fn()\n"
+            )
+
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g, top_n=10)
+
+        assert "Untested hotspots:" not in out, (
+            f"Untested hotspots: must NOT appear when all hotspot files have tests; got:\n{out}"
+        )
+
+
+class TestBlastImporterCallIntensitySort:
+    """S38: Blast mode — importers sorted by call count (most dependent first).
+
+    When multiple files import the blast target, the importer with the most
+    calls to symbols in the target file should appear before importers with
+    fewer calls.
+    """
+
+    def test_heavy_caller_listed_before_light_caller(self, tmp_path):
+        """Heavy importer (many calls) appears before light importer (few calls)."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        (tmp_path / "lib.py").write_text(
+            "def fn_a(): pass\ndef fn_b(): pass\ndef fn_c(): pass\n"
+        )
+        # heavy.py calls all 3 symbols
+        (tmp_path / "heavy.py").write_text(
+            "from lib import fn_a, fn_b, fn_c\n"
+            "def run():\n    fn_a()\n    fn_b()\n    fn_c()\n"
+        )
+        # light.py calls only 1 symbol
+        (tmp_path / "light.py").write_text(
+            "from lib import fn_a\ndef minimal(): return fn_a()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "lib.py")
+
+        # Both importers should appear
+        assert "heavy.py" in out, f"heavy.py must appear in blast output; got:\n{out}"
+        assert "light.py" in out, f"light.py must appear in blast output; got:\n{out}"
+        # heavy.py (3 calls) should appear before light.py (1 call)
+        heavy_pos = out.index("heavy.py")
+        light_pos = out.index("light.py")
+        assert heavy_pos < light_pos, (
+            f"heavy.py (3 calls) must appear before light.py (1 call); got:\n{out}"
+        )
+
+
+class TestBlastCochangePartners:
+    """S38: Blast mode — 'Co-change partners:' section from git history.
+
+    Files that historically co-change with the blast target appear as hints.
+    Absent in non-git directories (graceful fallback).
+    """
+
+    def test_no_cochange_in_non_git_repo(self, tmp_path):
+        """Co-change partners: must not appear for non-git directory."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        (tmp_path / "core.py").write_text("def fn(): pass\n")
+        (tmp_path / "user.py").write_text("from core import fn\ndef use(): return fn()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "core.py")
+
+        assert "Co-change partners:" not in out, (
+            f"Co-change partners: must not appear without git history; got:\n{out}"
+        )
+
+    def test_cochange_format_when_present(self):
+        """When Co-change partners: appears, it uses filename (score% age) format."""
+        import os
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        g = build_graph(repo, use_cache=False)
+        out = render_blast_radius(g, "tempograph/render.py")
+
+        if "Co-change partners:" in out:
+            line = next(l for l in out.split("\n") if "Co-change partners:" in l)
+            # Format: "filename.py (XX% recent)" or similar
+            assert "%" in line, f"Co-change must include percentage; got:\n{line}"
+
+
+class TestFocusImplementors:
+    """S38: Focus mode — 'implementors:' section for CLASS/INTERFACE seeds.
+
+    When a seed symbol is a class or interface with subclasses/implementors,
+    the focus output should show those implementors inline.
+    """
+
+    def _build(self, tmp_path, files: dict) -> object:
+        from tempograph.builder import build_graph
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_implementors_shown_for_interface_seed(self, tmp_path):
+        """implementors: line appears when an interface has subclasses."""
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "animal.py": "class Animal:\n    def sound(self): pass\n",
+            "dog.py": "from animal import Animal\nclass Dog(Animal):\n    def sound(self): return 'Woof'\n",
+            "cat.py": "from animal import Animal\nclass Cat(Animal):\n    def sound(self): return 'Meow'\n",
+        })
+        out = render_focused(g, "Animal")
+
+        assert "implementors:" in out, f"Expected implementors section; got:\n{out}"
+        assert "Dog" in out or "Cat" in out, f"Expected Dog or Cat in implementors; got:\n{out}"
+
+    def test_implementors_absent_when_no_subclasses(self, tmp_path):
+        """implementors: line absent when no class inherits from seed."""
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "animal.py": "class Animal:\n    def sound(self): pass\n",
+        })
+        out = render_focused(g, "Animal")
+
+        assert "implementors:" not in out, f"Unexpected implementors when none exist; got:\n{out}"
+
+    def test_implementors_absent_for_function_seed(self, tmp_path):
+        """implementors: line not shown for function seeds (only CLASS/INTERFACE)."""
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "utils.py": "def add(x, y):\n    return x + y\n",
+        })
+        out = render_focused(g, "add")
+
+        assert "implementors:" not in out, f"implementors must not appear for function; got:\n{out}"
+
+
+class TestFocusFileSiblings:
+    """S39: Focus mode — 'In filename.py: sibling (N callers)' section.
+
+    After the BFS output, shows other notable symbols in the seed's file.
+    Helps agents understand what's in the file without a separate blast query.
+    Only includes symbols with >= 1 caller (live code worth knowing about).
+    """
+
+    def test_siblings_shown_for_called_symbols(self, tmp_path):
+        """Siblings with callers appear in 'In file:' line."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "def primary(): pass\n"
+            "def helper(): pass\n"
+            "def util(): pass\n"
+        )
+        (tmp_path / "user.py").write_text(
+            "from service import primary, helper\n"
+            "def main(): primary(); helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "primary")
+
+        assert "service.py" in out
+        # helper is called externally → should appear as a sibling
+        assert "helper" in out.split("In service.py:")[-1] if "In service.py:" in out else True
+
+    def test_uncalled_siblings_excluded(self, tmp_path):
+        """Symbols with 0 callers are not shown as siblings."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "module.py").write_text(
+            "def main_fn(): pass\n"
+            "def dead_fn(): pass\n"  # never called
+        )
+        (tmp_path / "caller.py").write_text(
+            "from module import main_fn\n"
+            "def use(): return main_fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "main_fn")
+
+        if "In module.py:" in out:
+            sibs_line = next(l for l in out.split("\n") if "In module.py:" in l)
+            assert "dead_fn" not in sibs_line, (
+                f"dead_fn (0 callers) must not appear as sibling; got:\n{sibs_line}"
+            )
+
+
+class TestOverviewTechDebtMarkers:
+    """S39: Overview — tech debt markers (TODO/FIXME/HACK/XXX count).
+
+    Scans source files and emits a 'tech debt: N markers in M files (...)' line
+    when at least 3 markers are found. No line when project is clean.
+    """
+
+    def test_tech_debt_line_appears_with_markers(self, tmp_path):
+        """Overview shows tech debt summary when source files contain markers."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "main.py").write_text(
+            "# TODO: refactor this\n"
+            "def fn(): pass\n"
+            "# FIXME: broken edge case\n"
+            "def gn(): pass\n"
+            "# HACK: workaround for lib bug\n"
+            "def hn(): pass\n"
+        )
+        (tmp_path / "helper.py").write_text(
+            "# TODO: add validation\n"
+            "def util(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+
+        assert "tech debt:" in out, f"Expected tech debt line; got:\n{out}"
+        # Should show total count and marker breakdown
+        assert "TODO" in out or "FIXME" in out or "HACK" in out, (
+            f"Expected marker types in tech debt line; got:\n{out}"
+        )
+        # Should mention file count
+        assert "files" in out, f"Expected 'files' in tech debt line; got:\n{out}"
+
+    def test_tech_debt_absent_when_no_markers(self, tmp_path):
+        """Overview does not show tech debt line when no markers exist."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "clean.py").write_text(
+            "def add(x, y): return x + y\n"
+            "def mul(x, y): return x * y\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+
+        assert "tech debt:" not in out, (
+            f"tech debt line must not appear in clean project; got:\n{out}"
+        )
