@@ -1248,6 +1248,29 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — abandoned constructor alternatives; safe to remove after confirming no dynamic use"
         )
 
+    # S384: Dead cleanup functions — cleanup_*/teardown_*/destroy_* functions with 0 callers.
+    # Cleanup functions that are never called may have been unregistered from lifecycle hooks
+    # without being deleted; they consume memory and create false confidence in cleanup behavior.
+    _s384_cleanup_prefixes = (
+        "cleanup_", "teardown_", "destroy_", "shutdown_", "close_",
+        "dispose_", "finalize_", "free_", "release_",
+    )
+    _s384_dead_cleanup = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s384_cleanup_prefixes)
+    ]
+    if len(_s384_dead_cleanup) >= 2:
+        _cl_names384 = ", ".join(s.name for s in _s384_dead_cleanup[:3])
+        if len(_s384_dead_cleanup) > 3:
+            _cl_names384 += f" +{len(_s384_dead_cleanup) - 3} more"
+        lines.append(
+            f"dead cleanup: {len(_s384_dead_cleanup)} unused lifecycle fn(s) ({_cl_names384})"
+            f" — may be unregistered from lifecycle hooks; false confidence in cleanup behavior"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
