@@ -1957,7 +1957,7 @@ def _collect_hotspots_signals(
         ):
             _caller_count616 = len(graph.callers_of(_top616.id))
             out.append(
-                f"\nexported hotspot: {_top616.name} is a public symbol with {_caller_count616} callers"
+                f"\npublic hotspot: {_top616.name} is a public symbol with {_caller_count616} callers"
                 f" — part of the module API; signature changes require coordinating all callers"
             )
 
