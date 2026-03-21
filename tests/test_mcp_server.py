@@ -5226,3 +5226,55 @@ class TestFocusFileSiblings:
             assert "dead_fn" not in sibs_line, (
                 f"dead_fn (0 callers) must not appear as sibling; got:\n{sibs_line}"
             )
+
+
+class TestOverviewTechDebtMarkers:
+    """S39: Overview — tech debt markers (TODO/FIXME/HACK/XXX count).
+
+    Scans source files and emits a 'tech debt: N markers in M files (...)' line
+    when at least 3 markers are found. No line when project is clean.
+    """
+
+    def test_tech_debt_line_appears_with_markers(self, tmp_path):
+        """Overview shows tech debt summary when source files contain markers."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "main.py").write_text(
+            "# TODO: refactor this\n"
+            "def fn(): pass\n"
+            "# FIXME: broken edge case\n"
+            "def gn(): pass\n"
+            "# HACK: workaround for lib bug\n"
+            "def hn(): pass\n"
+        )
+        (tmp_path / "helper.py").write_text(
+            "# TODO: add validation\n"
+            "def util(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+
+        assert "tech debt:" in out, f"Expected tech debt line; got:\n{out}"
+        # Should show total count and marker breakdown
+        assert "TODO" in out or "FIXME" in out or "HACK" in out, (
+            f"Expected marker types in tech debt line; got:\n{out}"
+        )
+        # Should mention file count
+        assert "files" in out, f"Expected 'files' in tech debt line; got:\n{out}"
+
+    def test_tech_debt_absent_when_no_markers(self, tmp_path):
+        """Overview does not show tech debt line when no markers exist."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "clean.py").write_text(
+            "def add(x, y): return x + y\n"
+            "def mul(x, y): return x * y\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+
+        assert "tech debt:" not in out, (
+            f"tech debt line must not appear in clean project; got:\n{out}"
+        )

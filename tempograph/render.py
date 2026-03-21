@@ -1213,6 +1213,18 @@ def _build_symbol_block_lines(
         except Exception:
             pass
     block_lines = [f"{prefix} {sym.kind.value} {sym.qualified_name}{_blast_ann}{_age_ann} — {loc}{orbit_note}"]
+    # Container annotation for methods: show parent class with caller count.
+    # Helps agents understand the class context of the focused method.
+    if depth == 0 and sym.kind.value == "method" and "::" in sym.id:
+        _name_part = sym.id.split("::", 1)[1]
+        if "." in _name_part:
+            _class_id = sym.id.rsplit(".", 1)[0]  # "file.py::ClassName"
+            _class_sym = graph.symbols.get(_class_id)
+            if _class_sym:
+                _c_callers = len(graph.callers_of(_class_id))
+                _c_methods = len([c for c in graph.children_of(_class_id) if c.kind.value == "method"])
+                _c_ann = f"{_c_callers} callers" if _c_callers else "no callers"
+                block_lines.append(f"{indent}  container: {_class_sym.kind.value} {_class_sym.name} ({_c_ann}, {_c_methods} methods)")
     if sym.signature and depth < 2:
         block_lines.append(f"{indent}  sig: {sym.signature[:150]}")
     if sym.doc and depth == 0:
