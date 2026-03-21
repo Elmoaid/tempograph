@@ -741,6 +741,77 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — doc-only change; verify examples still match current implementation"
             )
 
+    # S969: Dependency file in diff — changed files include a package manifest.
+    # Dependency version changes can introduce breaking API changes, security vulnerabilities,
+    # or transitive conflicts that are invisible until runtime or integration test time.
+    if changed_files:
+        _dep_names969 = (
+            "requirements.txt", "requirements-dev.txt", "pyproject.toml",
+            "package.json", "package-lock.json", "yarn.lock",
+            "cargo.toml", "go.mod", "go.sum", "gemfile", "gemfile.lock",
+            "pom.xml", "build.gradle",
+        )
+        _dep_files969 = [
+            f for f in changed_files
+            if f.replace("\\", "/").rsplit("/", 1)[-1].lower() in _dep_names969
+        ]
+        if _dep_files969:
+            _dname969 = _dep_files969[0].replace("\\", "/").rsplit("/", 1)[-1]
+            lines.append(
+                f"dependency change: {len(_dep_files969)} dependency manifest(s) changed (e.g. {_dname969})"
+                f" — version bumps may introduce breaking API changes or transitive conflicts; review changelogs"
+            )
+
+    # S981: Security-sensitive file in diff — changed files touch auth or security code.
+    # Auth and security files carry high exploit risk; subtle changes can introduce
+    # vulnerabilities that pass all functional tests but are exploitable in production.
+    if changed_files:
+        _sec_kws981 = (
+            "auth", "authn", "authz", "authentication", "authorization",
+            "security", "crypto", "cryptography", "password", "passwd",
+            "secret", "jwt", "oauth", "tls", "ssl", "session",
+        )
+        _sec_files981 = []
+        for _sf981 in changed_files:
+            _sfname981 = _sf981.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+            if any(
+                _sfname981 == kw or _sfname981.startswith(kw + "_") or _sfname981.endswith("_" + kw)
+                for kw in _sec_kws981
+            ):
+                _sec_files981.append(_sf981)
+        if _sec_files981:
+            _sname981 = _sec_files981[0].replace("\\", "/").rsplit("/", 1)[-1]
+            lines.append(
+                f"security file in diff: {_sname981} touches authentication or security code"
+                f" — requires security review; subtle changes may introduce exploitable vulnerabilities"
+            )
+
+    # S987: Test-only diff — all changed files are test files.
+    # A diff that only touches tests carries no production regression risk,
+    # but verify tests are strengthening rather than relaxing assertion thresholds.
+    if changed_files:
+        _test_changed987 = [f for f in changed_files if _is_test_file(f)]
+        if len(_test_changed987) == len(changed_files) and _test_changed987:
+            lines.append(
+                f"test-only diff: all {len(_test_changed987)} changed file(s) are test files"
+                f" — no production code changed; verify tests are strengthening, not relaxing, coverage"
+            )
+
+    # S993: Init file in diff — changed files include a package __init__.py.
+    # Changes to __init__.py alter package-level exports and re-exports; adding or removing
+    # symbols from __init__.py changes the public API of the entire package silently.
+    if changed_files:
+        _init_files993 = [
+            f for f in changed_files
+            if f.replace("\\", "/").rsplit("/", 1)[-1] == "__init__.py"
+        ]
+        if _init_files993:
+            _ipath993 = _init_files993[0].replace("\\", "/")
+            lines.append(
+                f"init file in diff: {_ipath993} — package-level exports changed"
+                f"; adding or removing names here silently changes the API of the whole package"
+            )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 
@@ -2520,6 +2591,189 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             lines.append(
                 f"cross-module diff: {len(_diff_dirs909)} different directories changed"
                 f" — wide-scope change; check for missing abstraction or scattered responsibility"
+            )
+
+    # S915: Multiple init files in diff — 2+ module entry files (__init__.py, index.js, etc.) changed.
+    # Module entry files control what a package exports; changing multiple simultaneously
+    # suggests a package restructure that may break public API contracts.
+    if changed_files:
+        _init_names915 = ("__init__.py", "index.js", "index.ts", "mod.rs", "index.jsx", "index.tsx")
+        _init_files915 = [
+            f for f in changed_files
+            if f.replace("\\", "/").rsplit("/", 1)[-1] in _init_names915
+        ]
+        if len(_init_files915) >= 2:
+            _init_short915 = ", ".join(f.replace("\\", "/").rsplit("/", 1)[-1] for f in _init_files915[:2])
+            lines.append(
+                f"multiple init files: {len(_init_files915)} module entry files changed ({_init_short915})"
+                f" — multiple module boundaries changed; verify public API exports are consistent"
+            )
+
+    # S921: Schema or migration file in diff — changed files include database schema or migration files.
+    # Schema changes affect the database structure for all deployed instances;
+    # backward-incompatible migrations can cause runtime errors during rolling deployments.
+    if changed_files:
+        _schema_kws921 = ("migration", "migrate", "schema", "alembic", "flyway", "liquibase")
+        _schema_exts921 = (".sql", ".ddl")
+        _schema_files921 = [
+            f for f in changed_files
+            if (
+                any(kw in f.replace("\\", "/").lower() for kw in _schema_kws921)
+                or any(f.lower().endswith(e) for e in _schema_exts921)
+            )
+        ]
+        if _schema_files921:
+            _sf_name921 = _schema_files921[0].replace("\\", "/").rsplit("/", 1)[-1]
+            lines.append(
+                f"schema in diff: {len(_schema_files921)} schema/migration file(s) changed (e.g. {_sf_name921})"
+                f" — database schema changes; ensure backward-compatible migration for rolling deployments"
+            )
+
+    # S927: Test-only change — all graph-indexed changed files are test files.
+    # A test-only diff may indicate coverage was added after the fact, or tests were
+    # updated to match undocumented behavior changes rather than the intended spec.
+    if normalized and len(normalized) >= 2:
+        _all_test927 = all(_is_test_file(fp) for fp in normalized)
+        if _all_test927:
+            lines.append(
+                f"test-only diff: all {len(normalized)} changed file(s) are test files"
+                f" — no production code changed; verify tests reflect intentional behavior, not bugs"
+            )
+
+    # S933: Orphaned test change — test files changed but their source counterparts are not in the diff.
+    # Tests updated without a corresponding source change may be catching up to undocumented
+    # behavior, or hardcoding expected values rather than testing actual specifications.
+    if normalized:
+        _test_fps933 = [fp for fp in normalized if _is_test_file(fp)]
+        if _test_fps933:
+            _orphaned933 = []
+            for _tfp933 in _test_fps933:
+                _base933 = _tfp933.replace("test_", "", 1).replace("_test.py", ".py")
+                if _base933 not in normalized and _base933 != _tfp933:
+                    _orphaned933.append(_tfp933)
+            if _orphaned933:
+                _names933 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _orphaned933[:2])
+                lines.append(
+                    f"orphaned test change: {len(_orphaned933)} test file(s) changed without matching source ({_names933})"
+                    f" — tests updated without source change; verify tests reflect the intended spec"
+                )
+
+    # S939: Interface file in diff — changed files include abstract or protocol definition files.
+    # Interface files define contracts; changes ripple to all implementors and callers
+    # and may require coordinated updates across multiple classes.
+    if changed_files:
+        _iface_kws939 = ("abstract", "interface", "protocol", "contract", "base", "abc")
+        _iface_files939 = [
+            f for f in changed_files
+            if any(kw in f.replace("\\", "/").rsplit("/", 1)[-1].lower() for kw in _iface_kws939)
+            and not _is_test_file(f)
+        ]
+        if _iface_files939:
+            _iname939 = _iface_files939[0].replace("\\", "/").rsplit("/", 1)[-1]
+            lines.append(
+                f"interface in diff: {len(_iface_files939)} interface/abstract file(s) changed (e.g. {_iname939})"
+                f" — interface changes ripple to all implementors; verify all implementors are updated"
+            )
+
+    # S945: Widely-imported file in diff — a changed file is imported by 5+ other source files.
+    # When a hub file changes, every consumer is a potential regression site;
+    # the blast radius of this diff is likely larger than the file count suggests.
+    if normalized:
+        for _chf945 in normalized:
+            if _is_test_file(_chf945):
+                continue
+            _file_syms945 = [
+                s for s in graph.symbols.values()
+                if s.file_path == _chf945
+                or (not _chf945.startswith("/") and _chf945 in s.file_path)
+            ]
+            _importers945 = {
+                c.file_path
+                for s in _file_syms945
+                for c in graph.callers_of(s.id)
+                if not _is_test_file(c.file_path) and c.file_path != _chf945
+            }
+            if len(_importers945) >= 5:
+                lines.append(
+                    f"widely-imported change: {_chf945.rsplit('/', 1)[-1]} is imported by {len(_importers945)} source module(s)"
+                    f" — high fan-in file changed; blast radius wider than file count suggests"
+                )
+                break  # only report once
+
+    # S951: Cross-language diff — changed files span multiple programming languages.
+    # Mixed-language diffs require reviewers with expertise in each language;
+    # language-crossing changes often indicate interface or serialization changes.
+    if changed_files and len(changed_files) >= 2:
+        _ext951: set[str] = set()
+        _lang_map951 = {
+            ".py": "python", ".js": "js", ".ts": "js", ".tsx": "js", ".jsx": "js",
+            ".go": "go", ".java": "java", ".rb": "ruby", ".rs": "rust",
+            ".cpp": "cpp", ".cc": "cpp", ".c": "c", ".cs": "csharp",
+        }
+        for _f951 in changed_files:
+            _sfx951 = "." + _f951.rsplit(".", 1)[-1].lower() if "." in _f951 else ""
+            _lang951 = _lang_map951.get(_sfx951)
+            if _lang951:
+                _ext951.add(_lang951)
+        if len(_ext951) >= 2:
+            lines.append(
+                f"cross-language diff: changed files span {len(_ext951)} languages ({', '.join(sorted(_ext951))})"
+                f" — multi-language change requires reviewers proficient in each; verify interface/serialization alignment"
+            )
+
+    # S957: Multi-directory diff — changed files span 3+ distinct parent directories.
+    # Cross-subsystem changes require coordination across multiple owners and increase
+    # the chance that a merge lands in one subsystem without the paired change in another.
+    if changed_files and len(changed_files) >= 3:
+        _dirs957: set[str] = set()
+        for _f957 in changed_files:
+            _normalized957 = _f957.replace("\\", "/")
+            _parent957 = _normalized957.rsplit("/", 1)[0] if "/" in _normalized957 else "."
+            _dirs957.add(_parent957)
+        if len(_dirs957) >= 3:
+            lines.append(
+                f"multi-dir diff: changed files span {len(_dirs957)} directories"
+                f" — cross-subsystem change; verify all owners have reviewed their portion"
+            )
+
+    # S963: Test infrastructure changed — diff includes conftest.py or shared test utilities.
+    # Changes to test infrastructure affect every test that relies on those fixtures or helpers;
+    # a subtle fixture change can cause mass test failures or false passes.
+    if changed_files:
+        _infra_kws963 = ("conftest", "fixtures", "test_helpers", "test_utils", "testing_utils")
+        _infra_files963 = [
+            f for f in changed_files
+            if any(
+                f.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower() == kw
+                for kw in _infra_kws963
+            )
+        ]
+        if _infra_files963:
+            _iname963 = _infra_files963[0].replace("\\", "/").rsplit("/", 1)[-1]
+            lines.append(
+                f"test infra changed: {len(_infra_files963)} test infrastructure file(s) modified (e.g. {_iname963})"
+                f" — fixture changes silently affect all dependent tests; run the full test suite"
+            )
+
+    # S975: Build config in diff — changed files include build/CI tooling configuration.
+    # Build config changes can silently break deployments in specific environments even
+    # when all code tests pass locally; they require verification across all target envs.
+    if changed_files:
+        _build_names975 = (
+            "makefile", "dockerfile", "docker-compose.yml", "docker-compose.yaml",
+            ".travis.yml", ".circleci", "jenkinsfile", "tox.ini", "setup.cfg",
+            "pyproject.toml", ".github",
+        )
+        _build_files975 = [
+            f for f in changed_files
+            if f.replace("\\", "/").rsplit("/", 1)[-1].lower() in _build_names975
+            or any(kw in f.replace("\\", "/").lower() for kw in (".github/", ".circleci/"))
+        ]
+        if _build_files975:
+            _bname975 = _build_files975[0].replace("\\", "/").rsplit("/", 1)[-1]
+            lines.append(
+                f"build config in diff: {_bname975} — CI/CD or build changes;"
+                f" verify behavior across all target environments, not just local"
             )
 
     return "\n".join(lines)

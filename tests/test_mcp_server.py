@@ -42230,7 +42230,7 @@ class TestNewFilesInDiffS891:
 # ── S892: Hotspot cluster ────────────────────────────────────────────────────
 
 class TestHotspotClusterS892:
-    """S892: 3+ top-10 hotspots in same file emits hotspot-cluster signal."""
+    """S892: 3+ top-10 hotspots in same file emits coupling-hub signal."""
 
     def test_shown(self, tmp_path):
         from tempograph import build_graph
@@ -42247,8 +42247,8 @@ class TestHotspotClusterS892:
         )
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_hotspots(g)
-        assert "hotspot cluster" in out, (
-            f"'hotspot cluster' expected when 3+ hotspots in same file; got:\n{out}"
+        assert "coupling hub" in out, (
+            f"'coupling hub' expected when 3+ hotspots in same file; got:\n{out}"
         )
 
     def test_absent(self, tmp_path):
@@ -42265,8 +42265,8 @@ class TestHotspotClusterS892:
         )
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_hotspots(g)
-        assert "hotspot cluster" not in out, (
-            f"'hotspot cluster' must not appear when hotspots spread across files; got:\n{out}"
+        assert "coupling hub" not in out, (
+            f"'coupling hub' must not appear when hotspots spread across files; got:\n{out}"
         )
 
 
@@ -43035,4 +43035,3772 @@ class TestDeadAsyncFunctionsS911:
         out = render_dead_code(g)
         assert "dead async" not in out, (
             f"'dead async' must not appear when async function is called; got:\n{out}"
+        )
+
+
+class TestDunderMethodFocusS912:
+    """S912: Focused symbol is a Python dunder method (not __init__/__new__)."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "container.py").write_text(
+            "class Container:\n"
+            "    def __init__(self, items):\n"
+            "        self._items = items\n"
+            "    def __len__(self):\n"
+            "        return len(self._items)\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from container import Container\ndef run(): c = Container([1, 2])\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "__len__")
+        assert "dunder method" in out, (
+            f"'dunder method' expected for __len__ focus; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "container.py").write_text(
+            "class Container:\n"
+            "    def __init__(self, items):\n"
+            "        self._items = items\n"
+            "    def get_items(self):\n"
+            "        return self._items\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from container import Container\n"
+            "def run(): return Container([]).get_items()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "get_items")
+        assert "dunder method" not in out, (
+            f"'dunder method' must not appear for regular method; got:\n{out}"
+        )
+
+
+
+# ── S913: Test-heavy codebase ──────────────────────────────────────────────────
+
+class TestTestHeavyCodebaseS913:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        for i in range(3):
+            (tmp_path / f"module_{i}.py").write_text(f"def fn_{i}(): return {i}\n")
+        for i in range(6):
+            (tmp_path / f"test_module_{i}.py").write_text(
+                f"def test_fn_{i}(): assert True\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "test-heavy" in out, f"expected test-heavy; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        for i in range(5):
+            (tmp_path / f"module_{i}.py").write_text(f"def fn_{i}(): return {i}\n")
+        for i in range(2):
+            (tmp_path / f"test_module_{i}.py").write_text(
+                f"def test_fn_{i}(): assert True\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "test-heavy" not in out, f"unexpected test-heavy; got: {out}"
+
+
+# ── S914: Test file blast ──────────────────────────────────────────────────────
+
+class TestTestFileBlastS914:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "test_utils.py").write_text("def test_helper(x): return x * 2\n")
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "test_utils.py")
+        assert "test file blast" in out, f"expected test file blast; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "utils.py").write_text("def helper(x): return x * 2\n")
+        (tmp_path / "app.py").write_text(
+            "from utils import helper\ndef run(): helper(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "utils.py")
+        assert "test file blast" not in out, f"unexpected test file blast; got: {out}"
+
+
+# ── S915: Multiple init files in diff ─────────────────────────────────────────
+
+class TestMultipleInitFilesS915:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "pkg_a").mkdir()
+        (tmp_path / "pkg_b").mkdir()
+        (tmp_path / "pkg_a" / "__init__.py").write_text("def init_a(): return 0\n")
+        (tmp_path / "pkg_b" / "__init__.py").write_text("def init_b(): return 1\n")
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["pkg_a/__init__.py", "pkg_b/__init__.py"])
+        assert "multiple init files" in out, f"expected multiple init files; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "utils.py").write_text("def helper(): return 1\n")
+        (tmp_path / "app.py").write_text(
+            "from utils import helper\ndef run(): helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["utils.py"])
+        assert "multiple init files" not in out, f"unexpected multiple init files; got: {out}"
+
+
+# ── S916: Single-caller hotspot ────────────────────────────────────────────────
+
+class TestSingleCallerHotspotS916:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        body = ["def complex_validator(a, b, c, d, e):"]
+        for i in range(8):
+            body.append(f"    if a: b = c + d * e + {i}")
+            body.append(f"    elif b: c = a + d - {i}")
+        body.append("    return a")
+        (tmp_path / "validator.py").write_text("\n".join(body) + "\n")
+        (tmp_path / "app.py").write_text(
+            "from validator import complex_validator\n"
+            "def run(): complex_validator(1, 2, 3, 4, 5)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "single-caller hotspot" in out, f"expected single-caller hotspot; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        body = ["def complex_validator(a, b, c, d, e):"]
+        for i in range(8):
+            body.append(f"    if a: b = c + d * e + {i}")
+            body.append(f"    elif b: c = a + d - {i}")
+        body.append("    return a")
+        (tmp_path / "validator.py").write_text("\n".join(body) + "\n")
+        for i in range(4):
+            (tmp_path / f"caller_{i}.py").write_text(
+                "from validator import complex_validator\n"
+                f"def run_{i}(): complex_validator(1, 2, 3, 4, 5)\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "single-caller hotspot" not in out, f"unexpected single-caller hotspot; got: {out}"
+
+
+# ── S917: Dead callback functions ─────────────────────────────────────────────
+
+class TestDeadCallbackFunctionsS917:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "events.py").write_text(
+            "def on_user_created(user): pass\n"
+            "def handle_payment(txn): pass\n"
+            "def active_fn(): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from events import active_fn\ndef run(): active_fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead callbacks" in out, f"expected dead callbacks; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "events.py").write_text("def on_user_created(user): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from events import on_user_created\n"
+            "def run(): on_user_created({'id': 1})\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead callbacks" not in out, f"unexpected dead callbacks; got: {out}"
+
+
+# ── S918–S923 ──────────────────────────────────────────────────────────────────
+
+# ── S918: Private method focus ────────────────────────────────────────────────
+
+class TestPrivateMethodFocusS918:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "class Service:\n"
+            "    def __init__(self):\n"
+            "        self._config = {}\n"
+            "    def _load_config(self, path):\n"
+            "        return {}\n"
+            "    def run(self):\n"
+            "        self._load_config('cfg.json')\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from service import Service\ndef main(): Service().run()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "_load_config")
+        assert "private method" in out, f"expected private method; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "class Service:\n"
+            "    def run(self):\n"
+            "        return True\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from service import Service\ndef main(): Service().run()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "run")
+        assert "private method" not in out, f"unexpected private method; got: {out}"
+
+
+# ── S919: No entry points ─────────────────────────────────────────────────────
+
+class TestNoEntryPointsS919:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        for i in range(5):
+            (tmp_path / f"module_{i}.py").write_text(
+                f"def process_{i}(x): return x + {i}\n"
+                f"def helper_{i}(x): return x * {i}\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no entry point" in out, f"expected no entry point; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "app.py").write_text(
+            "def main(): return 0\n"
+            "def helper(): return 1\n"
+        )
+        for i in range(4):
+            (tmp_path / f"module_{i}.py").write_text(
+                f"def process_{i}(x): return x + {i}\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no entry point" not in out, f"unexpected no entry point; got: {out}"
+
+
+# ── S920: Cache blast ─────────────────────────────────────────────────────────
+
+class TestCacheBlastS920:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "cache_manager.py").write_text(
+            "def get(key): return None\n"
+            "def set(key, value): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from cache_manager import get, set\ndef run(): set('k', get('k'))\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "cache_manager.py")
+        assert "cache blast" in out, f"expected cache blast; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "user_service.py").write_text(
+            "def get_user(uid): return uid\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from user_service import get_user\ndef run(): get_user(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "user_service.py")
+        assert "cache blast" not in out, f"unexpected cache blast; got: {out}"
+
+
+# ── S921: Schema file in diff ─────────────────────────────────────────────────
+
+class TestSchemaInDiffS921:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "migrations").mkdir()
+        (tmp_path / "migrations" / "0001_add_users.py").write_text(
+            "def upgrade(): pass\n"
+            "def downgrade(): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["migrations/0001_add_users.py"])
+        assert "schema in diff" in out, f"expected schema in diff; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "utils.py").write_text("def helper(): return 1\n")
+        (tmp_path / "app.py").write_text(
+            "from utils import helper\ndef run(): helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["utils.py"])
+        assert "schema in diff" not in out, f"unexpected schema in diff; got: {out}"
+
+
+# ── S922: Test-imported hotspot ────────────────────────────────────────────────
+
+class TestTestImportedHotspotS922:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        body = ["def complex_fn(a, b, c, d, e):"]
+        for i in range(8):
+            body.append(f"    if a: b = c + d * e + {i}")
+            body.append(f"    elif b: c = a + d - {i}")
+        body.append("    return a")
+        (tmp_path / "core.py").write_text("\n".join(body) + "\n")
+        (tmp_path / "app.py").write_text(
+            "from core import complex_fn\ndef run(): complex_fn(1,2,3,4,5)\n"
+        )
+        (tmp_path / "test_core.py").write_text(
+            "from core import complex_fn\ndef test_it(): assert complex_fn(1,2,3,4,5)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "test-imported hotspot" in out, f"expected test-imported hotspot; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        body = ["def complex_fn(a, b, c, d, e):"]
+        for i in range(8):
+            body.append(f"    if a: b = c + d * e + {i}")
+            body.append(f"    elif b: c = a + d - {i}")
+        body.append("    return a")
+        (tmp_path / "core.py").write_text("\n".join(body) + "\n")
+        (tmp_path / "app.py").write_text(
+            "from core import complex_fn\ndef run(): complex_fn(1,2,3,4,5)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "test-imported hotspot" not in out, f"unexpected test-imported hotspot; got: {out}"
+
+
+# ── S923: Dead formatters ──────────────────────────────────────────────────────
+
+class TestDeadFormattersS923:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "formatters.py").write_text(
+            "def format_date(d): return str(d)\n"
+            "def render_html(t): return f'<p>{t}</p>'\n"
+            "def active_fn(): return True\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from formatters import active_fn\ndef run(): active_fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead formatters" in out, f"expected dead formatters; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "formatters.py").write_text(
+            "def format_date(d): return str(d)\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from formatters import format_date\ndef run(): format_date('2025')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead formatters" not in out, f"unexpected dead formatters; got: {out}"
+
+
+# ── S924–S929 ──────────────────────────────────────────────────────────────────
+
+# ── S924: Name collision ──────────────────────────────────────────────────────
+
+class TestNameCollisionS924:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "auth.py").write_text("def validate(token): return bool(token)\n")
+        (tmp_path / "forms.py").write_text("def validate(data): return bool(data)\n")
+        (tmp_path / "app.py").write_text(
+            "from auth import validate as auth_validate\n"
+            "from forms import validate as form_validate\n"
+            "def run(): auth_validate('tok')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "validate")
+        assert "name collision" in out, f"expected name collision; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "auth.py").write_text("def authenticate(token): return bool(token)\n")
+        (tmp_path / "app.py").write_text(
+            "from auth import authenticate\ndef run(): authenticate('tok')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "authenticate")
+        assert "name collision" not in out, f"unexpected name collision; got: {out}"
+
+
+# ── S925: Mixed language repo ─────────────────────────────────────────────────
+
+class TestMixedLanguageRepoS925:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "server.py").write_text("def start(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        (tmp_path / "client.js").write_text("function fetchData() {}\n")
+        (tmp_path / "app.ts").write_text("export function run() {}\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "mixed languages" in out, f"expected mixed languages; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "server.py").write_text("def start(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        (tmp_path / "models.py").write_text("class User: pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "mixed languages" not in out, f"unexpected mixed languages; got: {out}"
+
+
+# ── S926: Middleware blast ────────────────────────────────────────────────────
+
+class TestMiddlewareBlastS926:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "auth_middleware.py").write_text(
+            "def process_request(req): return req\n"
+            "def process_response(res): return res\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from auth_middleware import process_request\ndef run(): process_request({})\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "auth_middleware.py")
+        assert "middleware blast" in out, f"expected middleware blast; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "user_service.py").write_text("def get_user(uid): return uid\n")
+        (tmp_path / "app.py").write_text(
+            "from user_service import get_user\ndef run(): get_user(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "user_service.py")
+        assert "middleware blast" not in out, f"unexpected middleware blast; got: {out}"
+
+
+# ── S927: Test-only diff ──────────────────────────────────────────────────────
+
+class TestTestOnlyDiffS927:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "test_app.py").write_text("def test_run(): pass\n")
+        (tmp_path / "test_utils.py").write_text("def test_helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["test_app.py", "test_utils.py"])
+        assert "test-only diff" in out, f"expected test-only diff; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "test_app.py").write_text("def test_run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "test_app.py"])
+        assert "test-only diff" not in out, f"unexpected test-only diff; got: {out}"
+
+
+# ── S928: Shallow hotspot ─────────────────────────────────────────────────────
+
+class TestShallowHotspotS928:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "core.py").write_text(
+            "def get_value(key):\n"
+            "    return key\n"
+        )
+        for i in range(6):
+            (tmp_path / f"module_{i}.py").write_text(
+                "from core import get_value\n"
+                f"def fn_{i}(): get_value('key_{i}')\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "shallow hotspot" in out, f"expected shallow hotspot; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        body = ["def process(a, b, c, d, e):"]
+        for i in range(10):
+            body.append(f"    if a: b = c + d * e + {i}")
+        body.append("    return a")
+        (tmp_path / "core.py").write_text("\n".join(body) + "\n")
+        (tmp_path / "app.py").write_text(
+            "from core import process\ndef run(): process(1,2,3,4,5)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "shallow hotspot" not in out, f"unexpected shallow hotspot; got: {out}"
+
+
+# ── S929: Dead data classes ────────────────────────────────────────────────────
+
+class TestDeadDataClassesS929:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "models.py").write_text(
+            "class UserData:\n"
+            "    name = ''\n"
+            "    email = ''\n"
+            "\n"
+            "class Config:\n"
+            "    debug = False\n"
+            "\n"
+            "def active_fn(): return True\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from models import active_fn\ndef run(): active_fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead data classes" in out, f"expected dead data classes; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "models.py").write_text(
+            "class UserData:\n"
+            "    name = ''\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from models import UserData\ndef run(): return UserData()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead data classes" not in out, f"unexpected dead data classes; got: {out}"
+
+
+# ── S930–S935 ──────────────────────────────────────────────────────────────────
+
+# ── S930: Large class member ──────────────────────────────────────────────────
+
+class TestLargeClassMemberS930:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        methods = "\n".join(
+            f"    def method_{i}(self):\n        return {i}"
+            for i in range(12)
+        )
+        (tmp_path / "service.py").write_text(
+            f"class BigService:\n{methods}\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "method_0")
+        assert "large class member" in out, (
+            f"'large class member' expected for method in 12-method class; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "class SmallService:\n"
+            "    def method_a(self): return 1\n"
+            "    def method_b(self): return 2\n"
+            "    def method_c(self): return 3\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "method_a")
+        assert "large class member" not in out, (
+            f"'large class member' must not appear for small class; got:\n{out}"
+        )
+
+
+class TestLargePublicApiS931:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        fns = "\n".join(f"def public_fn_{i}(): pass" for i in range(22))
+        (tmp_path / "api.py").write_text(fns + "\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "large public API" in out, (
+            f"'large public API' expected for 22 exports; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "api.py").write_text(
+            "def foo(): pass\ndef bar(): pass\ndef baz(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "large public API" not in out, (
+            f"'large public API' must not appear for small public API; got:\n{out}"
+        )
+
+
+class TestUtilityBlastS932:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "utils.py").write_text(
+            "def helper_a(): pass\ndef helper_b(): pass\n"
+        )
+        (tmp_path / "mod_a.py").write_text("from utils import helper_a\ndef fn_a(): helper_a()\n")
+        (tmp_path / "mod_b.py").write_text("from utils import helper_b\ndef fn_b(): helper_b()\n")
+        (tmp_path / "mod_c.py").write_text("from utils import helper_a\ndef fn_c(): helper_a()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "utils.py")
+        assert "utility blast" in out, (
+            f"'utility blast' expected for utils.py used by 3+ modules; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "service.py").write_text("def process(): pass\n")
+        (tmp_path / "app.py").write_text("from service import process\ndef run(): process()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "service.py")
+        assert "utility blast" not in out, (
+            f"'utility blast' must not appear for non-utility file; got:\n{out}"
+        )
+
+
+class TestOrphanedTestChangeS933:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "service.py").write_text("def process(): return True\n")
+        (tmp_path / "test_auth.py").write_text("def test_login(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        # Both source and unrelated test file in diff — test_auth.py has no matching source
+        out = render_diff_context(g, ["test_auth.py", "service.py"])
+        assert "orphaned test change" in out, (
+            f"'orphaned test change' expected when test has no matching source in diff; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "service.py").write_text("def process(): return True\n")
+        (tmp_path / "test_service.py").write_text("def test_process(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        # Both test and matching source are in diff (test_service.py → service.py)
+        out = render_diff_context(g, ["test_service.py", "service.py"])
+        assert "orphaned test change" not in out, (
+            f"'orphaned test change' must not appear when matching source is also in diff; got:\n{out}"
+        )
+
+
+class TestUntestedHotspotS934:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "engine.py").write_text(
+            "def complex_fn():\n"
+            + "    x = 0\n" * 60
+            + "    if x: pass\n" * 5
+            + "    return x\n"
+        )
+        (tmp_path / "runner.py").write_text(
+            "from engine import complex_fn\ndef run(): complex_fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "untested hotspot" in out, (
+            f"'untested hotspot' expected when top hotspot has no test callers; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "engine.py").write_text(
+            "def complex_fn():\n"
+            + "    x = 0\n" * 60
+            + "    if x: pass\n" * 5
+            + "    return x\n"
+        )
+        (tmp_path / "test_engine.py").write_text(
+            "from engine import complex_fn\ndef test_complex(): complex_fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "untested hotspot" not in out, (
+            f"'untested hotspot' must not appear when test calls the hotspot; got:\n{out}"
+        )
+
+
+class TestDeadExceptionClassesS935:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "errors.py").write_text(
+            "class DatabaseError(Exception): pass\n"
+            "class ValidationError(Exception): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead exceptions" in out, (
+            f"'dead exceptions' expected for unused exception classes; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "errors.py").write_text(
+            "class DatabaseError(Exception): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from errors import DatabaseError\ndef run():\n    raise DatabaseError()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead exceptions" not in out, (
+            f"'dead exceptions' must not appear when exception is used; got:\n{out}"
+        )
+
+
+class TestAsyncMethodFocusS936:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "client.py").write_text(
+            "async def fetch_data(url: str) -> dict:\n"
+            "    return {}\n"
+            "\n"
+            "def sync_fn(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "fetch_data")
+        assert "async method" in out, (
+            f"'async method' expected for async function focus; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "client.py").write_text(
+            "def fetch_data(url: str) -> dict:\n"
+            "    return {}\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "fetch_data")
+        assert "async method" not in out, (
+            f"'async method' must not appear for sync function; got:\n{out}"
+        )
+
+
+class TestNoConstantsS937:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "service.py").write_text(
+            "def process_a(): pass\n"
+            "def process_b(): pass\n"
+            "def process_c(): pass\n"
+            "def process_d(): pass\n"
+            "def process_e(): pass\n"
+            "def process_f(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no constants" in out, (
+            f"'no constants' expected when no module-level constants exist; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "service.py").write_text(
+            "MAX_RETRIES = 3\n"
+            "TIMEOUT = 30\n"
+            "def process_a(): pass\n"
+            "def process_b(): pass\n"
+            "def process_c(): pass\n"
+            "def process_d(): pass\n"
+            "def process_e(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no constants" not in out, (
+            f"'no constants' must not appear when constants exist; got:\n{out}"
+        )
+
+
+class TestLoaderBlastS938:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "loader.py").write_text(
+            "def load_config(): return {}\n"
+            "def load_data(): return []\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from loader import load_config\ndef run(): load_config()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "loader.py")
+        assert "loader blast" in out, (
+            f"'loader blast' expected for loader.py target; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "service.py").write_text(
+            "def process(): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from service import process\ndef run(): process()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "service.py")
+        assert "loader blast" not in out, (
+            f"'loader blast' must not appear for regular service file; got:\n{out}"
+        )
+
+
+class TestInterfaceInDiffS939:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "base_repository.py").write_text(
+            "class BaseRepository:\n"
+            "    def find_by_id(self, id): raise NotImplementedError\n"
+        )
+        (tmp_path / "user_repo.py").write_text(
+            "from base_repository import BaseRepository\n"
+            "class UserRepository(BaseRepository):\n"
+            "    def find_by_id(self, id): return None\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["base_repository.py"])
+        assert "interface in diff" in out, (
+            f"'interface in diff' expected for base/abstract file in diff; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "service.py").write_text("def process(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from service import process\ndef run(): process()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["service.py"])
+        assert "interface in diff" not in out, (
+            f"'interface in diff' must not appear for regular service file; got:\n{out}"
+        )
+
+
+class TestLegacyHotspotS940:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "legacy_processor.py").write_text(
+            "def complex_fn():\n"
+            + "    x = 0\n" * 60
+            + "    if x: pass\n" * 5
+            + "    return x\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from legacy_processor import complex_fn\ndef run(): complex_fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "legacy hotspot" in out, (
+            f"'legacy hotspot' expected for hotspot in legacy file; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "processor.py").write_text(
+            "def complex_fn():\n"
+            + "    x = 0\n" * 60
+            + "    if x: pass\n" * 5
+            + "    return x\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from processor import complex_fn\ndef run(): complex_fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "legacy hotspot" not in out, (
+            f"'legacy hotspot' must not appear for non-legacy file; got:\n{out}"
+        )
+
+
+class TestDeadSetupFunctionsS941:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "bootstrap.py").write_text(
+            "def configure_logging(): pass\n"
+            "def setup_database(): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead setup" in out, (
+            f"'dead setup' expected for unused configure_/setup_ functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "bootstrap.py").write_text(
+            "def configure_logging(): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from bootstrap import configure_logging\ndef run(): configure_logging()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead setup" not in out, (
+            f"'dead setup' must not appear when setup function is called; got:\n{out}"
+        )
+
+
+class TestManyParametersS942:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "def create_user(name, email, age, role, country, phone):\n"
+            "    return {'name': name, 'email': email}\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "create_user")
+        assert "many parameters" in out, (
+            f"'many parameters' expected for 6-param function; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "def add(a, b): return a + b\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "add")
+        assert "many parameters" not in out, (
+            f"'many parameters' must not appear for 2-param function; got:\n{out}"
+        )
+
+
+class TestFunctionOnlyCodebaseS943:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "utils.py").write_text(
+            "def add(a, b): return a + b\n"
+            "def sub(a, b): return a - b\n"
+            "def mul(a, b): return a * b\n"
+            "def div(a, b): return a / b\n"
+            "def mod(a, b): return a % b\n"
+            "def power(a, b): return a ** b\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "function-only" in out, (
+            f"'function-only' expected for purely procedural codebase; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "service.py").write_text(
+            "class Calculator:\n"
+            "    def add(self, a, b): return a + b\n"
+            "    def sub(self, a, b): return a - b\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "function-only" not in out, (
+            f"'function-only' must not appear when class methods exist; got:\n{out}"
+        )
+
+
+class TestWidelyImportedBlastS944:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "core.py").write_text("def shared(): pass\n")
+        for i in range(6):
+            (tmp_path / f"module_{i}.py").write_text(
+                f"from core import shared\ndef fn_{i}(): shared()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "core.py")
+        assert "widely-imported blast" in out, (
+            f"'widely-imported blast' expected for file imported by 6 modules; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "service.py").write_text("def process(): pass\n")
+        (tmp_path / "app.py").write_text("from service import process\ndef run(): process()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "service.py")
+        assert "widely-imported blast" not in out, (
+            f"'widely-imported blast' must not appear for file with few importers; got:\n{out}"
+        )
+
+
+class TestWidelyImportedChangeS945:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "core.py").write_text("def shared(): pass\n")
+        for i in range(6):
+            (tmp_path / f"module_{i}.py").write_text(
+                f"from core import shared\ndef fn_{i}(): shared()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["core.py"])
+        assert "widely-imported change" in out, (
+            f"'widely-imported change' expected for file imported by 6 modules; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "service.py").write_text("def process(): pass\n")
+        (tmp_path / "app.py").write_text("from service import process\ndef run(): process()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["service.py"])
+        assert "widely-imported change" not in out, (
+            f"'widely-imported change' must not appear for file with few importers; got:\n{out}"
+        )
+
+
+class TestOversizedHotspotS946:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "engine.py").write_text(
+            "def huge_fn():\n"
+            + "    x = 0\n" * 105
+            + "    return x\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "oversized hotspot" in out, (
+            f"'oversized hotspot' expected for 100+ line function; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "engine.py").write_text(
+            "def medium_fn():\n"
+            + "    x = 0\n" * 40
+            + "    return x\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "oversized hotspot" not in out, (
+            f"'oversized hotspot' must not appear for 41-line function; got:\n{out}"
+        )
+
+
+class TestDeadTypeGuardsS947:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "validators.py").write_text(
+            "def is_valid_email(s): return '@' in s\n"
+            "def is_numeric(s): return s.isdigit()\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead type guards" in out, (
+            f"'dead type guards' expected for unused is_* functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "validators.py").write_text(
+            "def is_valid_email(s): return '@' in s\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from validators import is_valid_email\n"
+            "def run(email): return is_valid_email(email)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead type guards" not in out, (
+            f"'dead type guards' must not appear when is_* function is called; got:\n{out}"
+        )
+
+
+
+class TestAllPrivateClassS948:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "class DataManager:\n"
+            "    def _init_db(self): pass\n"
+            "    def _validate(self): pass\n"
+            "    def _cleanup(self): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "DataManager")
+        assert "all-private class" in out, (
+            f"'all-private class' expected for class with only private methods; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "class DataManager:\n"
+            "    def get_data(self): pass\n"
+            "    def _validate(self): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "DataManager")
+        assert "all-private class" not in out, (
+            f"'all-private class' must not appear when class has a public method; got:\n{out}"
+        )
+
+
+class TestAllPrivateCodebaseS949:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "internals.py").write_text(
+            "def _helper_a(): pass\n"
+            "def _helper_b(): pass\n"
+            "def _helper_c(): pass\n"
+            "def _helper_d(): pass\n"
+            "def _helper_e(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "all-private:" in out, (
+            f"'all-private:' expected when all 5+ source symbols are private; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "service.py").write_text(
+            "def _helper_a(): pass\n"
+            "def _helper_b(): pass\n"
+            "def _helper_c(): pass\n"
+            "def _helper_d(): pass\n"
+            "def public_fn(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "all-private:" not in out, (
+            f"'all-private:' must not appear when at least one public symbol exists; got:\n{out}"
+        )
+
+
+class TestContextManagerBlastS950:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "context_utils.py").write_text("def get_context(): pass\n")
+        (tmp_path / "main.py").write_text("from context_utils import get_context\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "context_utils.py")
+        assert "context manager blast" in out, (
+            f"'context manager blast' expected for context_utils.py; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "service.py").write_text("def process(): pass\n")
+        (tmp_path / "main.py").write_text("from service import process\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "service.py")
+        assert "context manager blast" not in out, (
+            f"'context manager blast' must not appear for service.py; got:\n{out}"
+        )
+
+
+class TestCrossLanguageDiffS951:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        (tmp_path / "server.js").write_text("function start() {}\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "server.js"])
+        assert "cross-language diff" in out, (
+            f"'cross-language diff' expected for mixed .py/.js diff; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "utils.py"])
+        assert "cross-language diff" not in out, (
+            f"'cross-language diff' must not appear for single-language diff; got:\n{out}"
+        )
+
+
+class TestClassBoundHotspotS952:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        fns = "".join(f"def fn_{i}(): pass\n" for i in range(20))
+        calls = "; ".join(f"fn_{i}()" for i in range(20))
+        (tmp_path / "engine.py").write_text(
+            fns
+            + "class Engine:\n"
+            + f"    def compute(self): {calls}\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "class-bound hotspot" in out, (
+            f"'class-bound hotspot' expected when top hotspot is a class method; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "utils.py").write_text(
+            "def helper_a(): pass\n"
+            "def helper_b(): pass\n"
+            "def process(): helper_a(); helper_b()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "class-bound hotspot" not in out, (
+            f"'class-bound hotspot' must not appear for standalone function; got:\n{out}"
+        )
+
+
+class TestDeadSerializersS953:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "model.py").write_text(
+            "def to_dict(obj): return {}\n"
+            "def to_json(obj): return '{}'\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead serializers" in out, (
+            f"'dead serializers' expected for unused to_dict/to_json; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "model.py").write_text("def to_dict(obj): return {}\n")
+        (tmp_path / "app.py").write_text(
+            "from model import to_dict\n"
+            "def run(x): return to_dict(x)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead serializers" not in out, (
+            f"'dead serializers' must not appear when to_dict is used; got:\n{out}"
+        )
+
+
+
+class TestAllPrivateClassFocusS948:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "impl.py").write_text(
+            "class InternalService:\n"
+            "    def _connect(self): pass\n"
+            "    def _disconnect(self): pass\n"
+            "    def _process(self): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "InternalService")
+        assert "all-private class" in out, (
+            f"'all-private class' expected for class with only private methods; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "class UserService:\n"
+            "    def get_user(self, uid): pass\n"
+            "    def _validate(self, uid): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "UserService")
+        assert "all-private class" not in out, (
+            f"'all-private class' must not appear when class has public methods; got:\n{out}"
+        )
+
+
+class TestAllPrivateCodebaseOverviewS949:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "internals.py").write_text(
+            "def _helper_a(): pass\n"
+            "def _helper_b(): pass\n"
+            "def _helper_c(): pass\n"
+            "def _helper_d(): pass\n"
+            "def _helper_e(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "all-private" in out, (
+            f"'all-private' expected for codebase with no public symbols; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "api.py").write_text(
+            "def get_user(): pass\n"
+            "def create_user(): pass\n"
+            "def delete_user(): pass\n"
+            "def update_user(): pass\n"
+            "def list_users(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "all-private" not in out, (
+            f"'all-private' must not appear when public symbols exist; got:\n{out}"
+        )
+
+
+class TestContextManagerBlastS950:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "context.py").write_text("def managed(): pass\n")
+        (tmp_path / "app.py").write_text("from context import managed\ndef run(): managed()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "context.py")
+        assert "context manager blast" in out, (
+            f"'context manager blast' expected for context-named file; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "router.py").write_text("def route(): pass\n")
+        (tmp_path / "app.py").write_text("from router import route\ndef run(): route()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "router.py")
+        assert "context manager blast" not in out, (
+            f"'context manager blast' must not appear for non-context file; got:\n{out}"
+        )
+
+
+class TestCrossLanguageDiffS951:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "server.py").write_text("def handle(): pass\n")
+        (tmp_path / "client.ts").write_text("export function call() {}\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["server.py", "client.ts"])
+        assert "cross-language diff" in out, (
+            f"'cross-language diff' expected for Python+TypeScript diff; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "models.py").write_text("def create(): pass\n")
+        (tmp_path / "views.py").write_text("def render(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["models.py", "views.py"])
+        assert "cross-language diff" not in out, (
+            f"'cross-language diff' must not appear for single-language diff; got:\n{out}"
+        )
+
+
+class TestClassBoundHotspotS952:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        method_lines = "    def process(self):\n"
+        for i in range(25):
+            method_lines += f"        if self.x > {i}: self.x += {i}\n"
+        method_lines += "        return self.x\n"
+        (tmp_path / "engine.py").write_text(
+            "class Engine:\n" + method_lines +
+            "    def run(self): return self.process()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "class-bound hotspot" in out, (
+            f"'class-bound hotspot' expected for class method as top hotspot; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        fn_lines = "def compute(x):\n"
+        for i in range(25):
+            fn_lines += f"    if x > {i}: x += {i}\n"
+        fn_lines += "    return x\n"
+        (tmp_path / "math_utils.py").write_text(fn_lines + "def run(): return compute(1)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "class-bound hotspot" not in out, (
+            f"'class-bound hotspot' must not appear when top hotspot is a standalone function; got:\n{out}"
+        )
+
+
+class TestDeadSerializersS953:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "models.py").write_text(
+            "def to_dict(obj): return vars(obj)\n"
+            "def to_json(obj): return str(obj)\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead serializers" in out, (
+            f"'dead serializers' expected for unused to_dict/to_json functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "models.py").write_text("def to_dict(obj): return vars(obj)\n")
+        (tmp_path / "app.py").write_text(
+            "from models import to_dict\ndef process(obj): return to_dict(obj)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead serializers" not in out, (
+            f"'dead serializers' must not appear when serializer is called; got:\n{out}"
+        )
+
+class TestGeneratorFocusS954:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "pipeline.py").write_text(
+            "def gen_events(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "gen_events")
+        assert "generator focus" in out, (
+            f"'generator focus' expected for gen_* named function; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "pipeline.py").write_text(
+            "def process_events(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process_events")
+        assert "generator focus" not in out, (
+            f"'generator focus' must not appear for non-generator name; got:\n{out}"
+        )
+
+
+class TestMegaFunctionS955:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "giant.py").write_text(
+            "def big_processor():\n"
+            + "    x = 0\n" * 205
+            + "    return x\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "mega function" in out, (
+            f"'mega function' expected for 205-line function; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "service.py").write_text(
+            "def moderate_fn():\n"
+            + "    x = 0\n" * 80
+            + "    return x\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "mega function" not in out, (
+            f"'mega function' must not appear for 81-line function; got:\n{out}"
+        )
+
+
+class TestFixtureBlastS956:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "conftest.py").write_text("def db_fixture(): pass\n")
+        (tmp_path / "test_auth.py").write_text("from conftest import db_fixture\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "conftest.py")
+        assert "fixture blast" in out, (
+            f"'fixture blast' expected for conftest.py; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "helpers.py").write_text("def helper(): pass\n")
+        (tmp_path / "main.py").write_text("from helpers import helper\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "helpers.py")
+        assert "fixture blast" not in out, (
+            f"'fixture blast' must not appear for non-fixture file; got:\n{out}"
+        )
+
+
+class TestMultiDirDiffS957:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "api").mkdir()
+        (tmp_path / "db").mkdir()
+        (tmp_path / "ui").mkdir()
+        (tmp_path / "api" / "routes.py").write_text("def route(): pass\n")
+        (tmp_path / "db" / "models.py").write_text("def model(): pass\n")
+        (tmp_path / "ui" / "views.py").write_text("def view(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["api/routes.py", "db/models.py", "ui/views.py"])
+        assert "multi-dir diff" in out, (
+            f"'multi-dir diff' expected for 3-directory diff; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "api").mkdir()
+        (tmp_path / "api" / "routes.py").write_text("def route(): pass\n")
+        (tmp_path / "api" / "auth.py").write_text("def auth(): pass\n")
+        (tmp_path / "api" / "utils.py").write_text("def util(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["api/routes.py", "api/auth.py", "api/utils.py"])
+        assert "multi-dir diff" not in out, (
+            f"'multi-dir diff' must not appear for single-directory diff; got:\n{out}"
+        )
+
+
+class TestInitHotspotS958:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "__init__.py").write_text(
+            "def create_app(): pass\n" * 1
+        )
+        # Give create_app enough callees to score high
+        fns = "".join(f"def dep_{i}(): pass\n" for i in range(20))
+        calls = "; ".join(f"dep_{i}()" for i in range(20))
+        (tmp_path / "__init__.py").write_text(
+            fns + f"def create_app(): {calls}\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "init hotspot" in out, (
+            f"'init hotspot' expected for __init__.py top hotspot; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        fns = "".join(f"def dep_{i}(): pass\n" for i in range(20))
+        calls = "; ".join(f"dep_{i}()" for i in range(20))
+        (tmp_path / "service.py").write_text(
+            fns + f"def process(): {calls}\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "init hotspot" not in out, (
+            f"'init hotspot' must not appear for non-__init__.py hotspot; got:\n{out}"
+        )
+
+
+class TestDeadHooksS959:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "lifecycle.py").write_text(
+            "def hook_startup(): pass\n"
+            "def hook_shutdown(): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead hooks" in out, (
+            f"'dead hooks' expected for unused hook_* functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "lifecycle.py").write_text("def hook_startup(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from lifecycle import hook_startup\n"
+            "def run(): hook_startup()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead hooks" not in out, (
+            f"'dead hooks' must not appear when hook_startup is called; got:\n{out}"
+        )
+
+
+
+class TestGeneratorFocusS954:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "streams.py").write_text(
+            "def iter_events(queue): return iter(queue)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "iter_events")
+        assert "generator focus" in out, (
+            f"'generator focus' expected for iter_-prefixed function; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "processor.py").write_text(
+            "def process_events(queue): return list(queue)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process_events")
+        assert "generator focus" not in out, (
+            f"'generator focus' must not appear for non-generator-named function; got:\n{out}"
+        )
+
+
+class TestMegaFunctionOverviewS955:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        lines = "def big_handler(req):\n"
+        for i in range(201):
+            lines += f"    x_{i} = {i}\n"
+        lines += "    return x_0\n"
+        (tmp_path / "handler.py").write_text(lines)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "mega function" in out, (
+            f"'mega function' expected for 200+-line function; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        lines = "def small_fn():\n"
+        for i in range(10):
+            lines += f"    x = {i}\n"
+        lines += "    return x\n"
+        (tmp_path / "utils.py").write_text(lines)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "mega function" not in out, (
+            f"'mega function' must not appear for short function; got:\n{out}"
+        )
+
+
+class TestFixtureBlastS956:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "conftest.py").write_text("def db_fixture(): pass\n")
+        (tmp_path / "test_app.py").write_text(
+            "from conftest import db_fixture\ndef test_run(): db_fixture()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "conftest.py")
+        assert "fixture blast" in out, (
+            f"'fixture blast' expected for conftest.py file; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "helpers.py").write_text("def helper(): pass\n")
+        (tmp_path / "app.py").write_text("from helpers import helper\ndef run(): helper()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "helpers.py")
+        assert "fixture blast" not in out, (
+            f"'fixture blast' must not appear for non-fixture file; got:\n{out}"
+        )
+
+
+class TestMultiDirDiffS957:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "api").mkdir()
+        (tmp_path / "db").mkdir()
+        (tmp_path / "ui").mkdir()
+        (tmp_path / "api" / "views.py").write_text("def view(): pass\n")
+        (tmp_path / "db" / "models.py").write_text("def model(): pass\n")
+        (tmp_path / "ui" / "forms.py").write_text("def form(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["api/views.py", "db/models.py", "ui/forms.py"])
+        assert "multi-dir diff" in out, (
+            f"'multi-dir diff' expected for files in 3+ directories; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "api").mkdir()
+        (tmp_path / "api" / "views.py").write_text("def view(): pass\n")
+        (tmp_path / "api" / "models.py").write_text("def model(): pass\n")
+        (tmp_path / "api" / "forms.py").write_text("def form(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["api/views.py", "api/models.py", "api/forms.py"])
+        assert "multi-dir diff" not in out, (
+            f"'multi-dir diff' must not appear when files are in the same directory; got:\n{out}"
+        )
+
+
+class TestInitFileHotspotS958:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        pkg = tmp_path / "mypkg"
+        pkg.mkdir()
+        fn_lines = "def core_fn(x):\n"
+        for i in range(25):
+            fn_lines += f"    if x > {i}: x += {i}\n"
+        fn_lines += "    return x\n"
+        (pkg / "__init__.py").write_text(fn_lines + "def helper(): return core_fn(1)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "init hotspot" in out, (
+            f"'init hotspot' expected for hotspot in __init__.py; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        fn_lines = "def core_fn(x):\n"
+        for i in range(25):
+            fn_lines += f"    if x > {i}: x += {i}\n"
+        fn_lines += "    return x\n"
+        (tmp_path / "utils.py").write_text(fn_lines + "def helper(): return core_fn(1)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "init hotspot" not in out, (
+            f"'init hotspot' must not appear for hotspot in regular file; got:\n{out}"
+        )
+
+
+class TestDeadHooksS959:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "lifecycle.py").write_text(
+            "def hook_on_start(): pass\n"
+            "def shutdown_hook(): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead hooks" in out, (
+            f"'dead hooks' expected for unused hook_* functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "lifecycle.py").write_text("def hook_on_start(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from lifecycle import hook_on_start\ndef run(): hook_on_start()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead hooks" not in out, (
+            f"'dead hooks' must not appear when hook function is called; got:\n{out}"
+        )
+
+
+class TestUtilityFileFocusS960:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "utils.py").write_text("def format_date(dt): return str(dt)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "format_date")
+        assert "utility file" in out, (
+            f"'utility file' expected for function in utils.py; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "billing.py").write_text("def charge_card(card): return True\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "charge_card")
+        assert "utility file" not in out, (
+            f"'utility file' must not appear for function in domain file; got:\n{out}"
+        )
+
+
+class TestFlatArchitectureOverviewS961:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        for name in ("models", "views", "forms", "admin", "signals", "tasks", "urls", "apps"):
+            (tmp_path / f"{name}.py").write_text(f"def {name}_fn(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "flat architecture" in out, (
+            f"'flat architecture' expected for 8 root-level source files; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "api").mkdir()
+        (tmp_path / "db").mkdir()
+        for i in range(4):
+            (tmp_path / "api" / f"view{i}.py").write_text(f"def view{i}(): pass\n")
+            (tmp_path / "db" / f"model{i}.py").write_text(f"def model{i}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "flat architecture" not in out, (
+            f"'flat architecture' must not appear for structured codebase; got:\n{out}"
+        )
+
+
+class TestRouterBlastS962:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "router.py").write_text("def add_route(path, handler): pass\n")
+        (tmp_path / "app.py").write_text("from router import add_route\ndef setup(): add_route('/', None)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "router.py")
+        assert "router blast" in out, (
+            f"'router blast' expected for router.py file; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "database.py").write_text("def connect(): pass\n")
+        (tmp_path / "app.py").write_text("from database import connect\ndef run(): connect()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "database.py")
+        assert "router blast" not in out, (
+            f"'router blast' must not appear for non-router file; got:\n{out}"
+        )
+
+
+class TestTestInfraChangedS963:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "conftest.py").write_text("def db_session(): pass\n")
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["conftest.py"])
+        assert "test infra changed" in out, (
+            f"'test infra changed' expected when conftest.py is changed; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "models.py").write_text("def create(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["models.py"])
+        assert "test infra changed" not in out, (
+            f"'test infra changed' must not appear for non-infra file; got:\n{out}"
+        )
+
+
+class TestBottleneckHotspotS964:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        core_fn = "def core(x):\n"
+        for i in range(25):
+            core_fn += f"    if x > {i}: x += {i}\n"
+        core_fn += "    return x\n"
+        (tmp_path / "core.py").write_text(core_fn)
+        for i in range(11):
+            (tmp_path / f"consumer{i}.py").write_text(
+                f"from core import core\ndef work{i}(): return core({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "bottleneck hotspot" in out, (
+            f"'bottleneck hotspot' expected for function called from 11 source files; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        core_fn = "def core(x):\n"
+        for i in range(25):
+            core_fn += f"    if x > {i}: x += {i}\n"
+        core_fn += "    return x\n"
+        (tmp_path / "core.py").write_text(core_fn)
+        (tmp_path / "app.py").write_text("from core import core\ndef run(): return core(1)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "bottleneck hotspot" not in out, (
+            f"'bottleneck hotspot' must not appear for function called from 1 file; got:\n{out}"
+        )
+
+
+class TestDeadTasksS965:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "tasks.py").write_text(
+            "def task_cleanup(): pass\n"
+            "def cron_daily_report(): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead tasks" in out, (
+            f"'dead tasks' expected for unused task_/cron_ functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "tasks.py").write_text("def task_cleanup(): pass\n")
+        (tmp_path / "scheduler.py").write_text(
+            "from tasks import task_cleanup\ndef run_all(): task_cleanup()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead tasks" not in out, (
+            f"'dead tasks' must not appear when task function is called; got:\n{out}"
+        )
+
+class TestUtilityFileFocusS960:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "utils.py").write_text("def parse_date(s): return s\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "parse_date")
+        assert "utility file" in out, (
+            f"'utility file' expected for function in utils.py; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "auth.py").write_text("def login(user): return True\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "login")
+        assert "utility file" not in out, (
+            f"'utility file' must not appear for non-utility filename; got:\n{out}"
+        )
+
+
+class TestFlatArchitectureS961:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        for name in ("a", "b", "c", "d", "e", "f", "g", "h"):
+            (tmp_path / f"{name}.py").write_text(f"def fn_{name}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "flat architecture" in out, (
+            f"'flat architecture' expected for 8 root-level files; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        sub = tmp_path / "core"
+        sub.mkdir()
+        for name in ("a", "b", "c", "d", "e", "f", "g", "h"):
+            (sub / f"{name}.py").write_text(f"def fn_{name}(): pass\n")
+        (tmp_path / "main.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "flat architecture" not in out, (
+            f"'flat architecture' must not appear when files are in subdirectories; got:\n{out}"
+        )
+
+
+class TestRouterBlastS962:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "routes.py").write_text("def get_user(): pass\n")
+        (tmp_path / "app.py").write_text("from routes import get_user\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "routes.py")
+        assert "router blast" in out, (
+            f"'router blast' expected for routes.py; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "service.py").write_text("def handle(): pass\n")
+        (tmp_path / "main.py").write_text("from service import handle\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "service.py")
+        assert "router blast" not in out, (
+            f"'router blast' must not appear for non-router filename; got:\n{out}"
+        )
+
+
+class TestTestInfraChangedS963:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "conftest.py").write_text("def db(): pass\n")
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["conftest.py", "app.py"])
+        assert "test infra changed" in out, (
+            f"'test infra changed' expected when conftest.py in diff; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "service.py").write_text("def run(): pass\n")
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["service.py", "app.py"])
+        assert "test infra changed" not in out, (
+            f"'test infra changed' must not appear for non-infra diff; got:\n{out}"
+        )
+
+
+class TestBottleneckHotspotS964:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        # Create a function called from 10 distinct files
+        (tmp_path / "core.py").write_text("def shared_fn(): pass\n")
+        for i in range(10):
+            sub = tmp_path / f"mod_{i}"
+            sub.mkdir()
+            (sub / "service.py").write_text(
+                f"from core import shared_fn\ndef run_{i}(): shared_fn()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "bottleneck hotspot" in out, (
+            f"'bottleneck hotspot' expected for function called from 10 files; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        (tmp_path / "a.py").write_text("from utils import helper\ndef a(): helper()\n")
+        (tmp_path / "b.py").write_text("from utils import helper\ndef b(): helper()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "bottleneck hotspot" not in out, (
+            f"'bottleneck hotspot' must not appear for function called from 2 files; got:\n{out}"
+        )
+
+
+class TestDeadScheduledTasksS965:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "tasks.py").write_text(
+            "def task_cleanup(): pass\n"
+            "def job_report(): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead tasks" in out, (
+            f"'dead tasks' expected for unused task_/job_ functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "tasks.py").write_text("def task_cleanup(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from tasks import task_cleanup\n"
+            "def run(): task_cleanup()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead tasks" not in out, (
+            f"'dead tasks' must not appear when task_cleanup is called; got:\n{out}"
+        )
+
+
+class TestOverrideCandidateS966:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "models.py").write_text(
+            "class Dog:\n"
+            "    def speak(self): pass\n"
+            "class Cat:\n"
+            "    def speak(self): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        # Focus on Dog.speak — both classes define speak in same file
+        out = render_focused(g, "Dog.speak")
+        assert "override candidate" in out, (
+            f"'override candidate' expected when same method in multiple classes; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "models.py").write_text(
+            "class Dog:\n"
+            "    def speak(self): pass\n"
+            "    def fetch(self): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "Dog.speak")
+        assert "override candidate" not in out, (
+            f"'override candidate' must not appear when method only in one class; got:\n{out}"
+        )
+
+
+class TestNoTestsS967:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "service.py").write_text("def process(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no tests:" in out, (
+            f"'no tests:' expected for repo with 0 test files; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "service.py").write_text("def process(): pass\n")
+        (tmp_path / "test_app.py").write_text("def test_run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no tests:" not in out, (
+            f"'no tests:' must not appear when test files exist; got:\n{out}"
+        )
+
+
+class TestMigrationBlastS968:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "migration_001.py").write_text(
+            "def upgrade(): pass\ndef downgrade(): pass\n"
+        )
+        (tmp_path / "app.py").write_text("from migration_001 import upgrade\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "migration_001.py")
+        assert "migration blast" in out, (
+            f"'migration blast' expected for migration_*.py; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "service.py").write_text("def process(): pass\n")
+        (tmp_path / "main.py").write_text("from service import process\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "service.py")
+        assert "migration blast" not in out, (
+            f"'migration blast' must not appear for non-migration file; got:\n{out}"
+        )
+
+
+class TestDependencyChangeS969:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "requirements.txt").write_text("flask==2.0.0\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "requirements.txt"])
+        assert "dependency change" in out, (
+            f"'dependency change' expected when requirements.txt in diff; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "utils.py"])
+        assert "dependency change" not in out, (
+            f"'dependency change' must not appear for non-manifest diff; got:\n{out}"
+        )
+
+
+class TestExportedHotspotS970:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        # Public function with many callees to score as top hotspot
+        fns = "".join(f"def _dep_{i}(): pass\n" for i in range(20))
+        calls = "; ".join(f"_dep_{i}()" for i in range(20))
+        (tmp_path / "api.py").write_text(
+            fns + f"def public_handler(): {calls}\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "exported hotspot" in out, (
+            f"'exported hotspot' expected for public top hotspot; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        # Private function (starts with _) as top hotspot
+        fns = "".join(f"def _dep_{i}(): pass\n" for i in range(20))
+        calls = "; ".join(f"_dep_{i}()" for i in range(20))
+        (tmp_path / "internal.py").write_text(
+            fns + f"def _private_handler(): {calls}\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "exported hotspot" not in out, (
+            f"'exported hotspot' must not appear for private function; got:\n{out}"
+        )
+
+
+class TestDeadConvertersS971:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "transforms.py").write_text(
+            "def convert_to_snake(s): return s\n"
+            "def transform_payload(d): return d\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead converters" in out, (
+            f"'dead converters' expected for unused convert_/transform_ functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "transforms.py").write_text(
+            "def convert_to_snake(s): return s\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from transforms import convert_to_snake\n"
+            "def run(x): return convert_to_snake(x)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead converters" not in out, (
+            f"'dead converters' must not appear when convert_ function is used; got:\n{out}"
+        )
+
+
+
+class TestOverrideCandidateFocusS966:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "shapes.py").write_text(
+            "class Circle:\n"
+            "    def area(self): return 3.14\n"
+            "class Square:\n"
+            "    def area(self): return 4.0\n"
+            "class Triangle:\n"
+            "    def area(self): return 2.0\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "Circle.area")
+        assert "override candidate" in out, (
+            f"'override candidate' expected when method exists in multiple classes; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "class UserService:\n"
+            "    def get_user(self, uid): return uid\n"
+            "    def _validate(self, uid): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "UserService.get_user")
+        assert "override candidate" not in out, (
+            f"'override candidate' must not appear when method name is unique; got:\n{out}"
+        )
+
+
+class TestNoTestsOverviewS967:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        (tmp_path / "models.py").write_text("def create(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no tests" in out, (
+            f"'no tests' expected for repo with no test files; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        (tmp_path / "test_app.py").write_text("def test_run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no tests" not in out, (
+            f"'no tests' must not appear when test files exist; got:\n{out}"
+        )
+
+
+class TestMigrationBlastS968:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        mig_dir = tmp_path / "migrations"
+        mig_dir.mkdir()
+        (mig_dir / "0001_initial.py").write_text("def upgrade(): pass\n")
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "migrations/0001_initial.py")
+        assert "migration blast" in out, (
+            f"'migration blast' expected for file in migrations/ directory; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "views.py").write_text("def index(): pass\n")
+        (tmp_path / "app.py").write_text("from views import index\ndef run(): index()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "views.py")
+        assert "migration blast" not in out, (
+            f"'migration blast' must not appear for non-migration file; got:\n{out}"
+        )
+
+
+class TestDependencyChangeDiffS969:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "requirements.txt").write_text("flask==2.0.0\n")
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["requirements.txt"])
+        assert "dependency change" in out, (
+            f"'dependency change' expected when requirements.txt is changed; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "models.py").write_text("def create(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["models.py"])
+        assert "dependency change" not in out, (
+            f"'dependency change' must not appear for non-manifest file; got:\n{out}"
+        )
+
+
+class TestExportedHotspotS970:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        fn_lines = "def public_api(x):\n"
+        for i in range(25):
+            fn_lines += f"    if x > {i}: x += {i}\n"
+        fn_lines += "    return x\n"
+        (tmp_path / "api.py").write_text(fn_lines + "def helper(): return public_api(1)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "exported hotspot" in out, (
+            f"'exported hotspot' expected for public exported top hotspot; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        fn_lines = "def _private_fn(x):\n"
+        for i in range(25):
+            fn_lines += f"    if x > {i}: x += {i}\n"
+        fn_lines += "    return x\n"
+        (tmp_path / "internal.py").write_text(fn_lines + "def run(): return _private_fn(1)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "exported hotspot" not in out, (
+            f"'exported hotspot' must not appear when top hotspot is private; got:\n{out}"
+        )
+
+
+class TestDeadConvertersS971:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "transforms.py").write_text(
+            "def convert_currency(amount, rate): return amount * rate\n"
+            "def transform_response(data): return data\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead converters" in out, (
+            f"'dead converters' expected for unused convert_/transform_ functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "transforms.py").write_text(
+            "def convert_currency(amount, rate): return amount * rate\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from transforms import convert_currency\n"
+            "def process(amt): return convert_currency(amt, 1.5)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead converters" not in out, (
+            f"'dead converters' must not appear when converter is called; got:\n{out}"
+        )
+
+class TestOrphanSymbolS972:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "unused.py").write_text(
+            "def isolated_fn(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "isolated_fn")
+        assert "orphan symbol" in out, (
+            f"'orphan symbol' expected for function with no callers/callees; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "def helper(): pass\n"
+            "def run(): helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "run")
+        assert "orphan symbol" not in out, (
+            f"'orphan symbol' must not appear for function with callees; got:\n{out}"
+        )
+
+
+class TestLoneClassS973:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        fns = "".join(f"def fn_{i}(): pass\n" for i in range(10))
+        (tmp_path / "module.py").write_text(
+            fns + "class Config: pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "lone class" in out, (
+            f"'lone class' expected for 1 class + 10 functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        fns = "".join(f"def fn_{i}(): pass\n" for i in range(10))
+        (tmp_path / "module.py").write_text(
+            fns + "class Config: pass\nclass Settings: pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "lone class" not in out, (
+            f"'lone class' must not appear with 2+ classes; got:\n{out}"
+        )
+
+
+class TestStorageBlastS974:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "user_repository.py").write_text("def find_user(id): pass\n")
+        (tmp_path / "service.py").write_text("from user_repository import find_user\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "user_repository.py")
+        assert "storage blast" in out, (
+            f"'storage blast' expected for *_repository.py; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "auth_service.py").write_text("def authenticate(): pass\n")
+        (tmp_path / "main.py").write_text("from auth_service import authenticate\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "auth_service.py")
+        assert "storage blast" not in out, (
+            f"'storage blast' must not appear for non-storage filename; got:\n{out}"
+        )
+
+
+class TestBuildConfigInDiffS975:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "Makefile").write_text("build:\n\tpython setup.py build\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "Makefile"])
+        assert "build config in diff" in out, (
+            f"'build config in diff' expected when Makefile in diff; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "utils.py"])
+        assert "build config in diff" not in out, (
+            f"'build config in diff' must not appear for normal code diff; got:\n{out}"
+        )
+
+
+class TestWideHotspotS976:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "core.py").write_text("def shared(): pass\n")
+        for dirname in ("api", "jobs", "workers"):
+            sub = tmp_path / dirname
+            sub.mkdir()
+            (sub / "service.py").write_text(
+                f"from core import shared\ndef run(): shared()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "wide hotspot" in out, (
+            f"'wide hotspot' expected for function called from 3 directories; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        fns = "".join(f"def dep_{i}(): pass\n" for i in range(10))
+        calls = "; ".join(f"dep_{i}()" for i in range(10))
+        (tmp_path / "service.py").write_text(fns + f"def process(): {calls}\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "wide hotspot" not in out, (
+            f"'wide hotspot' must not appear for same-directory callers; got:\n{out}"
+        )
+
+
+class TestDeadSqlFunctionsS977:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "db.py").write_text(
+            "def query_users(): pass\n"
+            "def fetch_orders(): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead sql" in out, (
+            f"'dead sql' expected for unused query_/fetch_ functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "db.py").write_text("def query_users(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from db import query_users\n"
+            "def run(): return query_users()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead sql" not in out, (
+            f"'dead sql' must not appear when query_ function is called; got:\n{out}"
+        )
+
+
+
+class TestSingleCallerS978:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "def helper(x): return x * 2\n"
+            "def run(): return helper(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper")
+        assert "single caller" in out, (
+            f"'single caller' expected when function has exactly one caller; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "def helper(x): return x * 2\n"
+            "def run(): return helper(1)\n"
+            "def process(): return helper(2)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper")
+        assert "single caller" not in out, (
+            f"'single caller' must not appear when function has multiple callers; got:\n{out}"
+        )
+
+
+class TestNoClassesS979:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "utils.py").write_text("def helper(): pass\ndef tool(): pass\n")
+        (tmp_path / "app.py").write_text("def run(): pass\ndef start(): pass\n")
+        (tmp_path / "core.py").write_text("def process(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no classes" in out, (
+            f"'no classes' expected for codebase with only functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "models.py").write_text(
+            "class User:\n"
+            "    def save(self): pass\n"
+            "    def delete(self): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no classes" not in out, (
+            f"'no classes' must not appear when class definitions exist; got:\n{out}"
+        )
+
+
+class TestCacheBlastS980:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "cache.py").write_text("def get(key): return None\ndef set(key, val): pass\n")
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "cache.py")
+        assert "cache blast" in out, (
+            f"'cache blast' expected for file named cache.py; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "views.py").write_text("def index(): pass\n")
+        (tmp_path / "app.py").write_text("from views import index\ndef run(): index()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "views.py")
+        assert "cache blast" not in out, (
+            f"'cache blast' must not appear for non-cache file; got:\n{out}"
+        )
+
+
+class TestSecurityFileInDiffS981:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "auth.py").write_text("def login(user, pw): return True\n")
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["auth.py"])
+        assert "security file in diff" in out, (
+            f"'security file in diff' expected when auth.py is changed; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "models.py").write_text("def create(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["models.py"])
+        assert "security file in diff" not in out, (
+            f"'security file in diff' must not appear for non-security file; got:\n{out}"
+        )
+
+
+class TestHeavyweightHotspotS982:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        fn_lines = "def engine(x):\n"
+        for i in range(55):
+            fn_lines += f"    if x > {i}: x += {i}\n"
+        fn_lines += "    return x\n"
+        (tmp_path / "core.py").write_text(fn_lines)
+        (tmp_path / "a.py").write_text("from core import engine\ndef run_a(): return engine(1)\n")
+        (tmp_path / "b.py").write_text("from core import engine\ndef run_b(): return engine(2)\n")
+        (tmp_path / "c.py").write_text("from core import engine\ndef run_c(): return engine(3)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "heavyweight hotspot" in out, (
+            f"'heavyweight hotspot' expected for large function with 3+ callers; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        fn_lines = "def engine(x):\n"
+        for i in range(55):
+            fn_lines += f"    if x > {i}: x += {i}\n"
+        fn_lines += "    return x\n"
+        (tmp_path / "core.py").write_text(fn_lines + "def helper(): return engine(0)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "heavyweight hotspot" not in out, (
+            f"'heavyweight hotspot' must not appear when function has only 1 non-test caller; got:\n{out}"
+        )
+
+
+class TestDeadEventsS983:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "events.py").write_text(
+            "def send_notification(user, msg): pass\n"
+            "def emit_change(entity): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead events" in out, (
+            f"'dead events' expected for unused send_/emit_ functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "events.py").write_text(
+            "def send_notification(user, msg): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from events import send_notification\n"
+            "def run(): send_notification('alice', 'hello')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead events" not in out, (
+            f"'dead events' must not appear when event dispatcher is called; got:\n{out}"
+        )
+
+class TestSingleCallerS978:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "def helper(): pass\n"
+            "def caller(): helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper")
+        assert "single caller" in out, (
+            f"'single caller' expected for function with exactly 1 caller; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "def helper(): pass\n"
+            "def caller_a(): helper()\n"
+            "def caller_b(): helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper")
+        assert "single caller" not in out, (
+            f"'single caller' must not appear for function with 2+ callers; got:\n{out}"
+        )
+
+
+class TestNoClassesS979:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        for i in range(5):
+            (tmp_path / f"mod_{i}.py").write_text(f"def fn_{i}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no classes:" in out, (
+            f"'no classes:' expected for codebase with 0 class definitions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "service.py").write_text(
+            "def process(): pass\n"
+            "class Engine: pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no classes:" not in out, (
+            f"'no classes:' must not appear when a class exists; got:\n{out}"
+        )
+
+
+class TestCacheBlastS980:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "cache.py").write_text("def get(key): pass\n")
+        (tmp_path / "service.py").write_text("from cache import get\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "cache.py")
+        assert "cache blast" in out, (
+            f"'cache blast' expected for cache.py; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "service.py").write_text("def process(): pass\n")
+        (tmp_path / "main.py").write_text("from service import process\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "service.py")
+        assert "cache blast" not in out, (
+            f"'cache blast' must not appear for non-cache file; got:\n{out}"
+        )
+
+
+class TestSecurityFileInDiffS981:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "auth.py").write_text("def login(u, p): pass\n")
+        (tmp_path / "app.py").write_text("from auth import login\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["auth.py", "app.py"])
+        assert "security file in diff" in out, (
+            f"'security file in diff' expected when auth.py in diff; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "service.py").write_text("def process(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["service.py", "utils.py"])
+        assert "security file in diff" not in out, (
+            f"'security file in diff' must not appear for non-security diff; got:\n{out}"
+        )
+
+
+class TestHeavyweightHotspotS982:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        # Large function (50+ lines) called from 3+ other functions
+        body = "    x = 0\n" * 55 + "    return x\n"
+        (tmp_path / "core.py").write_text(
+            f"def heavy():\n{body}"
+            "def a(): heavy()\n"
+            "def b(): heavy()\n"
+            "def c(): heavy()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "heavyweight hotspot" in out, (
+            f"'heavyweight hotspot' expected for large+widely-called function; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        # Small function called from a few places
+        (tmp_path / "utils.py").write_text(
+            "def tiny(): return 1\n"
+            "def a(): tiny()\n"
+            "def b(): tiny()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "heavyweight hotspot" not in out, (
+            f"'heavyweight hotspot' must not appear for small function; got:\n{out}"
+        )
+
+
+class TestDeadEventsS983:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "events.py").write_text(
+            "def emit_user_created(): pass\n"
+            "def notify_order_placed(): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead events" in out, (
+            f"'dead events' expected for unused emit_/notify_ functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "events.py").write_text("def emit_user_created(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from events import emit_user_created\n"
+            "def run(): emit_user_created()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead events" not in out, (
+            f"'dead events' must not appear when emit_ function is called; got:\n{out}"
+        )
+
+
+
+class TestTestOnlyCallerS984:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "def helper(x): return x * 2\n"
+        )
+        (tmp_path / "test_service.py").write_text(
+            "from service import helper\n"
+            "def test_helper(): assert helper(2) == 4\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper")
+        assert "test-only caller" in out, (
+            f"'test-only caller' expected when function is called only from tests; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "def helper(x): return x * 2\n"
+            "def run(): return helper(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper")
+        assert "test-only caller" not in out, (
+            f"'test-only caller' must not appear when function has a production caller; got:\n{out}"
+        )
+
+
+class TestNoEntrypointS985:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "utils.py").write_text("def helper(): pass\ndef tool(): pass\n")
+        (tmp_path / "app.py").write_text("def process(): pass\ndef transform(): pass\n")
+        (tmp_path / "core.py").write_text("def compute(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no entrypoint" in out, (
+            f"'no entrypoint' expected when no main/run/start function exists; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "app.py").write_text(
+            "def main(): pass\n"
+            "def helper(): pass\n"
+            "def process(): pass\n"
+        )
+        (tmp_path / "utils.py").write_text("def tool(): pass\ndef compute(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no entrypoint" not in out, (
+            f"'no entrypoint' must not appear when main/run/start function exists; got:\n{out}"
+        )
+
+
+class TestConfigBlastS986:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "config.py").write_text("DEBUG = True\nDATABASE_URL = 'sqlite://'\n")
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "config.py")
+        assert "config blast" in out, (
+            f"'config blast' expected for file named config.py; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "views.py").write_text("def index(): pass\n")
+        (tmp_path / "app.py").write_text("from views import index\ndef run(): index()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "views.py")
+        assert "config blast" not in out, (
+            f"'config blast' must not appear for non-config file; got:\n{out}"
+        )
+
+
+class TestTestOnlyDiffS987:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "test_app.py").write_text("def test_run(): pass\n")
+        (tmp_path / "test_models.py").write_text("def test_create(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["test_app.py", "test_models.py"])
+        assert "test-only diff" in out, (
+            f"'test-only diff' expected when all changed files are test files; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "test_app.py").write_text("def test_run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["app.py", "test_app.py"])
+        assert "test-only diff" not in out, (
+            f"'test-only diff' must not appear when production files are also changed; got:\n{out}"
+        )
+
+
+class TestPrivateHotspotS988:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        fn_lines = "def _internal_engine(x):\n"
+        for i in range(30):
+            fn_lines += f"    if x > {i}: x += {i}\n"
+        fn_lines += "    return x\n"
+        (tmp_path / "core.py").write_text(fn_lines + "def run(): return _internal_engine(1)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "private hotspot" in out, (
+            f"'private hotspot' expected for private top complexity function; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        fn_lines = "def public_engine(x):\n"
+        for i in range(30):
+            fn_lines += f"    if x > {i}: x += {i}\n"
+        fn_lines += "    return x\n"
+        (tmp_path / "core.py").write_text(fn_lines + "def run(): return public_engine(1)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "private hotspot" not in out, (
+            f"'private hotspot' must not appear when top hotspot is a public function; got:\n{out}"
+        )
+
+
+class TestDeadValidatorsS989:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "validators.py").write_text(
+            "def validate_email(addr): return '@' in addr\n"
+            "def check_permission(user): return user is not None\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead validators" in out, (
+            f"'dead validators' expected for unused validate_/check_ functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "validators.py").write_text(
+            "def validate_email(addr): return '@' in addr\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from validators import validate_email\n"
+            "def run(addr): return validate_email(addr)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead validators" not in out, (
+            f"'dead validators' must not appear when validator is called; got:\n{out}"
+        )
+
+class TestTestOnlyCallerS984:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text("def helper(): pass\n")
+        (tmp_path / "test_service.py").write_text(
+            "from service import helper\n"
+            "def test_helper(): helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper")
+        assert "test-only caller" in out, (
+            f"'test-only caller' expected for function called only from tests; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "def helper(): pass\n"
+            "def run(): helper()\n"
+        )
+        (tmp_path / "test_service.py").write_text(
+            "from service import helper\n"
+            "def test_helper(): helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper")
+        assert "test-only caller" not in out, (
+            f"'test-only caller' must not appear when function also has production callers; got:\n{out}"
+        )
+
+
+class TestNoEntrypointS985:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        for name in ("process", "handle", "compute", "transform", "execute"):
+            (tmp_path / f"{name}.py").write_text(f"def {name}_data(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no entrypoint:" in out, (
+            f"'no entrypoint:' expected when no main/run/start function exists; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        for name in ("process", "handle", "compute", "transform", "execute"):
+            (tmp_path / f"{name}.py").write_text(f"def {name}_data(): pass\n")
+        (tmp_path / "main.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no entrypoint:" not in out, (
+            f"'no entrypoint:' must not appear when main() exists; got:\n{out}"
+        )
+
+
+class TestConfigBlastS986:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "config.py").write_text("DEBUG = True\nDB_URL = 'localhost'\n")
+        (tmp_path / "app.py").write_text("from config import DB_URL\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "config.py")
+        assert "config blast" in out, (
+            f"'config blast' expected for config.py; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "service.py").write_text("def process(): pass\n")
+        (tmp_path / "main.py").write_text("from service import process\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "service.py")
+        assert "config blast" not in out, (
+            f"'config blast' must not appear for non-config file; got:\n{out}"
+        )
+
+
+class TestTestOnlyDiffS987:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "service.py").write_text("def process(): pass\n")
+        (tmp_path / "test_service.py").write_text("def test_process(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["test_service.py"])
+        assert "test-only diff" in out, (
+            f"'test-only diff' expected for diff with only test files; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "service.py").write_text("def process(): pass\n")
+        (tmp_path / "test_service.py").write_text("def test_process(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["test_service.py", "service.py"])
+        assert "test-only diff" not in out, (
+            f"'test-only diff' must not appear when non-test files are also in diff; got:\n{out}"
+        )
+
+
+class TestPrivateHotspotS988:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        # Private function with many callees to score as top hotspot
+        fns = "".join(f"def dep_{i}(): pass\n" for i in range(20))
+        calls = "; ".join(f"dep_{i}()" for i in range(20))
+        (tmp_path / "engine.py").write_text(
+            fns + f"def _internal_process(): {calls}\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "private hotspot" in out, (
+            f"'private hotspot' expected for private top hotspot; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        # Public function as top hotspot
+        fns = "".join(f"def dep_{i}(): pass\n" for i in range(20))
+        calls = "; ".join(f"dep_{i}()" for i in range(20))
+        (tmp_path / "engine.py").write_text(
+            fns + f"def public_process(): {calls}\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "private hotspot" not in out, (
+            f"'private hotspot' must not appear for public top hotspot; got:\n{out}"
+        )
+
+
+class TestDeadValidatorsS989:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "validators.py").write_text(
+            "def validate_email(s): return '@' in s\n"
+            "def check_age(n): return n >= 0\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead validators" in out, (
+            f"'dead validators' expected for unused validate_/check_ functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "validators.py").write_text(
+            "def validate_email(s): return '@' in s\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from validators import validate_email\n"
+            "def run(x): return validate_email(x)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead validators" not in out, (
+            f"'dead validators' must not appear when validate_ function is used; got:\n{out}"
+        )
+
+
+
+class TestExternalOnlyS990:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "utils.py").write_text("def helper(x): return x * 2\n")
+        (tmp_path / "app.py").write_text(
+            "from utils import helper\ndef run(): return helper(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper")
+        assert "external-only" in out, (
+            f"'external-only' expected when all callers are in external files; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "utils.py").write_text(
+            "def helper(x): return x * 2\n"
+            "def run(): return helper(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper")
+        assert "external-only" not in out, (
+            f"'external-only' must not appear when caller is in the same file; got:\n{out}"
+        )
+
+
+class TestGodClassS991:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        methods = "\n".join(
+            f"    def method_{i}(self): pass" for i in range(10)
+        )
+        (tmp_path / "service.py").write_text(f"class UserService:\n{methods}\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "god class" in out, (
+            f"'god class' expected for class with 10 methods; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "service.py").write_text(
+            "class UserService:\n"
+            "    def save(self): pass\n"
+            "    def delete(self): pass\n"
+            "    def find(self): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "god class" not in out, (
+            f"'god class' must not appear for class with only 3 methods; got:\n{out}"
+        )
+
+
+class TestSchemaBlastS992:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "models.py").write_text(
+            "class User:\n    id = None\n    name = None\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "models.py")
+        assert "schema blast" in out, (
+            f"'schema blast' expected for file named models.py; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "views.py").write_text("def index(): pass\n")
+        (tmp_path / "app.py").write_text("from views import index\ndef run(): index()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "views.py")
+        assert "schema blast" not in out, (
+            f"'schema blast' must not appear for non-schema file; got:\n{out}"
+        )
+
+
+class TestInitFileInDiffS993:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "__init__.py").write_text("from .app import run\n")
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["__init__.py"])
+        assert "init file in diff" in out, (
+            f"'init file in diff' expected when __init__.py is changed; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["app.py"])
+        assert "init file in diff" not in out, (
+            f"'init file in diff' must not appear when no __init__.py is changed; got:\n{out}"
+        )
+
+
+class TestContainedHotspotS994:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        fn_lines = "def engine(x):\n"
+        for i in range(25):
+            fn_lines += f"    if x > {i}: x += {i}\n"
+        fn_lines += "    return x\n"
+        fn_lines += "def run(): return engine(1)\n"
+        (tmp_path / "core.py").write_text(fn_lines)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "contained hotspot" in out, (
+            f"'contained hotspot' expected when all callers are in same file; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        fn_lines = "def engine(x):\n"
+        for i in range(25):
+            fn_lines += f"    if x > {i}: x += {i}\n"
+        fn_lines += "    return x\n"
+        (tmp_path / "core.py").write_text(fn_lines)
+        (tmp_path / "app.py").write_text("from core import engine\ndef run(): return engine(1)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "contained hotspot" not in out, (
+            f"'contained hotspot' must not appear when callers are in external files; got:\n{out}"
+        )
+
+
+class TestDeadFormattersS995:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "output.py").write_text(
+            "def format_response(data): return str(data)\n"
+            "def render_html(content): return f'<p>{content}</p>'\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead formatters" in out, (
+            f"'dead formatters' expected for unused format_/render_ functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "output.py").write_text(
+            "def format_response(data): return str(data)\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from output import format_response\n"
+            "def run(data): return format_response(data)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead formatters" not in out, (
+            f"'dead formatters' must not appear when formatter is called; got:\n{out}"
         )
