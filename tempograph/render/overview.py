@@ -1549,6 +1549,23 @@ def render_overview(graph: Tempo) -> str:
             f" ({_s271_ratio:.1f}× ratio) — unusually high; check for test duplication or dead tests"
         )
 
+
+    # S274: OOP-heavy codebase — 20+ class definitions in non-test source files.
+    # Large class counts suggest heavy object orientation; complex inheritance hierarchies
+    # and class bloat are common risks. Consider checking for god classes and deep inheritance.
+    _s274_classes = [
+        sym for sym in graph.symbols.values()
+        if sym.kind.value == "class"
+        and not _is_test_file(sym.file_path)
+        and graph.files.get(sym.file_path) is not None
+        and graph.files[sym.file_path].language.value in _CODE_LANGS
+    ]
+    if len(_s274_classes) >= 20:
+        lines.append(
+            f"oop-heavy: {len(_s274_classes)} class definitions in source code"
+            f" — complex OOP; watch for deep inheritance and god classes"
+        )
+
         # Suggest directories to exclude — detect likely noise
     noisy = _detect_noisy_dirs(graph, modules)
     if noisy:

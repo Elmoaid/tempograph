@@ -819,6 +819,28 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — event subscription may have been removed or silently detached"
         )
 
+
+    # S279: Dead async functions — async def functions with 0 callers (conf >= 40).
+    # Unused async functions are particularly risky because their deletion is not
+    # always obvious from sync callers; they may be event loop callbacks or coroutines.
+    # Only shown when 2+ dead async functions found.
+    _s279_dead_async = [
+        sym for sym, conf in scored
+        if conf >= 40
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and sym.signature and "async" in sym.signature.lower()
+    ]
+    if len(_s279_dead_async) >= 2:
+        _async_names = [s.name for s in _s279_dead_async[:3]]
+        _async_str = ", ".join(_async_names)
+        if len(_s279_dead_async) > 3:
+            _async_str += f" +{len(_s279_dead_async) - 3} more"
+        lines.append(
+            f"dead async fns: {len(_s279_dead_async)} unused async function(s) ({_async_str})"
+            f" — may be detached coroutines or removed event loop callbacks"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
