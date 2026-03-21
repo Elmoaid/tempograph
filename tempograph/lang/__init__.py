@@ -11,6 +11,7 @@ from .c_handler import CHandlerMixin
 from .rust_handler import RustHandlerMixin
 from .swift_handler import SwiftHandlerMixin
 from .php_handler import PHPHandlerMixin
+from .kotlin_handler import KotlinHandlerMixin
 
 __all__ = [
     "PythonHandlerMixin",
@@ -24,4 +25,5 @@ __all__ = [
     "RustHandlerMixin",
     "SwiftHandlerMixin",
     "PHPHandlerMixin",
+    "KotlinHandlerMixin",
 ]
