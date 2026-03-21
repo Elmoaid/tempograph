@@ -594,6 +594,19 @@ def _collect_seeds(
     return seeds, seed_files, query_tokens
 
 
+def _sym_importance(graph: "Tempo", sym: Symbol) -> int:
+    """Structural importance score for BFS prioritisation.
+
+    Score = cross_file_callers * 2 + (1 if exported) + (2 if hot_file).
+    Uses raw ``_callers`` index to avoid creating Symbol objects per lookup."""
+    caller_ids = graph._callers.get(sym.id, [])
+    cross = sum(
+        1 for cid in caller_ids
+        if cid in graph.symbols and graph.symbols[cid].file_path != sym.file_path
+    )
+    return cross * 2 + (1 if sym.exported else 0) + (2 if sym.file_path in graph.hot_files else 0)
+
+
 def _bfs_expand(
     graph: Tempo,
     seeds: list[Symbol],
@@ -612,50 +625,74 @@ def _bfs_expand(
     expand the BFS into git-coupled files that aren't reachable via call edges.
 
     max_depth overrides the hot-seeds heuristic when provided (used by adaptive
-    sparse-neighborhood expansion in render_focused)."""
+    sparse-neighborhood expansion in render_focused).
+
+    Within each depth level, candidates are sorted by structural importance so
+    that when the 50-node cap truncates, hub nodes (many cross-file callers,
+    exported, in hot files) survive over orphan/internal-only nodes."""
     _hot_seeds = any(s.file_path in graph.hot_files for s in seeds)
     _bfs_max_depth = max_depth if max_depth is not None else (4 if _hot_seeds else 3)
     seen_ids: set[str] = set()
-    queue: list[tuple[Symbol, int]] = [(s, 0) for s in seeds]
+    ordered: list[tuple[Symbol, int]] = []
+
+    # Level-by-level BFS: collect all candidates per depth, sort by importance,
+    # then expand.  This guarantees depth ordering (BFS topology unchanged)
+    # while ensuring high-importance nodes within a depth are visited first.
+    current_level: list[tuple[Symbol, int]] = [(s, 0) for s in seeds]
     if secondary_seeds:
         primary_ids = {s.id for s in seeds}
         for s in secondary_seeds:
             if s.id not in primary_ids:
-                queue.append((s, 1))
-    ordered: list[tuple[Symbol, int]] = []
+                current_level.append((s, 1))
 
-    def _enqueue(candidate: Symbol, depth: int) -> None:
-        if candidate.id in seen_ids:
-            return
-        # Cross-file edges get priority when seeds are in monolith files
-        if seed_files and candidate.file_path not in seed_files:
-            queue.insert(0, (candidate, depth))
-        else:
-            queue.append((candidate, depth))
+    # Pre-compute importance scores once per candidate (cache across levels)
+    _imp_cache: dict[str, int] = {}
 
-    while queue and len(ordered) < 50:
-        sym, depth = queue.pop(0)
-        if sym.id in seen_ids:
-            continue
-        seen_ids.add(sym.id)
-        ordered.append((sym, depth))
+    def _cached_importance(sym: Symbol) -> int:
+        score = _imp_cache.get(sym.id)
+        if score is None:
+            score = _sym_importance(graph, sym)
+            _imp_cache[sym.id] = score
+        return score
 
-        if depth < _bfs_max_depth:
-            # More context at shallow depths, less at deeper
-            caller_limit = 8 if depth == 0 else 5 if depth == 1 else 3
-            callee_limit = 8 if depth == 0 else 5 if depth == 1 else 3
-            # Importance-first traversal: when the 50-node cap forces truncation,
-            # structurally important nodes (many cross-file callers, exported) win.
-            def _imp_sort_key(s):
-                cross = sum(1 for c in graph.callers_of(s.id) if c.file_path != s.file_path)
-                return (s.file_path not in graph.hot_files, -(cross * 2 + int(s.exported)))
-            for caller in sorted(graph.callers_of(sym.id), key=_imp_sort_key)[:caller_limit]:
-                _enqueue(caller, depth + 1)
-            for callee in sorted(graph.callees_of(sym.id), key=_imp_sort_key)[:callee_limit]:
-                _enqueue(callee, depth + 1)
-            if depth < 2:
-                for child in graph.children_of(sym.id)[:5]:
-                    _enqueue(child, depth + 1)
+    while current_level and len(ordered) < 50:
+        # Deduplicate and remove already-seen before sorting
+        deduped: list[tuple[Symbol, int]] = []
+        for sym, d in current_level:
+            if sym.id not in seen_ids:
+                deduped.append((sym, d))
+                seen_ids.add(sym.id)
+
+        # Sort within this batch: lower depth first (preserves BFS layering),
+        # then cross-file nodes first, then by descending importance.
+        deduped.sort(key=lambda pair: (
+            pair[1],                                                  # depth ascending
+            pair[0].file_path in seed_files if seed_files else True,  # cross-file first
+            -_cached_importance(pair[0]),                              # importance descending
+        ))
+
+        next_level: list[tuple[Symbol, int]] = []
+        for sym, depth in deduped:
+            if len(ordered) >= 50:
+                break
+            ordered.append((sym, depth))
+
+            if depth < _bfs_max_depth:
+                caller_limit = 8 if depth == 0 else 5 if depth == 1 else 3
+                callee_limit = 8 if depth == 0 else 5 if depth == 1 else 3
+                _imp_key = lambda s: -_cached_importance(s)
+                for caller in sorted(graph.callers_of(sym.id), key=_imp_key)[:caller_limit]:
+                    if caller.id not in seen_ids:
+                        next_level.append((caller, depth + 1))
+                for callee in sorted(graph.callees_of(sym.id), key=_imp_key)[:callee_limit]:
+                    if callee.id not in seen_ids:
+                        next_level.append((callee, depth + 1))
+                if depth < 2:
+                    for child in graph.children_of(sym.id)[:5]:
+                        if child.id not in seen_ids:
+                            next_level.append((child, depth + 1))
+
+        current_level = next_level
 
     return ordered, seen_ids
 
