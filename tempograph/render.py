@@ -354,6 +354,47 @@ def render_overview(graph: Tempo) -> str:
         _hc_parts = [f"{fp.rsplit('/', 1)[-1]} ({n} imports)" for n, fp in _high_coupling[:3]]
         lines.append(f"high-coupling: {', '.join(_hc_parts)}")
 
+    # Co-change pairs: file pairs that frequently change together in git commits.
+    # Surfaces edit-coupling that static imports don't capture.
+    # e.g. "render.py ↔ test_mcp_server.py (100%)" tells agents what to touch together.
+    if graph.root:
+        try:
+            from .git import cochange_matrix as _ccm, is_git_repo as _igr  # noqa: PLC0415
+            if _igr(graph.root):
+                _cc_matrix = _ccm(graph.root)
+                _CC_SRC_EXTS = {
+                    ".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs",
+                    ".java", ".kt", ".rb", ".cs", ".cpp", ".c", ".h",
+                    ".swift", ".dart", ".scala", ".ex", ".exs",
+                }
+                def _is_src(_p: str) -> bool:
+                    return any(_p.endswith(e) for e in _CC_SRC_EXTS)
+
+                _seen_cc_pairs: set[tuple[str, str]] = set()
+                _cc_pairs: list[tuple[float, str, str]] = []
+                for _ccfp1, _cc_partners in _cc_matrix.items():
+                    if not _is_src(_ccfp1):
+                        continue
+                    for _ccfp2, _cc_freq in _cc_partners:
+                        if not _is_src(_ccfp2):
+                            continue
+                        _cc_key = (min(_ccfp1, _ccfp2), max(_ccfp1, _ccfp2))
+                        if _cc_key in _seen_cc_pairs:
+                            continue
+                        _seen_cc_pairs.add(_cc_key)
+                        if _is_test_file(_ccfp1) and _is_test_file(_ccfp2):
+                            continue
+                        _cc_pairs.append((_cc_freq, _ccfp1, _ccfp2))
+                _cc_pairs.sort(key=lambda x: -x[0])
+                if _cc_pairs:
+                    _cc_parts2 = [
+                        f"{_cp1.rsplit('/', 1)[-1]} ↔ {_cp2.rsplit('/', 1)[-1]} ({_cf:.0%})"
+                        for _cf, _cp1, _cp2 in _cc_pairs[:3]
+                    ]
+                    lines.append(f"co-change pairs: {', '.join(_cc_parts2)}")
+        except Exception:
+            pass
+
     # Stale tests: test files not in recent commits while their source file IS.
     # Signals test drift — code changed but tests haven't kept up. Needs git repo.
     if graph.root:
