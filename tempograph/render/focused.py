@@ -1633,6 +1633,22 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                 _sb_parts = [f"{s.name} ({n})" for n, s in _sibs[:4]]
                 lines.append(f"\nIn {_prim.file_path.rsplit('/', 1)[-1]}: {', '.join(_sb_parts)}")
 
+    # S132: Sibling count — total fn/method symbols in the primary seed's file.
+    # Dense files (>= 8 fns) are harder to navigate without unintended side effects.
+    # Gives agents orientation: they're working in a large module, not a focused one.
+    if _seed_syms and token_count < max_tokens - 40:
+        _prim132 = _seed_syms[0]
+        _fi132 = graph.files.get(_prim132.file_path)
+        if _fi132:
+            _fn_count132 = sum(
+                1 for sid in _fi132.symbols
+                if sid in graph.symbols
+                and graph.symbols[sid].kind.value in ("function", "method")
+                and graph.symbols[sid].id != _prim132.id
+            )
+            if _fn_count132 >= 8:
+                lines.append(f"\nsibling count: {_fn_count132} fns in {_prim132.file_path.rsplit('/', 1)[-1]}")
+
     return "\n".join(lines)
 
 

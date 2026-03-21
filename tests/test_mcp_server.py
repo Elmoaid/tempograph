@@ -10678,3 +10678,39 @@ class TestHotspotsHotAndComplex:
         assert "hot+complex" not in out, (
             f"'hot+complex' must not appear for simple (cx=1) hotspot files; got:\n{out}"
         )
+
+
+class TestFocusSiblingCount:
+    """S132: Focus — 'sibling count: N fns in file.py' for dense files (>= 8 fns)."""
+
+    def test_sibling_count_shown_for_dense_file(self, tmp_path):
+        """File with 10+ fn symbols → 'sibling count:' shown when focusing any one fn."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        # Create a dense file with 11 functions (1 target + 10 siblings)
+        fns = "\n".join(
+            f"def fn_{i}(x):\n    return x + {i}" for i in range(11)
+        )
+        (tmp_path / "dense.py").write_text(fns + "\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "fn_0")
+        assert "sibling count" in out, (
+            f"Expected 'sibling count' when file has 11 fns; got:\n{out}"
+        )
+
+    def test_sibling_count_absent_for_small_file(self, tmp_path):
+        """File with < 8 fn symbols → 'sibling count:' NOT shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        # Only 4 functions — well below threshold
+        fns = "\n".join(
+            f"def fn_{i}(x):\n    return x + {i}" for i in range(4)
+        )
+        (tmp_path / "small.py").write_text(fns + "\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "fn_0")
+        assert "sibling count" not in out, (
+            f"'sibling count' must not appear for small file (4 fns); got:\n{out}"
+        )
