@@ -8940,3 +8940,41 @@ class TestBlastUntestedExports:
         assert "Untested exports" not in out, (
             f"'Untested exports' must not appear when test callers exist; got:\n{out}"
         )
+
+
+class TestOverviewDirTestCoverage:
+    """S88 — per-directory test coverage breakdown in overview."""
+
+    def test_by_dir_shown_when_dirs_have_low_coverage(self, tmp_path):
+        """'by dir:' appears when 2+ directories have >=3 source files and <80% coverage."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        # Two subdirectories, each with 3 source files and no tests — both qualify
+        for dname in ("src", "lib"):
+            d = tmp_path / dname
+            d.mkdir()
+            (d / "a.py").write_text("def a(): pass\n")
+            (d / "b.py").write_text("def b(): pass\n")
+            (d / "c.py").write_text("def c(): pass\n")
+        (tmp_path / "test_a.py").write_text("def test_a(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "by dir:" in out, (
+            f"Expected 'by dir:' when 2 dirs have low test coverage; got:\n{out}"
+        )
+
+    def test_by_dir_absent_when_only_one_dir(self, tmp_path):
+        """'by dir:' only appears when 2+ dirs qualify; omitted for single dir."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        # Only 2 source files in root — under threshold of 3
+        (tmp_path / "a.py").write_text("def a(): pass\n")
+        (tmp_path / "b.py").write_text("def b(): pass\n")
+        (tmp_path / "test_a.py").write_text("from a import a\ndef test_a(): a()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "by dir:" not in out, (
+            f"'by dir:' must not appear when only one dir qualifies; got:\n{out}"
+        )

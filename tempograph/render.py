@@ -440,6 +440,26 @@ def render_overview(graph: Tempo) -> str:
         _test_pct = int(_covered / len(_src_fps) * 100)
         lines.append(f"test coverage: {_covered}/{len(_src_fps)} source files ({_test_pct}%)")
 
+        # Per-directory breakdown: show dirs with >=3 source files and <80% coverage.
+        # Agents use this to identify which directories are high-risk to edit.
+        from collections import defaultdict as _dd
+        _dir_src: dict[str, list[str]] = _dd(list)
+        for fp in _src_fps:
+            _d = fp.rsplit("/", 1)[0] if "/" in fp else "."
+            _dir_src[_d].append(fp)
+        _dir_breakdown: list[tuple[int, str, str]] = []  # (pct, dir, label)
+        for _d, _fps in _dir_src.items():
+            if len(_fps) < 3:
+                continue
+            _d_cov = sum(1 for fp in _fps if any(fp.rsplit("/", 1)[-1].rsplit(".", 1)[0] in t for t in _test_fps))
+            _d_pct = int(_d_cov / len(_fps) * 100)
+            if _d_pct < 80:  # only show undertested dirs
+                _dname = _d.rsplit("/", 1)[-1] if "/" in _d else _d
+                _dir_breakdown.append((_d_pct, _dname, f"{_dname}/ ({_d_pct}%, {_d_cov}/{len(_fps)})"))
+        if len(_dir_breakdown) >= 2:
+            _dir_breakdown.sort(key=lambda x: x[0])  # worst first
+            lines.append(f"  by dir: {', '.join(x[2] for x in _dir_breakdown[:4])}")
+
     # Orphan test files: test files that name a source file which no longer exists.
     # These linger after source renames/deletions and should be cleaned up.
     # Uses both basename and stem-segment matching to avoid false positives:
@@ -2101,32 +2121,26 @@ def _build_symbol_block_lines(
         except Exception:
             pass
 
-    # Callee chain: show the first-hop callees for depth-0 functions with 1-4 direct callees.
+    # Callee chain: show the first-hop cross-file callees for depth-0 functions.
     # Helps agents trace execution flow without reading all callee source files.
-    # Shows "callee chain: parse → tokenize → normalize" (seed → callee_1 → callee_1's_callee).
+    # Shows "callee chain: process → parse → tokenize" (seed → callee → callee's callee).
+    # Uses file-level CALLS index (source_id = file path) to find callees.
     if depth == 0 and sym.kind.value in ("function", "method"):
-        _direct_callees = [
-            graph.symbols[e.target_id]
-            for e in graph.edges
-            if e.kind == EdgeKind.CALLS and e.source_id == sym.id and e.target_id in graph.symbols
-            and graph.symbols[e.target_id].file_path != sym.file_path  # only cross-file callees
+        _file_callees = [
+            c for c in graph.callees_of(sym.file_path)
+            if c.file_path != sym.file_path  # cross-file only
         ]
-        if 1 <= len(_direct_callees) <= 4:
-            _chain_parts = [sym.name]
-            # Show first-hop callee name
-            _c1 = _direct_callees[0]
-            _chain_parts.append(_c1.name)
-            # Show second-hop (first callee of _c1) if it exists and is cross-file
+        if 1 <= len(_file_callees) <= 4:
+            _chain_parts = [sym.name, _file_callees[0].name]
+            # Add second hop: first cross-file callee of the first callee
+            _c1 = _file_callees[0]
             _c1_callees = [
-                graph.symbols[e.target_id]
-                for e in graph.edges
-                if e.kind == EdgeKind.CALLS and e.source_id == _c1.id and e.target_id in graph.symbols
-                and graph.symbols[e.target_id].file_path != _c1.file_path
+                c for c in graph.callees_of(_c1.file_path)
+                if c.file_path != _c1.file_path
             ]
             if _c1_callees:
                 _chain_parts.append(_c1_callees[0].name)
-            if len(_chain_parts) >= 2:
-                block_lines.append(f"{indent}  callee chain: {' → '.join(_chain_parts)}")
+            block_lines.append(f"{indent}  callee chain: {' → '.join(_chain_parts)}")
 
     if sym.signature and depth < 2:
         block_lines.append(f"{indent}  sig: {sym.signature[:150]}")
