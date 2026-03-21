@@ -1225,6 +1225,17 @@ def _build_symbol_block_lines(
                 _c_methods = len([c for c in graph.children_of(_class_id) if c.kind.value == "method"])
                 _c_ann = f"{_c_callers} callers" if _c_callers else "no callers"
                 block_lines.append(f"{indent}  container: {_class_sym.kind.value} {_class_sym.name} ({_c_ann}, {_c_methods} methods)")
+    # Recent commit messages: last 2 commits that touched the seed symbol's file.
+    # Gives agents instant "why was this last changed" context without running git log.
+    if depth == 0 and graph.root:
+        try:
+            from .git import recent_file_commits as _rfc  # noqa: PLC0415
+            _commits = _rfc(graph.root, sym.file_path, n=2)
+            if _commits:
+                _commit_parts = [f"{c['days_ago']}d \"{c['message']}\"" for c in _commits]
+                block_lines.append(f"{indent}  recent: {', '.join(_commit_parts)}")
+        except Exception:
+            pass
     if sym.signature and depth < 2:
         block_lines.append(f"{indent}  sig: {sym.signature[:150]}")
     if sym.doc and depth == 0:
@@ -1335,6 +1346,31 @@ def _build_symbol_block_lines(
                     if _overflow_sub > 0:
                         _sub_line += f" (+{_overflow_sub} more)"
                     block_lines.append(_sub_line)
+
+            # Similar functions: other functions sharing ≥2 callees with this seed.
+            # Helps agents find related implementations that may need parallel changes.
+            if sym.kind in (SymbolKind.FUNCTION, SymbolKind.METHOD):
+                _seed_callees = set(graph._callees.get(sym.id, []))
+                if len(_seed_callees) >= 2:
+                    _overlap: dict[str, int] = {}
+                    for _callee_id in _seed_callees:
+                        for _sibling_id in graph._callers.get(_callee_id, []):
+                            if _sibling_id != sym.id:
+                                _sib = graph.symbols.get(_sibling_id)
+                                if _sib and _sib.kind.value in ("function", "method"):
+                                    _overlap[_sibling_id] = _overlap.get(_sibling_id, 0) + 1
+                    _similar = [
+                        (cnt, graph.symbols[sid])
+                        for sid, cnt in _overlap.items()
+                        if cnt >= 2 and sid in graph.symbols
+                    ]
+                    if _similar:
+                        _similar.sort(key=lambda x: -x[0])
+                        _sim_strs = [
+                            f"{s.qualified_name} ({s.file_path.rsplit('/', 1)[-1]}:{s.line_start}, {n} shared)"
+                            for n, s in _similar[:4]
+                        ]
+                        block_lines.append(f"{indent}  similar: {', '.join(_sim_strs)}")
     return block_lines
 
 

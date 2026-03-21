@@ -5379,3 +5379,49 @@ class TestDiffChangeVelocityAnnotation:
         assert "/wk]" in out, (
             f"Expected [Nx/wk] annotation when velocity is 5.0; got:\n{out}"
         )
+
+
+class TestFocusRecentCommits:
+    """S42: Focus mode — recent commit messages for seed symbol.
+
+    Depth-0 symbol shows 'recent: Nd "msg1", Md "msg2"' when git history
+    is available. Non-git repos must not show the recent line.
+    """
+
+    def test_recent_commits_absent_without_git(self, tmp_path):
+        """No 'recent:' line when the directory has no git history."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "auth.py").write_text(
+            "def login(user, pw): pass\ndef logout(user): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from auth import login\ndef main(): login('a', 'b')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "login")
+
+        assert "recent:" not in out, (
+            f"'recent:' must not appear without git history; got:\n{out}"
+        )
+
+    def test_recent_commits_shown_in_git_repo(self):
+        """'recent:' line appears for seed symbol in a git-tracked repo."""
+        import os
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        g = build_graph(repo, use_cache=False)
+        out = render_focused(g, "render_overview")
+
+        # render_overview is in a heavily-committed file; recent: should appear
+        assert "recent:" in out, (
+            f"Expected 'recent:' line for render_overview in git repo; got:\n{out}"
+        )
+        # Format: 'Nd "message"'
+        recent_line = next((l for l in out.split("\n") if "recent:" in l), "")
+        assert "d \"" in recent_line, (
+            f"recent: line must include Nd \"msg\" format; got:\n{recent_line}"
+        )
