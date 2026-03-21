@@ -1732,6 +1732,23 @@ def _signals_structure(
         )
 
 
+    # S379: Deeply nested source — 30%+ of source files are 3+ directory levels deep.
+    # Deep nesting indicates a large codebase that has grown without restructuring;
+    # navigating 4+ levels to find a file slows onboarding and refactor discovery.
+    _s379_src_fps = [
+        fp for fp in graph.files
+        if not _is_test_file(fp) and graph.files[fp].language.value in _CODE_LANGS
+    ]
+    if len(_s379_src_fps) >= 10:
+        _s379_deep = [fp for fp in _s379_src_fps if fp.count("/") >= 3]
+        if len(_s379_deep) / len(_s379_src_fps) >= 0.30:
+            _pct379 = int(100 * len(_s379_deep) / len(_s379_src_fps))
+            lines.append(
+                f"deep nesting: {_pct379}% of source files ({len(_s379_deep)}/{len(_s379_src_fps)}) are 3+ levels deep"
+                f" — complex directory hierarchy; consider flattening to reduce navigation friction"
+            )
+
+
     return lines
 
 
