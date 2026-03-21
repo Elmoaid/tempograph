@@ -1668,6 +1668,16 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — integration-boundary files change frequently; expect blast-radius changes often"
         )
 
+    # S614: Deep path blast — blast target is nested 4+ directories deep.
+    # Files buried deep in a package hierarchy are harder to find and navigate;
+    # they may be under-tested because developers overlook them during coverage reviews.
+    _depth614 = len(_fp589.split("/"))
+    if _depth614 >= 4:
+        lines.append(
+            f"deep path blast: {file_path} is {_depth614} directories deep"
+            f" — deeply nested files are often under-tested and overlooked in reviews"
+        )
+
     return "\n".join(lines)
 
 

@@ -1945,5 +1945,21 @@ def _collect_hotspots_signals(
                 f" — apply {_ext610}-specific refactoring patterns rather than Python conventions"
             )
 
+    # S616: Exported hotspot — top hotspot is an exported (public) symbol.
+    # Public hotspots are part of the module's API surface; callers depend on their signature
+    # and behavior, making refactoring more disruptive than for private internals.
+    if scores:
+        _top616 = scores[0][1]
+        if (
+            not _is_test_file(_top616.file_path)
+            and _top616.kind.value in ("function", "method", "class")
+            and _top616.exported
+        ):
+            _caller_count616 = len(graph.callers_of(_top616.id))
+            out.append(
+                f"\nexported hotspot: {_top616.name} is a public symbol with {_caller_count616} callers"
+                f" — part of the module API; signature changes require coordinating all callers"
+            )
+
     return out
 

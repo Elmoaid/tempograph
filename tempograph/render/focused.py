@@ -3168,6 +3168,19 @@ def _signals_focused_fn_advanced(
                 f" — long symbols accumulate unrelated logic; consider splitting into smaller units"
             )
 
+    # S612: Widely imported symbol — focused symbol's file is imported by 10+ other files.
+    # When the host file is depended on by many consumers, even minor changes create large
+    # blast radii; treat this symbol's file as a stable API surface.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim612 = _seed_syms[0]
+        if not _is_test_file(_prim612.file_path):
+            _importers612 = graph.importers_of(_prim612.file_path)
+            if len(_importers612) >= 10:
+                lines.append(
+                    f"\nwidely imported: {_prim612.file_path.rsplit('/', 1)[-1]} has"
+                    f" {len(_importers612)} importers — treat as stable API; breakage here is wide-reaching"
+                )
+
     return lines
 
 

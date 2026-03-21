@@ -29019,3 +29019,199 @@ class TestDeadLargeClassS611:
 
 # ── S606: Large symbol focused ─────────────────────────────────────────────────
 
+
+
+class TestWidelyImportedFocusedS612:
+    """S612: Focused symbol's file imported by 10+ files emits widely-imported signal."""
+
+    def test_widely_imported_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def helper(): pass\n")
+        for i in range(11):
+            (tmp_path / f"consumer_{i}.py").write_text(
+                f"from core import helper\ndef fn_{i}(): helper()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper")
+        assert "widely imported" in out, (
+            f"Expected 'widely imported' for file with 11 importers; got:\n{out}"
+        )
+
+    def test_widely_imported_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from utils import helper\ndef run(): helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper")
+        assert "widely imported" not in out, (
+            f"'widely imported' must not appear for file with 1 importer; got:\n{out}"
+        )
+
+
+class TestCircularImportsOverviewS613:
+    """S613: Two source files importing each other emit circular-imports signal."""
+
+    def test_circular_imports_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        (tmp_path / "a.py").write_text(
+            "from b import b_fn\ndef a_fn(): b_fn()\n"
+        )
+        (tmp_path / "b.py").write_text(
+            "from a import a_fn\ndef b_fn(): a_fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "circular imports" in out, (
+            f"Expected 'circular imports' for a.py ↔ b.py mutual imports; got:\n{out}"
+        )
+
+    def test_circular_imports_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from utils import helper\ndef run(): helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "circular imports" not in out, (
+            f"'circular imports' must not appear for one-way imports; got:\n{out}"
+        )
+
+
+class TestDeepPathBlastS614:
+    """S614: Blast target nested 4+ directories deep emits deep-path-blast signal."""
+
+    def test_deep_path_blast_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        deep = tmp_path / "a" / "b" / "c"
+        deep.mkdir(parents=True)
+        (deep / "module.py").write_text("def fn(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from a.b.c.module import fn\ndef run(): fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "a/b/c/module.py")
+        assert "deep path blast" in out, (
+            f"Expected 'deep path blast' for 4-level nested file; got:\n{out}"
+        )
+
+    def test_deep_path_blast_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from utils import helper\ndef run(): helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "utils.py")
+        assert "deep path blast" not in out, (
+            f"'deep path blast' must not appear for root-level file; got:\n{out}"
+        )
+
+
+class TestSecretsInDiffS615:
+    """S615: .env or secrets file in diff emits secrets-in-diff signal."""
+
+    def test_secrets_in_diff_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", ".env"])
+        assert "secrets in diff" in out, (
+            f"Expected 'secrets in diff' when .env file is changed; got:\n{out}"
+        )
+
+    def test_secrets_in_diff_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "config.py"])
+        assert "secrets in diff" not in out, (
+            f"'secrets in diff' must not appear for non-secret files; got:\n{out}"
+        )
+
+
+class TestExportedHotspotS616:
+    """S616: Top hotspot is a public exported symbol emits exported-hotspot signal."""
+
+    def test_exported_hotspot_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "api.py").write_text("def process(x): return x\n")
+        for i in range(4):
+            (tmp_path / f"client_{i}.py").write_text(
+                f"from api import process\ndef use_{i}(): process({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "exported hotspot" in out, (
+            f"Expected 'exported hotspot' for public function with 4 callers; got:\n{out}"
+        )
+
+    def test_exported_hotspot_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        # Private function as top hotspot
+        (tmp_path / "internal.py").write_text("def _private_fn(x): return x\n")
+        for i in range(4):
+            (tmp_path / f"user_{i}.py").write_text(
+                f"from internal import _private_fn\ndef fn_{i}(): _private_fn({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "exported hotspot" not in out, (
+            f"'exported hotspot' must not appear for private function hotspot; got:\n{out}"
+        )
+
+
+class TestDeadAsyncFunctionS617:
+    """S617: Unused async function emits dead-async-functions signal."""
+
+    def test_dead_async_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "tasks.py").write_text(
+            "async def fetch_data(): return []\n"
+            "async def process_queue(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead async functions" in out, (
+            f"Expected 'dead async functions' for unused async functions; got:\n{out}"
+        )
+
+    def test_dead_async_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "tasks.py").write_text(
+            "async def fetch_data(): return []\n"
+        )
+        (tmp_path / "runner.py").write_text(
+            "from tasks import fetch_data\nasync def main(): await fetch_data()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead async functions" not in out, (
+            f"'dead async functions' must not appear when async fn is imported; got:\n{out}"
+        )

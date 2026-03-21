@@ -2120,6 +2120,24 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — significant effort invested but never used; stale logic likely; safe to remove"
         )
 
+    # S617: Dead async function — unused function whose signature contains "async def".
+    # An async function that is never awaited represents an abandoned coroutine design;
+    # it may be a partially-implemented feature or leftover from a refactored async layer.
+    _dead_async617 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and (s.signature or "").startswith("async ")
+    ]
+    if _dead_async617:
+        _async_names617 = ", ".join(s.name for s in _dead_async617[:3])
+        if len(_dead_async617) > 3:
+            _async_names617 += f" +{len(_dead_async617) - 3} more"
+        lines.append(
+            f"dead async functions: {len(_dead_async617)} unused async function(s) ({_async_names617})"
+            f" — never awaited; likely abandoned coroutine design; remove or wire into async context"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

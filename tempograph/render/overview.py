@@ -2513,6 +2513,27 @@ def _signals_async_oop(
                 f" ({_s607_ratio:.0%}) have no callers — accumulation without pruning; schedule a dead-code pass"
             )
 
+    # S613: Circular import pairs — two source files import each other (mutual dependency).
+    # Circular imports in Python are runtime errors in many patterns; they also indicate
+    # that module responsibilities are poorly separated.
+    _import_edges613 = {
+        (e.source_id, e.target_id)
+        for e in graph.edges
+        if e.kind.value == "imports"
+        and not _is_test_file(e.source_id)
+        and not _is_test_file(e.target_id)
+    }
+    _circular613 = [
+        (a, b) for (a, b) in _import_edges613
+        if (b, a) in _import_edges613 and a < b
+    ]
+    if _circular613:
+        _circ_names613 = f"{_circular613[0][0].rsplit('/', 1)[-1]} ↔ {_circular613[0][1].rsplit('/', 1)[-1]}"
+        lines.append(
+            f"circular imports: {len(_circular613)} mutual import pair(s) ({_circ_names613})"
+            f" — bidirectional dependencies indicate poor module separation; refactor to break cycle"
+        )
+
     return lines
 
 

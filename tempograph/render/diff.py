@@ -82,6 +82,23 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — large changesets are harder to review; consider splitting into smaller PRs"
         )
 
+    # S615: Secrets/env file in diff — diff includes a .env, .envrc, or secrets file.
+    # Credentials files in a diff indicate secrets may be stored in version control,
+    # or that environment configuration is being leaked in a review.
+    _secrets_exts615 = (".env", ".envrc", ".secret", ".secrets", ".pem", ".key", ".p12", ".pfx")
+    _secrets_names615 = (".env", ".envrc", "secrets.yml", "secrets.yaml", "id_rsa", "id_ed25519")
+    _secret_files615 = [
+        f for f in changed_files
+        if f.rsplit("/", 1)[-1].lower() in _secrets_names615
+        or any(f.lower().endswith(e) for e in _secrets_exts615)
+    ]
+    if _secret_files615:
+        _sec_name615 = _secret_files615[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"secrets in diff: {_sec_name615} ({len(_secret_files615)} credential/env file(s))"
+            f" — verify no secrets are tracked in VCS; rotate any credentials if leaked"
+        )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 
