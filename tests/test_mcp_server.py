@@ -29842,3 +29842,211 @@ class TestDeadCallbacksS629:
         assert "dead callbacks" not in out, (
             f"'dead callbacks' must not appear when callback is called; got:\n{out}"
         )
+
+
+# ── S630: Property accessor ───────────────────────────────────────────────────
+
+class TestPropertyAccessorS630:
+    """S630: Focused symbol with kind 'property' emits property-accessor signal."""
+
+    def test_property_accessor_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "model.py").write_text(
+            "class User:\n"
+            "    def __init__(self): self._name = 'test'\n"
+            "    @property\n"
+            "    def display_name(self): return self._name.title()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "display_name")
+        assert "property accessor" in out, (
+            f"Expected 'property accessor' for @property method; got:\n{out}"
+        )
+
+    def test_property_accessor_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def format_name(name): return name.title()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "format_name")
+        assert "property accessor" not in out, (
+            f"'property accessor' must not appear for a regular function; got:\n{out}"
+        )
+
+
+# ── S631: Procedural style ────────────────────────────────────────────────────
+
+class TestProceduralStyleS631:
+    """S631: 10+ exported functions and 0 exported classes emits procedural-style signal."""
+
+    def test_procedural_style_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        for i in range(5):
+            (tmp_path / f"ops_{i}.py").write_text(
+                f"def fn_a_{i}(x): return x\ndef fn_b_{i}(x): return x * 2\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "procedural style" in out, (
+            f"Expected 'procedural style' for 10+ fns and 0 classes; got:\n{out}"
+        )
+
+    def test_procedural_style_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        for i in range(5):
+            (tmp_path / f"svc_{i}.py").write_text(
+                f"class Service_{i}:\n    def run(self): pass\n"
+                f"def helper_{i}(): pass\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "procedural style" not in out, (
+            f"'procedural style' must not appear when exported classes exist; got:\n{out}"
+        )
+
+
+# ── S632: Import hub ──────────────────────────────────────────────────────────
+
+class TestImportHubS632:
+    """S632: File with 5+ importers and fan-in >= 3x fan-out emits import-hub signal."""
+
+    def test_import_hub_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def engine(): pass\n")
+        for i in range(6):
+            (tmp_path / f"consumer_{i}.py").write_text(
+                f"from core import engine\ndef run_{i}(): engine()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "core.py")
+        assert "import hub" in out, (
+            f"Expected 'import hub' for file with 6 importers and 0 dependencies; got:\n{out}"
+        )
+
+    def test_import_hub_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def engine(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from core import engine\ndef run(): engine()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "core.py")
+        assert "import hub" not in out, (
+            f"'import hub' must not appear for file with only 1 importer; got:\n{out}"
+        )
+
+
+# ── S633: Generated file in diff ─────────────────────────────────────────────
+
+class TestGeneratedFileInDiffS633:
+    """S633: Auto-generated file in diff (_pb2.py, *_generated*) emits generated-file signal."""
+
+    def test_generated_file_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["app.py", "schema_pb2.py"])
+        assert "generated file in diff" in out, (
+            f"Expected 'generated file in diff' when _pb2.py is in diff; got:\n{out}"
+        )
+
+    def test_generated_file_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["app.py", "schema.py"])
+        assert "generated file in diff" not in out, (
+            f"'generated file in diff' must not appear for regular Python files; got:\n{out}"
+        )
+
+
+# ── S634: Single-symbol hotspot ───────────────────────────────────────────────
+
+class TestSingleSymbolHotspotS634:
+    """S634: Hotspot symbol is the only symbol in its file emits single-symbol-hotspot signal."""
+
+    def test_single_symbol_hotspot_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "sole.py").write_text("def core_fn(x): return x * 2\n")
+        for i in range(6):
+            (tmp_path / f"user_{i}.py").write_text(
+                f"from sole import core_fn\ndef task_{i}(): core_fn({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "single-symbol hotspot" in out, (
+            f"Expected 'single-symbol hotspot' for lone fn in file with many callers; got:\n{out}"
+        )
+
+    def test_single_symbol_hotspot_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def fn_a(x): return x\ndef fn_b(x): return x + 1\n"
+        )
+        for i in range(6):
+            (tmp_path / f"user_{i}.py").write_text(
+                f"from utils import fn_a\ndef task_{i}(): fn_a({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "single-symbol hotspot" not in out, (
+            f"'single-symbol hotspot' must not appear when file has multiple symbols; got:\n{out}"
+        )
+
+
+# ── S635: Dead deprecated symbol ─────────────────────────────────────────────
+
+class TestDeadDeprecatedS635:
+    """S635: Unused exported symbol with 'deprecated' in its docstring emits dead-deprecated signal."""
+
+    def test_dead_deprecated_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "compat.py").write_text(
+            "def old_api(x):\n"
+            '    """Deprecated: use new_api instead."""\n'
+            "    return x\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead deprecated" in out, (
+            f"Expected 'dead deprecated' for unused fn with deprecated docstring; got:\n{out}"
+        )
+
+    def test_dead_deprecated_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "compat.py").write_text(
+            "def old_api(x):\n"
+            '    """Deprecated: use new_api instead."""\n'
+            "    return x\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from compat import old_api\ndef run(): return old_api(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead deprecated" not in out, (
+            f"'dead deprecated' must not appear when deprecated fn is still called; got:\n{out}"
+        )

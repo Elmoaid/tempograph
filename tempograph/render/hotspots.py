@@ -1996,5 +1996,23 @@ def _collect_hotspots_signals(
                 f" — change magnet directory; may warrant extraction into its own package"
             )
 
+    # S634: Single-symbol file hotspot — hotspot symbol is the only non-test symbol in its file.
+    # When a file exists solely to hold one heavily-called symbol, that symbol is the file's
+    # sole reason to exist — it may be better placed in a higher-level module.
+    if scores:
+        _top634 = scores[0][1]
+        if not _is_test_file(_top634.file_path):
+            _file_syms634 = [
+                s for s in graph.symbols_in_file(_top634.file_path)
+                if not _is_test_file(s.file_path) and s.parent_id is None
+            ]
+            if len(_file_syms634) == 1:
+                _caller_count634 = len(graph.callers_of(_top634.id))
+                out.append(
+                    f"\nsingle-symbol hotspot: {_top634.name} is the only symbol in"
+                    f" {_top634.file_path.rsplit('/', 1)[-1]} ({_caller_count634} callers)"
+                    f" — consider inlining into a higher-level module"
+                )
+
     return out
 

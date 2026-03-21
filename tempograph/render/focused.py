@@ -3217,6 +3217,21 @@ def _signals_focused_fn_advanced(
                     f" — terminal node; safe to refactor in isolation; high-caller leaves suit inlining"
                 )
 
+    # S630: Property accessor — focused symbol has kind "property"; callers read it as an attribute.
+    # Property accessors look like attribute reads but execute code; callers are unaware of
+    # side effects or cost — relevant for caching, lazy init, or expensive computation.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim630 = _seed_syms[0]
+        if (
+            _prim630.kind.value == "property"
+            and not _is_test_file(_prim630.file_path)
+        ):
+            _callers630 = graph.callers_of(_prim630.id)
+            lines.append(
+                f"\nproperty accessor: {_prim630.name} is a @property accessed by {len(_callers630)} caller(s)"
+                f" — looks like an attribute read but executes code; relevant if lazy/cached/expensive"
+            )
+
     return lines
 
 

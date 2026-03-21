@@ -1708,6 +1708,21 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — utility modules accumulate mixed concerns; consider splitting by domain"
         )
 
+    # S632: Import hub — blast target has 5+ importers and more fan-in than fan-out.
+    # A module with many more importers than dependencies is a pure hub — it aggregates
+    # nothing but is heavily consumed; any change ripples widely with no upstream buffer.
+    _fanin632 = len([fp for fp in importers if not _is_test_file(fp)])
+    _fanout632 = len({
+        e.target_id for e in graph.edges
+        if e.kind.value == "imports"
+        and e.source_id == _fp589
+    })
+    if _fanin632 >= 5 and _fanin632 >= _fanout632 * 3:
+        lines.append(
+            f"import hub: {_fp589.rsplit('/', 1)[-1]} has {_fanin632} importers but only {_fanout632} dependencies"
+            f" — pure consumer hub; changes here ripple widely with no upstream buffer"
+        )
+
     return "\n".join(lines)
 
 
