@@ -728,6 +728,19 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — version changes affect the whole codebase; verify compatibility across all consumers"
         )
 
+    # S885: Docs-only diff — all changed files are documentation (markdown/rst/txt).
+    # Doc-only diffs carry no runtime risk but may contain outdated examples; agents
+    # should verify that code examples in docs still match the current implementation.
+    _doc_exts885 = (".md", ".rst", ".txt", ".adoc")
+    if changed_files:
+        _doc_files885 = [f for f in changed_files if any(f.lower().endswith(e) for e in _doc_exts885)]
+        _non_doc885 = [f for f in changed_files if not any(f.lower().endswith(e) for e in _doc_exts885)]
+        if _doc_files885 and not _non_doc885:
+            lines.append(
+                f"docs diff: all {len(_doc_files885)} changed file(s) are documentation"
+                f" — doc-only change; verify examples still match current implementation"
+            )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 
