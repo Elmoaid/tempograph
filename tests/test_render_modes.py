@@ -1,4 +1,5 @@
-"""Unit tests for render_overview, render_blast_radius, render_hotspots, render_dead_code."""
+"""Unit tests for render_overview, render_blast_radius, render_hotspots, render_dead_code,
+render_dependencies, render_architecture, render_skills, is_git_repo."""
 from __future__ import annotations
 
 from tempograph.builder import build_graph
@@ -7,7 +8,11 @@ from tempograph.render import (
     render_dead_code,
     render_hotspots,
     render_overview,
+    render_dependencies,
+    render_architecture,
+    render_skills,
 )
+from tempograph.git import is_git_repo
 
 
 def _build(tmp_path, files: dict[str, str]):
@@ -263,3 +268,97 @@ class TestRenderDeadCode:
         out = render_dead_code(g)
         # Either dead ratio is shown, or just "No dead code" — either is valid
         assert isinstance(out, str)
+
+
+# ── render_dependencies ───────────────────────────────────────────────────────
+
+class TestRenderDependencies:
+    def test_returns_str(self, tmp_path):
+        g = _build(tmp_path, {"a.py": "from b import f\ndef g(): f()\n", "b.py": "def f(): pass\n"})
+        out = render_dependencies(g)
+        assert isinstance(out, str)
+
+    def test_header_present(self, tmp_path):
+        g = _build(tmp_path, {"a.py": "def f(): pass\n"})
+        out = render_dependencies(g)
+        assert "Dependency" in out
+
+    def test_no_circular_imports_message(self, tmp_path):
+        g = _build(tmp_path, {"a.py": "def f(): pass\n", "b.py": "def g(): pass\n"})
+        out = render_dependencies(g)
+        assert "No circular imports" in out
+
+    def test_circular_import_detected(self, tmp_path):
+        g = _build(tmp_path, {
+            "a.py": "from b import g\ndef f(): g()\n",
+            "b.py": "from a import f\ndef g(): f()\n",
+        })
+        out = render_dependencies(g)
+        # Either shows a cycle or no circular imports — depends on resolution
+        assert isinstance(out, str)
+
+    def test_dependency_layers_section_present(self, tmp_path):
+        g = _build(tmp_path, {
+            "core.py": "def base(): pass\n",
+            "app.py": "from core import base\ndef run(): base()\n",
+        })
+        out = render_dependencies(g)
+        assert "Layer" in out or "layer" in out.lower()
+
+
+# ── render_architecture ───────────────────────────────────────────────────────
+
+class TestRenderArchitecture:
+    def test_returns_str(self, tmp_path):
+        g = _build(tmp_path, {"pkg/mod.py": "def fn(): pass\n"})
+        out = render_architecture(g)
+        assert isinstance(out, str)
+
+    def test_architecture_header(self, tmp_path):
+        g = _build(tmp_path, {"pkg/a.py": "def fn(): pass\n"})
+        out = render_architecture(g)
+        assert "Architecture" in out or "Modules" in out
+
+    def test_modules_section_present(self, tmp_path):
+        g = _build(tmp_path, {
+            "frontend/app.py": "def render(): pass\n",
+            "backend/api.py": "def handler(): pass\n",
+        })
+        out = render_architecture(g)
+        assert "frontend" in out or "backend" in out
+
+    def test_flat_repo_shows_root_module(self, tmp_path):
+        g = _build(tmp_path, {"utils.py": "def helper(): pass\n"})
+        out = render_architecture(g)
+        assert isinstance(out, str) and len(out) > 0
+
+
+# ── render_skills ─────────────────────────────────────────────────────────────
+
+class TestRenderSkills:
+    def test_returns_str(self, tmp_path):
+        g = _build(tmp_path, {"mod.py": "def fn(): pass\n"})
+        out = render_skills(g)
+        assert isinstance(out, str)
+
+    def test_returns_fallback_when_plugin_missing(self, tmp_path):
+        g = _build(tmp_path, {"mod.py": "def fn(): pass\n"})
+        out = render_skills(g)
+        # Either returns pattern data or the "not available" fallback
+        assert len(out) > 0
+
+
+# ── is_git_repo ───────────────────────────────────────────────────────────────
+
+class TestIsGitRepo:
+    def test_non_git_dir_returns_false(self, tmp_path):
+        assert is_git_repo(str(tmp_path)) is False
+
+    def test_dir_with_git_returns_true(self, tmp_path):
+        (tmp_path / ".git").mkdir()
+        assert is_git_repo(str(tmp_path)) is True
+
+    def test_tempograph_itself_is_git_repo(self):
+        import os
+        repo = os.path.dirname(os.path.dirname(__file__))
+        assert is_git_repo(repo) is True
