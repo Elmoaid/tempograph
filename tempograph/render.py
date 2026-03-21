@@ -384,6 +384,32 @@ def render_overview(graph: Tempo) -> str:
         _test_pct = int(_covered / len(_src_fps) * 100)
         lines.append(f"test coverage: {_covered}/{len(_src_fps)} source files ({_test_pct}%)")
 
+    # Orphan test files: test files that name a source file which no longer exists.
+    # These linger after source renames/deletions and should be cleaned up.
+    if len(_test_fps) >= 2:
+        _orphan_tests: list[str] = []
+        _src_basenames = {
+            fp.rsplit("/", 1)[-1] for fp in graph.files if not _is_test_file(fp)
+        }
+        for _tfp in _test_fps:
+            _tname = _tfp.rsplit("/", 1)[-1]
+            _sname = _tname
+            if _sname.startswith("test_"):
+                _sname = _sname[5:]
+            elif _sname.endswith("_test.py"):
+                _sname = _sname[:-8] + ".py"
+            else:
+                continue  # no test_ prefix/suffix pattern — skip
+            if _sname not in _src_basenames:
+                _orphan_tests.append(_tname)
+        if _orphan_tests:
+            _ot_str = ", ".join(sorted(_orphan_tests)[:3])
+            if len(_orphan_tests) > 3:
+                _ot_str += f" +{len(_orphan_tests) - 3} more"
+            lines.append(
+                f"orphan tests ({len(_orphan_tests)}): {_ot_str} — no matching source file"
+            )
+
     # API surface health: exported symbols with 0 cross-file callers = potentially dead API.
     # Quick fraction for agents: "35% of exports unused → dead code problem worth investigating."
     # Only shown when >= 5 exported non-test symbols exist (avoids noise on tiny repos).
@@ -1510,6 +1536,7 @@ def _build_symbol_block_lines(
     _age_ann = ""
     _doc_ann = ""
     _param_ann = ""
+    _depth_from_entry_ann = ""
     if depth == 0:
         _blast_files = {c.file_path for c in graph.callers_of(sym.id) if c.file_path != sym.file_path}
         if len(_blast_files) >= 3:
@@ -1596,6 +1623,39 @@ def _build_symbol_block_lines(
                     _pcount = _pc + 1
                     if _pcount >= 5:
                         _param_ann = f" [params: {_pcount}]"
+        # S75: Import depth from entry point — BFS backwards through import graph
+        # to find the shortest path from any known entry file to the seed's file.
+        # [depth: N] tells agents how deeply nested this file is; N>=4 = hard to trace.
+        _depth_from_entry_ann = ""
+        _FOCUS_ENTRY_NAMES = {
+            "__main__.py", "main.py", "app.py", "manage.py", "cli.py",
+            "server.py", "wsgi.py", "asgi.py", "run.py", "index.js",
+            "index.ts", "index.tsx", "main.ts", "main.tsx", "main.go",
+        }
+        _entry_fps = {fp for fp in graph.files if fp.rsplit("/", 1)[-1] in _FOCUS_ENTRY_NAMES}
+        if _entry_fps and sym.file_path not in _entry_fps:
+            # Build import adjacency (target → importers) for reverse BFS
+            _rev_adj: dict[str, list[str]] = {}
+            for _e in graph.edges:
+                if _e.kind == EdgeKind.IMPORTS and _e.source_id in graph.files and _e.target_id in graph.files:
+                    _rev_adj.setdefault(_e.target_id, []).append(_e.source_id)
+            # BFS backwards from seed's file toward entry files
+            _bfs_imp: list[tuple[str, int]] = [(sym.file_path, 0)]
+            _seen_imp: set[str] = {sym.file_path}
+            _found_depth: int | None = None
+            while _bfs_imp and _found_depth is None:
+                _cur_fp, _cur_d = _bfs_imp.pop(0)
+                if _cur_d >= 8:
+                    continue
+                for _imp in _rev_adj.get(_cur_fp, []):
+                    if _imp in _entry_fps:
+                        _found_depth = _cur_d + 1
+                        break
+                    if _imp not in _seen_imp and len(_seen_imp) < 80:
+                        _seen_imp.add(_imp)
+                        _bfs_imp.append((_imp, _cur_d + 1))
+            if _found_depth is not None and _found_depth >= 4:
+                _depth_from_entry_ann = f" [depth: {_found_depth}]"
         # Recursion detection: self-recursion or mutual recursion via direct callees.
         # Recursive functions need care before memoizing, splitting, or inlining.
         if sym.kind.value in ("function", "method"):
@@ -1632,7 +1692,7 @@ def _build_symbol_block_lines(
         }
         if len(_hub_caller_files) >= 15:
             _hub_ann = f" [hub: {len(_hub_caller_files)} files]"
-    block_lines = [f"{prefix} {sym.kind.value} {sym.qualified_name}{_blast_ann}{_hub_ann}{_age_ann}{_callee_ann}{_depth_ann}{_doc_ann}{_param_ann} — {loc}{orbit_note}"]
+    block_lines = [f"{prefix} {sym.kind.value} {sym.qualified_name}{_blast_ann}{_hub_ann}{_age_ann}{_callee_ann}{_depth_ann}{_doc_ann}{_param_ann}{_depth_from_entry_ann} — {loc}{orbit_note}"]
     # S61: "also in:" — warn when same symbol name exists in other files.
     # Prevents agents from fixing the wrong copy in multi-file refactors.
     if depth == 0:

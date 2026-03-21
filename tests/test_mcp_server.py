@@ -7726,3 +7726,78 @@ class TestBlastImportsFrom:
         assert "Imports from" not in out, (
             f"'Imports from' must not appear for file with only 1 dep; got:\n{out}"
         )
+
+
+class TestOverviewOrphanTests:
+    """S73: Overview mode — 'orphan tests:' for test files with no matching source.
+
+    A test file is 'orphan' when its implied source file (e.g. test_foo.py → foo.py)
+    does not exist in the graph. Shown when at least 1 orphan is found and there
+    are 2+ test files total.
+    """
+
+    def test_orphan_test_shown_when_source_missing(self, tmp_path):
+        """Repo with test_deleted.py but no deleted.py → orphan annotation appears."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "real.py").write_text("def fn(): return 1\n")
+        (tmp_path / "test_real.py").write_text("from real import fn\ndef test_fn(): assert fn() == 1\n")
+        (tmp_path / "test_deleted.py").write_text("def test_ghost(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "orphan tests" in out, (
+            f"Expected 'orphan tests' for test_deleted.py with no matching source; got:\n{out}"
+        )
+        assert "test_deleted.py" in out, (
+            f"Expected orphan filename 'test_deleted.py' in output; got:\n{out}"
+        )
+
+    def test_orphan_test_absent_when_all_matched(self, tmp_path):
+        """Repo where every test file has a matching source → no orphan annotation."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "foo.py").write_text("def fn(): return 1\n")
+        (tmp_path / "bar.py").write_text("def fn2(): return 2\n")
+        (tmp_path / "test_foo.py").write_text("from foo import fn\ndef test_fn(): assert fn() == 1\n")
+        (tmp_path / "test_bar.py").write_text("from bar import fn2\ndef test_fn2(): assert fn2() == 2\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "orphan tests" not in out, (
+            f"'orphan tests' must not appear when all test files have matching sources; got:\n{out}"
+        )
+
+
+class TestFocusImportDepthFromEntry:
+    """S75: Focus seed shows [depth: N] when import depth from entry point is >= 4."""
+
+    def test_depth_shown_for_deeply_nested_symbol(self, tmp_path):
+        """Symbol file reachable from main.py via 4+ import hops → [depth: N] shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        # Chain: main.py → a.py → b.py → c.py → d.py (depth 4)
+        (tmp_path / "d.py").write_text("def deep_fn(): pass\n")
+        (tmp_path / "c.py").write_text("from d import deep_fn\ndef c_fn(): return deep_fn()\n")
+        (tmp_path / "b.py").write_text("from c import c_fn\ndef b_fn(): return c_fn()\n")
+        (tmp_path / "a.py").write_text("from b import b_fn\ndef a_fn(): return b_fn()\n")
+        (tmp_path / "main.py").write_text("from a import a_fn\ndef run(): return a_fn()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "deep_fn")
+        assert "[depth:" in out, (
+            f"Expected '[depth:' annotation for symbol at depth 4 from main.py; got:\n{out}"
+        )
+
+    def test_depth_absent_for_shallow_symbol(self, tmp_path):
+        """Symbol only 1 import hop from main.py → no [depth:] annotation."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        (tmp_path / "main.py").write_text("from utils import helper\ndef run(): return helper()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper")
+        assert "[depth:" not in out, (
+            f"'[depth:' must not appear for symbol only 1 hop from entry; got:\n{out}"
+        )
