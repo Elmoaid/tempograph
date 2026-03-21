@@ -3290,6 +3290,26 @@ def _signals_focused_fn_advanced(
                     f" — same name in multiple files; refactoring risks touching the wrong definition"
                 )
 
+    # S654: Generic name — focused symbol has a very common, non-specific name.
+    # Generic names like `run`, `process`, `handle` are hard to grep and refactor;
+    # they provide no semantic hint about purpose and tend to accumulate unrelated logic.
+    _generic_names654 = frozenset({
+        "run", "main", "execute", "start", "stop", "process", "handle", "handler",
+        "get", "set", "init", "setup", "teardown", "update", "delete", "create",
+        "load", "save", "read", "write", "parse", "format", "render",
+    })
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim654 = _seed_syms[0]
+        if (
+            not _is_test_file(_prim654.file_path)
+            and _prim654.kind.value in ("function", "method", "class")
+            and _prim654.name.lower() in _generic_names654
+        ):
+            lines.append(
+                f"\ngeneric name: '{_prim654.name}' is a common, non-specific symbol name"
+                f" — hard to grep and refactor; consider a domain-specific name that signals intent"
+            )
+
     return lines
 
 

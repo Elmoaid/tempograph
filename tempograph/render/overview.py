@@ -2655,6 +2655,24 @@ def _signals_async_oop(
                 f" — wide failure surface; callers must handle many distinct exception types"
             )
 
+    # S655: High average complexity — average symbol complexity exceeds 5.
+    # Complex functions are harder to understand, test, and maintain;
+    # a high average signals that the codebase may need targeted refactoring passes.
+    _cx_syms655 = [
+        s for s in graph.symbols.values()
+        if s.complexity and s.complexity > 1
+        and not _is_test_file(s.file_path)
+        and s.kind.value in ("function", "method")
+    ]
+    if len(_cx_syms655) >= 10:
+        _avg_cx655 = sum(s.complexity for s in _cx_syms655) // len(_cx_syms655)
+        if _avg_cx655 > 5:
+            lines.append(
+                f"high average complexity: avg cyclomatic complexity is {_avg_cx655}"
+                f" across {len(_cx_syms655)} functions"
+                f" — complex codebase; target functions above cx=10 for refactoring first"
+            )
+
     return lines
 
 

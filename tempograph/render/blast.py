@@ -1773,6 +1773,27 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — circular file dependency; can cause ImportError in Python; break the cycle"
         )
 
+    # S656: Constants-only module — blast target exports only constants, no functions or classes.
+    # A file that only exports constants is a config/settings module; changes to it affect
+    # every consumer's behavior silently (no API signature to grep for).
+    _all_syms656 = [
+        s for s in graph.symbols.values()
+        if s.file_path == _fp589 and s.exported and s.parent_id is None
+        and not _is_test_file(s.file_path)
+    ]
+    if len(_all_syms656) >= 2:
+        _all_consts656 = all(
+            s.kind.value in ("constant", "variable")
+            for s in _all_syms656
+        )
+        if _all_consts656:
+            _importer_count656 = len([fp for fp in importers if not _is_test_file(fp)])
+            lines.append(
+                f"constants-only module: {_fp589.rsplit('/', 1)[-1]} exports only constants"
+                f" ({len(_all_syms656)} values, {_importer_count656} importer(s))"
+                f" — config changes affect all importers silently; no API signature to grep"
+            )
+
     return "\n".join(lines)
 
 

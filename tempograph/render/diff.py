@@ -206,6 +206,26 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — database or ORM changes require migration review; verify schema/code parity"
         )
 
+    # S657: CI/CD config in diff — diff includes a CI/CD or build configuration file.
+    # CI changes affect the entire team's workflow; build script changes can silently
+    # break the deployment pipeline and may go unnoticed until the next push.
+    _ci_names657 = (
+        "jenkinsfile", "makefile", "dockerfile", ".travis.yml", "circle.yml",
+        "azure-pipelines.yml", "buildspec.yml", "tox.ini", "noxfile.py",
+    )
+    _ci_patterns657 = (".github/", ".gitlab-ci", ".circleci/", ".buildkite/", "ci/")
+    _ci_files657 = [
+        f for f in changed_files
+        if f.rsplit("/", 1)[-1].lower() in _ci_names657
+        or any(p in f.replace("\\", "/").lower() for p in _ci_patterns657)
+    ]
+    if _ci_files657:
+        _ci_name657 = _ci_files657[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"CI/CD config in diff: {_ci_name657} ({len(_ci_files657)} pipeline file(s) changed)"
+            f" — build/deploy workflow changes; verify no pipeline regressions before merging"
+        )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 

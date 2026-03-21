@@ -2251,6 +2251,24 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — unimplemented contract; remove or provide at least one concrete implementation"
         )
 
+    # S659: Dead empty class — unused class with no method children (shell class).
+    # A class with no methods may be a placeholder, a stub that was never fleshed out,
+    # or a configuration class that became dead when the feature was abandoned.
+    _dead_empty659 = [
+        s for s in dead
+        if s.kind.value == "class"
+        and not _is_test_file(s.file_path)
+        and not graph.children_of(s.id)  # no children at all
+    ]
+    if _dead_empty659:
+        _empty_names659 = ", ".join(s.name for s in _dead_empty659[:3])
+        if len(_dead_empty659) > 3:
+            _empty_names659 += f" +{len(_dead_empty659) - 3} more"
+        lines.append(
+            f"dead empty classes: {len(_dead_empty659)} unused class(es) with no children ({_empty_names659})"
+            f" — placeholder or abandoned stub; safe to delete"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

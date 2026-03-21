@@ -30934,3 +30934,224 @@ class TestDeadProtocolsS653:
         assert "dead protocols" not in out, (
             f"'dead protocols' must not appear when interface has an implementation; got:\n{out}"
         )
+
+
+# ── S654: Generic name ────────────────────────────────────────────────────────
+
+class TestGenericNameS654:
+    """S654: Focused symbol with a very common generic name emits generic-name signal."""
+
+    def test_generic_name_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "worker.py").write_text("def process(data): return data\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process")
+        assert "generic name" in out, (
+            f"Expected 'generic name' for function named 'process'; got:\n{out}"
+        )
+
+    def test_generic_name_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def normalize_email_address(email): return email.lower().strip()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "normalize_email_address")
+        assert "generic name" not in out, (
+            f"'generic name' must not appear for a domain-specific name; got:\n{out}"
+        )
+
+
+# ── S655: High average complexity ────────────────────────────────────────────
+
+class TestHighAvgComplexityS655:
+    """S655: Average symbol complexity > 5 emits high-average-complexity signal."""
+
+    def test_high_avg_complexity_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # Write 10 functions each with high cyclomatic complexity
+        code = ""
+        for i in range(10):
+            code += (
+                f"def complex_{i}(x, y, z):\n"
+                f"    if x > 0:\n"
+                f"        if y > 0:\n"
+                f"            if z > 0:\n"
+                f"                if x + y > z:\n"
+                f"                    if x - y < z:\n"
+                f"                        return x\n"
+                f"                    return y\n"
+                f"                return z\n"
+                f"            return x + y\n"
+                f"        return x - y\n"
+                f"    return 0\n\n"
+            )
+        (tmp_path / "complex_module.py").write_text(code)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "high average complexity" in out, (
+            f"Expected 'high average complexity' for highly complex functions; got:\n{out}"
+        )
+
+    def test_high_avg_complexity_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        code = "".join(f"def simple_{i}(x): return x + {i}\n" for i in range(10))
+        (tmp_path / "simple_module.py").write_text(code)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "high average complexity" not in out, (
+            f"'high average complexity' must not appear for simple functions; got:\n{out}"
+        )
+
+
+# ── S656: Constants-only module ───────────────────────────────────────────────
+
+class TestConstantsOnlyModuleS656:
+    """S656: Blast target exports only constants (no functions/classes) — constants-only-module signal."""
+
+    def test_constants_only_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "config.py").write_text(
+            "MAX_RETRIES = 3\nTIMEOUT = 30\nDEBUG = False\n"
+        )
+        for i in range(3):
+            (tmp_path / f"svc_{i}.py").write_text(
+                f"from config import MAX_RETRIES\ndef run_{i}(): return MAX_RETRIES\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "config.py")
+        assert "constants-only module" in out, (
+            f"Expected 'constants-only module' for file with only constants; got:\n{out}"
+        )
+
+    def test_constants_only_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "DEFAULT_PORT = 8080\ndef get_url(host): return f'http://{host}:{DEFAULT_PORT}'\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from utils import get_url\ndef run(): get_url('localhost')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "utils.py")
+        assert "constants-only module" not in out, (
+            f"'constants-only module' must not appear for file with functions; got:\n{out}"
+        )
+
+
+# ── S657: CI/CD config in diff ────────────────────────────────────────────────
+
+class TestCICDConfigInDiffS657:
+    """S657: CI/CD config file in diff emits CI/CD-config-in-diff signal."""
+
+    def test_cicd_config_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["app.py", ".github/workflows/ci.yml"])
+        assert "CI/CD config in diff" in out, (
+            f"Expected 'CI/CD config in diff' when .github/ file is changed; got:\n{out}"
+        )
+
+    def test_cicd_config_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["app.py", "README.md"])
+        assert "CI/CD config in diff" not in out, (
+            f"'CI/CD config in diff' must not appear for non-CI files; got:\n{out}"
+        )
+
+
+# ── S658: Repo-wide top caller ────────────────────────────────────────────────
+
+class TestRepoWideTopCallerS658:
+    """S658: Top hotspot is also the most-called symbol in the entire repo — repo-wide-top-caller signal."""
+
+    def test_repo_top_caller_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def universal_fn(x): return x\n")
+        for i in range(6):
+            (tmp_path / f"module_{i}.py").write_text(
+                f"from core import universal_fn\ndef use_{i}(): universal_fn({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "repo-wide top caller" in out, (
+            f"Expected 'repo-wide top caller' for most-called fn in repo; got:\n{out}"
+        )
+
+    def test_repo_top_caller_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        # Two functions each called 3 times — neither is uniquely the top
+        (tmp_path / "a.py").write_text("def fn_a(x): return x\n")
+        (tmp_path / "b.py").write_text("def fn_b(x): return x\n")
+        for i in range(3):
+            (tmp_path / f"u_a_{i}.py").write_text(
+                f"from a import fn_a\ndef do_{i}(): fn_a({i})\n"
+            )
+        for i in range(3):
+            (tmp_path / f"u_b_{i}.py").write_text(
+                f"from b import fn_b\ndef go_{i}(): fn_b({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "repo-wide top caller" not in out, (
+            f"'repo-wide top caller' must not appear when multiple fns tie for top; got:\n{out}"
+        )
+
+
+# ── S659: Dead empty classes ──────────────────────────────────────────────────
+
+class TestDeadEmptyClassesS659:
+    """S659: Unused class with no method children emits dead-empty-classes signal."""
+
+    def test_dead_empty_class_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "stubs.py").write_text(
+            "class PlaceholderA: pass\n"
+            "class PlaceholderB: pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead empty classes" in out, (
+            f"Expected 'dead empty classes' for unused stub classes; got:\n{out}"
+        )
+
+    def test_dead_empty_class_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "stubs.py").write_text(
+            "class PlaceholderA: pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from stubs import PlaceholderA\ndef make(): return PlaceholderA()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead empty classes" not in out, (
+            f"'dead empty classes' must not appear when class is instantiated; got:\n{out}"
+        )

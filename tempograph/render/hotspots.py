@@ -2060,5 +2060,23 @@ def _collect_hotspots_signals(
                     f" — trim dead code before adding features to this file"
                 )
 
+    # S658: Repo-wide top caller — top hotspot is also the most-called symbol in the entire graph.
+    # This symbol is not just a local hotspot; it dominates the entire codebase's call graph.
+    # Refactoring it has global scope: every caller, test, and integration depends on it.
+    if scores:
+        _top658 = scores[0][1]
+        if not _is_test_file(_top658.file_path):
+            _max_callers658 = max(
+                (len(graph.callers_of(s.id)) for s in graph.symbols.values()
+                 if not _is_test_file(s.file_path)),
+                default=0,
+            )
+            _top_callers658 = len(graph.callers_of(_top658.id))
+            if _top_callers658 >= 5 and _top_callers658 == _max_callers658:
+                out.append(
+                    f"\nrepo-wide top caller: {_top658.name} is called by {_top_callers658} symbols"
+                    f" — most-called in the entire repo; global refactoring scope"
+                )
+
     return out
 
