@@ -1464,6 +1464,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — tightly coupled to one consumer; safe to change in sync, but consider if the coupling is intentional"
         )
 
+    # S515: Config file blast — blast target is a configuration or settings file.
+    # Config files propagate to all consumers at runtime even when not statically imported;
+    # constants, feature flags, and env-driven values silently affect all code paths on reload.
+    _s515_config_markers = ("config", "settings", "constants", "conf", "env")
+    _s515_is_config = any(m in file_path.lower() for m in _s515_config_markers)
+    if _s515_is_config:
+        lines.append(
+            f"config file blast: {file_path.rsplit('/', 1)[-1]} is a config/settings file"
+            f" — runtime values propagate everywhere; verify all consumers handle changed defaults"
+        )
+
     return "\n".join(lines)
 
 

@@ -1521,4 +1521,19 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — check for required migrations and audit all queries against changed fields"
         )
 
+    # S516: Generated file in diff — diff includes auto-generated source files.
+    # Generated files should not be manually edited; changes are overwritten on next codegen run.
+    # If a generated file appears in a diff, the generator input (proto, schema, spec) should change too.
+    _s516_gen_markers = ("_pb2", "_generated", "_auto.", "/generated/", "_grpc", ".auto.")
+    _s516_gen_files = [
+        f for f in changed_files
+        if any(m in f.lower() for m in _s516_gen_markers)
+    ]
+    if _s516_gen_files:
+        lines.append(
+            f"generated file in diff: {len(_s516_gen_files)} auto-generated file(s) changed"
+            f" ({', '.join(f.rsplit('/', 1)[-1] for f in _s516_gen_files[:2])})"
+            f" — do not manually edit generated files; update the generator input and re-run codegen"
+        )
+
     return "\n".join(lines)
