@@ -1444,4 +1444,24 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — transitive dependency upgrades may introduce incompatible APIs or vulnerabilities"
         )
 
+    # S485: Base class touched — diff contains a file that defines a Base* or Abstract* class.
+    # Changes to base classes cascade to every subclass; a renamed method or added required
+    # argument breaks all derivatives that don't override it.
+    _s485_base_prefixes = ("Base", "Abstract", "Mixin", "Interface")
+    _s485_base_files: list[str] = []
+    for _fp485 in changed_files:
+        _syms485 = [
+            s for s in graph.symbols.values()
+            if s.file_path == _fp485 and s.kind.value == "class"
+            and any(s.name.startswith(p) for p in _s485_base_prefixes)
+        ]
+        if _syms485:
+            _s485_base_files.append(_fp485)
+    if _s485_base_files:
+        _names485 = ", ".join(f.rsplit("/", 1)[-1] for f in _s485_base_files[:3])
+        lines.append(
+            f"base class touched: {_names485} defines a base/abstract class"
+            f" — changes cascade to all subclasses; check every derivative for compatibility"
+        )
+
     return "\n".join(lines)

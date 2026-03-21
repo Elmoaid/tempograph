@@ -1635,6 +1635,40 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — safe to delete; verify the path they were debugging still works"
         )
 
+    # S487: Dead context managers — class defines __enter__/__exit__ but is never imported.
+    # A context manager that is never used means the resource management path is untested;
+    # if the class is later used, teardown bugs surface at runtime.
+    _s487_cm_names: list[str] = []
+    _s487_seen_files: set[str] = set()
+    for _s487sym in graph.symbols.values():
+        if (
+            _s487sym.kind.value == "method"
+            and _s487sym.name == "__enter__"
+            and not _is_test_file(_s487sym.file_path)
+            and _s487sym.file_path not in _s487_seen_files
+        ):
+            _callers487 = [
+                e for e in graph.edges
+                if e.kind.value == "calls" and e.target_id == _s487sym.id
+            ]
+            _importers487 = graph.importers_of(_s487sym.file_path)
+            if not _callers487 and not _importers487:
+                _cls487 = next(
+                    (
+                        s for s in graph.symbols.values()
+                        if s.kind.value == "class" and s.file_path == _s487sym.file_path
+                    ),
+                    None,
+                )
+                if _cls487:
+                    _s487_cm_names.append(_cls487.name)
+                    _s487_seen_files.add(_s487sym.file_path)
+    if _s487_cm_names:
+        lines.append(
+            f"dead context managers: {', '.join(_s487_cm_names[:3])} define __enter__/__exit__"
+            f" but are never used with `with` — teardown logic is untested"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
