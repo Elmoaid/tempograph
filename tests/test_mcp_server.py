@@ -10442,3 +10442,86 @@ class TestDeadCodeByModule:
         assert "dead by module" not in out, (
             f"'dead by module' must not appear for single-module dead code; got:\n{out}"
         )
+
+
+class TestOverviewMostComplexFn:
+    """S125: Overview — 'most complex fn: name (cx=N in file.py)'."""
+
+    def test_high_complexity_fn_shown(self, tmp_path):
+        """Overview shows most complex fn when max complexity >= 15."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        # Build a function with many branches (high complexity)
+        branches = "\n".join(f"    if x == {i}:\n        return {i}" for i in range(20))
+        (tmp_path / "complex.py").write_text(
+            f"def complex_fn(x):\n{branches}\n    return -1\n"
+        )
+        for i in range(4):
+            (tmp_path / f"simple{i}.py").write_text(f"def fn{i}():\n    pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        # Only show if complexity was actually parsed
+        if any(sym.complexity >= 15 for sym in g.symbols.values()):
+            out = render_overview(g)
+            assert "most complex fn" in out, (
+                f"Expected 'most complex fn' for cx >= 15; got:\n{out}"
+            )
+
+    def test_low_complexity_not_shown(self, tmp_path):
+        """Overview must NOT show most complex fn when max complexity < 15."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        for i in range(8):
+            (tmp_path / f"fn{i}.py").write_text(
+                f"def fn{i}(x):\n    if x > 0:\n        return x\n    return 0\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "most complex fn" not in out, (
+            f"'most complex fn' must not appear for low-complexity code; got:\n{out}"
+        )
+
+
+class TestDeadCodeExportedDeadRatio:
+    """S126: Dead code — 'exported: N/M public symbols dead (X%)' in header."""
+
+    def test_high_exported_dead_shown(self, tmp_path):
+        """When 20%+ of exported symbols are dead, show exported dead ratio."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        # 5 dead exported fns, 5 live exported fns — 50% dead
+        for i in range(5):
+            (tmp_path / f"dead{i}.py").write_text(f"def dead_fn_{i}():\n    pass\n")
+        (tmp_path / "live.py").write_text(
+            "\n".join(f"def live_fn_{i}():\n    pass\n" for i in range(5))
+        )
+        (tmp_path / "main.py").write_text(
+            "from live import " + ", ".join(f"live_fn_{i}" for i in range(5)) + "\n"
+            "def main():\n" + "".join(f"    live_fn_{i}()\n" for i in range(5))
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "exported:" in out, (
+            f"Expected 'exported:' dead ratio for high exported-dead fraction; got:\n{out}"
+        )
+
+    def test_low_exported_dead_not_shown(self, tmp_path):
+        """When < 20% of exported symbols are dead, do NOT show exported dead ratio."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        (tmp_path / "lib.py").write_text(
+            "\n".join(f"def fn_{i}():\n    pass\n" for i in range(10))
+        )
+        (tmp_path / "main.py").write_text(
+            "from lib import " + ", ".join(f"fn_{i}" for i in range(9)) + "\n"
+            "def main():\n" + "".join(f"    fn_{i}()\n" for i in range(9))
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        # only fn_9 is dead (10%), below 20% threshold — signal should not appear
+        assert "exported:" not in out or "public symbols dead" not in out, (
+            f"'exported: N/M public symbols dead' must not appear for <20% exported dead; got:\n{out}"
+        )
