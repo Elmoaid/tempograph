@@ -20,6 +20,25 @@
   --font-mono: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace;
 }
 
+[data-theme="light"] {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f4f4f5;
+  --bg-tertiary: #e4e4e7;
+  --bg-hover: #e4e4e7;
+  --bg-active: #d4d4d8;
+  --border: #d4d4d8;
+  --border-subtle: #e4e4e7;
+  --text-primary: #18181b;
+  --text-secondary: #52525b;
+  --text-tertiary: #71717a;
+  --accent: #6366f1;
+  --accent-hover: #4f46e5;
+  --accent-muted: rgba(99, 102, 241, 0.12);
+  --success: #16a34a;
+  --warning: #d97706;
+  --error: #dc2626;
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 body {
