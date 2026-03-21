@@ -1642,6 +1642,20 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — changes are locally contained; verify this file isn't an unreferenced orphan"
         )
 
+    # S602: No test coverage — blast target has no corresponding test file in the graph.
+    # A file with no test coverage means regressions from blast-radius changes go undetected;
+    # any modification here requires manual verification or new tests.
+    _stem602 = _fp589.rsplit("/", 1)[-1].replace(".py", "").replace(".js", "").replace(".ts", "")
+    _test_fps602 = [
+        fp for fp in graph.files
+        if _is_test_file(fp) and _stem602 in fp.replace("\\", "/").rsplit("/", 1)[-1]
+    ]
+    if not _test_fps602 and not _fp589.endswith("__init__.py"):
+        lines.append(
+            f"no test coverage: no test file found for {file_path.rsplit('/', 1)[-1]}"
+            f" — changes here cannot be regression-tested; add tests before modifying"
+        )
+
     return "\n".join(lines)
 
 

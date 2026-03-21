@@ -3140,6 +3140,23 @@ def _signals_focused_fn_advanced(
                 f" — entry point, dead code, or dynamically dispatched; verify intent before removing"
             )
 
+    # S600: Deprecated caller — focused symbol's callers are in legacy/compat/deprecated files.
+    # If every caller lives in a compatibility shim or legacy module, the symbol itself
+    # may be on a deprecation path and should be marked or removed.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim600 = _seed_syms[0]
+        if _prim600.kind.value in ("function", "method", "class") and not _is_test_file(_prim600.file_path):
+            _callers600 = graph.callers_of(_prim600.id)
+            _legacy_markers600 = ("legacy", "deprecated", "compat", "old_", "_old", "v1", "backport")
+            if _callers600 and all(
+                any(m in c.file_path.lower() for m in _legacy_markers600)
+                for c in _callers600
+            ):
+                lines.append(
+                    f"\ndeprecated callers: all {len(_callers600)} caller(s) of {_prim600.name}"
+                    f" are in legacy/compat files — symbol may be on a deprecation path; mark or schedule removal"
+                )
+
     return lines
 
 

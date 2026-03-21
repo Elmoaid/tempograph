@@ -21,7 +21,18 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         and not graph.importers_of(fp)
     ]
 
-    if not dead and not _dead_typing_files569:
+    # S605: Dead utility function — pre-computed to allow firing when `dead` is empty.
+    # Catches BOTH non-exported private utilities AND exported dead utilities with utility prefix.
+    _util_prefixes605_pre = ("get_", "make_", "create_", "build_", "generate_", "compute_", "fetch_")
+    _dead_util605_pre = [
+        sym for sym in graph.symbols.values()
+        if not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.startswith(p) for p in _util_prefixes605_pre)
+        and not graph.callers_of(sym.id)
+    ]
+
+    if not dead and not _dead_typing_files569 and not _dead_util605_pre:
         return "No dead code detected — all exported symbols are referenced."
 
     # Score each symbol
@@ -2077,6 +2088,16 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         lines.append(
             f"dead modules: {len(_s598_dead_modules)} entire file(s) unreachable ({_mod_names598})"
             f" — no importers and no cross-file callers; likely abandoned; safe to remove"
+        )
+
+    # S605: Dead utility function (pre-computed near top to allow firing when dead[] is empty)
+    if _dead_util605_pre:
+        _util_names605 = ", ".join(s.name for s in _dead_util605_pre[:3])
+        if len(_dead_util605_pre) > 3:
+            _util_names605 += f" +{len(_dead_util605_pre) - 3} more"
+        lines.append(
+            f"dead utility functions: {len(_dead_util605_pre)} unused factory/utility function(s) ({_util_names605})"
+            f" — never called; the use case they were written for never materialized; remove or promote"
         )
 
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")

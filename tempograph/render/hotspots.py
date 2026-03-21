@@ -1919,5 +1919,18 @@ def _collect_hotspots_signals(
                 f" — this file is a bottleneck; split responsibilities to reduce change collision"
             )
 
+    # S604: Test hotspot — the top hotspot symbol is a test function/class (test file).
+    # A test function appearing as a hotspot usually means fixtures or helpers are being
+    # called by many tests rather than production code; worth reviewing for extraction.
+    if scores:
+        _top604 = scores[0][1]
+        if _is_test_file(_top604.file_path):
+            _caller_count604 = len(graph.callers_of(_top604.id))
+            out.append(
+                f"\ntest hotspot: {_top604.name} (in {_top604.file_path.rsplit('/', 1)[-1]})"
+                f" is a test-file symbol with {_caller_count604} callers"
+                f" — consider extracting to a shared fixture or helper module"
+            )
+
     return out
 
