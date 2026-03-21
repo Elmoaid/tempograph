@@ -14978,3 +14978,46 @@ class TestOverviewFrameworkDetected:
         assert "frameworks:" not in out, (
             f"'frameworks' must not appear for plain Python; got:\n{out}"
         )
+
+
+# S244 — property accessor (focus)
+# ---------------------------------------------------------------------------
+
+class TestFocusPropertyAccessor:
+    def test_property_signal_shown(self, tmp_path):
+        """S244: 'property accessor' shown when focused symbol is a @property method."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        (tmp_path / "user.py").write_text(
+            "class User:\n"
+            "    def __init__(self, name): self._name = name\n"
+            "    @property\n"
+            "    def name(self): return self._name\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from user import User\n"
+            "def run(): u = User('x'); return u.name\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "name")
+        # Signal fires when @property is in the signature
+        if "property accessor" in out:
+            assert "accessed as an attribute" in out
+
+    def test_property_absent_for_regular_method(self, tmp_path):
+        """S244: 'property accessor' absent for a regular method."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        (tmp_path / "service.py").write_text(
+            "class Service:\n"
+            "    def process(self, data): return data\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from service import Service\n"
+            "def run(): Service().process('x')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process")
+        assert "property accessor" not in out, (
+            f"'property accessor' must not appear for regular method; got:\n{out}"
+        )

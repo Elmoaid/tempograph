@@ -1997,6 +1997,54 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                     f" — interface changes break all inheritors"
                 )
 
+    # S234: Long parameter list — focused fn/method has >= 5 parameters.
+    # Many parameters = hard to call correctly, often signals missing data objects.
+    # Only shown when seed has >= 5 params in its signature.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim234 = _seed_syms[0]
+        if _prim234.kind.value in ("function", "method"):
+            _sig234 = _prim234.signature or ""
+            # Count commas in the parameter section as a proxy for param count
+            _paren_start = _sig234.find("(")
+            _paren_end = _sig234.rfind(")")
+            if _paren_start != -1 and _paren_end != -1:
+                _params_str = _sig234[_paren_start + 1:_paren_end].strip()
+                # Remove self/cls
+                _params_str = _params_str.replace("self, ", "").replace("cls, ", "")
+                _params_str = _params_str.replace("self,", "").replace("cls,", "")
+                _params_str = _params_str.replace("self", "").replace("cls", "").strip()
+                if _params_str:
+                    _param_count234 = len([p for p in _params_str.split(",") if p.strip()])
+                    if _param_count234 >= 5:
+                        lines.append(
+                            f"\nlong parameter list: {_prim234.name} has {_param_count234} params"
+                            f" — consider grouping into a config/data object"
+                        )
+
+    # S244: Property accessor — focused symbol is a @property method.
+    # Callers access it like an attribute (no parentheses); renaming or changing type is
+    # a breaking change even if the source looks like a function change.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim244 = _seed_syms[0]
+        if _prim244.kind.value == "method":
+            _sig244 = _prim244.signature or ""
+            _name244 = _prim244.name
+            # Detect property: signature starts with "@property" or name matches Python/TS getter patterns
+            _is_property = (
+                "@property" in _sig244
+                or _sig244.strip().startswith("@property")
+                or (
+                    _name244.startswith("get_") and "(" in _sig244
+                    and "self" in _sig244
+                    and _sig244.count(",") == 0  # no params other than self
+                )
+            )
+            if _is_property:
+                lines.append(
+                    f"\nproperty accessor: {_name244} is accessed as an attribute"
+                    f" — type or name changes break all usages silently"
+                )
+
     return "\n".join(lines)
 
 
