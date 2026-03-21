@@ -6691,6 +6691,22 @@ class TestOverviewUntestedHot:
             f"'untested hot:' must not appear when function has test coverage; got:\n{out}"
         )
 
+    def test_untested_hot_includes_filename(self, tmp_path):
+        """'untested hot:' entry includes the source filename for agent navigation."""
+        from tempograph.render import render_overview
+
+        g = self._build(tmp_path, {
+            "core.py": "def process(x): return x\n",
+            "a.py": "from core import process\ndef a(): return process(1)\n",
+            "b.py": "from core import process\ndef b(): return process(2)\n",
+            "c.py": "from core import process\ndef c(): return process(3)\n",
+        })
+        out = render_overview(g)
+        assert "untested hot:" in out
+        assert "core.py" in out, (
+            f"Expected source filename 'core.py' in untested hot entry; got:\n{out}"
+        )
+
 
 class TestFocusCalleeDepth:
     """S61: Focus mode — '[callee depth: N]' annotation on depth-0 seed with call chain >= 3.

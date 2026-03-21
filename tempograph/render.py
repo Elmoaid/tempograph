@@ -189,10 +189,13 @@ def render_overview(graph: Tempo) -> str:
         _src_caller_files = {c.file_path for c in _all_callers if c.file_path != sym.file_path and not _is_test_file(c.file_path)}
         _test_callers = [c for c in _all_callers if _is_test_file(c.file_path)]
         if len(_src_caller_files) >= 3 and not _test_callers:
-            _untested_hot.append((len(_src_caller_files), sym.name))
+            _untested_hot.append((len(_src_caller_files), sym.name, sym.file_path))
     if _untested_hot:
         _untested_hot.sort(key=lambda x: -x[0])
-        _uh_parts = [f"{name} ({n})" for n, name in _untested_hot[:3]]
+        _uh_parts = [
+            f"{name} ({n}, {fp.rsplit('/', 1)[-1]})"
+            for n, name, fp in _untested_hot[:3]
+        ]
         lines.append(f"untested hot: {', '.join(_uh_parts)} — no test coverage")
 
     # Stable core: files with high import fan-in that have rarely changed (>=30d).
