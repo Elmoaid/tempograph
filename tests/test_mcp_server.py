@@ -10749,3 +10749,43 @@ class TestDiffTouchedTestCount:
         assert "touched test count: 0" in out, (
             f"Expected 'touched test count: 0' when no matching test file exists; got:\n{out}"
         )
+
+
+class TestOverviewLargestModule:
+    """S134: Overview — 'largest module: dir/ (N files, M symbols)'."""
+
+    def test_largest_module_shown(self, tmp_path):
+        """Repo with 3+ dirs where one has 3+ source files → 'largest module:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        # big/ has 4 source files; small/ and other/ have 1 each
+        for mod in ["big", "small", "other"]:
+            (tmp_path / mod).mkdir()
+            (tmp_path / mod / "__init__.py").write_text("")
+        for i in range(4):
+            (tmp_path / "big" / f"part{i}.py").write_text(f"def fn_{i}():\n    pass\n")
+        (tmp_path / "small" / "util.py").write_text("def util():\n    pass\n")
+        (tmp_path / "other" / "misc.py").write_text("def misc():\n    pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "largest module" in out, (
+            f"Expected 'largest module' when big/ has 4 files; got:\n{out}"
+        )
+        assert "big/" in out, out
+
+    def test_largest_module_absent_for_flat_repo(self, tmp_path):
+        """Flat repo (< 3 dirs) → 'largest module:' NOT shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        # Only 2 subdirs — below the 3-dir threshold
+        for mod in ["alpha", "beta"]:
+            (tmp_path / mod).mkdir()
+            (tmp_path / mod / "__init__.py").write_text("")
+            (tmp_path / mod / "lib.py").write_text(f"def {mod}_fn():\n    pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "largest module" not in out, (
+            f"'largest module' must not appear for flat repo (2 dirs); got:\n{out}"
+        )

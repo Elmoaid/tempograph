@@ -971,6 +971,29 @@ def render_overview(graph: Tempo) -> str:
                 _om_str += f" +{len(_orphan_mods) - 4} more"
             lines.append(f"orphan modules: {_om_str} — no files imported by other modules")
 
+    # S134: Largest module — the top-level directory with the most source files.
+    # Points agents to the heaviest architectural weight; also flags where complexity lives.
+    # Only shown when 3+ top-level dirs exist (otherwise trivial single-package repos).
+    if modules and len(modules) >= 3:
+        _s134_file_counts: dict[str, int] = {}
+        _s134_sym_counts: dict[str, int] = {}
+        for _s134_mod, _s134_fps in modules.items():
+            _s134_src_fps = [fp for fp in _s134_fps if not _is_test_file(fp)]
+            if not _s134_src_fps:
+                continue
+            _s134_file_counts[_s134_mod] = len(_s134_src_fps)
+            _s134_sym_counts[_s134_mod] = sum(
+                len(graph.files[fp].symbols) for fp in _s134_src_fps if fp in graph.files
+            )
+        if _s134_file_counts:
+            _s134_top = max(_s134_file_counts, key=lambda m: _s134_file_counts[m])
+            _s134_fc = _s134_file_counts[_s134_top]
+            _s134_sc = _s134_sym_counts.get(_s134_top, 0)
+            if _s134_fc >= 3:
+                lines.append(
+                    f"largest module: {_s134_top}/ ({_s134_fc} files, {_s134_sc} symbols)"
+                )
+
     # Suggest directories to exclude — detect likely noise
     noisy = _detect_noisy_dirs(graph, modules)
     if noisy:
