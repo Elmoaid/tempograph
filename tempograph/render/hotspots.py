@@ -2857,7 +2857,7 @@ def _collect_hotspots_signals(
                     f" — extreme fan-in; breaking changes here cause simultaneous failures across many subsystems"
                 )
 
-    # S970: Exported hotspot — the top hotspot is a public exported function.
+    # S970: API-surface hotspot — the top hotspot is a public exported function.
     # Exported functions are API surface; internal refactors that seem safe may break
     # external consumers who rely on the exact signature or behavior.
     if scores:
@@ -2869,7 +2869,7 @@ def _collect_hotspots_signals(
             and _top970.kind.value in ("function", "method")
         ):
             out.append(
-                f"\nexported hotspot: {_top970.name} is a public exported function"
+                f"\napi-surface hotspot: {_top970.name} is a public exported function"
                 f" — API surface; signature or behavior changes may break external consumers"
             )
 
