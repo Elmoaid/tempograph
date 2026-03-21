@@ -3496,6 +3496,17 @@ def _signals_async_oop(
             f" — no module boundaries; consider introducing package subdirectories as the codebase grows"
         )
 
+    # S967: No tests at all — the repo has zero test files.
+    # Without any test files, changes cannot be verified against regression;
+    # agents should treat all changes as high risk regardless of apparent simplicity.
+    _test_files967 = [fp for fp in graph.files if _is_test_file(fp)]
+    _src_files967 = [fp for fp in graph.files if not _is_test_file(fp)]
+    if not _test_files967 and len(_src_files967) >= 3:
+        lines.append(
+            f"no tests: 0 test files detected in {len(_src_files967)} source file(s)"
+            f" — no regression safety net; all changes carry high risk regardless of apparent scope"
+        )
+
     return lines
 
 

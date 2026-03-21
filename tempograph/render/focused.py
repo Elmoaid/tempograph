@@ -4183,6 +4183,33 @@ def _signals_focused_fn_advanced(
                 f" — utility changes cross-cut features; test all consumer modules, not just obvious callers"
             )
 
+    # S966: Override candidate — focused method shares its name with a method in another class in the same file.
+    # When multiple classes define the same method name, any change to one may need to be
+    # mirrored in the others to preserve consistent behavior across the class hierarchy.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim966 = _seed_syms[0]
+        if (
+            _prim966.kind.value == "method"
+            and _prim966.parent_id is not None
+            and not _is_test_file(_prim966.file_path)
+        ):
+            _siblings966 = [
+                s for s in graph.symbols.values()
+                if s.kind.value == "method"
+                and s.name == _prim966.name
+                and s.file_path == _prim966.file_path
+                and s.parent_id != _prim966.parent_id
+                and s.parent_id is not None
+            ]
+            if _siblings966:
+                _cls_names966 = ", ".join(
+                    s.qualified_name.rsplit(".", 1)[0] for s in _siblings966[:2]
+                )
+                lines.append(
+                    f"\noverride candidate: {_prim966.name} also defined in {_cls_names966}"
+                    f" — shared method name across classes; changes may need mirroring for consistent behavior"
+                )
+
     return lines
 
 

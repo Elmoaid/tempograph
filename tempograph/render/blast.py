@@ -2398,6 +2398,19 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — path/method changes may silently break existing endpoints; verify all routes are tested"
         )
 
+    # S968: Migration blast — blast target is a database migration file.
+    # Migration files modify production schema; errors can corrupt data or fail deploys
+    # in ways that are often difficult or impossible to reverse safely.
+    _mig_kws968 = ("migration", "migrate", "alembic", "schema", "flyway")
+    _fpath968 = _fp589.replace("\\", "/")
+    _fname968 = _fpath968.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    _in_migrations968 = any(kw in _fpath968.lower() for kw in ("migrations/", "migration/", "alembic/"))
+    if _in_migrations968 or any(_fname968 == kw or _fname968.startswith(kw + "_") for kw in _mig_kws968):
+        lines.append(
+            f"migration blast: {_fp589.rsplit('/', 1)[-1]} is a database migration file"
+            f" — schema changes are often irreversible; require DBA review and tested rollback plan"
+        )
+
     return "\n".join(lines)
 
 

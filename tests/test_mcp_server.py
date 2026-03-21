@@ -45184,3 +45184,173 @@ class TestDeadTasksS965:
         assert "dead tasks" not in out, (
             f"'dead tasks' must not appear when task function is called; got:\n{out}"
         )
+
+class TestUtilityFileFocusS960:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "utils.py").write_text("def parse_date(s): return s\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "parse_date")
+        assert "utility file" in out, (
+            f"'utility file' expected for function in utils.py; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "auth.py").write_text("def login(user): return True\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "login")
+        assert "utility file" not in out, (
+            f"'utility file' must not appear for non-utility filename; got:\n{out}"
+        )
+
+
+class TestFlatArchitectureS961:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        for name in ("a", "b", "c", "d", "e", "f", "g", "h"):
+            (tmp_path / f"{name}.py").write_text(f"def fn_{name}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "flat architecture" in out, (
+            f"'flat architecture' expected for 8 root-level files; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        sub = tmp_path / "core"
+        sub.mkdir()
+        for name in ("a", "b", "c", "d", "e", "f", "g", "h"):
+            (sub / f"{name}.py").write_text(f"def fn_{name}(): pass\n")
+        (tmp_path / "main.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "flat architecture" not in out, (
+            f"'flat architecture' must not appear when files are in subdirectories; got:\n{out}"
+        )
+
+
+class TestRouterBlastS962:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "routes.py").write_text("def get_user(): pass\n")
+        (tmp_path / "app.py").write_text("from routes import get_user\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "routes.py")
+        assert "router blast" in out, (
+            f"'router blast' expected for routes.py; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "service.py").write_text("def handle(): pass\n")
+        (tmp_path / "main.py").write_text("from service import handle\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "service.py")
+        assert "router blast" not in out, (
+            f"'router blast' must not appear for non-router filename; got:\n{out}"
+        )
+
+
+class TestTestInfraChangedS963:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "conftest.py").write_text("def db(): pass\n")
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["conftest.py", "app.py"])
+        assert "test infra changed" in out, (
+            f"'test infra changed' expected when conftest.py in diff; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "service.py").write_text("def run(): pass\n")
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["service.py", "app.py"])
+        assert "test infra changed" not in out, (
+            f"'test infra changed' must not appear for non-infra diff; got:\n{out}"
+        )
+
+
+class TestBottleneckHotspotS964:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        # Create a function called from 10 distinct files
+        (tmp_path / "core.py").write_text("def shared_fn(): pass\n")
+        for i in range(10):
+            sub = tmp_path / f"mod_{i}"
+            sub.mkdir()
+            (sub / "service.py").write_text(
+                f"from core import shared_fn\ndef run_{i}(): shared_fn()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "bottleneck hotspot" in out, (
+            f"'bottleneck hotspot' expected for function called from 10 files; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        (tmp_path / "a.py").write_text("from utils import helper\ndef a(): helper()\n")
+        (tmp_path / "b.py").write_text("from utils import helper\ndef b(): helper()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "bottleneck hotspot" not in out, (
+            f"'bottleneck hotspot' must not appear for function called from 2 files; got:\n{out}"
+        )
+
+
+class TestDeadScheduledTasksS965:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "tasks.py").write_text(
+            "def task_cleanup(): pass\n"
+            "def job_report(): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead tasks" in out, (
+            f"'dead tasks' expected for unused task_/job_ functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "tasks.py").write_text("def task_cleanup(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from tasks import task_cleanup\n"
+            "def run(): task_cleanup()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead tasks" not in out, (
+            f"'dead tasks' must not appear when task_cleanup is called; got:\n{out}"
+        )
+
