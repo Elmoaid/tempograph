@@ -326,6 +326,23 @@ class Tempo:
                   and _re.match(r'^[a-z][a-z0-9_]*$', t)]  # valid identifier chars only
         if not tokens:
             tokens = [t for t in query_lower.split() if len(t) > 1]
+        # IDF penalty: for multi-token queries, tokens that appear in many symbol names
+        # are generic words (test, handler, coverage) and should get lower weight.
+        # This prevents "add test coverage for parser" from flooding results with test classes.
+        _idf_factors: dict[str, float] = {}
+        if len(tokens) > 1:
+            _n_syms = len(self.symbols)
+            if _n_syms > 0:
+                _name_set = [sym.name.lower() for sym in self.symbols.values()]
+                for t in tokens:
+                    _freq = sum(1 for n in _name_set if t in n)
+                    _ratio = _freq / _n_syms
+                    if _ratio > 0.15:    # very common (>15%): heavy penalty
+                        _idf_factors[t] = 0.3
+                    elif _ratio > 0.05:  # moderately common (5-15%): mild penalty
+                        _idf_factors[t] = 0.6
+                    # else: rare/specific → factor = 1.0 (default)
+
         results: list[tuple[float, Symbol]] = []
         for sym in self.symbols.values():
             name_lower = sym.name.lower()
@@ -336,7 +353,7 @@ class Tempo:
             score = 0.0
             matched_count = 0  # only name/qname/sig/doc matches (used for conjunction bonus)
             for token in tokens:
-                weight = min(len(token) / 3, 2.0)
+                weight = min(len(token) / 3, 2.0) * _idf_factors.get(token, 1.0)
                 if token == name_lower:
                     score += 10.0 * weight
                     matched_count += 1
