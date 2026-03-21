@@ -195,6 +195,30 @@ def render_overview(graph: Tempo) -> str:
         _uh_parts = [f"{name} ({n})" for n, name in _untested_hot[:3]]
         lines.append(f"untested hot: {', '.join(_uh_parts)} — no test coverage")
 
+    # Stable core: files with high import fan-in that have rarely changed (>=30d).
+    # Foundational infrastructure treated as stable contracts — changes here are highest-risk.
+    if graph.root:
+        try:
+            from .git import file_last_modified_days as _fld_sc  # noqa: PLC0415
+            _sc_candidates: list[tuple[int, int, str]] = []  # (importers, days, fp)
+            for _fp, _fi in graph.files.items():
+                if _is_test_file(_fp) or not _fi.symbols:
+                    continue
+                _src_imps = len({
+                    i for i in graph.importers_of(_fp)
+                    if i != _fp and i in graph.files and not _is_test_file(i)
+                })
+                if _src_imps >= 5:
+                    _days_sc = _fld_sc(graph.root, _fp)
+                    if _days_sc is not None and _days_sc >= 30:
+                        _sc_candidates.append((_src_imps, _days_sc, _fp))
+            if len(_sc_candidates) >= 2:
+                _sc_candidates.sort(key=lambda x: -x[0])
+                _sc_parts = [f"{fp.rsplit('/', 1)[-1]} ({n} importers, {d}d stable)" for n, d, fp in _sc_candidates[:3]]
+                lines.append(f"stable core: {', '.join(_sc_parts)}")
+        except Exception:
+            pass
+
     # Function size distribution: tiny/small/medium/large/huge counts across source functions.
     # One-line style signal — "large: 3" means 3 functions >50L each; agents know to grep not read.
     _fn_sizes = {"tiny": 0, "small": 0, "medium": 0, "large": 0, "huge": 0}
@@ -1460,6 +1484,11 @@ def _build_symbol_block_lines(
             # Agents can safely change this without reviewing other files.
             _sole_file = next(iter(_blast_files))
             _blast_ann = f" [owned by: {_sole_file.rsplit('/', 1)[-1]}]"
+        elif len(_blast_files) == 0 and sym.exported and sym.kind.value in ("function", "method", "class"):
+            # Exported but no cross-file callers — likely a CLI/API entry point.
+            # Agents need this to distinguish "safe to change, nothing calls it internally"
+            # from a dead API (which would be non-exported with 0 callers).
+            _blast_ann = " [entry point]"
         # Symbol-level age: when was this specific function last changed?
         # Uses git log -L for per-line precision; falls back to file-level.
         # Skipped for symbols changed < 8 days ago (not actionable — treat as "fresh").
@@ -1505,6 +1534,13 @@ def _build_symbol_block_lines(
                     _bfs_q.append((_e.target_id, _cur_lvl + 1))
         if _max_callee_depth >= 3:
             _depth_ann = f" [callee depth: {_max_callee_depth}]"
+        # S68: Undocumented annotation — exported fn with 3+ external caller files but no docstring.
+        # Signals missing API docs on a widely-used symbol.
+        _doc_ann = ""
+        if sym.exported and not sym.doc and sym.kind.value in ("function", "method"):
+            _ext_caller_files = {c.file_path for c in graph.callers_of(sym.id) if c.file_path != sym.file_path}
+            if len(_ext_caller_files) >= 3:
+                _doc_ann = " [undocumented]"
         # Recursion detection: self-recursion or mutual recursion via direct callees.
         # Recursive functions need care before memoizing, splitting, or inlining.
         if sym.kind.value in ("function", "method"):
@@ -1541,7 +1577,7 @@ def _build_symbol_block_lines(
         }
         if len(_hub_caller_files) >= 15:
             _hub_ann = f" [hub: {len(_hub_caller_files)} files]"
-    block_lines = [f"{prefix} {sym.kind.value} {sym.qualified_name}{_blast_ann}{_hub_ann}{_age_ann}{_callee_ann}{_depth_ann} — {loc}{orbit_note}"]
+    block_lines = [f"{prefix} {sym.kind.value} {sym.qualified_name}{_blast_ann}{_hub_ann}{_age_ann}{_callee_ann}{_depth_ann}{_doc_ann} — {loc}{orbit_note}"]
     # S61: "also in:" — warn when same symbol name exists in other files.
     # Prevents agents from fixing the wrong copy in multi-file refactors.
     if depth == 0:

@@ -7260,3 +7260,94 @@ class TestOverviewQuickWins:
         assert "quick wins:" not in out, (
             f"'quick wins:' must not appear when all functions have callers; got:\n{out}"
         )
+
+
+class TestFocusEntryPointAnnotation:
+    """S68: Focus mode — [entry point] annotation for exported 0-caller functions.
+
+    An exported function with 0 cross-file callers gets '[entry point]' in the
+    header — signals CLI/API root vs dead API. Non-exported functions and
+    functions with callers must NOT get the annotation.
+    """
+
+    def test_entry_point_annotated_for_exported_0_caller_function(self, tmp_path):
+        """Exported function with 0 cross-file callers gets '[entry point]' header."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "cli.py").write_text(
+            "def run_cli():\n    print('hello')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "run_cli")
+        assert "[entry point]" in out, (
+            f"Expected '[entry point]' for exported 0-caller function; got:\n{out}"
+        )
+
+    def test_entry_point_absent_when_function_has_callers(self, tmp_path):
+        """Function with cross-file callers does NOT get [entry point]."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "util.py").write_text(
+            "def helper():\n    return 1\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from util import helper\ndef run(): return helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper")
+        assert "[entry point]" not in out, (
+            f"'[entry point]' must not appear when function has callers; got:\n{out}"
+        )
+
+    def test_entry_point_absent_for_private_function(self, tmp_path):
+        """Non-exported private function with 0 callers does NOT get [entry point]."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "internal.py").write_text(
+            "def _private():\n    return 42\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "_private")
+        assert "[entry point]" not in out, (
+            f"Non-exported function must not get '[entry point]'; got:\n{out}"
+        )
+
+
+class TestFocusUndocumentedAnnotation:
+    """S68: Focus seed shows [undocumented] when exported fn has 3+ ext caller files, no docstring."""
+
+    def test_undocumented_shown_for_wide_exported_fn(self, tmp_path):
+        """Exported function with 3 external callers and no docstring → [undocumented]."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "api.py").write_text(
+            "def process(x):\n    return x\n"
+        )
+        (tmp_path / "a.py").write_text("from api import process\ndef run_a(): return process(1)\n")
+        (tmp_path / "b.py").write_text("from api import process\ndef run_b(): return process(2)\n")
+        (tmp_path / "c.py").write_text("from api import process\ndef run_c(): return process(3)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process")
+        assert "[undocumented]" in out, (
+            f"Expected '[undocumented]' for exported fn with 3 caller files; got:\n{out}"
+        )
+
+    def test_undocumented_absent_for_narrowly_used_fn(self, tmp_path):
+        """Exported function called from only 2 external files → no [undocumented]."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "api.py").write_text(
+            "def helper(x):\n    return x\n"
+        )
+        (tmp_path / "a.py").write_text("from api import helper\ndef run_a(): return helper(1)\n")
+        (tmp_path / "b.py").write_text("from api import helper\ndef run_b(): return helper(2)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper")
+        assert "[undocumented]" not in out, (
+            f"'[undocumented]' must not appear for fn with only 2 caller files; got:\n{out}"
+        )
