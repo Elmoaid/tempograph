@@ -2472,6 +2472,24 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
         except Exception:
             pass
 
+    # S74: "Imports from" — direct source dependencies of the blast target file.
+    # Rounds out the picture: shows what THIS file depends on, not just who depends on it.
+    _deps_of_target = sorted({
+        e.target_id for e in graph.edges
+        if e.kind == EdgeKind.IMPORTS
+        and e.source_id == file_path
+        and e.target_id in graph.files
+        and not _is_test_file(e.target_id)
+        and e.target_id != file_path
+    })
+    if len(_deps_of_target) >= 3:
+        _dep_names = [fp.rsplit("/", 1)[-1] for fp in _deps_of_target[:5]]
+        _dep_str = ", ".join(_dep_names)
+        if len(_deps_of_target) > 5:
+            _dep_str += f" +{len(_deps_of_target) - 5} more"
+        lines.append(f"Imports from ({len(_deps_of_target)}): {_dep_str}")
+        lines.append("")
+
     # S70: Singleton caller hint — file only imported by 1 non-test file.
     # This tight coupling suggests the two files may be candidates for merging.
     _src_imps = [imp for imp in importers if not _is_test_file(imp)]

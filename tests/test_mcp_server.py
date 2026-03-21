@@ -7691,3 +7691,38 @@ class TestHotspotsFileComplexityRank:
         assert "File complexity:" not in out, (
             f"'File complexity:' must not appear for trivial files; got:\n{out}"
         )
+
+
+class TestBlastImportsFrom:
+    """S74: Blast mode shows 'Imports from (N):' when blast file has 3+ direct source deps."""
+
+    def test_imports_from_shown_when_many_deps(self, tmp_path):
+        """File importing 3+ source files → 'Imports from' section shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        for i in range(4):
+            (tmp_path / f"dep{i}.py").write_text(f"def dep{i}_fn(): pass\n")
+        (tmp_path / "main.py").write_text(
+            "from dep0 import dep0_fn\nfrom dep1 import dep1_fn\n"
+            "from dep2 import dep2_fn\nfrom dep3 import dep3_fn\n"
+            "def run(): return dep0_fn() + dep1_fn() + dep2_fn() + dep3_fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "main.py")
+        assert "Imports from" in out, (
+            f"Expected 'Imports from' for file with 4 deps; got:\n{out}"
+        )
+
+    def test_imports_from_absent_when_few_deps(self, tmp_path):
+        """File importing only 1 source file → no 'Imports from' section."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        (tmp_path / "main.py").write_text("from utils import helper\ndef run(): return helper()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "main.py")
+        assert "Imports from" not in out, (
+            f"'Imports from' must not appear for file with only 1 dep; got:\n{out}"
+        )
