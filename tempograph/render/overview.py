@@ -1565,8 +1565,6 @@ def _signals_structure(
             f" — many unimplemented functions; callers may depend on behavior that doesn't exist"
         )
 
-    # S316: Async-heavy — 5+ source files use async def patterns.
-
     # S330: Data-pipeline codebase — 5+ files contain pipeline/processor/etl/transform patterns.
     # Pipeline architectures require understanding the data contract between stages;
     # changes to intermediate formats or schema break all downstream stages.
@@ -2149,6 +2147,26 @@ def _signals_async_oop(
         lines.append(
             f"no entry points: {len(_s463_src_files)} source files with no main/cli/run function"
             f" — library-only; no single execution path to trace for integration testing"
+        )
+
+    # S469: Shallow test suite — all test functions are trivially short (< 10 lines).
+    # Tiny test functions are likely smoke tests or assertion-only stubs;
+    # they prove the code runs but don't verify complex behavior or edge cases.
+    _s469_test_fns = [
+        s for s in graph.symbols.values()
+        if _is_test_file(s.file_path)
+        and s.kind.value in ("function", "method", "test")
+        and s.name.startswith("test_")
+        and s.line_start is not None and s.line_end is not None
+    ]
+    _s469_short_fns = [
+        s for s in _s469_test_fns
+        if (s.line_end - s.line_start) < 10
+    ]
+    if len(_s469_test_fns) >= 10 and len(_s469_short_fns) == len(_s469_test_fns):
+        lines.append(
+            f"shallow tests: all {len(_s469_test_fns)} test functions are under 10 lines"
+            f" — likely smoke tests only; complex behavior and edge cases are untested"
         )
 
     return lines

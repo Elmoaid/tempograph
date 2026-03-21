@@ -26,9 +26,7 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                 "   Re-run without --exclude to index it, or run "
                 "`tempograph . --mode overview` to see what is currently indexed."
             )
-        # S419: Type stub blast — blast target is a .pyi stub file (not indexed by graph).
-        # Type stub files define the public API contract; changing a stub silently breaks
-        # type checks in all importers even when the runtime code hasn't changed.
+        # Early-exit for type stub files not indexed by graph (see S419 in main signals).
         if file_path.lower().endswith(".pyi"):
             return (
                 f"type stub blast: {file_path.rsplit('/', 1)[-1]} is a type stub"
@@ -1361,6 +1359,21 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" ({len(_s467_test)} test file(s))"
             f" — may be an unused helper; verify before keeping or deleting"
         )
+
+    # S473: Constants-only blast — blast target contains only constant/variable definitions.
+    # Pure constants files are the broadest implicit dependency: every consumer
+    # is silently coupled to every constant's value, name, and type simultaneously.
+    if symbols:
+        _s473_non_const = [
+            s for s in symbols
+            if s.kind.value not in ("variable", "constant", "property")
+        ]
+        if not _s473_non_const and len(symbols) >= 5 and importers:
+            lines.append(
+                f"constants-only blast: {file_path.rsplit('/', 1)[-1]} contains only {len(symbols)} constant/variable definitions"
+                f" imported by {len(importers)} file(s)"
+                f" — renaming or removing any constant silently breaks all consumers"
+            )
 
     return "\n".join(lines)
 

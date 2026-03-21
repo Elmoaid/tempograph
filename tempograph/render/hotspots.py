@@ -1592,5 +1592,22 @@ def _collect_hotspots_signals(
                     f" — cross-cutting concern; refactoring requires coordinated changes in every consumer directory"
                 )
 
+    # S472: API hotspot — top hotspot lives in an api/ or routes/ file.
+    # API hotspots are web-facing contracts; any change to the function signature
+    # or return shape breaks clients even if internal callers look fine.
+    if scores:
+        _top472 = scores[0][1]
+        _fp472 = _top472.file_path.lower().replace("\\", "/")
+        _api_keywords472 = ("/api/", "/routes/", "/endpoints/", "/views/", "/handlers/", "/controllers/")
+        _is_api472 = (
+            any(kw in _fp472 for kw in _api_keywords472)
+            or _fp472.rsplit("/", 1)[-1].startswith(("api_", "route_", "endpoint_", "view_", "handler_", "controller_"))
+        )
+        if _is_api472 and not _is_test_file(_top472.file_path):
+            out.append(
+                f"\nAPI hotspot: {_top472.name} lives in {_top472.file_path.rsplit('/', 1)[-1]}"
+                f" — web-facing contract; changing signature or return shape breaks clients"
+            )
+
     return out
 

@@ -2636,6 +2636,23 @@ def _signals_focused_fn_advanced(
                         f" — signature changes break all conforming types; update every implementation"
                     )
 
+    # S475: Generator/iterator function — focused symbol name suggests lazy iteration.
+    # Generators are lazy iterators; callers must consume with next() or a loop.
+    # Replacing a generator with a list silently changes memory semantics and prevents re-iteration.
+    _s475_gen_prefixes = ("iter_", "generate_", "stream_", "yield_", "produce_", "enumerate_")
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim475 = next((s for s in _seed_syms if s.kind.value in ("function", "method")), None)
+        if _prim475 and any(_prim475.name.lower().startswith(p) for p in _s475_gen_prefixes):
+            _callers475 = [
+                e for e in graph.edges
+                if e.kind.value == "calls" and e.target_id == _prim475.id
+            ]
+            if _callers475:
+                lines.append(
+                    f"\ngenerator function: {_prim475.name} is a lazy iterator"
+                    f" — callers must iterate or convert to list; replacing with list changes memory semantics"
+                )
+
     # S457: High parameter count — focused function/method has 6+ parameters.
     # Functions with many parameters are hard to call correctly and hard to test;
     # they often indicate that the function is doing too much or needs a parameter object.
@@ -2679,6 +2696,22 @@ def _signals_focused_fn_advanced(
                 lines.append(
                     f"\nproperty method: {_prim464.name} is a getter/setter"
                     f" — attribute-style callers are invisible to call-edge analysis; grep for usages before renaming"
+                )
+
+    # S470: Deprecated function — focused symbol has "deprecated", "legacy", or "old_" in its name.
+    # Deprecated functions often accumulate callers long after being marked for removal;
+    # modifying them requires checking whether the migration to the replacement is complete.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim470 = next((s for s in _seed_syms if s.kind.value in ("function", "method", "class")), None)
+        if _prim470:
+            _deprecated_markers470 = ("deprecated", "legacy", "old_", "_old", "_deprecated", "_legacy", "compat_")
+            _is_deprecated470 = any(m in _prim470.name.lower() for m in _deprecated_markers470)
+            if _is_deprecated470:
+                _callers470 = graph.callers_of(_prim470.id)
+                lines.append(
+                    f"\ndeprecated function: {_prim470.name} is marked deprecated/legacy"
+                    f" with {len(_callers470)} active caller(s)"
+                    f" — verify migration to replacement is complete before removing"
                 )
 
     # S350: Orphaned symbol — focused symbol has 0 callers and the file is not imported anywhere.
