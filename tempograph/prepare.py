@@ -151,6 +151,38 @@ def _cl_path_fallback(graph: "Tempo", kw: str) -> list[str]:
     return []
 
 
+def _coverage_line(query_tokens: list[str], graph: Tempo, context_files: list[str]) -> str:
+    """Build a one-line coverage signal for prepare_context output.
+
+    Returns empty string when there's nothing meaningful to report.
+    """
+    if not query_tokens:
+        return ""
+
+    # Build set of all symbol names in the graph (lowercased for case-insensitive match)
+    sym_names = {sym.name.lower() for sym in graph.symbols.values()}
+
+    resolved = sum(1 for t in query_tokens if t.lower() in sym_names)
+    total = len(query_tokens)
+    n_files = len(context_files)
+
+    if total == 0:
+        return ""
+
+    pct = resolved / total
+    if pct > 0.75:
+        confidence = "high"
+    elif pct >= 0.40:
+        confidence = "medium"
+    else:
+        confidence = "low"
+
+    return (
+        f"Context coverage: {resolved} of {total} changed symbols resolved "
+        f"({pct:.0%}) | {n_files} key files identified | confidence: {confidence}"
+    )
+
+
 def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: str = "",
                    baseline_predicted_files: list[str] | None = None,
                    precision_filter: bool = False,
@@ -175,6 +207,9 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
 
     sections: list[str] = []
     token_count = 0
+    # Track query tokens and resolved files for coverage signal
+    _query_tokens: list[str] = []
+    _context_files: list[str] = []
 
     # Load L2 insights to customize which supplemental modes to include
     l2_best_modes: set[str] = set()
@@ -209,6 +244,7 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
         # Short tokens can't trigger path fallback (which requires len>=4) and rarely match
         # specific symbols. This prevents "req" (len=3) from blocking "resp" (len=4).
         effective_keywords = [kw for kw in keywords if len(kw) >= 4][:3]
+        _query_tokens = effective_keywords
         for kw in effective_keywords:
             focused = render_focused(graph, kw, max_tokens=focus_budget)
             no_match = not focused or "No symbols matching" in focused or "No exact match" in focused
@@ -250,6 +286,7 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                 sections.append(fp)
                 token_count += count_tokens(fp)
             key_files = _extract_focus_files("\n\n".join(focus_parts), task_keywords=keywords)
+            _context_files = key_files
             # Precision gate: >4 key files → topic too broad → skip injection.
             # Bench evidence (Phase 5.26, n=111): precision_filter=+3.9% (p=0.085, ns).
             if precision_filter and len(key_files) > 4:
@@ -289,6 +326,7 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                     return ""  # single focused prediction doesn't align with path hint → risky
             if precision_filter and len(path_fallback_files) > 4:
                 return ""  # Too broad (path match) — skip context entirely
+            _context_files = path_fallback_files[:5]
             kf_section = "KEY FILES (path match):\n" + "\n".join(f"  {f}" for f in path_fallback_files[:5])
             sections.append(kf_section)
             token_count += count_tokens(kf_section)
@@ -311,6 +349,7 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
     else:
         # General coding task path: multi-token fuzzy search + always-overview fallback.
         # Suitable for: "add login feature", "fix broken test", "explain this function".
+        _query_tokens = [w for w in re.split(r'[\s/\-_]+', task) if len(w) >= 4]
         focus_output = render_focused(graph, task, max_tokens=int(max_tokens * 0.6))
 
         # Large-scope heuristic: bench data shows focused context hurts for 8+ file tasks.
@@ -342,6 +381,7 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
 
             if not _no_match:
                 key_files = _extract_focus_files(focus_output)
+                _context_files = key_files
                 if key_files:
                     if len(key_files) > 10:
                         sections.append(
@@ -413,6 +453,10 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                             token_count += dt + 10
                 except Exception:
                     pass
+
+    coverage = _coverage_line(_query_tokens, graph, _context_files)
+    if coverage:
+        sections.append(coverage)
 
     sections.append("---\nCall report_feedback after using this context to improve future recommendations.")
     return "\n\n".join(sections)
