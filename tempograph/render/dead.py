@@ -353,6 +353,25 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             _dc_str += f" +{len(_dead_consts) - 3} more"
         lines.append(f"dead constants: {len(_dead_consts)} unused constants/variables ({_dc_str})")
 
+    # S184: Dead getters/setters — accessor methods (get_*/set_*) that are dead.
+    # Methods in classes score lower confidence than standalone fns; threshold reflects this.
+    # Only shown when 2+ such dead accessor methods found.
+    _s184_dead_accessors = [
+        sym for sym, conf in scored
+        if conf >= 15
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and (sym.name.startswith("get_") or sym.name.startswith("set_"))
+    ]
+    if len(_s184_dead_accessors) >= 2:
+        _acc_names = [s.name for s in _s184_dead_accessors[:3]]
+        _acc_str = ", ".join(_acc_names)
+        if len(_s184_dead_accessors) > 3:
+            _acc_str += f" +{len(_s184_dead_accessors) - 3} more"
+        lines.append(
+            f"dead accessors: {len(_s184_dead_accessors)} dead getter/setter methods ({_acc_str})"
+        )
+
     # S178: Dead exports — exported functions that have 0 callers and confidence >= 40.
     # These are public API symbols that were never used — over-exposed surface or abandoned stubs.
     # Only shown when 3+ such dead exported functions found.

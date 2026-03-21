@@ -12423,3 +12423,234 @@ class TestDeadExports:
         assert "dead exports" not in out, (
             f"'dead exports' must not appear; got:\n{out}"
         )
+
+
+# ---------------------------------------------------------------------------
+# S179 — mixed-role files (overview)
+# ---------------------------------------------------------------------------
+class TestOverviewMixedRoleFiles:
+    def test_mixed_role_shown(self, tmp_path):
+        """S179: mixed-role files shown when a source file has test_ functions."""
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "module.py").write_text(
+            "def real_logic(): return 42\n"
+            "def test_real_logic(): assert real_logic() == 42\n"
+        )
+        (tmp_path / "other.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "mixed-role files" in out, f"'mixed-role files' expected; got:\n{out}"
+
+    def test_mixed_role_absent_for_clean_separation(self, tmp_path):
+        """S179: mixed-role files not shown when src and test are cleanly separated."""
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "module.py").write_text("def real_logic(): return 42\n")
+        (tmp_path / "test_module.py").write_text(
+            "from module import real_logic\n"
+            "def test_real_logic(): assert real_logic() == 42\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "mixed-role files" not in out, (
+            f"'mixed-role files' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S180 — complex hub (focused)
+# ---------------------------------------------------------------------------
+class TestFocusedComplexHub:
+    def test_complex_hub_shown(self, tmp_path):
+        """S180: complex hub shown when focused fn has cx >= 8 and >= 5 callers."""
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        # High-complexity function (many branches) called by many files
+        complex_body = (
+            "def router(x):\n"
+            "    if x == 1: return 'a'\n"
+            "    elif x == 2: return 'b'\n"
+            "    elif x == 3: return 'c'\n"
+            "    elif x == 4: return 'd'\n"
+            "    elif x == 5: return 'e'\n"
+            "    elif x == 6: return 'f'\n"
+            "    elif x == 7: return 'g'\n"
+            "    else: return 'h'\n"
+        )
+        (tmp_path / "routing.py").write_text(complex_body)
+        for i in range(6):
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from routing import router\ndef do_{i}(): router({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "router")
+        assert "complex hub" in out, f"'complex hub' expected; got:\n{out}"
+
+    def test_complex_hub_absent_for_simple_fn(self, tmp_path):
+        """S180: complex hub not shown for simple low-complexity functions."""
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "simple.py").write_text("def add(a, b): return a + b\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "add")
+        assert "complex hub" not in out, f"'complex hub' must not appear; got:\n{out}"
+
+
+# ---------------------------------------------------------------------------
+# S181 — test-heavy diff (diff)
+# ---------------------------------------------------------------------------
+class TestDiffTestHeavy:
+    def test_test_heavy_shown(self, tmp_path):
+        """S181: test-heavy diff shown when >= 50% of 4+ files are tests."""
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "core.py").write_text("def fn(): pass\n")
+        (tmp_path / "test_a.py").write_text("from core import fn\ndef test_1(): fn()\n")
+        (tmp_path / "test_b.py").write_text("from core import fn\ndef test_2(): fn()\n")
+        (tmp_path / "test_c.py").write_text("from core import fn\ndef test_3(): fn()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["core.py", "test_a.py", "test_b.py", "test_c.py"])
+        assert "test-heavy diff" in out, f"'test-heavy diff' expected; got:\n{out}"
+
+    def test_test_heavy_absent_when_few_files(self, tmp_path):
+        """S181: test-heavy diff not shown when < 4 total files in diff."""
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "core.py").write_text("def fn(): pass\n")
+        (tmp_path / "test_core.py").write_text("from core import fn\ndef test_fn(): fn()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["core.py", "test_core.py"])
+        assert "test-heavy diff" not in out, (
+            f"'test-heavy diff' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S182 — hot cluster (hotspots)
+# ---------------------------------------------------------------------------
+class TestHotspotsHotCluster:
+    def test_hot_cluster_shown(self, tmp_path):
+        """S182: hot cluster shown when 2+ top hotspot files are in the same directory."""
+        import os
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        # Two heavily-called files in the same subdir
+        engine_dir = tmp_path / "engine"
+        engine_dir.mkdir()
+        (engine_dir / "parser.py").write_text("def parse(x): return x\n")
+        (engine_dir / "runner.py").write_text("def run(x): return x\n")
+        for i in range(5):
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from engine.parser import parse\n"
+                f"from engine.runner import run\n"
+                f"def use_{i}(): parse({i}); run({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "hot cluster" in out, f"'hot cluster' expected; got:\n{out}"
+
+    def test_hot_cluster_absent_when_spread(self, tmp_path):
+        """S182: hot cluster not shown when hotspot files are in different dirs."""
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        for mod in ["alpha", "beta", "gamma"]:
+            d = tmp_path / mod
+            d.mkdir()
+            (d / "fn.py").write_text(f"def fn_{mod}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "hot cluster" not in out, (
+            f"'hot cluster' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S183 — large export count (blast)
+# ---------------------------------------------------------------------------
+class TestBlastLargeExportCount:
+    def test_large_export_count_shown(self, tmp_path):
+        """S183: large export count shown when blast file exports >= 10 symbols."""
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        fns = "\n".join(f"def fn_{i}(): pass" for i in range(12))
+        (tmp_path / "big_api.py").write_text(fns + "\n")
+        (tmp_path / "user.py").write_text(
+            "from big_api import fn_0\ndef main(): fn_0()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "big_api.py")
+        assert "large export count" in out, f"'large export count' expected; got:\n{out}"
+
+    def test_large_export_count_absent_for_small_api(self, tmp_path):
+        """S183: large export count not shown when < 10 exports."""
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "small_api.py").write_text(
+            "def fn_a(): pass\ndef fn_b(): pass\n"
+        )
+        (tmp_path / "user.py").write_text(
+            "from small_api import fn_a\ndef main(): fn_a()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "small_api.py")
+        assert "large export count" not in out, (
+            f"'large export count' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S184 — dead accessors (dead)
+# ---------------------------------------------------------------------------
+class TestDeadAccessors:
+    def test_dead_accessors_shown(self, tmp_path):
+        """S184: dead accessors shown when 2+ standalone get_/set_ fns are dead."""
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        # Standalone exported accessor functions — never called
+        (tmp_path / "store.py").write_text(
+            "def get_name(): return _name\n"
+            "def set_name(v): global _name; _name = v\n"
+            "def get_value(): return _val\n"
+            "def set_value(v): global _val; _val = v\n"
+            "_name = ''\n"
+            "_val = 0\n"
+        )
+        # Unrelated file to make graph non-trivial
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead accessors" in out, f"'dead accessors' expected; got:\n{out}"
+
+    def test_dead_accessors_absent_when_used(self, tmp_path):
+        """S184: dead accessors not shown when getters/setters are called."""
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "store.py").write_text(
+            "def get_name(): return _name\n"
+            "def set_name(v): global _name; _name = v\n"
+            "_name = ''\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from store import get_name, set_name\n"
+            "def run():\n"
+            "    set_name('test')\n"
+            "    return get_name()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead accessors" not in out, (
+            f"'dead accessors' must not appear; got:\n{out}"
+        )
