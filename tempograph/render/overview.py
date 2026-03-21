@@ -3158,6 +3158,49 @@ def _signals_async_oop(
             f" — test suite is 2×+ the source; check for duplicated scenarios or orphaned tests"
         )
 
+    # S841: No async functions — codebase has many functions but none are async.
+    # A repo with zero async functions may be using blocking I/O; async-naive
+    # patterns can become bottlenecks when services are later integrated with async frameworks.
+    _all_fns841 = [s for s in graph.symbols.values() if s.kind.value == "function" and not _is_test_file(s.file_path)]
+    _async_fns841 = [s for s in _all_fns841 if (s.signature or "").lstrip().startswith("async ")]
+    if len(_all_fns841) >= 10 and not _async_fns841:
+        lines.append(
+            f"no async functions: {len(_all_fns841)} functions but none are async"
+            f" — all synchronous; blocking I/O may become a bottleneck in async frameworks"
+        )
+
+    # S847: Many small modules — repo has 10+ files all under 20 lines.
+    # A repo with many tiny modules has over-fragmented its logic; each function
+    # is isolated in its own file, making cross-cutting concerns hard to see.
+    _src_files847 = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_src_files847) >= 10:
+        _small_files847 = [fp for fp in _src_files847 if graph.files[fp].line_count < 20]
+        if len(_small_files847) == len(_src_files847):
+            lines.append(
+                f"many small modules: all {len(_src_files847)} source files are under 20 lines"
+                f" — over-fragmented; consider consolidating related small modules"
+            )
+
+    # S853: High dead ratio — over 40% of exported source symbols are unused.
+    # A repo where most of its public API is dead is accumulating significant cleanup debt;
+    # maintaining dead symbols wastes review time and creates misleading documentation.
+    _all_exported853 = [
+        s for s in graph.symbols.values()
+        if not _is_test_file(s.file_path)
+        and s.parent_id is None
+        and not s.name.startswith("_")
+    ]
+    if len(_all_exported853) >= 10:
+        _dead853 = graph.find_dead_code()
+        _dead_ids853 = {s.id for s in _dead853}
+        _dead_exported853 = [s for s in _all_exported853 if s.id in _dead_ids853]
+        _ratio853 = len(_dead_exported853) / len(_all_exported853)
+        if _ratio853 >= 0.4:
+            lines.append(
+                f"high dead ratio: {len(_dead_exported853)}/{len(_all_exported853)} exported symbols ({_ratio853:.0%}) appear unused"
+                f" — significant cleanup debt; review dead code before adding more public API"
+            )
+
     return lines
 
 

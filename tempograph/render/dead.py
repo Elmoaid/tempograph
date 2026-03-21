@@ -2902,6 +2902,67 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — abandoned interface contracts; verify no concrete class is checked against them"
         )
 
+    # S845: Dead event handler functions — unused on_/handle_/_handler functions.
+    # Event handlers are wired to event buses, signals, or hooks; dead handlers indicate
+    # removed subscriptions where the handler was not cleaned up alongside the subscription.
+    _handler_prefixes845 = ("on_", "handle_")
+    _handler_suffixes845 = ("_handler", "_callback", "_listener")
+    _dead_handlers845 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and (
+            any(s.name.lower().startswith(p) for p in _handler_prefixes845)
+            or any(s.name.lower().endswith(sfx) for sfx in _handler_suffixes845)
+        )
+    ]
+    if _dead_handlers845:
+        _handler_names845 = ", ".join(s.name for s in _dead_handlers845[:3])
+        if len(_dead_handlers845) > 3:
+            _handler_names845 += f" +{len(_dead_handlers845) - 3} more"
+        lines.append(
+            f"dead event handlers: {len(_dead_handlers845)} unused event handler function(s) ({_handler_names845})"
+            f" — removed subscriptions not cleaned up; verify the event or signal was also removed"
+        )
+
+    # S851: Dead validation functions — unused validate_/check_/verify_ functions.
+    # Dead validators indicate abandoned input sanity checks or replaced validation logic;
+    # they may signal that callers no longer validate data they were once required to check.
+    _val_prefixes851 = ("validate_", "check_", "verify_", "assert_", "ensure_")
+    _dead_val851 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().startswith(p) for p in _val_prefixes851)
+    ]
+    if _dead_val851:
+        _val_names851 = ", ".join(s.name for s in _dead_val851[:3])
+        if len(_dead_val851) > 3:
+            _val_names851 += f" +{len(_dead_val851) - 3} more"
+        lines.append(
+            f"dead validators: {len(_dead_val851)} unused validation function(s) ({_val_names851})"
+            f" — abandoned input checks; verify callers no longer need these validations"
+        )
+
+    # S857: Dead factory functions — unused create_/make_/build_/spawn_/new_ functions.
+    # Factory functions are construction entry points; dead factories indicate
+    # abandoned object creation paths that were replaced without deleting the old code.
+    _factory_prefixes857 = ("create_", "make_", "build_", "spawn_", "new_", "construct_")
+    _dead_factory857 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().startswith(p) for p in _factory_prefixes857)
+    ]
+    if _dead_factory857:
+        _factory_names857 = ", ".join(s.name for s in _dead_factory857[:3])
+        if len(_dead_factory857) > 3:
+            _factory_names857 += f" +{len(_dead_factory857) - 3} more"
+        lines.append(
+            f"dead factories: {len(_dead_factory857)} unused factory function(s) ({_factory_names857})"
+            f" — abandoned construction paths; verify the object is constructed elsewhere"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
