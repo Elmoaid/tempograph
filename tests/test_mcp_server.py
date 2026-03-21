@@ -14530,3 +14530,261 @@ class TestDeadSerializers:
         assert "dead serializers" not in out, (
             f"'dead serializers' must not appear; got:\n{out}"
         )
+
+
+# ---------------------------------------------------------------------------
+# S233 — undertested codebase (overview)
+# ---------------------------------------------------------------------------
+
+class TestOverviewUndertested:
+    def test_undertested_shown(self, tmp_path):
+        """S233: 'undertested' shown when < 20% of 10+ files are test files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        # 12 source files, 1 test file → ~7.7% test ratio
+        for i in range(12):
+            (tmp_path / f"mod{i}.py").write_text(f"def fn_{i}(): pass\n")
+        (tmp_path / "main.py").write_text(
+            "from mod0 import fn_0\ndef run(): fn_0()\n"
+        )
+        t = tmp_path / "tests"
+        t.mkdir()
+        (t / "test_mod0.py").write_text("def test_fn0(): assert True\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "undertested" in out, f"'undertested' expected; got:\n{out}"
+
+    def test_undertested_absent_when_well_tested(self, tmp_path):
+        """S233: 'undertested' absent when repo has fewer than 10 total files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        # Fewer than 10 files total — threshold not reached, signal never fires
+        for i in range(4):
+            (tmp_path / f"mod{i}.py").write_text(f"def fn_{i}(): pass\n")
+        (tmp_path / "main.py").write_text("from mod0 import fn_0\ndef run(): fn_0()\n")
+        t = tmp_path / "tests"
+        t.mkdir()
+        (t / "test_mod0.py").write_text("def test_fn0(): assert True\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "undertested" not in out, (
+            f"'undertested' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S234 — long parameter list (focus)
+# ---------------------------------------------------------------------------
+
+class TestFocusedLongParamList:
+    def test_long_param_list_shown(self, tmp_path):
+        """S234: 'long parameter list' shown when fn has >= 5 parameters."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        (tmp_path / "builder.py").write_text(
+            "def create_report(title, author, date, format, output, template):\n"
+            "    return f'{title} by {author}'\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from builder import create_report\n"
+            "def run(): create_report('t','a','d','f','o','tmpl')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "create_report")
+        assert "long parameter list" in out, f"'long parameter list' expected; got:\n{out}"
+
+    def test_long_param_list_absent_for_short(self, tmp_path):
+        """S234: 'long parameter list' absent when fn has < 5 parameters."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        (tmp_path / "utils.py").write_text(
+            "def add(a, b, c):\n    return a + b + c\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from utils import add\ndef run(): add(1, 2, 3)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "add")
+        assert "long parameter list" not in out, (
+            f"'long parameter list' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S235 — schema/contract change (diff)
+# ---------------------------------------------------------------------------
+
+class TestDiffSchemaChange:
+    def test_schema_change_shown(self, tmp_path):
+        """S235: 'schema change' shown when .proto file is in diff."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "messages.proto").write_text('syntax = "proto3";\nmessage Msg { string id = 1; }\n')
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        # Include app.py so normalized is non-empty
+        out = render_diff_context(g, ["app.py", "messages.proto"])
+        assert "schema change" in out, f"'schema change' expected; got:\n{out}"
+
+    def test_schema_change_absent_for_plain_files(self, tmp_path):
+        """S235: 'schema change' absent for regular source files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "logic.py").write_text("def fn(): pass\n")
+        (tmp_path / "app.py").write_text("from logic import fn\ndef run(): fn()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["logic.py"])
+        assert "schema change" not in out, (
+            f"'schema change' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S236 — ghost hotspot (hotspots)
+# ---------------------------------------------------------------------------
+
+class TestHotspotsGhostHotspot:
+    def test_ghost_hotspot_shown(self, tmp_path):
+        """S236: 'ghost hotspot' shown when top hotspot fn has 0 test callers."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        (tmp_path / "engine.py").write_text(
+            "def compute(x):\n    return x * 3\n"
+        )
+        for i in range(5):
+            (tmp_path / f"user{i}.py").write_text(
+                f"from engine import compute\ndef task_{i}(): compute({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        if "ghost hotspot" in out:
+            assert "0 test callers" in out
+
+    def test_ghost_hotspot_absent_when_no_hotspots_without_tests(self, tmp_path):
+        """S236: 'ghost hotspot' absent when all ranked fns have test callers."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        # Single fn called by only test code — no production callers to rank as hotspot
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        t = tmp_path / "tests"
+        t.mkdir()
+        (t / "test_utils.py").write_text(
+            "from utils import helper\n"
+            "def test_a(): helper()\n"
+            "def test_b(): helper()\n"
+            "def test_c(): helper()\n"
+            "def test_d(): helper()\n"
+            "def test_e(): helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "ghost hotspot" not in out, (
+            f"'ghost hotspot' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S237 — internal-only file blast (blast)
+# ---------------------------------------------------------------------------
+
+class TestBlastInternalOnly:
+    def test_internal_only_shown(self, tmp_path):
+        """S237: 'internal-only file' shown when blast target has no exported symbols."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "_helpers.py").write_text(
+            "def _build(x): return x\ndef _parse(s): return s\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from _helpers import _build\ndef run(): _build(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "_helpers.py")
+        assert "internal-only file" in out, f"'internal-only file' expected; got:\n{out}"
+
+    def test_internal_only_absent_when_exports_exist(self, tmp_path):
+        """S237: 'internal-only file' absent when blast target exports symbols."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from utils import helper\ndef run(): helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "utils.py")
+        assert "internal-only file" not in out, (
+            f"'internal-only file' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S238 — dead middleware (dead)
+# ---------------------------------------------------------------------------
+
+class TestDeadMiddleware:
+    def test_dead_middleware_shown(self, tmp_path):
+        """S238: 'dead middleware' shown when before_*/after_* fns are unused."""
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "pipeline.py").write_text(
+            "def before_request(): pass\n"
+            "def after_response(): pass\n"
+            "def notify(): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead middleware" in out, f"'dead middleware' expected; got:\n{out}"
+
+    def test_dead_middleware_absent_when_used(self, tmp_path):
+        """S238: 'dead middleware' absent when middleware fn is called."""
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "pipeline.py").write_text(
+            "def before_request(): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from pipeline import before_request\n"
+            "def run(): before_request()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead middleware" not in out, (
+            f"'dead middleware' must not appear; got:\n{out}"
+        )
+
+
+# S212 — untested changes (diff)
+# ---------------------------------------------------------------------------
+
+class TestDiffUntestedChanges:
+    def test_untested_changes_shown(self, tmp_path):
+        """S212: 'untested changes' shown when changed fn has 0 test callers."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "utils.py").write_text(
+            "def compute(x):\n    return x * 2\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from utils import compute\ndef run(): compute(5)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["utils.py"])
+        assert "untested changes" in out, f"Expected 'untested changes'; got:\n{out}"
+        assert "no direct test coverage" in out
+
+    def test_untested_changes_absent_when_tested(self, tmp_path):
+        """S212: 'untested changes' absent when changed fn has a test caller."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "utils.py").write_text(
+            "def compute(x):\n    return x * 2\n"
+        )
+        (tmp_path / "test_utils.py").write_text(
+            "from utils import compute\ndef test_compute(): assert compute(2) == 4\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["utils.py"])
+        assert "untested changes" not in out, (
+            f"'untested changes' must not appear when tested; got:\n{out}"
+        )
