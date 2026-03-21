@@ -1147,7 +1147,8 @@ class TestRenderTokenCaps:
         output = render_symbols(g, max_tokens=2000)
         tokens = count_tokens(output)
         assert tokens <= 2500  # allow some overhead
-        assert "truncated" in output
+        assert "more symbols" in output
+        assert "increase max_tokens" in output
         # Unlimited (max_tokens=0 means no limit)
         full = render_symbols(g, max_tokens=0)
         assert count_tokens(full) > tokens
@@ -1155,6 +1156,32 @@ class TestRenderTokenCaps:
         default_output = render_symbols(g)
         default_tokens = count_tokens(default_output)
         assert default_tokens <= 9000  # 8000 cap + some overhead
+
+    def test_symbols_cap_at_default_8000(self):
+        from tempograph.builder import build_graph
+        from tempograph.render import render_symbols, count_tokens
+        g = build_graph(REPO_PATH, exclude_dirs=["archive"])
+        output = render_symbols(g)  # default max_tokens=8000
+        tokens = count_tokens(output)
+        assert tokens <= 9000, f"Default symbols output should be capped near 8000 tokens, got {tokens}"
+
+    def test_symbols_overflow_count_shown(self):
+        from tempograph.builder import build_graph
+        from tempograph.render import render_symbols
+        g = build_graph(REPO_PATH, exclude_dirs=["archive"])
+        output = render_symbols(g, max_tokens=2000)
+        assert "... and" in output, "Overflow note should start with '... and'"
+        assert "more symbols" in output, "Overflow note should mention remaining symbol count"
+        assert "increase max_tokens to see all" in output, "Overflow note should tell user how to get more"
+
+    def test_symbols_no_cap_below_limit(self):
+        from tempograph.builder import build_graph
+        from tempograph.render import render_symbols, count_tokens
+        g = build_graph(REPO_PATH, exclude_dirs=["archive"])
+        # Use a very high cap — output should not be truncated
+        output = render_symbols(g, max_tokens=0)
+        assert "more symbols" not in output, "Should not truncate when no cap is applied"
+        assert "increase max_tokens" not in output
 
     def test_map_max_tokens(self):
         from tempograph.builder import build_graph

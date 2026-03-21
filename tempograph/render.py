@@ -304,8 +304,10 @@ def render_symbols(graph: Tempo, *, max_tokens: int = 8000) -> str:
             block_text = "\n".join(file_block)
             block_tokens = count_tokens(block_text)
             if token_count + block_tokens > max_tokens:
-                remaining = len(by_file) - len([l for l in lines if l.startswith("──")])
-                lines.append(f"... truncated ({remaining} more files, {sum(len(v) for k, v in by_file.items() if k >= file_path)} more symbols)")
+                rendered_files = sum(1 for l in lines if l.startswith("──"))
+                remaining_files = len(by_file) - rendered_files
+                remaining_symbols = sum(len(v) for k, v in by_file.items() if k >= file_path)
+                lines.append(f"... and {remaining_symbols} more symbols in {remaining_files} files (increase max_tokens to see all)")
                 break
             token_count += block_tokens
         lines.extend(file_block)
