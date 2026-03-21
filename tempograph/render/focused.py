@@ -2627,7 +2627,7 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                     lines.append(
                         f"\nabstract method: {_prim428.name} is from {_parent428.name}"
                         f" with {len(_subclass_impls428)} concrete implementation(s)"
-                        f" — focus on a concrete subclass to see actual behavior"
+                        f" — changes will cascade to all concrete classes; review each subclass"
                     )
 
     return "\n".join(lines)
