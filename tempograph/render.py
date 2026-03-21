@@ -2283,6 +2283,21 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
         except Exception:
             pass
 
+    # Risk summary: top changed files by blast radius, so agents can prioritize review.
+    # Only shown when 2+ changed files with blast >= 2; single-file diffs skip this.
+    _risk_blast = sorted(
+        [
+            (len({i for i in graph.importers_of(fp) if i != fp and i in graph.files}), fp)
+            for fp in normalized
+        ],
+        key=lambda x: -x[0],
+    )
+    _risk_blast_gt1 = [(n, fp) for n, fp in _risk_blast if n >= 2]
+    if len(_risk_blast_gt1) >= 2:
+        _risk_parts = [f"{fp.rsplit('/', 1)[-1]} (blast:{n})" for n, fp in _risk_blast_gt1[:3]]
+        lines.append(f"Risk: {', '.join(_risk_parts)}")
+        lines.append("")
+
     lines.append("Changed files:")
     for fp in sorted(normalized):
         fi = graph.files[fp]

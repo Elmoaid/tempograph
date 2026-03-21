@@ -6596,3 +6596,49 @@ class TestOverviewHighCoupling:
         assert "high-coupling:" not in out, (
             f"'high-coupling:' must not appear when max imports is 2; got:\n{out}"
         )
+
+
+class TestDiffRiskSummary:
+    """S59: Diff mode — 'Risk:' summary line at top showing highest-blast changed files.
+
+    When 2+ changed files have blast >= 2, shows them sorted by blast count.
+    Helps agents prioritize review without reading the full file list.
+    """
+
+    def _build(self, tmp_path, files: dict):
+        from tempograph.builder import build_graph
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_risk_summary_shown_for_multiple_high_blast_changes(self, tmp_path):
+        """'Risk:' summary appears when 2+ changed files have blast >=2."""
+        from tempograph.render import render_diff_context
+
+        g = self._build(tmp_path, {
+            "core.py": "def process(x): return x\n",
+            "utils.py": "def helper(x): return x + 1\n",
+            "a.py": "from core import process\nfrom utils import helper\ndef a(): pass\n",
+            "b.py": "from core import process\nfrom utils import helper\ndef b(): pass\n",
+            "c.py": "from core import process\ndef c(): pass\n",
+        })
+        out = render_diff_context(g, ["core.py", "utils.py"])
+        assert "Risk:" in out, (
+            f"Expected 'Risk:' summary when 2 widely-imported files changed; got:\n{out}"
+        )
+        assert "blast:" in out, (
+            f"Expected 'blast:N' in risk summary; got:\n{out}"
+        )
+
+    def test_risk_summary_absent_for_isolated_changes(self, tmp_path):
+        """'Risk:' summary absent when changed files have no importers."""
+        from tempograph.render import render_diff_context
+
+        g = self._build(tmp_path, {
+            "standalone_a.py": "def fa(): return 1\n",
+            "standalone_b.py": "def fb(): return 2\n",
+        })
+        out = render_diff_context(g, ["standalone_a.py", "standalone_b.py"])
+        assert "Risk:" not in out, (
+            f"'Risk:' must not appear when changed files have no importers; got:\n{out}"
+        )
