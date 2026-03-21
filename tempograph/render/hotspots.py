@@ -637,6 +637,19 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                     f" = {_pct139}% of {_top_sym139.name} callers — single file dominates usage"
                 )
 
+    # S156: Velocity + complexity — the top hotspot symbol's churn rate AND complexity combined.
+    # A symbol that's both actively modified (velocity) and complex is the highest refactor risk.
+    # Only shown when top hotspot has velocity >= 2.0/wk AND complexity >= 10.
+    if scores and velocity:
+        _top156: "Symbol" = scores[0][1]
+        _v156 = velocity.get(_top156.file_path, 0.0)
+        _cx156 = _top156.complexity or 0
+        if _v156 >= 2.0 and _cx156 >= 10:
+            lines.append(
+                f"\ntop risk: {_top156.name} — cx={_cx156}, {_v156:.1f} changes/wk"
+                f" — highest combined velocity+complexity"
+            )
+
     # S144: Recursive fns in hotspots — top-ranked symbols that call themselves.
     # Recursive functions are harder to modify: changing loop invariants or base cases
     # requires understanding the full recursion contract. Flag when 2+ are in top hotspots.
