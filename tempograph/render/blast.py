@@ -2444,6 +2444,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — runtime behavior changes affect all consumers; flag for explicit review before merge"
         )
 
+    # S992: Schema blast — blast target is a schema/model/entity definition file.
+    # Schema changes affect database migrations, serialization, and all code reading the schema;
+    # even additive changes may require coordinated updates across multiple layers.
+    _schema_kws992 = ("schema", "schemas", "model", "models", "entity", "entities", "types", "typedefs", "datamodel", "domain")
+    _fname992 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if any(_fname992 == kw or _fname992.startswith(kw + "_") or _fname992.endswith("_" + kw) for kw in _schema_kws992):
+        lines.append(
+            f"schema blast: {_fp589.rsplit('/', 1)[-1]} is a schema/model definition"
+            f" — changes require coordinated migration, serialization updates, and consumer validation"
+        )
+
     return "\n".join(lines)
 
 

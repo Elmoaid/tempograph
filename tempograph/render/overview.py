@@ -3563,6 +3563,22 @@ def _signals_async_oop(
             f" — entry point is unclear; execution flow harder to trace for agents and reviewers"
         )
 
+    # S991: God class — a single class has 8 or more methods.
+    # A class with many methods accumulates multiple responsibilities; changes to one
+    # responsibility risk unintended coupling to others, making the class hard to test safely.
+    _class_method_counts991: dict[str, tuple[str, int]] = {}
+    for s in graph.symbols.values():
+        if s.kind.value == "method" and s.parent_id is not None and not _is_test_file(s.file_path):
+            _cname991 = s.parent_id.rsplit("::", 1)[-1] if "::" in s.parent_id else s.parent_id
+            _class_method_counts991[s.parent_id] = (_cname991, _class_method_counts991.get(s.parent_id, (_cname991, 0))[1] + 1)
+    _god_classes991 = [(name, cnt) for _, (name, cnt) in _class_method_counts991.items() if cnt >= 8]
+    if _god_classes991:
+        _top_god991 = max(_god_classes991, key=lambda x: x[1])
+        lines.append(
+            f"god class candidate: {_top_god991[0]} has {_top_god991[1]} methods"
+            f" — single class accumulating many responsibilities; changes may have unintended coupling"
+        )
+
     return lines
 
 
