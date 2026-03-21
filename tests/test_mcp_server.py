@@ -43666,3 +43666,400 @@ class TestDeadDataClassesS929:
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_dead_code(g)
         assert "dead data classes" not in out, f"unexpected dead data classes; got: {out}"
+
+
+# ── S930–S935 ──────────────────────────────────────────────────────────────────
+
+# ── S930: Large class member ──────────────────────────────────────────────────
+
+class TestLargeClassMemberS930:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        methods = "\n".join(
+            f"    def method_{i}(self): return {i}" for i in range(11)
+        )
+        (tmp_path / "service.py").write_text(
+            f"class BigService:\n{methods}\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from service import BigService\ndef run(): BigService().method_0()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "method_0")
+        assert "large class member" in out, f"expected large class member; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "class SmallService:\n"
+            "    def run(self): return True\n"
+            "    def stop(self): return False\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from service import SmallService\ndef main(): SmallService().run()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "run")
+        assert "large class member" not in out, f"unexpected large class member; got: {out}"
+
+
+# ── S931: Large public API ────────────────────────────────────────────────────
+
+class TestLargePublicApiS931:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        for i in range(5):
+            src = "\n".join(f"def public_fn_{i}_{j}(x): return x" for j in range(4))
+            (tmp_path / f"module_{i}.py").write_text(src + "\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "large public API" in out, f"expected large public API; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "utils.py").write_text(
+            "def fn_a(): return 1\ndef fn_b(): return 2\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "large public API" not in out, f"unexpected large public API; got: {out}"
+
+
+# ── S932: Utility blast ───────────────────────────────────────────────────────
+
+class TestUtilityBlastS932:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "utils.py").write_text("def fmt(x): return str(x)\n")
+        for i in range(3):
+            (tmp_path / f"module_{i}.py").write_text(
+                "from utils import fmt\n"
+                f"def fn_{i}(): fmt({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "utils.py")
+        assert "utility blast" in out, f"expected utility blast; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "auth_service.py").write_text("def login(u): return True\n")
+        (tmp_path / "app.py").write_text(
+            "from auth_service import login\ndef run(): login('admin')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "auth_service.py")
+        assert "utility blast" not in out, f"unexpected utility blast; got: {out}"
+
+
+# ── S933: Orphaned test change ────────────────────────────────────────────────
+
+class TestOrphanedTestChangeS933:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "auth.py").write_text("def login(u): return True\n")
+        (tmp_path / "test_auth.py").write_text("def test_login(): assert True\n")
+        (tmp_path / "test_users.py").write_text("def test_get_user(): assert True\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        # test_users.py changed but users.py (source) is NOT in the diff
+        out = render_diff_context(g, ["test_auth.py", "test_users.py"])
+        assert "orphaned test change" in out, f"expected orphaned test change; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "auth.py").write_text("def login(u): return True\n")
+        (tmp_path / "test_auth.py").write_text("def test_login(): assert True\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        # Both auth.py (source) and test_auth.py (test) in diff — not orphaned
+        out = render_diff_context(g, ["auth.py", "test_auth.py"])
+        assert "orphaned test change" not in out, f"unexpected orphaned test change; got: {out}"
+
+
+# ── S934: Untested hotspot ─────────────────────────────────────────────────────
+
+class TestUntestedHotspotS934:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        body = ["def complex_fn(a, b, c, d, e):"]
+        for i in range(8):
+            body.append(f"    if a: b = c + d * e + {i}")
+            body.append(f"    elif b: c = a + d - {i}")
+        body.append("    return a")
+        (tmp_path / "core.py").write_text("\n".join(body) + "\n")
+        (tmp_path / "app.py").write_text(
+            "from core import complex_fn\ndef run(): complex_fn(1,2,3,4,5)\n"
+        )
+        # No test file calling complex_fn
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "untested hotspot" in out, f"expected untested hotspot; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        body = ["def complex_fn(a, b, c, d, e):"]
+        for i in range(8):
+            body.append(f"    if a: b = c + d * e + {i}")
+            body.append(f"    elif b: c = a + d - {i}")
+        body.append("    return a")
+        (tmp_path / "core.py").write_text("\n".join(body) + "\n")
+        (tmp_path / "app.py").write_text(
+            "from core import complex_fn\ndef run(): complex_fn(1,2,3,4,5)\n"
+        )
+        (tmp_path / "test_core.py").write_text(
+            "from core import complex_fn\ndef test_fn(): complex_fn(1,2,3,4,5)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "untested hotspot" not in out, f"unexpected untested hotspot; got: {out}"
+
+
+# ── S935: Dead exception classes ───────────────────────────────────────────────
+
+class TestDeadExceptionClassesS935:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "errors.py").write_text(
+            "class AuthError(Exception): pass\n"
+            "class ValidationError(Exception): pass\n"
+            "def active_fn(): return True\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from errors import active_fn\ndef run(): active_fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead exceptions" in out, f"expected dead exceptions; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "errors.py").write_text(
+            "class AuthError(Exception): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from errors import AuthError\ndef run():\n    raise AuthError('fail')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead exceptions" not in out, f"unexpected dead exceptions; got: {out}"
+
+
+class TestLargeClassMemberS930:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        methods = "\n".join(
+            f"    def method_{i}(self):\n        return {i}"
+            for i in range(12)
+        )
+        (tmp_path / "service.py").write_text(
+            f"class BigService:\n{methods}\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "method_0")
+        assert "large class member" in out, (
+            f"'large class member' expected for method in 12-method class; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "class SmallService:\n"
+            "    def method_a(self): return 1\n"
+            "    def method_b(self): return 2\n"
+            "    def method_c(self): return 3\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "method_a")
+        assert "large class member" not in out, (
+            f"'large class member' must not appear for small class; got:\n{out}"
+        )
+
+
+class TestLargePublicApiS931:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        fns = "\n".join(f"def public_fn_{i}(): pass" for i in range(22))
+        (tmp_path / "api.py").write_text(fns + "\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "large public API" in out, (
+            f"'large public API' expected for 22 exports; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "api.py").write_text(
+            "def foo(): pass\ndef bar(): pass\ndef baz(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "large public API" not in out, (
+            f"'large public API' must not appear for small public API; got:\n{out}"
+        )
+
+
+class TestUtilityBlastS932:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "utils.py").write_text(
+            "def helper_a(): pass\ndef helper_b(): pass\n"
+        )
+        (tmp_path / "mod_a.py").write_text("from utils import helper_a\ndef fn_a(): helper_a()\n")
+        (tmp_path / "mod_b.py").write_text("from utils import helper_b\ndef fn_b(): helper_b()\n")
+        (tmp_path / "mod_c.py").write_text("from utils import helper_a\ndef fn_c(): helper_a()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "utils.py")
+        assert "utility blast" in out, (
+            f"'utility blast' expected for utils.py used by 3+ modules; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "service.py").write_text("def process(): pass\n")
+        (tmp_path / "app.py").write_text("from service import process\ndef run(): process()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "service.py")
+        assert "utility blast" not in out, (
+            f"'utility blast' must not appear for non-utility file; got:\n{out}"
+        )
+
+
+class TestOrphanedTestChangeS933:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "service.py").write_text("def process(): return True\n")
+        (tmp_path / "test_auth.py").write_text("def test_login(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        # Both source and unrelated test file in diff — test_auth.py has no matching source
+        out = render_diff_context(g, ["test_auth.py", "service.py"])
+        assert "orphaned test change" in out, (
+            f"'orphaned test change' expected when test has no matching source in diff; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "service.py").write_text("def process(): return True\n")
+        (tmp_path / "test_service.py").write_text("def test_process(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        # Both test and matching source are in diff (test_service.py → service.py)
+        out = render_diff_context(g, ["test_service.py", "service.py"])
+        assert "orphaned test change" not in out, (
+            f"'orphaned test change' must not appear when matching source is also in diff; got:\n{out}"
+        )
+
+
+class TestUntestedHotspotS934:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "engine.py").write_text(
+            "def complex_fn():\n"
+            + "    x = 0\n" * 60
+            + "    if x: pass\n" * 5
+            + "    return x\n"
+        )
+        (tmp_path / "runner.py").write_text(
+            "from engine import complex_fn\ndef run(): complex_fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "untested hotspot" in out, (
+            f"'untested hotspot' expected when top hotspot has no test callers; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "engine.py").write_text(
+            "def complex_fn():\n"
+            + "    x = 0\n" * 60
+            + "    if x: pass\n" * 5
+            + "    return x\n"
+        )
+        (tmp_path / "test_engine.py").write_text(
+            "from engine import complex_fn\ndef test_complex(): complex_fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "untested hotspot" not in out, (
+            f"'untested hotspot' must not appear when test calls the hotspot; got:\n{out}"
+        )
+
+
+class TestDeadExceptionClassesS935:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "errors.py").write_text(
+            "class DatabaseError(Exception): pass\n"
+            "class ValidationError(Exception): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead exceptions" in out, (
+            f"'dead exceptions' expected for unused exception classes; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "errors.py").write_text(
+            "class DatabaseError(Exception): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from errors import DatabaseError\ndef run():\n    raise DatabaseError()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead exceptions" not in out, (
+            f"'dead exceptions' must not appear when exception is used; got:\n{out}"
+        )
