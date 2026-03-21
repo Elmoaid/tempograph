@@ -2673,6 +2673,23 @@ def _signals_async_oop(
                 f" — complex codebase; target functions above cx=10 for refactoring first"
             )
 
+    # S661: Deep directory nesting — source files span 5+ directory levels.
+    # Files buried deep require long import paths and are easy to miss during code review;
+    # deep nesting also signals overly granular package decomposition.
+    _max_depth661 = max(
+        (
+            len(fp.replace("\\", "/").split("/"))
+            for fp in graph.files
+            if not _is_test_file(fp)
+        ),
+        default=0,
+    )
+    if _max_depth661 >= 5:
+        lines.append(
+            f"deep nesting: source files reach {_max_depth661} directory levels deep"
+            f" — long import paths and review-invisible files; consider flattening package structure"
+        )
+
     return lines
 
 

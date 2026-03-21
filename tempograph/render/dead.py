@@ -2269,6 +2269,24 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — placeholder or abandoned stub; safe to delete"
         )
 
+    # S665: Dead annotated function — dead function with a `->` return type annotation.
+    # Functions with explicit return annotations were designed as intentional API;
+    # an annotated-but-unused function is a more deliberate artifact than an unannotated one.
+    _dead_annotated665 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and "->" in (s.signature or "")
+    ]
+    if _dead_annotated665:
+        _ann_names665 = ", ".join(s.name for s in _dead_annotated665[:3])
+        if len(_dead_annotated665) > 3:
+            _ann_names665 += f" +{len(_dead_annotated665) - 3} more"
+        lines.append(
+            f"dead annotated functions: {len(_dead_annotated665)} unused typed function(s) ({_ann_names665})"
+            f" — annotated APIs that were never called; intentional design that was abandoned"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

@@ -2078,5 +2078,22 @@ def _collect_hotspots_signals(
                     f" — most-called in the entire repo; global refactoring scope"
                 )
 
+    # S664: Pure dispatcher — top hotspot has 5+ callers but makes 0 callees (calls nothing).
+    # A function that many call but that calls nothing itself is a pure data processor;
+    # it may be overloaded or doing implicit global-state operations that aren't visible in the graph.
+    if scores and scores[0]:
+        _top664 = scores[0][1]
+        if (
+            not _is_test_file(_top664.file_path)
+            and _top664.kind.value in ("function", "method")
+        ):
+            _callers664 = graph.callers_of(_top664.id)
+            _callees664 = graph.callees_of(_top664.id)
+            if len(_callers664) >= 5 and not _callees664:
+                out.append(
+                    f"\npure dispatcher: {_top664.name} has {len(_callers664)} callers"
+                    f" and calls nothing — pure data processor or implicit state manipulation"
+                )
+
     return out
 

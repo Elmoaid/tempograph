@@ -226,6 +226,21 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — build/deploy workflow changes; verify no pipeline regressions before merging"
         )
 
+    # S663: Package init in diff — diff includes a __init__.py file (package restructuring).
+    # Changes to __init__.py affect the entire package's public API surface;
+    # symbol additions/removals or re-exports here change what consumers can import.
+    _init_files663 = [
+        f for f in changed_files
+        if f.rsplit("/", 1)[-1] == "__init__.py" or f == "__init__.py"
+    ]
+    if _init_files663:
+        _init_name663 = _init_files663[0].rsplit("/", 2)[-2] if "/" in _init_files663[0] else ""
+        _pkg_label663 = f"{_init_name663}/" if _init_name663 else ""
+        lines.append(
+            f"package init in diff: {_pkg_label663}__init__.py ({len(_init_files663)} init file(s) changed)"
+            f" — package public API changed; verify re-exports and downstream consumers"
+        )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 

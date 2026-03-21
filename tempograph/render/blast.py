@@ -1794,6 +1794,16 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                 f" — config changes affect all importers silently; no API signature to grep"
             )
 
+    # S662: Large blast target — blast target file exceeds 300 lines.
+    # Large files have higher coupling density; more symbols means more potential callers
+    # and changes may interact with code you didn't intend to modify.
+    _fi662 = graph.files.get(_fp589)
+    if _fi662 and _fi662.line_count > 300:
+        lines.append(
+            f"large blast target: {_fp589.rsplit('/', 1)[-1]} is {_fi662.line_count} lines"
+            f" — large file has high coupling density; careful scoping of your change is needed"
+        )
+
     return "\n".join(lines)
 
 

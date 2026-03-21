@@ -31155,3 +31155,204 @@ class TestDeadEmptyClassesS659:
         assert "dead empty classes" not in out, (
             f"'dead empty classes' must not appear when class is instantiated; got:\n{out}"
         )
+
+
+# ── S660: Dense file ──────────────────────────────────────────────────────────
+
+class TestDenseFileS660:
+    """S660: Focused symbol in a file with 50+ top-level symbols emits dense-file signal."""
+
+    def test_dense_file_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        code = "".join(f"def fn_{i}(x): return x\n" for i in range(51))
+        (tmp_path / "big_module.py").write_text(code)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "fn_0")
+        assert "dense file" in out, (
+            f"Expected 'dense file' for symbol in a 51-function file; got:\n{out}"
+        )
+
+    def test_dense_file_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "small.py").write_text(
+            "def helper_a(x): return x\ndef helper_b(y): return y\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper_a")
+        assert "dense file" not in out, (
+            f"'dense file' must not appear for a small module; got:\n{out}"
+        )
+
+
+# ── S661: Deep directory nesting ──────────────────────────────────────────────
+
+class TestDeepNestingS661:
+    """S661: Source files reaching 5+ directory levels emit deep-nesting signal."""
+
+    def test_deep_nesting_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        deep = tmp_path / "a" / "b" / "c" / "d"
+        deep.mkdir(parents=True)
+        (deep / "deep_module.py").write_text("def fn(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "deep nesting" in out, (
+            f"Expected 'deep nesting' for files 5 levels deep; got:\n{out}"
+        )
+
+    def test_deep_nesting_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        (tmp_path / "pkg").mkdir()
+        (tmp_path / "pkg" / "mod.py").write_text("def fn(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "deep nesting" not in out, (
+            f"'deep nesting' must not appear for shallow directory structure; got:\n{out}"
+        )
+
+
+# ── S662: Large blast target ──────────────────────────────────────────────────
+
+class TestLargeBlastTargetS662:
+    """S662: Blast target file > 300 lines emits large-blast-target signal."""
+
+    def test_large_blast_target_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        code = "def engine(): pass\n" + "#\n" * 301
+        (tmp_path / "engine.py").write_text(code)
+        (tmp_path / "app.py").write_text(
+            "from engine import engine\ndef run(): engine()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "engine.py")
+        assert "large blast target" in out, (
+            f"Expected 'large blast target' for 302-line file; got:\n{out}"
+        )
+
+    def test_large_blast_target_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "small.py").write_text("def fn(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from small import fn\ndef run(): fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "small.py")
+        assert "large blast target" not in out, (
+            f"'large blast target' must not appear for short file; got:\n{out}"
+        )
+
+
+# ── S663: Package init in diff ────────────────────────────────────────────────
+
+class TestPackageInitInDiffS663:
+    """S663: __init__.py in diff emits package-init-in-diff signal."""
+
+    def test_init_in_diff_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["app.py", "mypkg/__init__.py"])
+        assert "package init in diff" in out, (
+            f"Expected 'package init in diff' when __init__.py is changed; got:\n{out}"
+        )
+
+    def test_init_in_diff_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["app.py", "utils.py"])
+        assert "package init in diff" not in out, (
+            f"'package init in diff' must not appear for non-init files; got:\n{out}"
+        )
+
+
+# ── S664: Pure dispatcher ─────────────────────────────────────────────────────
+
+class TestPureDispatcherS664:
+    """S664: Top hotspot with 5+ callers and 0 callees emits pure-dispatcher signal."""
+
+    def test_pure_dispatcher_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "leaf.py").write_text("def compute(x, y): return x + y\n")
+        for i in range(6):
+            (tmp_path / f"client_{i}.py").write_text(
+                f"from leaf import compute\ndef work_{i}(): compute({i}, {i+1})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "pure dispatcher" in out, (
+            f"Expected 'pure dispatcher' for fn with 6 callers and no callees; got:\n{out}"
+        )
+
+    def test_pure_dispatcher_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "helpers.py").write_text("def low_level(x): return x * 2\n")
+        (tmp_path / "mid.py").write_text(
+            "from helpers import low_level\n"
+            "def orchestrate(x): return low_level(x) + 1\n"
+        )
+        for i in range(6):
+            (tmp_path / f"user_{i}.py").write_text(
+                f"from mid import orchestrate\ndef task_{i}(): orchestrate({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "pure dispatcher" not in out, (
+            f"'pure dispatcher' must not appear for fn that calls other functions; got:\n{out}"
+        )
+
+
+# ── S665: Dead annotated functions ────────────────────────────────────────────
+
+class TestDeadAnnotatedFunctionsS665:
+    """S665: Unused function with `->` return annotation emits dead-annotated-functions signal."""
+
+    def test_dead_annotated_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "api.py").write_text(
+            "def fetch_records(limit: int) -> list[str]:\n    return []\n"
+            "def get_user(uid: int) -> dict:\n    return {}\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead annotated functions" in out, (
+            f"Expected 'dead annotated functions' for unused typed functions; got:\n{out}"
+        )
+
+    def test_dead_annotated_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "api.py").write_text(
+            "def fetch_records(limit: int) -> list[str]:\n    return []\n"
+        )
+        (tmp_path / "service.py").write_text(
+            "from api import fetch_records\ndef run(): return fetch_records(10)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead annotated functions" not in out, (
+            f"'dead annotated functions' must not appear when annotated fn is called; got:\n{out}"
+        )

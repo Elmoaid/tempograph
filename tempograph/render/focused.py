@@ -3310,6 +3310,23 @@ def _signals_focused_fn_advanced(
                 f" — hard to grep and refactor; consider a domain-specific name that signals intent"
             )
 
+    # S660: Dense file — focused symbol is in a file with 50+ top-level symbols.
+    # Very large files are hard to navigate and often indicate a module that has
+    # accumulated too many responsibilities; refactoring requires splitting by concern.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim660 = _seed_syms[0]
+        if not _is_test_file(_prim660.file_path):
+            _file_sym_count660 = len([
+                s for s in graph.symbols.values()
+                if s.file_path == _prim660.file_path and s.parent_id is None
+            ])
+            if _file_sym_count660 >= 50:
+                lines.append(
+                    f"\ndense file: {_prim660.file_path.rsplit('/', 1)[-1]} contains"
+                    f" {_file_sym_count660} top-level symbols"
+                    f" — monolith file; split by concern before adding more symbols"
+                )
+
     return lines
 
 
