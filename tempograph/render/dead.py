@@ -3318,6 +3318,26 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — unregistered hooks silently skip; the event they were meant to intercept now goes unhandled"
         )
 
+    # S965: Dead scheduled tasks — unused schedule_/cron_/task_/job_ prefixed functions.
+    # Dead scheduled tasks indicate removed automation paths; if they produced side effects
+    # (data cleanup, notifications, reports), those effects now silently no longer happen.
+    _sched_prefixes965 = ("schedule_", "cron_", "task_", "job_", "periodic_", "daily_", "hourly_")
+    _dead_tasks965 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().startswith(p) for p in _sched_prefixes965)
+    ]
+    if _dead_tasks965:
+        _task_names965 = ", ".join(s.name for s in _dead_tasks965[:3])
+        if len(_dead_tasks965) > 3:
+            _task_names965 += f" +{len(_dead_tasks965) - 3} more"
+        lines.append(
+            f"dead tasks: {len(_dead_tasks965)} unused scheduled task(s) ({_task_names965})"
+            f" — removed automation paths; verify any data cleanup or notification side effects are still handled"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

@@ -2665,4 +2665,23 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — cross-subsystem change; verify all owners have reviewed their portion"
             )
 
+    # S963: Test infrastructure changed — diff includes conftest.py or shared test utilities.
+    # Changes to test infrastructure affect every test that relies on those fixtures or helpers;
+    # a subtle fixture change can cause mass test failures or false passes.
+    if changed_files:
+        _infra_kws963 = ("conftest", "fixtures", "test_helpers", "test_utils", "testing_utils")
+        _infra_files963 = [
+            f for f in changed_files
+            if any(
+                f.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower() == kw
+                for kw in _infra_kws963
+            )
+        ]
+        if _infra_files963:
+            _iname963 = _infra_files963[0].replace("\\", "/").rsplit("/", 1)[-1]
+            lines.append(
+                f"test infra changed: {len(_infra_files963)} test infrastructure file(s) modified (e.g. {_iname963})"
+                f" — fixture changes silently affect all dependent tests; run the full test suite"
+            )
+
     return "\n".join(lines)

@@ -2840,5 +2840,22 @@ def _collect_hotspots_signals(
                     f" — package-level symbol; changes alter the import surface and affect all package consumers"
                 )
 
+    # S964: Bottleneck hotspot — the top hotspot is called from 10+ distinct source files.
+    # Extreme fan-in means this function is a central dependency; breaking changes here
+    # cause cascading failures across unrelated subsystems simultaneously.
+    if scores:
+        _top964 = scores[0][1]
+        if _top964 is not None and not _is_test_file(_top964.file_path):
+            _callers964 = graph.callers_of(_top964.id)
+            _caller_files964 = {
+                c.file_path for c in _callers964
+                if not _is_test_file(c.file_path) and c.file_path != _top964.file_path
+            }
+            if len(_caller_files964) >= 10:
+                out.append(
+                    f"\nbottleneck hotspot: {_top964.name} is called from {len(_caller_files964)} source files"
+                    f" — extreme fan-in; breaking changes here cause simultaneous failures across many subsystems"
+                )
+
     return out
 

@@ -3482,6 +3482,20 @@ def _signals_async_oop(
             f" — exceeds 200-line threshold; candidate for mandatory decomposition before any new additions"
         )
 
+    # S961: Flat architecture — all source files are at the root level with no subdirectory structure.
+    # Flat repos with many files have no module boundaries; a growing flat codebase accumulates
+    # coupling across everything and becomes harder to reason about incrementally.
+    _src_files961 = [
+        fp for fp in graph.files
+        if not _is_test_file(fp) and "/" not in fp.replace("\\", "/").lstrip("./")
+    ]
+    _all_src_files961 = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_all_src_files961) >= 8 and len(_src_files961) == len(_all_src_files961):
+        lines.append(
+            f"flat architecture: all {len(_all_src_files961)} source files are at the root level"
+            f" — no module boundaries; consider introducing package subdirectories as the codebase grows"
+        )
+
     return lines
 
 

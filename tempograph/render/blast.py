@@ -2387,6 +2387,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — pytest auto-imports this; changes silently affect all tests in its scope without explicit import"
         )
 
+    # S962: Router blast — blast target is a routing/URL dispatch file.
+    # Routers map URLs to handlers; changes here can silently break endpoints by
+    # altering paths, methods, or middleware chains without runtime errors at import time.
+    _router_kws962 = ("router", "routes", "urls", "routing", "endpoints", "paths")
+    _fname962 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if any(_fname962 == kw or _fname962.startswith(kw + "_") or _fname962.endswith("_" + kw) for kw in _router_kws962):
+        lines.append(
+            f"router blast: {_fp589.rsplit('/', 1)[-1]} is a routing file"
+            f" — path/method changes may silently break existing endpoints; verify all routes are tested"
+        )
+
     return "\n".join(lines)
 
 

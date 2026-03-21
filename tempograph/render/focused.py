@@ -4166,6 +4166,23 @@ def _signals_focused_fn_advanced(
                     f" — callers must iterate the return value; consuming as non-iterator will exhaust it silently"
                 )
 
+    # S960: Utility file focus — the focused symbol lives in a utils/helpers/common file.
+    # Utility files aggregate shared helpers with no domain affiliation; changes here
+    # cross-cut multiple features and may introduce regressions in unrelated consumers.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim960 = _seed_syms[0]
+        _util_kws960 = ("utils", "util", "helpers", "helper", "common", "shared", "misc", "tools")
+        _fbase960 = _prim960.file_path.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+        if (
+            _prim960.kind.value in ("function", "method")
+            and not _is_test_file(_prim960.file_path)
+            and any(_fbase960 == kw or _fbase960.startswith(kw + "_") or _fbase960.endswith("_" + kw) for kw in _util_kws960)
+        ):
+            lines.append(
+                f"\nutility file: {_prim960.name} is in a utility/helpers module"
+                f" — utility changes cross-cut features; test all consumer modules, not just obvious callers"
+            )
+
     return lines
 
 
