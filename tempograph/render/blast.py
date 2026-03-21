@@ -2296,6 +2296,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — blast radius of test files is typically low; verify this is the intended target"
         )
 
+    # S920: Cache blast — blast target is a caching or session file.
+    # Cache files are shared state; changes may cause stale data, invalidation bugs,
+    # or session corruption that affects all users concurrently.
+    _cache_kws920 = ("cache", "redis", "memcache", "session", "store", "buffer")
+    _fname920 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if any(kw in _fname920 for kw in _cache_kws920):
+        lines.append(
+            f"cache blast: {_fp589.rsplit('/', 1)[-1]} manages caching or sessions"
+            f" — cache changes affect shared state; verify invalidation logic and concurrent access"
+        )
+
     return "\n".join(lines)
 
 

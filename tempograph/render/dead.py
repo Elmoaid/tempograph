@@ -3179,6 +3179,26 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — may still be registered in event configs; verify before removing"
         )
 
+    # S923: Dead formatters — unused format_/render_/display_/to_ prefixed functions.
+    # Dead formatters often indicate removed presentation paths; the business logic
+    # they contained may still be needed for other output formats.
+    _fmt_prefixes923 = ("format_", "render_", "display_", "to_", "fmt_", "stringify_")
+    _dead_fmts923 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().startswith(p) for p in _fmt_prefixes923)
+    ]
+    if _dead_fmts923:
+        _fmt_names923 = ", ".join(s.name for s in _dead_fmts923[:3])
+        if len(_dead_fmts923) > 3:
+            _fmt_names923 += f" +{len(_dead_fmts923) - 3} more"
+        lines.append(
+            f"dead formatters: {len(_dead_fmts923)} unused formatter function(s) ({_fmt_names923})"
+            f" — removed presentation paths; verify the business logic they contained is no longer needed"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

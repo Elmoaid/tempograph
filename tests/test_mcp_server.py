@@ -43248,3 +43248,222 @@ class TestDeadCallbackFunctionsS917:
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_dead_code(g)
         assert "dead callbacks" not in out, f"unexpected dead callbacks; got: {out}"
+
+
+# ── S918–S923 ──────────────────────────────────────────────────────────────────
+
+# ── S918: Private method focus ────────────────────────────────────────────────
+
+class TestPrivateMethodFocusS918:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "class Service:\n"
+            "    def __init__(self):\n"
+            "        self._config = {}\n"
+            "    def _load_config(self, path):\n"
+            "        return {}\n"
+            "    def run(self):\n"
+            "        self._load_config('cfg.json')\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from service import Service\ndef main(): Service().run()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "_load_config")
+        assert "private method" in out, f"expected private method; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "class Service:\n"
+            "    def run(self):\n"
+            "        return True\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from service import Service\ndef main(): Service().run()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "run")
+        assert "private method" not in out, f"unexpected private method; got: {out}"
+
+
+# ── S919: No entry points ─────────────────────────────────────────────────────
+
+class TestNoEntryPointsS919:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        for i in range(5):
+            (tmp_path / f"module_{i}.py").write_text(
+                f"def process_{i}(x): return x + {i}\n"
+                f"def helper_{i}(x): return x * {i}\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no entry point" in out, f"expected no entry point; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "app.py").write_text(
+            "def main(): return 0\n"
+            "def helper(): return 1\n"
+        )
+        for i in range(4):
+            (tmp_path / f"module_{i}.py").write_text(
+                f"def process_{i}(x): return x + {i}\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no entry point" not in out, f"unexpected no entry point; got: {out}"
+
+
+# ── S920: Cache blast ─────────────────────────────────────────────────────────
+
+class TestCacheBlastS920:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "cache_manager.py").write_text(
+            "def get(key): return None\n"
+            "def set(key, value): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from cache_manager import get, set\ndef run(): set('k', get('k'))\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "cache_manager.py")
+        assert "cache blast" in out, f"expected cache blast; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "user_service.py").write_text(
+            "def get_user(uid): return uid\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from user_service import get_user\ndef run(): get_user(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "user_service.py")
+        assert "cache blast" not in out, f"unexpected cache blast; got: {out}"
+
+
+# ── S921: Schema file in diff ─────────────────────────────────────────────────
+
+class TestSchemaInDiffS921:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "migrations").mkdir()
+        (tmp_path / "migrations" / "0001_add_users.py").write_text(
+            "def upgrade(): pass\n"
+            "def downgrade(): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["migrations/0001_add_users.py"])
+        assert "schema in diff" in out, f"expected schema in diff; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "utils.py").write_text("def helper(): return 1\n")
+        (tmp_path / "app.py").write_text(
+            "from utils import helper\ndef run(): helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["utils.py"])
+        assert "schema in diff" not in out, f"unexpected schema in diff; got: {out}"
+
+
+# ── S922: Test-imported hotspot ────────────────────────────────────────────────
+
+class TestTestImportedHotspotS922:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        body = ["def complex_fn(a, b, c, d, e):"]
+        for i in range(8):
+            body.append(f"    if a: b = c + d * e + {i}")
+            body.append(f"    elif b: c = a + d - {i}")
+        body.append("    return a")
+        (tmp_path / "core.py").write_text("\n".join(body) + "\n")
+        (tmp_path / "app.py").write_text(
+            "from core import complex_fn\ndef run(): complex_fn(1,2,3,4,5)\n"
+        )
+        (tmp_path / "test_core.py").write_text(
+            "from core import complex_fn\ndef test_it(): assert complex_fn(1,2,3,4,5)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "test-imported hotspot" in out, f"expected test-imported hotspot; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        body = ["def complex_fn(a, b, c, d, e):"]
+        for i in range(8):
+            body.append(f"    if a: b = c + d * e + {i}")
+            body.append(f"    elif b: c = a + d - {i}")
+        body.append("    return a")
+        (tmp_path / "core.py").write_text("\n".join(body) + "\n")
+        (tmp_path / "app.py").write_text(
+            "from core import complex_fn\ndef run(): complex_fn(1,2,3,4,5)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "test-imported hotspot" not in out, f"unexpected test-imported hotspot; got: {out}"
+
+
+# ── S923: Dead formatters ──────────────────────────────────────────────────────
+
+class TestDeadFormattersS923:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "formatters.py").write_text(
+            "def format_date(d): return str(d)\n"
+            "def render_html(t): return f'<p>{t}</p>'\n"
+            "def active_fn(): return True\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from formatters import active_fn\ndef run(): active_fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead formatters" in out, f"expected dead formatters; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "formatters.py").write_text(
+            "def format_date(d): return str(d)\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from formatters import format_date\ndef run(): format_date('2025')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead formatters" not in out, f"unexpected dead formatters; got: {out}"

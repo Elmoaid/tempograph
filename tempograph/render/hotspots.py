@@ -2746,5 +2746,19 @@ def _collect_hotspots_signals(
                     f" — consider inlining to reduce indirection overhead"
                 )
 
+    # S922: Test-imported hotspot — the top hotspot is called from test files.
+    # When tests call hotspot functions directly, changes to the hotspot may break tests
+    # in addition to production callers; double the verification scope when changing it.
+    if scores:
+        _top922 = scores[0][1]
+        if _top922 is not None and not _is_test_file(_top922.file_path):
+            _callers922 = graph.callers_of(_top922.id)
+            _test_callers922 = [c for c in _callers922 if _is_test_file(c.file_path)]
+            if _test_callers922:
+                out.append(
+                    f"\ntest-imported hotspot: {_top922.name} is called directly by {len(_test_callers922)} test file(s)"
+                    f" — hotspot changes break tests; verify both test and production callers"
+                )
+
     return out
 
