@@ -16,6 +16,8 @@ from .dart_handler import DartHandlerMixin
 from .elixir_handler import ElixirHandlerMixin
 from .scala_handler import ScalaHandlerMixin
 from .ocaml_handler import OCamlHandlerMixin
+from .fsharp_handler import FSharpHandlerMixin
+from .haskell_handler import HaskellHandlerMixin
 
 __all__ = [
     "PythonHandlerMixin",
@@ -34,4 +36,6 @@ __all__ = [
     "ElixirHandlerMixin",
     "ScalaHandlerMixin",
     "OCamlHandlerMixin",
+    "FSharpHandlerMixin",
+    "HaskellHandlerMixin",
 ]
