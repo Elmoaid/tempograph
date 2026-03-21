@@ -4131,6 +4131,26 @@ def _signals_focused_fn_advanced(
                     f" — high parameter count; each caller must pass all args; signature changes break all call sites"
                 )
 
+    # S948: All-private class — focused class has no public methods (all methods start with _).
+    # An all-private class has no intentional external interface; callers may be accessing
+    # internal methods directly, creating undocumented coupling that's fragile to refactors.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim948 = _seed_syms[0]
+        if _prim948.kind.value == "class" and not _is_test_file(_prim948.file_path):
+            _methods948 = [
+                s for s in graph.symbols.values()
+                if s.parent_id == _prim948.id and s.kind.value in ("method", "function")
+            ]
+            _public_methods948 = [
+                m for m in _methods948
+                if not m.name.startswith("_")
+            ]
+            if _methods948 and not _public_methods948:
+                lines.append(
+                    f"\nall-private class: {_prim948.name} has {len(_methods948)} method(s) but none are public"
+                    f" — no intended external interface; direct access to private methods is fragile coupling"
+                )
+
     return lines
 
 

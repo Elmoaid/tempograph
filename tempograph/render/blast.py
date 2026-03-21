@@ -2365,6 +2365,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — high fan-in; test all consumers after changes; regressions may surface in unexpected call sites"
         )
 
+    # S950: Context manager blast — blast target is a context manager or context utility file.
+    # Context managers run setup/teardown code on entry and exit; changes may silently affect
+    # resource acquisition, exception handling, or cleanup in all `with` block consumers.
+    _ctx_kws950 = ("context", "ctx", "contextlib", "contextmanager", "scope", "transaction")
+    _fname950 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if any(_fname950 == kw or _fname950.startswith(kw + "_") or _fname950.endswith("_" + kw) for kw in _ctx_kws950):
+        lines.append(
+            f"context manager blast: {_fp589.rsplit('/', 1)[-1]} manages context/scope"
+            f" — changes affect resource acquisition and cleanup in all 'with' block consumers"
+        )
+
     return "\n".join(lines)
 
 

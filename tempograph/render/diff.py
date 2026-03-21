@@ -2629,4 +2629,25 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 )
                 break  # only report once
 
+    # S951: Cross-language diff — changed files span multiple programming languages.
+    # Mixed-language diffs require reviewers with expertise in each language;
+    # language-crossing changes often indicate interface or serialization changes.
+    if changed_files and len(changed_files) >= 2:
+        _ext951: set[str] = set()
+        _lang_map951 = {
+            ".py": "python", ".js": "js", ".ts": "js", ".tsx": "js", ".jsx": "js",
+            ".go": "go", ".java": "java", ".rb": "ruby", ".rs": "rust",
+            ".cpp": "cpp", ".cc": "cpp", ".c": "c", ".cs": "csharp",
+        }
+        for _f951 in changed_files:
+            _sfx951 = "." + _f951.rsplit(".", 1)[-1].lower() if "." in _f951 else ""
+            _lang951 = _lang_map951.get(_sfx951)
+            if _lang951:
+                _ext951.add(_lang951)
+        if len(_ext951) >= 2:
+            lines.append(
+                f"cross-language diff: changed files span {len(_ext951)} languages ({', '.join(sorted(_ext951))})"
+                f" — multi-language change requires reviewers proficient in each; verify interface/serialization alignment"
+            )
+
     return "\n".join(lines)

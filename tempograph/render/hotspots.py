@@ -2814,5 +2814,18 @@ def _collect_hotspots_signals(
                     f" — exceeds 100 lines; likely contains multiple responsibilities; refactor before extending"
                 )
 
+    # S952: Class-bound hotspot — the top hotspot is a class method, not a standalone function.
+    # Methods carry hidden `self` state; changes may have broader impact than the signature
+    # suggests if they read or modify shared instance fields visible to other methods.
+    if scores:
+        _top952 = scores[0][1]
+        if _top952 is not None and _top952.kind.value == "method" and not _is_test_file(_top952.file_path):
+            _cls952 = graph.symbols.get(_top952.parent_id) if _top952.parent_id else None
+            if _cls952:
+                out.append(
+                    f"\nclass-bound hotspot: {_top952.name} is a method of {_cls952.name}"
+                    f" — reads/writes instance state; changes may have broader impact than the signature suggests"
+                )
+
     return out
 
