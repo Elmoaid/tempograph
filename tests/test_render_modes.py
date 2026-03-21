@@ -2,6 +2,8 @@
 render_dependencies, render_architecture, render_skills, is_git_repo."""
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 from tempograph.builder import build_graph
 from tempograph.render import (
     render_blast_radius,
@@ -15,7 +17,9 @@ from tempograph.render import (
     _extract_name_from_question,
     _is_test_file,
 )
+from tempograph.render.dead import _file_effort_badge
 from tempograph.git import is_git_repo
+from tempograph.types import Symbol, SymbolKind, Language
 
 
 def _build(tmp_path, files: dict[str, str]):
@@ -457,3 +461,38 @@ class TestIsTestFile:
 
     def test_empty_string_not_test(self):
         assert _is_test_file("") is False
+
+
+# ── _file_effort_badge ────────────────────────────────────────────────────────
+
+def _make_sym(sym_id: str, file_path: str) -> Symbol:
+    return Symbol(
+        id=sym_id,
+        name=sym_id.split("::")[-1],
+        qualified_name=sym_id.split("::")[-1],
+        kind=SymbolKind.FUNCTION,
+        language=Language.PYTHON,
+        file_path=file_path,
+        line_start=1,
+        line_end=5,
+    )
+
+
+class TestFileEffortBadge:
+    def test_high_effort_five_symbols_two_callers_each(self):
+        # 5 dead symbols, each with 2 external callers → score = 5 * (1 + 2) = 15 → HIGH
+        syms = [(_make_sym(f"a.py::fn_{i}", "a.py"), 80) for i in range(5)]
+        graph = MagicMock()
+        # Each symbol has 2 callers from a different file
+        caller_sym = _make_sym("b.py::caller", "b.py")
+        graph.callers_of.return_value = [caller_sym, caller_sym]
+        badge = _file_effort_badge(syms, graph)
+        assert badge == " [effort: HIGH]"
+
+    def test_low_effort_two_symbols_zero_callers(self):
+        # 2 dead symbols, 0 external callers → weights = [0.5, 0.5], score = 2 * 1.5 = 3 → LOW
+        syms = [(_make_sym(f"a.py::fn_{i}", "a.py"), 80) for i in range(2)]
+        graph = MagicMock()
+        graph.callers_of.return_value = []
+        badge = _file_effort_badge(syms, graph)
+        assert badge == " [effort: LOW]"
