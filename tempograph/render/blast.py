@@ -408,6 +408,19 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — barrel/hub; upstream changes flow through here"
         )
 
+    # S152: Cross-language blast — blast radius crosses language boundaries.
+    # When a file in one language is imported/used by files in different languages,
+    # changes require understanding both ecosystems. Flag when 2+ distinct languages found.
+    _s152_target_lang = file_path.rsplit(".", 1)[-1] if "." in file_path else ""
+    _s152_lang_ext: dict[str, int] = {}
+    for _fp152 in importers:
+        _ext152 = _fp152.rsplit(".", 1)[-1] if "." in _fp152 else ""
+        if _ext152 and _ext152 != _s152_target_lang:
+            _s152_lang_ext[_ext152] = _s152_lang_ext.get(_ext152, 0) + 1
+    if _s152_lang_ext:
+        _s152_langs_str = ", ".join(f".{ext}({n})" for ext, n in sorted(_s152_lang_ext.items())[:3])
+        lines.append(f"cross-language blast: importers span {len(_s152_lang_ext)+1} languages ({_s152_langs_str})")
+
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
 

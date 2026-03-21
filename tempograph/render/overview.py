@@ -1048,6 +1048,23 @@ def render_overview(graph: Tempo) -> str:
             _s146_str += f" +{len(_s146_barrels) - 3} more"
         lines.append(f"barrel files: {len(_s146_barrels)} aggregator files ({_s146_str})")
 
+    # S151: Impl vs test ratio — ratio of non-test source lines to test file lines.
+    # High ratio (>= 5x) = tests are thin relative to implementation.
+    # Only shown when test files exist and there are 10+ source lines.
+    _s151_src_lines = sum(
+        fi.line_count for fp, fi in graph.files.items() if not _is_test_file(fp)
+    )
+    _s151_test_lines = sum(
+        fi.line_count for fp, fi in graph.files.items() if _is_test_file(fp)
+    )
+    if _s151_test_lines > 0 and _s151_src_lines >= 10:
+        _s151_ratio = _s151_src_lines / _s151_test_lines
+        if _s151_ratio >= 5.0:
+            lines.append(
+                f"impl:test ratio: {_s151_ratio:.1f}x ({_s151_src_lines:,}L src / {_s151_test_lines:,}L tests)"
+                f" — test coverage is thin"
+            )
+
     # Suggest directories to exclude — detect likely noise
     noisy = _detect_noisy_dirs(graph, modules)
     if noisy:
