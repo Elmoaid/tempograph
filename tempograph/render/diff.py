@@ -400,6 +400,32 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             _s160_str += f" +{len(_s160_new_syms) - 3} more"
         lines.append(f"new symbols: {len(_s160_new_syms)} exported fns/classes with 0 callers ({_s160_str})")
 
+    # S187: Contract risk — the diff changes an exported symbol with 5+ external callers.
+    # Changing a widely-called exported symbol is a potential breaking change for all callers.
+    # Only shown when 1+ such high-caller exported symbol is in the changed files.
+    _s187_risky: list[tuple[int, str]] = []
+    for _fp187 in normalized:
+        if _is_test_file(_fp187):
+            continue
+        for _sym187 in graph.symbols.values():
+            if _sym187.file_path != _fp187 or not _sym187.exported:
+                continue
+            if _sym187.kind.value not in ("function", "method", "class"):
+                continue
+            _ext_callers187 = {
+                c.file_path for c in graph.callers_of(_sym187.id)
+                if c.file_path not in set(normalized)
+            }
+            if len(_ext_callers187) >= 5:
+                _s187_risky.append((len(_ext_callers187), _sym187.name))
+    if _s187_risky:
+        _s187_risky.sort(reverse=True)
+        _s187_top = _s187_risky[0]
+        lines.append(
+            f"contract risk: {_s187_top[1]} has {_s187_top[0]} external callers"
+            f" — changing this exported symbol may break callers"
+        )
+
     # S181: Test-heavy diff — the majority of changed files are test files.
     # A diff that's mostly tests without paired source changes may indicate speculative tests.
     # Only shown when >= 4 total files and >= 50% are test files.

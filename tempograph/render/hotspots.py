@@ -650,6 +650,26 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 f" — highest combined velocity+complexity"
             )
 
+    # S188: Avg complexity of top hotspot — the top hotspot file's functions are complex on average.
+    # Complex-on-average files have high maintenance cost beyond any single function.
+    # Only shown when avg complexity of fns in top hotspot file >= 8.
+    if scores:
+        _top188_fp = scores[0][1].file_path
+        _cx_vals188 = [
+            s.complexity for s in graph.symbols.values()
+            if s.file_path == _top188_fp
+            and s.kind.value in ("function", "method")
+            and s.complexity is not None
+        ]
+        if _cx_vals188:
+            _avg_cx188 = sum(_cx_vals188) / len(_cx_vals188)
+            if _avg_cx188 >= 8:
+                _top188_base = _top188_fp.rsplit("/", 1)[-1]
+                lines.append(
+                    f"\nhigh avg complexity: {_top188_base} — avg cx {_avg_cx188:.1f}"
+                    f" across {len(_cx_vals188)} fns — entire file is complex"
+                )
+
     # S182: Hot cluster — 2+ top hotspot files share the same parent directory.
     # When multiple hot files cluster in one directory, that dir is a change concentration zone.
     # Only shown when 2+ of the top-20 hotspots are in the same directory.
