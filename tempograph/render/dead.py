@@ -353,6 +353,53 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             _dc_str += f" +{len(_dead_consts) - 3} more"
         lines.append(f"dead constants: {len(_dead_consts)} unused constants/variables ({_dc_str})")
 
+    # S190: Dead overrides — methods in a live class that override a parent method but have 0 callers.
+    # A live class with an unused override = the child behavior is never triggered.
+    # Only shown when >= 1 such method found with live class (has callers) but 0-caller override.
+    _s190_dead_overrides: list[str] = []
+    for _cls190 in graph.symbols.values():
+        if _cls190.kind.value != "class" or _is_test_file(_cls190.file_path):
+            continue
+        # Class must be live: at least one method has cross-file callers
+        # (instantiation like Child() creates edges to methods, not the class itself)
+        _cls190_children = graph.children_of(_cls190.id)
+        if not any(
+            any(c.file_path != _cls190.file_path for c in graph.callers_of(m.id))
+            for m in _cls190_children
+            if m.kind.value == "method"
+        ):
+            continue
+        # Find parent class via INHERITS edge (source=child, target=parent)
+        _parent190 = next(
+            (
+                graph.symbols[e.target_id]
+                for e in graph.edges
+                if e.kind.value == "inherits" and e.source_id == _cls190.id
+                and e.target_id in graph.symbols
+            ),
+            None,
+        )
+        if _parent190 is None:
+            continue
+        _parent_method_names190 = {
+            s.name for s in graph.children_of(_parent190.id)
+            if s.kind.value == "method"
+        }
+        for _child190 in graph.children_of(_cls190.id):
+            if (
+                _child190.kind.value == "method"
+                and _child190.name in _parent_method_names190
+                and len(graph.callers_of(_child190.id)) == 0
+            ):
+                _s190_dead_overrides.append(_child190.name)
+    if len(_s190_dead_overrides) >= 1:
+        _ov_str = ", ".join(list(dict.fromkeys(_s190_dead_overrides))[:3])
+        if len(_s190_dead_overrides) > 3:
+            _ov_str += f" +{len(_s190_dead_overrides) - 3} more"
+        lines.append(
+            f"dead overrides: {len(_s190_dead_overrides)} override method(s) unused ({_ov_str})"
+        )
+
     # S184: Dead getters/setters — accessor methods (get_*/set_*) that are dead.
     # Methods in classes score lower confidence than standalone fns; threshold reflects this.
     # Only shown when 2+ such dead accessor methods found.

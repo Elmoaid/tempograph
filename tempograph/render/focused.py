@@ -1743,6 +1743,26 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
             if _inh_depth >= 3:
                 lines.append(f"\ninheritance depth: {_inh_depth} levels — deep hierarchy, high base-class coupling")
 
+    # S186: Cross-file callee — the focused symbol calls functions in 3+ distinct external files.
+    # Reaching out to many files means this fn is a coordination point; changes ripple widely.
+    # Only shown when seed is a fn/method with callees in 3+ different files.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim186 = _seed_syms[0]
+        if _prim186.kind.value in ("function", "method"):
+            _callee_files186 = {
+                c.file_path for c in graph.callees_of(_prim186.id)
+                if c.file_path != _prim186.file_path
+            }
+            if len(_callee_files186) >= 3:
+                _cf_names186 = [fp.rsplit("/", 1)[-1] for fp in sorted(_callee_files186)[:3]]
+                _cf_str186 = ", ".join(_cf_names186)
+                if len(_callee_files186) > 3:
+                    _cf_str186 += f" +{len(_callee_files186) - 3} more"
+                lines.append(
+                    f"\ncross-file callee: {_prim186.name} calls into {len(_callee_files186)} files"
+                    f" ({_cf_str186}) — coordination fn, changes ripple to many modules"
+                )
+
     # S180: Complex hub — focused symbol has high cyclomatic complexity AND many callers.
     # High cx + many callers = cognitive load at a widely-used junction; refactor priority.
     # Only shown when seed is a fn/method, cx >= 8, and callers >= 5.

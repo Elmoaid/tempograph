@@ -436,6 +436,25 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                 f" — package entry point, changes affect all importers"
             )
 
+    # S189: Sibling files — other source files sharing the same directory as the blast target.
+    # Co-located files are often tightly coupled and may need coordinated updates.
+    # Only shown when 2+ sibling source files exist in the same directory.
+    _s189_target_dir = file_path.rsplit("/", 1)[0] if "/" in file_path else "."
+    _s189_siblings = [
+        fp for fp in graph.files
+        if fp != file_path and not _is_test_file(fp)
+        and (fp.rsplit("/", 1)[0] if "/" in fp else ".") == _s189_target_dir
+    ]
+    if len(_s189_siblings) >= 2:
+        _sib_names = [fp.rsplit("/", 1)[-1] for fp in _s189_siblings[:3]]
+        _sib_str = ", ".join(_sib_names)
+        if len(_s189_siblings) > 3:
+            _sib_str += f" +{len(_s189_siblings) - 3} more"
+        lines.append(
+            f"sibling files: {len(_s189_siblings)} co-located files ({_sib_str})"
+            f" — may require coordinated updates"
+        )
+
     # S183: Large export count — blast target exports >= 10 symbols.
     # High export count = large public API surface; any change is a potential breaking change.
     # Only shown when the blast file exports >= 10 fn/method/class/interface symbols.

@@ -12654,3 +12654,250 @@ class TestDeadAccessors:
         assert "dead accessors" not in out, (
             f"'dead accessors' must not appear; got:\n{out}"
         )
+
+
+# ---------------------------------------------------------------------------
+# S185 — circular deps (overview)
+# ---------------------------------------------------------------------------
+class TestOverviewCircularDeps:
+    def test_circular_deps_shown(self, tmp_path):
+        """S185: circular deps shown when two files mutually import each other."""
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "alpha.py").write_text(
+            "from beta import beta_fn\ndef alpha_fn(): return beta_fn()\n"
+        )
+        (tmp_path / "beta.py").write_text(
+            "from alpha import alpha_fn\ndef beta_fn(): return 1\n"
+        )
+        # Third file to make repo non-trivial
+        (tmp_path / "util.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "circular deps" in out, f"'circular deps' expected; got:\n{out}"
+
+    def test_circular_deps_absent_for_clean_imports(self, tmp_path):
+        """S185: circular deps not shown when imports are acyclic."""
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "base.py").write_text("def base_fn(): pass\n")
+        (tmp_path / "mid.py").write_text(
+            "from base import base_fn\ndef mid_fn(): base_fn()\n"
+        )
+        (tmp_path / "top.py").write_text(
+            "from mid import mid_fn\ndef top_fn(): mid_fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "circular deps" not in out, f"'circular deps' must not appear; got:\n{out}"
+
+
+# ---------------------------------------------------------------------------
+# S186 — cross-file callee (focused)
+# ---------------------------------------------------------------------------
+class TestFocusedCrossFileCallee:
+    def test_cross_file_callee_shown(self, tmp_path):
+        """S186: cross-file callee shown when focused fn calls into 3+ distinct files."""
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "storage.py").write_text("def fetch_record(): pass\n")
+        (tmp_path / "cache_store.py").write_text("def read_cache(k): pass\n")
+        (tmp_path / "audit_trail.py").write_text("def write_audit(msg): pass\n")
+        (tmp_path / "metric_sink.py").write_text("def push_metric(k, v): pass\n")
+        (tmp_path / "service.py").write_text(
+            "from storage import fetch_record\n"
+            "from cache_store import read_cache\n"
+            "from audit_trail import write_audit\n"
+            "from metric_sink import push_metric\n"
+            "def orchestrate():\n"
+            "    fetch_record(); read_cache('k'); write_audit('x'); push_metric('y', 1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "orchestrate")
+        assert "cross-file callee" in out, f"'cross-file callee' expected; got:\n{out}"
+
+    def test_cross_file_callee_absent_when_local(self, tmp_path):
+        """S186: cross-file callee not shown when fn only calls local fns."""
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "module.py").write_text(
+            "def helper(): return 1\n"
+            "def main(): return helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "main")
+        assert "cross-file callee" not in out, (
+            f"'cross-file callee' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S187 — contract risk (diff)
+# ---------------------------------------------------------------------------
+class TestDiffContractRisk:
+    def test_contract_risk_shown(self, tmp_path):
+        """S187: contract risk shown when changed file has exported sym with 5+ callers."""
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "api.py").write_text("def endpoint(req): return req\n")
+        for i in range(6):
+            (tmp_path / f"client_{i}.py").write_text(
+                f"from api import endpoint\ndef call_{i}(): endpoint({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["api.py"])
+        assert "contract risk" in out, f"'contract risk' expected; got:\n{out}"
+
+    def test_contract_risk_absent_when_few_callers(self, tmp_path):
+        """S187: contract risk not shown when changed sym has < 5 callers."""
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "api.py").write_text("def endpoint(req): return req\n")
+        (tmp_path / "client.py").write_text(
+            "from api import endpoint\ndef call(): endpoint(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["api.py"])
+        assert "contract risk" not in out, (
+            f"'contract risk' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S188 — high avg complexity (hotspots)
+# ---------------------------------------------------------------------------
+class TestHotspotsHighAvgComplexity:
+    def test_high_avg_complexity_shown(self, tmp_path):
+        """S188: high avg complexity shown when top hotspot file's fns avg cx >= 8."""
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        # Write a file with multiple high-complexity functions
+        complex_fns = ""
+        for fn_i in range(4):
+            branches = "\n".join(
+                f"    if x == {j}: return {j}" for j in range(fn_i * 3, fn_i * 3 + 9)
+            )
+            complex_fns += f"def fn_{fn_i}(x):\n{branches}\n    return -1\n\n"
+        (tmp_path / "complex.py").write_text(complex_fns)
+        for i in range(5):
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from complex import fn_0\ndef do_{i}(): fn_0({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "high avg complexity" in out, f"'high avg complexity' expected; got:\n{out}"
+
+    def test_high_avg_complexity_absent_for_simple_file(self, tmp_path):
+        """S188: high avg complexity not shown when top hotspot file's fns are simple."""
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "simple.py").write_text(
+            "def fn_a(): return 1\ndef fn_b(): return 2\n"
+        )
+        for i in range(5):
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from simple import fn_a\ndef do_{i}(): fn_a()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "high avg complexity" not in out, (
+            f"'high avg complexity' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S189 — sibling files (blast)
+# ---------------------------------------------------------------------------
+class TestBlastSiblingFiles:
+    def test_sibling_files_shown(self, tmp_path):
+        """S189: sibling files shown when 2+ files share the blast target's directory."""
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        # All files in the same flat directory — siblings = everything else
+        (tmp_path / "core.py").write_text("def api(): pass\n")
+        (tmp_path / "helper.py").write_text("def util(): pass\n")
+        (tmp_path / "models.py").write_text("def model(): pass\n")
+        (tmp_path / "main.py").write_text(
+            "from core import api\ndef run(): api()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "core.py")
+        assert "sibling files" in out, f"'sibling files' expected; got:\n{out}"
+
+    def test_sibling_files_absent_when_alone(self, tmp_path):
+        """S189: sibling files not shown when blast target is alone in its dir."""
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "solo.py").write_text("def fn(): pass\n")
+        (tmp_path / "caller.py").write_text(
+            "from solo import fn\ndef use(): fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "solo.py")
+        assert "sibling files" not in out, (
+            f"'sibling files' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S190 — dead overrides (dead)
+# ---------------------------------------------------------------------------
+class TestDeadOverrides:
+    def test_dead_overrides_shown(self, tmp_path):
+        """S190: dead overrides shown when Child is imported but overridden method unused."""
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        # Child is imported and its activate() is called, but process() override is never called
+        (tmp_path / "base.py").write_text(
+            "class Base:\n"
+            "    def process(self): return 'base'\n"
+            "    def activate(self): return True\n"
+        )
+        (tmp_path / "child.py").write_text(
+            "from base import Base\n"
+            "class Child(Base):\n"
+            "    def process(self): return 'child'\n"  # override, never called
+            "    def activate(self): return True\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from child import Child\n"
+            "def run(): Child().activate()\n"  # Child used, but .process() not called
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead overrides" in out, f"'dead overrides' expected; got:\n{out}"
+
+    def test_dead_overrides_absent_when_override_called(self, tmp_path):
+        """S190: dead overrides not shown when the override is called."""
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "base.py").write_text(
+            "class Base:\n"
+            "    def process(self): return 'base'\n"
+        )
+        (tmp_path / "child.py").write_text(
+            "from base import Base\n"
+            "class Child(Base):\n"
+            "    def process(self): return 'child'\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from child import Child\ndef main(): Child().process()\n"
+            # 'main' is excluded from dead code detection → process() is live
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead overrides" not in out, (
+            f"'dead overrides' must not appear; got:\n{out}"
+        )

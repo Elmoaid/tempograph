@@ -1118,6 +1118,32 @@ def render_overview(graph: Tempo) -> str:
             f" — changes here have wide blast radius"
         )
 
+    # S185: Circular deps — pairs of source files that mutually import each other.
+    # Circular imports introduce tight coupling and make testing or refactoring harder.
+    # Only shown when >= 1 such circular pair is detected.
+    _s185_fp_imports: dict[str, set[str]] = {}
+    for _fp185b in graph.files:
+        if _is_test_file(_fp185b):
+            continue
+        for _imp185a in graph.importers_of(_fp185b):
+            if _imp185a in graph.files and not _is_test_file(_imp185a) and _imp185a != _fp185b:
+                _s185_fp_imports.setdefault(_imp185a, set()).add(_fp185b)
+    _s185_circular: set[tuple[str, str]] = set()
+    for _fp185a, _imports185 in _s185_fp_imports.items():
+        for _fp185b in _imports185:
+            if _fp185a in _s185_fp_imports.get(_fp185b, set()):
+                _s185_circular.add(tuple(sorted([_fp185a, _fp185b])))  # type: ignore[arg-type]
+    if _s185_circular:
+        _circ_names = [
+            f"{a.rsplit('/', 1)[-1]}↔{b.rsplit('/', 1)[-1]}"
+            for a, b in list(_s185_circular)[:2]
+        ]
+        _circ_str = ", ".join(_circ_names)
+        lines.append(
+            f"circular deps: {len(_s185_circular)} mutual-import pair(s) ({_circ_str})"
+            f" — tight coupling, difficult to test in isolation"
+        )
+
     # S179: Mixed-role files — non-test source files that contain test_ symbols.
     # Production code mixed with test code signals poor separation of concerns.
     # Only shown when >= 1 such mixed file exists.
