@@ -8594,9 +8594,8 @@ class TestHotspotsFileDangerZone:
         (tmp_path / "heavy.py").write_text(code)
 
         g = build_graph(str(tmp_path), use_cache=False)
-        heavy_fp = str(tmp_path / "heavy.py")
-        # Patch git.file_change_velocity to simulate active churn on this file
-        with patch("tempograph.git.file_change_velocity", return_value={heavy_fp: 3.5}):
+        # sym.file_path is stored relative to graph root (e.g. "heavy.py")
+        with patch("tempograph.git.file_change_velocity", return_value={"heavy.py": 3.5}):
             out = render_hotspots(g)
         assert "Danger zone:" in out, (
             f"Expected 'Danger zone:' for high-cx + high-churn file; got:\n{out}"

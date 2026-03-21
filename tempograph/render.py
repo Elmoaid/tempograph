@@ -2030,6 +2030,33 @@ def _build_symbol_block_lines(
         except Exception:
             pass
 
+    # Callee chain: show the first-hop callees for depth-0 functions with 1-4 direct callees.
+    # Helps agents trace execution flow without reading all callee source files.
+    # Shows "callee chain: parse → tokenize → normalize" (seed → callee_1 → callee_1's_callee).
+    if depth == 0 and sym.kind.value in ("function", "method"):
+        _direct_callees = [
+            graph.symbols[e.target_id]
+            for e in graph.edges
+            if e.kind == EdgeKind.CALLS and e.source_id == sym.id and e.target_id in graph.symbols
+            and graph.symbols[e.target_id].file_path != sym.file_path  # only cross-file callees
+        ]
+        if 1 <= len(_direct_callees) <= 4:
+            _chain_parts = [sym.name]
+            # Show first-hop callee name
+            _c1 = _direct_callees[0]
+            _chain_parts.append(_c1.name)
+            # Show second-hop (first callee of _c1) if it exists and is cross-file
+            _c1_callees = [
+                graph.symbols[e.target_id]
+                for e in graph.edges
+                if e.kind == EdgeKind.CALLS and e.source_id == _c1.id and e.target_id in graph.symbols
+                and graph.symbols[e.target_id].file_path != _c1.file_path
+            ]
+            if _c1_callees:
+                _chain_parts.append(_c1_callees[0].name)
+            if len(_chain_parts) >= 2:
+                block_lines.append(f"{indent}  callee chain: {' → '.join(_chain_parts)}")
+
     if sym.signature and depth < 2:
         block_lines.append(f"{indent}  sig: {sym.signature[:150]}")
     if sym.doc and depth == 0:
