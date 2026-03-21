@@ -31,13 +31,13 @@ DEFAULT_IGNORE_FILES = frozenset({
 CUSTOM_HANDLER_LANGUAGES = frozenset({
     Language.PYTHON, Language.TYPESCRIPT, Language.TSX,
     Language.JAVASCRIPT, Language.JSX, Language.RUST, Language.GO,
-    Language.JAVA, Language.CSHARP, Language.RUBY,
+    Language.JAVA, Language.CSHARP, Language.RUBY, Language.BASH,
 })
 
 # Non-code languages that should never be parsed for symbols
 _NON_CODE_LANGUAGES = frozenset({
     Language.JSON, Language.TOML, Language.YAML, Language.CSS,
-    Language.HTML, Language.BASH, Language.MARKDOWN, Language.UNKNOWN,
+    Language.HTML, Language.MARKDOWN, Language.UNKNOWN,
 })
 
 def _is_parseable(lang: Language) -> bool:

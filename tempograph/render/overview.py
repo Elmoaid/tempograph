@@ -1,0 +1,1238 @@
+from __future__ import annotations
+
+from collections import defaultdict
+from pathlib import Path
+
+from ..types import Tempo, EdgeKind, FileInfo, Symbol, SymbolKind
+from ._utils import count_tokens, _is_test_file
+
+def _find_entry_points(graph: Tempo) -> list[str]:
+    """Find actual execution entry points — where the program starts.
+    These are what agents need to understand the architecture."""
+    entries: list[str] = []
+    files = set(graph.files.keys())
+
+    # Config/manifest files (tells you what kind of project)
+    for pattern, label in [
+        ("package.json", "package.json"), ("Cargo.toml", "Cargo.toml"),
+        ("go.mod", "go.mod"), ("pyproject.toml", "pyproject.toml"),
+        ("setup.py", "setup.py"),
+    ]:
+        for f in files:
+            if f.endswith(pattern):
+                entries.append(f)
+                break
+
+    # Main entry points
+    for f in files:
+        base = f.rsplit("/", 1)[-1]
+        if base in ("main.py", "main.ts", "main.tsx", "main.rs", "main.go",
+                     "index.ts", "index.tsx", "index.js", "app.py", "app.ts",
+                     "lib.rs", "mod.rs", "__main__.py", "server.py", "cli.py"):
+            entries.append(f)
+
+    # Symbols named main/run/app at top level
+    for sym in graph.symbols.values():
+        if sym.parent_id:
+            continue
+        if sym.name in ("main", "app", "run_server", "create_app", "cli"):
+            entries.append(f"{sym.file_path}::{sym.name}")
+
+    # Deduplicate: if file already listed at file level, skip redundant file::symbol entry.
+    # e.g. "tempo/cli.py" and "tempo/cli.py::main" → keep "tempo/cli.py::main" (more specific).
+    seen_files: set[str] = set()
+    deduped: list[str] = []
+    # Two passes: symbol entries (more informative) take precedence over bare file entries
+    symbol_entries = [e for e in entries if "::" in e]
+    file_entries = [e for e in entries if "::" not in e]
+    for e in symbol_entries:
+        file_part = e.split("::")[0]
+        seen_files.add(file_part)
+        deduped.append(e)
+    for e in file_entries:
+        if e not in seen_files:
+            deduped.append(e)
+    return sorted(set(deduped), key=lambda e: ("::" not in e, e))[:15]  # files first, capped
+
+
+def render_overview(graph: Tempo) -> str:
+    """Cheapest mode: repo orientation — stats, entry points, key files, structure."""
+    stats = graph.stats
+    lines = [f"repo: {graph.root.rsplit('/', 1)[-1]}"]
+
+    # One-line stats
+    lang_items = sorted(stats["languages"].items(), key=lambda x: -x[1])
+    lang_str = ", ".join(f"{lang}({n})" for lang, n in lang_items)
+    lines.append(f"{stats['files']} files, {stats['symbols']} symbols, {stats['total_lines']:,} lines | {lang_str}")
+
+    # Entry points — what agents need to understand "where does this start"
+    entries = _find_entry_points(graph)
+    if entries:
+        lines.append("")
+        lines.append("entry points:")
+        for e in entries:
+            lines.append(f"  {e}")
+
+    # Top files by combined size + complexity (not two separate lists)
+    # Exclude non-code files: JSON schemas, markdown docs, CSS, TOML configs, etc.
+    # These have cx=0 but large line counts (e.g. auto-generated Tauri schemas at 2564L),
+    # which dominate the ranking and mislead agents about which files actually matter.
+    _CODE_LANGS = {
+        "python", "typescript", "tsx", "javascript", "jsx",
+        "rust", "go", "java", "csharp", "ruby",
+    }
+    file_scores: list[tuple[float, FileInfo]] = []
+    for fi in graph.files.values():
+        if fi.language.value not in _CODE_LANGS:
+            continue  # skip markdown, json, toml, yaml, html, css — never "key" for coding
+        cx = sum(graph.symbols[sid].complexity for sid in fi.symbols if sid in graph.symbols)
+        # Score: lines matter, complexity matters more
+        score = fi.line_count + cx * 3
+        file_scores.append((score, fi))
+    file_scores.sort(key=lambda x: -x[0])
+    lines.append("")
+    lines.append("key files (by size + complexity):")
+    for score, fi in file_scores[:12]:
+        cx = sum(graph.symbols[sid].complexity for sid in fi.symbols if sid in graph.symbols)
+        parts = []
+        parts.append(f"{fi.line_count:,}L")
+        if cx > 0:
+            parts.append(f"cx={cx}")
+        parts.append(fi.language.value)
+        lines.append(f"  {fi.path} ({', '.join(parts)})")
+
+    # Recently active: top commit-hot SOURCE files (excludes docs/config/tests)
+    _SRC_EXTS = {".py", ".js", ".ts", ".jsx", ".tsx", ".go", ".rs", ".java",
+                 ".rb", ".cpp", ".c", ".h", ".cs", ".swift", ".kt", ".php"}
+    try:
+        from ..git import file_commit_counts as _file_commit_counts
+        _commit_counts = _file_commit_counts(graph.root)
+        _active = sorted(
+            [(fp, c) for fp, c in _commit_counts.items()
+             if fp in graph.files and not _is_test_file(fp)
+             and Path(fp).suffix in _SRC_EXTS],
+            key=lambda x: -x[1],
+        )[:3]
+        if _active:
+            segs_list = [fp.replace("\\", "/").split("/") for fp, _ in _active]
+            short = ["/".join(s[-2:]) if len(s) > 1 else s[-1] for s in segs_list]
+            _act_str = ", ".join(f"{sh} ({c})" for sh, (_, c) in zip(short, _active))
+            lines.append("")
+            lines.append(f"recently active: {_act_str}")
+    except Exception:
+        _commit_counts = {}
+
+    # High-risk files: high-churn source files with no matching test file.
+    # Actively changing code with no test coverage — most likely to introduce regressions.
+    # Only shown when test files exist (otherwise the whole project lacks tests).
+    _test_fps_for_risk = {fp for fp in graph.files if _is_test_file(fp)}
+    if _commit_counts and _test_fps_for_risk:
+        _high_risk = sorted(
+            [
+                (fp, c) for fp, c in _commit_counts.items()
+                if fp in graph.files
+                and not _is_test_file(fp)
+                and c >= 5
+                and graph.files[fp].symbols
+                and Path(fp).suffix in _SRC_EXTS
+                and not any(fp.rsplit("/", 1)[-1].rsplit(".", 1)[0] in t for t in _test_fps_for_risk)
+            ],
+            key=lambda x: -x[1],
+        )
+        if _high_risk:
+            _hr_parts = [f"{fp.rsplit('/', 1)[-1]} ({c})" for fp, c in _high_risk[:3]]
+            lines.append(f"high risk (no tests): {', '.join(_hr_parts)}")
+
+    # Hot symbols: top 3 source functions by unique cross-file caller files.
+    # Helps agents immediately identify the highest-traffic API surfaces.
+    _hot_syms: list[tuple[int, str, str]] = []  # (unique_caller_files, name, file)
+    for sym in graph.symbols.values():
+        if sym.kind.value not in ("function", "method") or _is_test_file(sym.file_path):
+            continue
+        cross_files = {
+            c.file_path for c in graph.callers_of(sym.id)
+            if c.file_path != sym.file_path and not _is_test_file(c.file_path)
+        }
+        if len(cross_files) >= 3:
+            _hot_syms.append((len(cross_files), sym.qualified_name, sym.file_path))
+    if _hot_syms:
+        _hot_syms.sort(key=lambda x: -x[0])
+        _hot_parts = [f"{name} ({n})" for n, name, _ in _hot_syms[:3]]
+        lines.append("")
+        lines.append(f"hot symbols: {', '.join(_hot_parts)}")
+
+    # Untested hot: hot symbols (>=3 caller files) with zero test file callers.
+    # These are the most dangerous to refactor — widely used but unprotected by tests.
+    _untested_hot: list[tuple[int, str]] = []
+    for sym in graph.symbols.values():
+        if sym.kind.value not in ("function", "method") or _is_test_file(sym.file_path):
+            continue
+        _all_callers = graph.callers_of(sym.id)
+        _src_caller_files = {c.file_path for c in _all_callers if c.file_path != sym.file_path and not _is_test_file(c.file_path)}
+        _test_callers = [c for c in _all_callers if _is_test_file(c.file_path)]
+        if len(_src_caller_files) >= 3 and not _test_callers:
+            _untested_hot.append((len(_src_caller_files), sym.name, sym.file_path))
+    if _untested_hot:
+        _untested_hot.sort(key=lambda x: -x[0])
+        _uh_parts = [
+            f"{name} ({n}, {fp.rsplit('/', 1)[-1]})"
+            for n, name, fp in _untested_hot[:3]
+        ]
+        lines.append(f"untested hot: {', '.join(_uh_parts)} — no test coverage")
+
+    # Stable core: files with high import fan-in that have rarely changed (>=30d).
+    # Foundational infrastructure treated as stable contracts — changes here are highest-risk.
+    if graph.root:
+        try:
+            from ..git import file_last_modified_days as _fld_sc  # noqa: PLC0415
+            _sc_candidates: list[tuple[int, int, str]] = []  # (importers, days, fp)
+            for _fp, _fi in graph.files.items():
+                if _is_test_file(_fp) or not _fi.symbols:
+                    continue
+                _src_imps = len({
+                    i for i in graph.importers_of(_fp)
+                    if i != _fp and i in graph.files and not _is_test_file(i)
+                })
+                if _src_imps >= 5:
+                    _days_sc = _fld_sc(graph.root, _fp)
+                    if _days_sc is not None and _days_sc >= 30:
+                        _sc_candidates.append((_src_imps, _days_sc, _fp))
+            if len(_sc_candidates) >= 2:
+                _sc_candidates.sort(key=lambda x: -x[0])
+                _sc_parts = [f"{fp.rsplit('/', 1)[-1]} ({n} importers, {d}d stable)" for n, d, fp in _sc_candidates[:3]]
+                lines.append(f"stable core: {', '.join(_sc_parts)}")
+        except Exception:
+            pass
+
+    # Function size distribution: tiny/small/medium/large/huge counts across source functions.
+    # One-line style signal — "large: 3" means 3 functions >50L each; agents know to grep not read.
+    _fn_sizes = {"tiny": 0, "small": 0, "medium": 0, "large": 0, "huge": 0}
+    for sym in graph.symbols.values():
+        if sym.kind.value not in ("function", "method") or _is_test_file(sym.file_path):
+            continue
+        lc = sym.line_count
+        if lc <= 5:
+            _fn_sizes["tiny"] += 1
+        elif lc <= 20:
+            _fn_sizes["small"] += 1
+        elif lc <= 50:
+            _fn_sizes["medium"] += 1
+        elif lc <= 150:
+            _fn_sizes["large"] += 1
+        else:
+            _fn_sizes["huge"] += 1
+    _fn_total = sum(_fn_sizes.values())
+    if _fn_total >= 5:
+        _fs_parts = [f"{k}: {v}" for k, v in _fn_sizes.items() if v > 0]
+        # S82: Append avg complexity to the fn sizes line.
+        # avg cx > 5 = dense; 2-5 = moderate; < 2 = clean.
+        _cx_vals = [
+            sym.complexity
+            for sym in graph.symbols.values()
+            if sym.kind.value in ("function", "method")
+            and not _is_test_file(sym.file_path)
+            and sym.complexity >= 1
+        ]
+        if _cx_vals:
+            _avg_cx = sum(_cx_vals) / len(_cx_vals)
+            _fs_parts.append(f"avg cx: {_avg_cx:.1f}")
+        lines.append(f"fn sizes: {', '.join(_fs_parts)}")
+
+    # Largest functions: top 3 non-test functions by line count.
+    # Agents should avoid reading these in full; grep/focus is safer.
+    _large_fns = sorted(
+        (
+            (sym.line_count, sym.name, sym.file_path)
+            for sym in graph.symbols.values()
+            if sym.kind.value in ("function", "method")
+            and not _is_test_file(sym.file_path)
+            and sym.line_count >= 50
+        ),
+        key=lambda x: -x[0],
+    )
+    if len(_large_fns) >= 2:
+        _lf_parts = [f"{name} ({lc}L)" for lc, name, _ in _large_fns[:3]]
+        lines.append(f"largest fns: {', '.join(_lf_parts)}")
+
+    # God files: source files with unusually many exported symbols (>15).
+    # Signal for undivided modules or god objects — high cognitive load, hard to navigate.
+    _god_files = sorted(
+        (
+            (sum(1 for sid in fi.symbols if graph.symbols.get(sid, None) and graph.symbols[sid].exported), fp)
+            for fp, fi in graph.files.items()
+            if not _is_test_file(fp) and fi.symbols
+        ),
+        key=lambda x: -x[0],
+    )
+    _god_files = [(n, fp) for n, fp in _god_files if n >= 15]
+    if len(_god_files) >= 1:
+        _gf_parts = [f"{fp.rsplit('/', 1)[-1]} ({n} exported)" for n, fp in _god_files[:3]]
+        lines.append(f"god files: {', '.join(_gf_parts)}")
+
+    # Top imported: files most imported by other source files — true infrastructure files.
+    # Distinct from hot symbols (call frequency) and hot files (commit count).
+    _importer_counts: dict[str, int] = {}
+    for fp in graph.files:
+        if _is_test_file(fp):
+            continue
+        importers = [
+            i for i in graph.importers_of(fp)
+            if i in graph.files and not _is_test_file(i) and i != fp
+        ]
+        if importers:
+            _importer_counts[fp] = len(set(importers))
+    if _importer_counts:
+        _top_imported = sorted(_importer_counts.items(), key=lambda x: -x[1])[:3]
+        _min_importers = 3
+        _top_imported = [(fp, n) for fp, n in _top_imported if n >= _min_importers]
+        if _top_imported:
+            _ti_parts = [
+                f"{fp.rsplit('/', 1)[-1]} ({n})" for fp, n in _top_imported
+            ]
+            lines.append("")
+            lines.append(f"top imported: {', '.join(_ti_parts)}")
+
+    # Stable core: widely-imported files (>= 5 source importers) that haven't been
+    # modified in 30+ days. These are the infrastructure heart of the codebase —
+    # agents can rely on them being stable and well-tested.
+    if graph.root and _importer_counts:
+        try:
+            from ..git import file_last_modified_days as _fld_core  # noqa: PLC0415
+            _stable_core: list[tuple[int, str, int]] = []  # (importers, fp, days)
+            for _fp, _n_imp in _importer_counts.items():
+                if _n_imp < 5:
+                    continue
+                _days_c = _fld_core(graph.root, _fp)
+                if _days_c is not None and _days_c >= 30:
+                    _stable_core.append((_n_imp, _fp, _days_c))
+            if _stable_core:
+                _stable_core.sort(key=lambda x: -x[0])
+                _sc_parts = [
+                    f"{fp.rsplit('/', 1)[-1]} ({n_imp} importers, {d}d)"
+                    for n_imp, fp, d in _stable_core[:3]
+                ]
+                lines.append(f"stable core: {', '.join(_sc_parts)}")
+        except Exception:
+            pass
+
+    # High-coupling files: non-test source files that import >= 8 distinct source files.
+    # High fan-out = many dependencies = fragile integration points. Hard to change safely.
+    _import_fanout: dict[str, int] = {}
+    for _edge in graph.edges:
+        if _edge.kind == EdgeKind.IMPORTS:
+            _src_fp = _edge.source_id
+            _tgt_fp = _edge.target_id
+            if (
+                _src_fp in graph.files and _tgt_fp in graph.files
+                and not _is_test_file(_src_fp) and not _is_test_file(_tgt_fp)
+                and _src_fp != _tgt_fp
+            ):
+                _import_fanout[_src_fp] = _import_fanout.get(_src_fp, 0) + 1
+    _high_coupling = sorted(
+        [(n, fp) for fp, n in _import_fanout.items() if n >= 8],
+        key=lambda x: -x[0],
+    )
+    if _high_coupling:
+        _hc_parts = [f"{fp.rsplit('/', 1)[-1]} ({n} imports)" for n, fp in _high_coupling[:3]]
+        lines.append(f"high-coupling: {', '.join(_hc_parts)}")
+
+    # Co-change pairs: file pairs that frequently change together in git commits.
+    # Surfaces edit-coupling that static imports don't capture.
+    # e.g. "render.py ↔ test_mcp_server.py (100%)" tells agents what to touch together.
+    if graph.root:
+        try:
+            from ..git import cochange_matrix as _ccm, is_git_repo as _igr  # noqa: PLC0415
+            if _igr(graph.root):
+                _cc_matrix = _ccm(graph.root)
+                _CC_SRC_EXTS = {
+                    ".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".rs",
+                    ".java", ".kt", ".rb", ".cs", ".cpp", ".c", ".h",
+                    ".swift", ".dart", ".scala", ".ex", ".exs",
+                }
+                def _is_src(_p: str) -> bool:
+                    return any(_p.endswith(e) for e in _CC_SRC_EXTS)
+
+                _seen_cc_pairs: set[tuple[str, str]] = set()
+                _cc_pairs: list[tuple[float, str, str]] = []
+                for _ccfp1, _cc_partners in _cc_matrix.items():
+                    if not _is_src(_ccfp1):
+                        continue
+                    for _ccfp2, _cc_freq in _cc_partners:
+                        if not _is_src(_ccfp2):
+                            continue
+                        _cc_key = (min(_ccfp1, _ccfp2), max(_ccfp1, _ccfp2))
+                        if _cc_key in _seen_cc_pairs:
+                            continue
+                        _seen_cc_pairs.add(_cc_key)
+                        if _is_test_file(_ccfp1) and _is_test_file(_ccfp2):
+                            continue
+                        _cc_pairs.append((_cc_freq, _ccfp1, _ccfp2))
+                _cc_pairs.sort(key=lambda x: -x[0])
+                if _cc_pairs:
+                    _cc_parts2 = [
+                        f"{_cp1.rsplit('/', 1)[-1]} ↔ {_cp2.rsplit('/', 1)[-1]} ({_cf:.0%})"
+                        for _cf, _cp1, _cp2 in _cc_pairs[:3]
+                    ]
+                    lines.append(f"co-change pairs: {', '.join(_cc_parts2)}")
+        except Exception:
+            pass
+
+    # Stale tests: test files not in recent commits while their source file IS.
+    # Signals test drift — code changed but tests haven't kept up. Needs git repo.
+    if graph.root:
+        try:
+            from ..git import file_change_velocity as _fcv2  # noqa: PLC0415
+            _recent_vel = _fcv2(graph.root)
+            _stale_tests: list[str] = []
+            for _tfp in graph.files:
+                if not _is_test_file(_tfp):
+                    continue
+                # Find likely source file: test_foo.py → foo.py
+                _tname = _tfp.rsplit("/", 1)[-1]
+                _sname = _tname
+                if _sname.startswith("test_"):
+                    _sname = _sname[5:]
+                elif _sname.endswith("_test.py"):
+                    _sname = _sname[:-8] + ".py"
+                # Find source file with matching base name
+                _src_match = next(
+                    (fp for fp in graph.files if not _is_test_file(fp) and fp.rsplit("/", 1)[-1] == _sname),
+                    None,
+                )
+                if _src_match and _src_match in _recent_vel and _tfp not in _recent_vel:
+                    _stale_tests.append(_tfp.rsplit("/", 1)[-1])
+            if len(_stale_tests) >= 2:
+                _st_str = ", ".join(_stale_tests[:3])
+                if len(_stale_tests) > 3:
+                    _st_str += f" +{len(_stale_tests) - 3} more"
+                lines.append(f"stale tests ({len(_stale_tests)}): {_st_str} — source changed, tests didn't")
+        except Exception:
+            pass
+
+    # Test coverage ratio: source files with a matching test file (name-pattern match).
+    # Signals overall project health — agents use this to identify undertested areas.
+    # Only count code files with symbols (excludes docs, config, markdown).
+    _src_fps = [fp for fp in graph.files if not _is_test_file(fp) and graph.files[fp].symbols]
+    _test_fps = {fp for fp in graph.files if _is_test_file(fp)}
+    if _src_fps and _test_fps:
+        _covered = sum(
+            1 for fp in _src_fps
+            if any(fp.rsplit("/", 1)[-1].rsplit(".", 1)[0] in t for t in _test_fps)
+        )
+        _test_pct = int(_covered / len(_src_fps) * 100)
+        lines.append(f"test coverage: {_covered}/{len(_src_fps)} source files ({_test_pct}%)")
+
+        # Per-directory breakdown: show dirs with >=3 source files and <80% coverage.
+        # Agents use this to identify which directories are high-risk to edit.
+        from collections import defaultdict as _dd
+        _dir_src: dict[str, list[str]] = _dd(list)
+        for fp in _src_fps:
+            _d = fp.rsplit("/", 1)[0] if "/" in fp else "."
+            _dir_src[_d].append(fp)
+        _dir_breakdown: list[tuple[int, str, str]] = []  # (pct, dir, label)
+        for _d, _fps in _dir_src.items():
+            if len(_fps) < 3:
+                continue
+            _d_cov = sum(1 for fp in _fps if any(fp.rsplit("/", 1)[-1].rsplit(".", 1)[0] in t for t in _test_fps))
+            _d_pct = int(_d_cov / len(_fps) * 100)
+            if _d_pct < 80:  # only show undertested dirs
+                _dname = _d.rsplit("/", 1)[-1] if "/" in _d else _d
+                _dir_breakdown.append((_d_pct, _dname, f"{_dname}/ ({_d_pct}%, {_d_cov}/{len(_fps)})"))
+        if len(_dir_breakdown) >= 2:
+            _dir_breakdown.sort(key=lambda x: x[0])  # worst first
+            lines.append(f"  by dir: {', '.join(x[2] for x in _dir_breakdown[:4])}")
+
+    # Orphan test files: test files that name a source file which no longer exists.
+    # These linger after source renames/deletions and should be cleaned up.
+    # Uses both basename and stem-segment matching to avoid false positives:
+    # test_bench_context.py -> "bench_context.py" OR any file ending in "context.py"
+    # with a path segment containing "bench".
+    if len(_test_fps) >= 2:
+        _orphan_tests: list[str] = []
+        _src_basenames = {
+            fp.rsplit("/", 1)[-1] for fp in graph.files if not _is_test_file(fp)
+        }
+        # Also build a stem set for partial matching (handles test_bench_ctx -> ctx.py patterns)
+        _src_stems = {
+            fp.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+            for fp in graph.files if not _is_test_file(fp)
+        }
+        for _tfp in _test_fps:
+            _tname = _tfp.rsplit("/", 1)[-1]
+            _sname = _tname
+            if _sname.startswith("test_"):
+                _sname = _sname[5:]
+            elif _sname.endswith("_test.py"):
+                _sname = _sname[:-8] + ".py"
+            else:
+                continue  # no test_ prefix/suffix pattern — skip
+            _sstem = _sname.rsplit(".", 1)[0]  # e.g. "bench_context"
+            # Direct basename match
+            if _sname in _src_basenames:
+                continue
+            # Partial stem match: any source file whose stem is a suffix of test stem
+            # e.g. "bench_context" -> source "context" (bench/changelocal/context.py)
+            _partial_match = any(
+                _sstem.endswith("_" + s) or _sstem == s
+                for s in _src_stems
+                if len(s) >= 3
+            )
+            if not _partial_match:
+                _orphan_tests.append(_tname)
+        # Suppress if many orphans AND >40% ratio — indicates a naming mismatch
+        # between test structure and source structure (e.g. test_bench_foo.py for bench/foo.py).
+        # Small counts (<5) always shown regardless of ratio (likely real orphans).
+        _orphan_ratio = len(_orphan_tests) / max(len(_test_fps), 1)
+        if _orphan_tests and (len(_orphan_tests) < 5 or _orphan_ratio <= 0.40):
+            _ot_str = ", ".join(sorted(_orphan_tests)[:3])
+            if len(_orphan_tests) > 3:
+                _ot_str += f" +{len(_orphan_tests) - 3} more"
+            lines.append(
+                f"orphan tests ({len(_orphan_tests)}): {_ot_str} — no matching source file"
+            )
+
+    # S115: Largest test file — the test file with the most test functions.
+    # Identifies the "main test suite" — agents should run it first after any change.
+    # Only shown when 2+ test files exist and the largest has 3+ test functions.
+    if len(_test_fps) >= 2:
+        _test_fn_counts: list[tuple[int, str]] = []
+        for _tfp in _test_fps:
+            _fi_t = graph.files.get(_tfp)
+            if not _fi_t:
+                continue
+            _n_tests = sum(
+                1 for sid in _fi_t.symbols
+                if sid in graph.symbols and graph.symbols[sid].name.startswith("test_")
+            )
+            if _n_tests >= 3:
+                _test_fn_counts.append((_n_tests, _tfp))
+        if _test_fn_counts:
+            _largest_t_n, _largest_t_fp = max(_test_fn_counts, key=lambda x: x[0])
+            lines.append(f"largest test file: {_largest_t_fp.rsplit('/', 1)[-1]} ({_largest_t_n} tests)")
+
+    # API surface health: exported symbols with 0 cross-file callers = potentially dead API.
+    # Quick fraction for agents: "35% of exports unused → dead code problem worth investigating."
+    # Only shown when >= 5 exported non-test symbols exist (avoids noise on tiny repos).
+    _exported_src = [
+        sym for sym in graph.symbols.values()
+        if sym.exported and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method", "class", "interface", "variable", "constant")
+    ]
+    if len(_exported_src) >= 5:
+        _unused_exp = [
+            sym for sym in _exported_src
+            if not any(c.file_path != sym.file_path for c in graph.callers_of(sym.id))
+        ]
+        _unused_pct = int(len(_unused_exp) / len(_exported_src) * 100)
+        _ap_line = f"API surface: {len(_exported_src)} exported"
+        if _unused_exp:
+            _ap_line += f", {len(_unused_exp)} unused ({_unused_pct}%)"
+        lines.append(_ap_line)
+
+    # S130: Most-called export — the single exported symbol with the most cross-file source callers.
+    # The "heart" of the codebase: changes here have maximum blast radius.
+    # Only shown when there are 5+ exported non-test symbols and max callers >= 5.
+    if len(_exported_src) >= 5:
+        _mc_exp_sym: "Symbol | None" = None
+        _mc_exp_count = 0
+        for _mce in _exported_src:
+            if _mce.kind.value not in ("function", "method"):
+                continue
+            _mce_cfs = len({
+                c.file_path for c in graph.callers_of(_mce.id)
+                if c.file_path != _mce.file_path and not _is_test_file(c.file_path)
+            })
+            if _mce_cfs > _mc_exp_count:
+                _mc_exp_count = _mce_cfs
+                _mc_exp_sym = _mce
+        if _mc_exp_sym and _mc_exp_count >= 5:
+            lines.append(
+                f"most-called export: {_mc_exp_sym.name}"
+                f" ({_mc_exp_count} caller files in {_mc_exp_sym.file_path.rsplit('/', 1)[-1]})"
+            )
+
+    # S84: Test debt — exported functions/methods with real callers but zero test coverage.
+    # Different from "API surface unused": these ARE actively called but not tested.
+    # The highest-risk category: production code exercised by users but not by tests.
+    # Only shown when 3+ qualify (avoids noise on small/well-tested repos).
+    _active_exported_fns = [
+        sym for sym in graph.symbols.values()
+        if sym.exported
+        and sym.kind.value in ("function", "method")
+        and not _is_test_file(sym.file_path)
+        and any(c.file_path != sym.file_path for c in graph.callers_of(sym.id))
+        and not any(_is_test_file(c.file_path) for c in graph.callers_of(sym.id))
+    ]
+    if len(_active_exported_fns) >= 3:
+        lines.append(
+            f"test debt: {len(_active_exported_fns)} active exports with callers but no tests"
+        )
+
+    # S86: Zombie exports — exported functions whose ONLY callers are test files.
+    # These are test-scaffolding APIs that should be made private or deleted.
+    # Only shown when 2+ qualify; single occurrence could be an intentional test helper.
+    _zombie_exports = [
+        sym for sym in graph.symbols.values()
+        if sym.exported
+        and sym.kind.value in ("function", "method")
+        and not _is_test_file(sym.file_path)
+        and graph.callers_of(sym.id)  # must have at least one caller
+        and all(_is_test_file(c.file_path) for c in graph.callers_of(sym.id))
+    ]
+    if len(_zombie_exports) >= 2:
+        _z_names = [s.name for s in _zombie_exports[:4]]
+        _z_str = ", ".join(_z_names)
+        if len(_zombie_exports) > 4:
+            _z_str += f" +{len(_zombie_exports) - 4} more"
+        lines.append(f"zombie exports ({len(_zombie_exports)}): {_z_str} — exported but only called from tests")
+
+    # S80: Interface/abstract count — how many pure interface/protocol/abstract-class symbols.
+    # Signals codebase abstraction health: 0 interfaces in a 100-class repo = no abstraction layer.
+    # Only shown when project has 5+ classes (smaller repos rarely use abstractions).
+    _class_count = sum(
+        1 for sym in graph.symbols.values()
+        if sym.kind.value == "class" and not _is_test_file(sym.file_path) and sym.exported
+    )
+    if _class_count >= 5:
+        _iface_count = sum(
+            1 for sym in graph.symbols.values()
+            if sym.kind.value == "interface" and not _is_test_file(sym.file_path)
+        )
+        if _iface_count >= 1:
+            lines.append(f"abstractions: {_iface_count} interface(s) across {_class_count} classes")
+
+    # Private API leaking: symbols with _ prefix called from external files.
+    # Indicates callers depending on implementation details — fragile coupling.
+    _private_leaks: list[str] = []
+    for sym in graph.symbols.values():
+        if not sym.name.startswith("_") or sym.name.startswith("__"):
+            continue
+        if _is_test_file(sym.file_path) or sym.kind.value not in ("function", "method"):
+            continue
+        _ext_callers = {c.file_path for c in graph.callers_of(sym.id) if c.file_path != sym.file_path and not _is_test_file(c.file_path)}
+        if _ext_callers:
+            _private_leaks.append(sym.name)
+    if len(_private_leaks) >= 2:
+        _pl_str = ", ".join(_private_leaks[:4])
+        if len(_private_leaks) > 4:
+            _pl_str += f" +{len(_private_leaks) - 4} more"
+        lines.append(f"private leak ({len(_private_leaks)}): {_pl_str} — _ symbols called externally")
+
+    # Quick-win dead code: largest non-test, non-exported functions with 0 callers.
+    # Agents get immediate cleanup targets without running full dead_code mode.
+    # Threshold: line_count >= 15 to avoid flagging trivial 1-2 line helpers.
+    _quick_wins = sorted(
+        [
+            (sym.line_count, sym)
+            for sym in graph.symbols.values()
+            if sym.kind.value in ("function", "method")
+            and not sym.exported
+            and not _is_test_file(sym.file_path)
+            and sym.line_count >= 15
+            and not graph.callers_of(sym.id)
+        ],
+        key=lambda x: -x[0],
+    )[:3]
+    if len(_quick_wins) >= 2:
+        _qw_parts = [f"{sym.name} ({lc}L)" for lc, sym in _quick_wins]
+        lines.append(f"quick wins: {', '.join(_qw_parts)} — no callers, likely dead")
+
+    # Lone files: source files with both 0 outgoing imports AND 0 incoming importers.
+    # Completely structurally isolated — either dead utility modules or entry points not yet wired.
+    # Only shown when 3+ exist (single lone file = normal for utilities; 3+ = structural smell).
+    if len(_src_fps) >= 6:
+        _LONE_SKIP = {
+            "__init__.py", "__main__.py", "main.py", "app.py", "manage.py",
+            "cli.py", "server.py", "conftest.py", "setup.py",
+        }
+        _lone_files: list[str] = []
+        _src_import_set = {
+            e.source_id for e in graph.edges
+            if e.kind == EdgeKind.IMPORTS and e.source_id in graph.files
+        }
+        _imported_set = {
+            e.target_id for e in graph.edges
+            if e.kind == EdgeKind.IMPORTS and e.target_id in graph.files
+        }
+        for _fp in _src_fps:
+            _bname = _fp.rsplit("/", 1)[-1]
+            if _bname in _LONE_SKIP or _is_test_file(_fp):
+                continue
+            if _fp not in _src_import_set and _fp not in _imported_set and graph.files[_fp].symbols:
+                _lone_files.append(_fp)
+        if len(_lone_files) >= 3:
+            _lone_names = [fp.rsplit("/", 1)[-1] for fp in _lone_files[:4]]
+            _lone_str = ", ".join(_lone_names)
+            if len(_lone_files) > 4:
+                _lone_str += f" +{len(_lone_files) - 4} more"
+            lines.append(f"lone files ({len(_lone_files)}): {_lone_str} — no imports or importers")
+
+    # Potentially unused modules: source files with 0 source importers AND no test coverage.
+    # Flags entire floating modules that nothing depends on and nothing tests — either dead
+    # features or undiscovered entry points agents should investigate.
+    # Only shown when project has 10+ source files AND has tests (otherwise too noisy).
+    _ENTRY_BASENAMES = {
+        "__init__.py", "__main__.py", "main.py", "app.py", "manage.py",
+        "cli.py", "server.py", "wsgi.py", "asgi.py", "run.py", "start.py",
+        "index.js", "index.ts", "index.tsx", "main.ts", "main.tsx", "app.ts",
+        "main.go", "main.rs", "lib.rs", "mod.rs",  # Rust crate/module roots
+        "main.swift", "Program.cs",
+    }
+    if len(_src_fps) >= 10 and _test_fps:
+        _unused_modules: list[str] = []
+        for _fp in _src_fps:
+            _basename = _fp.rsplit("/", 1)[-1]
+            if _basename in _ENTRY_BASENAMES:
+                continue  # skip known entry points and package markers
+            # Skip TypeScript type-only files (.types.ts, .d.ts) — we skip `import type`
+            # statements, so these always appear as having 0 importers (false positive).
+            if _basename.endswith(".types.ts") or _basename.endswith(".d.ts"):
+                continue
+            if len(graph.files[_fp].symbols) < 3:
+                continue  # too minimal to flag
+            _src_importers_fp = [i for i in graph.importers_of(_fp) if not _is_test_file(i)]
+            _test_importers_fp = [i for i in graph.importers_of(_fp) if _is_test_file(i)]
+            _test_callers_fp = any(
+                _is_test_file(c.file_path)
+                for sid in graph.files[_fp].symbols
+                for c in graph.callers_of(sid)
+            )
+            if not _src_importers_fp and not _test_importers_fp and not _test_callers_fp:
+                _unused_modules.append(_fp)
+        if len(_unused_modules) >= 2:
+            _parts = _fp.rsplit("/", 2)
+            def _short_fp(fp: str) -> str:
+                parts = fp.rsplit("/", 2)
+                return "/".join(parts[-2:]) if len(parts) >= 2 else fp
+            _um_names = [_short_fp(fp) for fp in _unused_modules[:4]]
+            _um_str = ", ".join(_um_names)
+            if len(_unused_modules) > 4:
+                _um_str += f" +{len(_unused_modules) - 4} more"
+            lines.append(f"potentially unused ({len(_unused_modules)}): {_um_str}")
+
+    # Tech debt markers: TODO/FIXME/HACK/XXX comment counts in source files.
+    # Quick signal for known issues, shortcuts, and incomplete work.
+    # Only source-code files with symbols; capped to avoid I/O cost on huge repos.
+    import re as _re  # noqa: PLC0415
+    # Only match markers that appear in comment lines (after # or //).
+    # Avoids false positives from regex strings, test fixtures, and scanner code itself.
+    _TD_PAT = _re.compile(r'(?:#|//)[^\n]*\b(TODO|FIXME|HACK|XXX)\b')
+    _td_counts: dict[str, int] = {}
+    _td_per_file: dict[str, int] = {}
+    _td_file_count = 0
+    for _fp in _src_fps[:200]:  # cap at 200 to keep I/O bounded
+        if Path(_fp).suffix not in _SRC_EXTS:
+            continue
+        try:
+            _content = (Path(graph.root) / _fp).read_text(errors="replace")
+            _matches = _TD_PAT.findall(_content)
+            if _matches:
+                _td_file_count += 1
+                _td_per_file[_fp] = len(_matches)
+                for _m in _matches:
+                    _td_counts[_m] = _td_counts.get(_m, 0) + 1
+        except Exception:
+            pass
+    if _td_counts:
+        _td_total = sum(_td_counts.values())
+        if _td_total >= 3:
+            _td_parts = [
+                f"{_td_counts[k]} {k}s"
+                for k in ("TODO", "FIXME", "HACK", "XXX")
+                if _td_counts.get(k, 0) > 0
+            ]
+            lines.append(f"tech debt: {_td_total} markers in {_td_file_count} files ({', '.join(_td_parts)})")
+        # Per-file tech debt concentration: top 3 files with most markers.
+        # Tells agents where to focus cleanup effort.
+        if _td_total >= 5 and _td_per_file:
+            _debt_hot = sorted(_td_per_file.items(), key=lambda x: -x[1])[:3]
+            _debt_hot = [(fp, n) for fp, n in _debt_hot if n >= 3]
+            if _debt_hot:
+                _dh_parts = [f"{fp.rsplit('/', 1)[-1]} ({n})" for fp, n in _debt_hot]
+                lines.append(f"debt hot: {', '.join(_dh_parts)}")
+
+    # S84: Async surface — count exported async functions to signal async-heavy codebases.
+    # Helps agents understand whether the project needs coroutine/event-loop awareness.
+    # Only shown when 3+ exported async functions exist (prevents false signal on tiny projects).
+    _async_syms = [
+        sym for sym in graph.symbols.values()
+        if sym.kind.value in ("function", "method")
+        and sym.exported
+        and not _is_test_file(sym.file_path)
+        and sym.signature.startswith("async ")
+    ]
+    if len(_async_syms) >= 3:
+        _async_files = len({s.file_path for s in _async_syms})
+        lines.append(f"async surface: {len(_async_syms)} exported async functions in {_async_files} files")
+
+    # Deepest import chain: longest path from any source file through import edges.
+    # High depth = deep coupling = hard to refactor. Only shown when depth >= 5.
+    # Uses iterative DFS on the import graph; stops early at depth 12 to stay fast.
+    # Skips test files and considers only source files with symbols.
+    _MAX_CHAIN = 12
+    _best_chain: list[str] = []
+    _import_adj: dict[str, list[str]] = {}  # file → files it imports
+    for _edge in graph.edges:
+        if _edge.kind == EdgeKind.IMPORTS:
+            # IMPORTS edges use file paths directly as source_id/target_id
+            _src_fp = _edge.source_id
+            _tgt_fp = _edge.target_id
+            if (
+                _src_fp in graph.files and _tgt_fp in graph.files
+                and not _is_test_file(_src_fp) and not _is_test_file(_tgt_fp)
+            ):
+                _import_adj.setdefault(_src_fp, [])
+                if _tgt_fp not in _import_adj[_src_fp]:
+                    _import_adj[_src_fp].append(_tgt_fp)
+    # DFS from each file with symbols, find longest non-cyclic chain
+    _src_imp_fps = [fp for fp in _import_adj if fp in graph.files and graph.files[fp].symbols]
+    for _start in _src_imp_fps[:100]:  # cap to 100 starts for performance
+        # Iterative DFS: (file, chain)
+        _stack = [(_start, [_start])]
+        while _stack:
+            _cur, _chain = _stack.pop()
+            if len(_chain) > len(_best_chain):
+                _best_chain = _chain
+            if len(_chain) >= _MAX_CHAIN:
+                continue
+            for _nxt in _import_adj.get(_cur, []):
+                if _nxt not in _chain:  # avoid cycles
+                    _stack.append((_nxt, _chain + [_nxt]))
+    if len(_best_chain) >= 5:
+        def _short(fp: str) -> str:
+            parts = fp.split("/")
+            return "/".join(parts[-2:]) if len(parts) > 2 else fp
+        _chain_names = [_short(fp) for fp in _best_chain]
+        lines.append(f"dep depth: {len(_best_chain)} ({' → '.join(_chain_names[:5])}{'...' if len(_best_chain) > 5 else ''})")
+
+    # S93: Complexity concentration — % of total cyclomatic complexity held in top-N files.
+    # High concentration = most cognitive burden in few files = clear refactoring targets.
+    # Only shown when 5+ source files AND top-3 files hold >= 50% of total complexity.
+    _src_file_cx: dict[str, int] = {}
+    for _sym in graph.symbols.values():
+        if not _is_test_file(_sym.file_path) and _sym.complexity >= 1:
+            _src_file_cx[_sym.file_path] = _src_file_cx.get(_sym.file_path, 0) + _sym.complexity
+    _total_cx = sum(_src_file_cx.values())
+    if _total_cx >= 10 and len(_src_file_cx) >= 5:
+        _cx_sorted = sorted(_src_file_cx.items(), key=lambda x: -x[1])
+        _top3_cx = sum(cx for _, cx in _cx_sorted[:3])
+        _pct = int(_top3_cx / _total_cx * 100)
+        if _pct >= 60:
+            _cxc_parts = [f"{fp.rsplit('/', 1)[-1]}:{cx}" for fp, cx in _cx_sorted[:3]]
+            lines.append(f"cx concentration: {_pct}% in top 3 files ({', '.join(_cxc_parts)})")
+
+    # S100: Median complexity — central tendency for cyclomatic complexity across fns.
+    # Complements the avg: if median << avg, a small number of outliers skew the mean.
+    # Only shown when 10+ non-test functions have complexity data.
+    _all_cx_vals = sorted(
+        sym.complexity for sym in graph.symbols.values()
+        if sym.kind.value in ("function", "method") and not _is_test_file(sym.file_path) and sym.complexity >= 1
+    )
+    if len(_all_cx_vals) >= 10:
+        _mid = len(_all_cx_vals) // 2
+        _median_cx = (
+            _all_cx_vals[_mid] if len(_all_cx_vals) % 2 == 1
+            else (_all_cx_vals[_mid - 1] + _all_cx_vals[_mid]) // 2
+        )
+        _mean_cx = sum(_all_cx_vals) / len(_all_cx_vals)
+        lines.append(f"median complexity: {_median_cx} (mean: {_mean_cx:.1f}, n={len(_all_cx_vals)} fns)")
+
+    # S125: Most complex function — the single non-test function with highest cyclomatic complexity.
+    # Agents refactoring or auditing code need to know the worst-case function by complexity.
+    # Only shown when there are 5+ non-test functions AND max complexity >= 15.
+    if len(_all_cx_vals) >= 5 and _all_cx_vals and _all_cx_vals[-1] >= 15:
+        _cx_max = _all_cx_vals[-1]
+        _cx_leader = max(
+            (sym for sym in graph.symbols.values()
+             if sym.kind.value in ("function", "method") and not _is_test_file(sym.file_path)
+             and sym.complexity >= _cx_max),
+            key=lambda s: s.complexity,
+            default=None,
+        )
+        if _cx_leader:
+            lines.append(
+                f"most complex fn: {_cx_leader.name} (cx={_cx_leader.complexity}"
+                f" in {_cx_leader.file_path.rsplit('/', 1)[-1]})"
+            )
+
+    # S105: Mono-callers — exported symbols used by exactly 1 external file.
+    # These look like "public API" but are secretly coupled to a single consumer.
+    # High count = hidden tight coupling disguised as an open interface.
+    # Only shown when 3+ mono-caller exports exist (fewer = not a pattern worth flagging).
+    _mono_callers = [
+        sym for sym in graph.symbols.values()
+        if sym.exported and sym.kind.value in ("function", "method")
+        and not _is_test_file(sym.file_path)
+        and len({c.file_path for c in graph.callers_of(sym.id) if c.file_path != sym.file_path and not _is_test_file(c.file_path)}) == 1
+    ]
+    if len(_mono_callers) >= 3:
+        _mc_names = [s.name for s in _mono_callers[:4]]
+        _mc_str = ", ".join(_mc_names)
+        if len(_mono_callers) > 4:
+            _mc_str += f" +{len(_mono_callers) - 4} more"
+        lines.append(f"mono-callers: {len(_mono_callers)} exported fns with only 1 caller file ({_mc_str})")
+
+    # S110: File size distribution — avg + median source file line counts.
+    # High avg = large files = harder to navigate; agents should use focus mode more.
+    # Only shown when 5+ source files exist with known line counts.
+    _src_line_counts = sorted(
+        fi.line_count for fp, fi in graph.files.items()
+        if not _is_test_file(fp) and fi.line_count and fi.line_count > 0
+    )
+    if len(_src_line_counts) >= 5:
+        _lc_avg = int(sum(_src_line_counts) / len(_src_line_counts))
+        _lc_mid = len(_src_line_counts) // 2
+        _lc_median = (
+            _src_line_counts[_lc_mid] if len(_src_line_counts) % 2 == 1
+            else (_src_line_counts[_lc_mid - 1] + _src_line_counts[_lc_mid]) // 2
+        )
+        if _lc_avg >= 50:  # skip trivial repos with tiny stubs
+            lines.append(f"avg file size: {_lc_avg} lines (median: {_lc_median}, n={len(_src_line_counts)} files)")
+
+    # S119: Deepest import chain — the source file with the highest import depth from root.
+    # Deeply-nested files are fragile: a change anywhere up the chain cascades down.
+    # Only shown when there are 5+ source files and max depth >= 4.
+    _src_fps_depth = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_src_fps_depth) >= 5:
+        _max_depth = 0
+        _deepest_fp = ""
+        for _dfp in _src_fps_depth:
+            # BFS depth from this file up the importer chain
+            _visited: set[str] = set()
+            _queue = [(_dfp, 0)]
+            _local_max = 0
+            while _queue:
+                _cur, _d = _queue.pop(0)
+                if _cur in _visited:
+                    continue
+                _visited.add(_cur)
+                _local_max = max(_local_max, _d)
+                for _imp in graph.importers_of(_cur):
+                    if _imp not in _visited and not _is_test_file(_imp):
+                        _queue.append((_imp, _d + 1))
+            if _local_max > _max_depth:
+                _max_depth = _local_max
+                _deepest_fp = _dfp
+        if _max_depth >= 4:
+            lines.append(f"deepest import chain: {_deepest_fp.rsplit('/', 1)[-1]} ({_max_depth} hops from root)")
+
+    # Circular imports: flag immediately in overview so agents don't miss them.
+    # Details are in `--mode deps` but overview gives a quick count + first cycle.
+    try:
+        _cycles = graph.detect_circular_imports()
+        if _cycles:
+            _first_cycle = " → ".join(fp.rsplit("/", 1)[-1] for fp in _cycles[0])
+            _more = f" +{len(_cycles) - 1} more" if len(_cycles) > 1 else ""
+            lines.append(f"⚠ circular imports: {len(_cycles)} cycle(s) ({_first_cycle}{_more})")
+    except Exception:
+        pass
+
+    # Module structure -- just the shape, no noisy import counts
+    modules: dict[str, list[str]] = {}
+    for fp in graph.files:
+        parts = fp.split("/")
+        mod = parts[0] if len(parts) > 1 else "."
+        modules.setdefault(mod, []).append(fp)
+    if len(modules) > 1:
+        lines.append("")
+        lines.append("structure: " + ", ".join(
+            f"{mod}/({len(fs)})" for mod, fs in
+            sorted(modules.items(), key=lambda x: -len(x[1]))
+        ))
+
+    # Circular imports — these are real problems worth flagging
+    cycles = graph.detect_circular_imports()
+    if cycles:
+        lines.append("")
+        lines.append(f"CIRCULAR IMPORTS ({len(cycles)}):")
+        for cycle in cycles[:3]:
+            chain = " → ".join(c.rsplit("/", 1)[-1] for c in cycle)
+            lines.append(f"  {chain}")
+
+    # S129: Orphan modules — top-level dirs where no file is imported by any other module.
+    # These are candidate standalone tools, dead plugins, or forgotten experiments.
+    # Only shown when 3+ top-level dirs exist and 2+ are orphans (not "." root files).
+    if len(modules) >= 3:
+        _orphan_mods: list[str] = []
+        for _om, _om_files in modules.items():
+            if _om == ".":
+                continue
+            # A module is orphan if none of its files are imported from outside the module
+            _any_importer = any(
+                imp in graph.files and not imp.startswith(_om + "/")
+                for fp in _om_files
+                for imp in graph.importers_of(fp)
+            )
+            if not _any_importer:
+                _orphan_mods.append(_om)
+        if len(_orphan_mods) >= 2:
+            _om_str = ", ".join(f"{m}/" for m in sorted(_orphan_mods)[:4])
+            if len(_orphan_mods) > 4:
+                _om_str += f" +{len(_orphan_mods) - 4} more"
+            lines.append(f"orphan modules: {_om_str} — no files imported by other modules")
+
+    # S134: Largest module — the top-level directory with the most source files.
+    # Points agents to the heaviest architectural weight; also flags where complexity lives.
+    # Only shown when 3+ top-level dirs exist (otherwise trivial single-package repos).
+    if modules and len(modules) >= 3:
+        _s134_file_counts: dict[str, int] = {}
+        _s134_sym_counts: dict[str, int] = {}
+        for _s134_mod, _s134_fps in modules.items():
+            _s134_src_fps = [fp for fp in _s134_fps if not _is_test_file(fp)]
+            if not _s134_src_fps:
+                continue
+            _s134_file_counts[_s134_mod] = len(_s134_src_fps)
+            _s134_sym_counts[_s134_mod] = sum(
+                len(graph.files[fp].symbols) for fp in _s134_src_fps if fp in graph.files
+            )
+        if _s134_file_counts:
+            _s134_top = max(_s134_file_counts, key=lambda m: _s134_file_counts[m])
+            _s134_fc = _s134_file_counts[_s134_top]
+            _s134_sc = _s134_sym_counts.get(_s134_top, 0)
+            if _s134_fc >= 3:
+                lines.append(
+                    f"largest module: {_s134_top}/ ({_s134_fc} files, {_s134_sc} symbols)"
+                )
+
+    # S137: Avg fn size — mean line count of all non-test function/method bodies.
+    # High average (>= 40 lines) = functions doing too much; poor decomposition signal.
+    # Only shown when 10+ source functions exist and avg >= 40.
+    _s137_fns = [
+        sym for sym in graph.symbols.values()
+        if sym.kind.value in ("function", "method")
+        and not _is_test_file(sym.file_path)
+        and sym.line_count >= 3
+    ]
+    if len(_s137_fns) >= 10:
+        _s137_avg = sum(s.line_count for s in _s137_fns) / len(_s137_fns)
+        if _s137_avg >= 40:
+            lines.append(f"avg fn size: {_s137_avg:.0f} lines — functions are large, consider decomposition")
+
+    # S142: Test coverage gap — source files with no corresponding test file.
+    # Helps agents know which areas of the codebase are "flying blind."
+    # Only shown when test files exist AND >= 30% of source files lack tests.
+    _s142_all_tests = {fp for fp in graph.files if _is_test_file(fp)}
+    _s142_src_fps = [fp for fp in graph.files if not _is_test_file(fp)]
+    if _s142_all_tests and len(_s142_src_fps) >= 5:
+        _s142_untested_fps = [
+            fp for fp in _s142_src_fps
+            if not any(fp.rsplit("/", 1)[-1].rsplit(".", 1)[0] in t for t in _s142_all_tests)
+        ]
+        _s142_gap_pct = int(len(_s142_untested_fps) / len(_s142_src_fps) * 100)
+        if _s142_gap_pct >= 30:
+            lines.append(
+                f"test coverage gap: {len(_s142_untested_fps)}/{len(_s142_src_fps)}"
+                f" source files have no tests ({_s142_gap_pct}%)"
+            )
+
+    # S146: Barrel file count — source files that import from 5+ other modules (aggregators).
+    # Many barrel files = fragmented architecture; changes to any dependency flow through them.
+    # Only shown when 2+ barrel files found.
+    from ..types import EdgeKind as _EK146
+    _s146_import_counts: dict[str, int] = {}
+    for _e146 in graph.edges:
+        if _e146.kind != _EK146.IMPORTS:
+            continue
+        if _e146.source_id not in graph.files or _e146.target_id not in graph.files:
+            continue
+        if _is_test_file(_e146.source_id) or _is_test_file(_e146.target_id):
+            continue
+        if _e146.source_id == _e146.target_id:
+            continue
+        _s146_import_counts[_e146.source_id] = _s146_import_counts.get(_e146.source_id, 0) + 1
+    _s146_barrels = [fp for fp, cnt in _s146_import_counts.items() if cnt >= 5]
+    if len(_s146_barrels) >= 2:
+        _s146_names = [fp.rsplit("/", 1)[-1] for fp in sorted(_s146_barrels)[:3]]
+        _s146_str = ", ".join(_s146_names)
+        if len(_s146_barrels) > 3:
+            _s146_str += f" +{len(_s146_barrels) - 3} more"
+        lines.append(f"barrel files: {len(_s146_barrels)} aggregator files ({_s146_str})")
+
+    # S151: Impl vs test ratio — ratio of non-test source lines to test file lines.
+    # High ratio (>= 5x) = tests are thin relative to implementation.
+    # Only shown when test files exist and there are 10+ source lines.
+    _s151_src_lines = sum(
+        fi.line_count for fp, fi in graph.files.items() if not _is_test_file(fp)
+    )
+    _s151_test_lines = sum(
+        fi.line_count for fp, fi in graph.files.items() if _is_test_file(fp)
+    )
+    if _s151_test_lines > 0 and _s151_src_lines >= 10:
+        _s151_ratio = _s151_src_lines / _s151_test_lines
+        if _s151_ratio >= 5.0:
+            lines.append(
+                f"impl:test ratio: {_s151_ratio:.1f}x ({_s151_src_lines:,}L src / {_s151_test_lines:,}L tests)"
+                f" — test coverage is thin"
+            )
+
+    # Suggest directories to exclude — detect likely noise
+    noisy = _detect_noisy_dirs(graph, modules)
+    if noisy:
+        lines.append("")
+        lines.append("SUGGESTED EXCLUDES (use exclude_dirs to filter):")
+        for dir_name, reason in noisy[:3]:
+            lines.append(f"  {dir_name}/ — {reason}")
+
+    return "\n".join(lines)
+
+
+def _detect_noisy_dirs(graph: Tempo, modules: dict[str, list[str]]) -> list[tuple[str, str]]:
+    """Detect directories that are likely noise — archived code, generated files, etc."""
+    if len(modules) <= 2:
+        return []
+
+    total_files = sum(len(fs) for fs in modules.values())
+    if total_files < 20:
+        return []
+
+    # Known noise patterns
+    noise_names = {"archive", "archived", "old", "backup", "deprecated", "legacy",
+                   "generated", "gen", "dist", "build", "out", "output", ".cache"}
+
+    # Build cross-directory edge counts
+    cross_dir_edges: dict[str, int] = {mod: 0 for mod in modules}
+    for edge in graph.edges:
+        if edge.kind == EdgeKind.CALLS or edge.kind == EdgeKind.IMPORTS:
+            src_file = graph.symbols[edge.source_id].file_path if edge.source_id in graph.symbols else ""
+            tgt_file = graph.symbols[edge.target_id].file_path if edge.target_id in graph.symbols else ""
+            if not src_file or not tgt_file:
+                continue
+            src_dir = src_file.split("/")[0] if "/" in src_file else "."
+            tgt_dir = tgt_file.split("/")[0] if "/" in tgt_file else "."
+            if src_dir != tgt_dir:
+                cross_dir_edges[src_dir] = cross_dir_edges.get(src_dir, 0) + 1
+                cross_dir_edges[tgt_dir] = cross_dir_edges.get(tgt_dir, 0) + 1
+
+    suggestions: list[tuple[str, str]] = []
+    for mod, files in modules.items():
+        if mod == ".":
+            continue
+        file_count = len(files)
+        pct = file_count / total_files * 100
+        cross_edges = cross_dir_edges.get(mod, 0)
+
+        # Count files with actual code symbols (skip docs-only dirs)
+        code_files = sum(1 for fp in files if fp in graph.files and len(graph.files[fp].symbols) > 0)
+        if code_files == 0:
+            continue  # no code — docs/notes/config dir, not worth excluding
+
+        # Heuristic 1: name matches known noise patterns
+        if mod.lower() in noise_names and code_files >= 5:
+            suggestions.append((mod, f"{file_count} files ({code_files} with code), likely archived/generated"))
+            continue
+
+        # Heuristic 2: large directory with zero cross-dir connections
+        if code_files >= 10 and cross_edges == 0:
+            suggestions.append((mod, f"{file_count} files ({pct:.0f}%), no cross-directory connections"))
+            continue
+
+        # Heuristic 3: large directory with very few cross-dir connections relative to size
+        if code_files >= 20 and cross_edges < 3 and pct > 20:
+            suggestions.append((mod, f"{file_count} files ({pct:.0f}%), only {cross_edges} cross-dir edges"))
+
+    suggestions.sort(key=lambda x: -len(x[1]))
+    return suggestions
+
+
+def render_map(graph: Tempo, *, max_symbols_per_file: int = 8, max_tokens: int = 0) -> str:
+    """File tree with top symbols per file. Good for orientation."""
+    lines = []
+    token_count = 0
+
+    # Group files by directory
+    dirs: dict[str, list[FileInfo]] = defaultdict(list)
+    for fi in sorted(graph.files.values(), key=lambda f: f.path):
+        parts = fi.path.rsplit("/", 1)
+        dir_path = parts[0] if len(parts) > 1 else "."
+        dirs[dir_path].append(fi)
+
+    truncated = False
+    for dir_path in sorted(dirs):
+        files = dirs[dir_path]
+        dir_block = [f"[{dir_path}/]"]
+        for fi in files:
+            fname = fi.path.rsplit("/", 1)[-1]
+            sym_count = len(fi.symbols)
+            tag = f" ({fi.line_count} lines, {sym_count} sym)" if sym_count else f" ({fi.line_count} lines)"
+            dir_block.append(f"  {fname}{tag}")
+
+            # Show top symbols
+            symbols = [graph.symbols[sid] for sid in fi.symbols if sid in graph.symbols]
+            symbols.sort(key=lambda s: (
+                0 if s.kind in (SymbolKind.COMPONENT, SymbolKind.HOOK) else
+                1 if s.kind in (SymbolKind.CLASS, SymbolKind.STRUCT, SymbolKind.TRAIT, SymbolKind.INTERFACE) else
+                2 if s.kind == SymbolKind.FUNCTION and s.exported else
+                3 if s.kind == SymbolKind.FUNCTION else
+                4 if s.kind == SymbolKind.COMMAND else
+                5,
+                s.line_start,
+            ))
+            shown = symbols[:max_symbols_per_file]
+            for sym in shown:
+                kind_tag = sym.kind.value[:4]
+                line_info = f"L{sym.line_start}"
+                if sym.line_count > 5:
+                    line_info = f"L{sym.line_start}-{sym.line_end}"
+                sig = f" — {sym.signature}" if sym.signature and len(sym.signature) < 80 else ""
+                dir_block.append(f"    {kind_tag} {sym.qualified_name} ({line_info}){sig}")
+            if len(symbols) > max_symbols_per_file:
+                dir_block.append(f"    ... +{len(symbols) - max_symbols_per_file} more")
+        dir_block.append("")
+
+        block_text = "\n".join(dir_block)
+        if max_tokens > 0:
+            block_tokens = count_tokens(block_text)
+            if token_count + block_tokens > max_tokens:
+                remaining_dirs = len(dirs) - len([l for l in lines if l.startswith("[")])
+                lines.append(f"... truncated ({remaining_dirs} more directories)")
+                truncated = True
+                break
+            token_count += block_tokens
+        lines.extend(dir_block)
+
+    return "\n".join(lines)
+
+def render_symbols(graph: Tempo, *, max_tokens: int = 8000) -> str:
+    """Full symbol index — signatures, locations, relationships.
+
+    max_tokens: cap output to prevent context overflow (default 8000; 0 = no limit)"""
+    lines = []
+    token_count = 0
+    by_file: dict[str, list[Symbol]] = defaultdict(list)
+    for sym in graph.symbols.values():
+        by_file[sym.file_path].append(sym)
+
+    for file_path in sorted(by_file):
+        symbols = sorted(by_file[file_path], key=lambda s: s.line_start)
+        file_block = [f"── {file_path} ──"]
+        for sym in symbols:
+            parts = [f"{sym.kind.value} {sym.qualified_name}"]
+            parts.append(f"L{sym.line_start}-{sym.line_end}")
+            if sym.signature:
+                parts.append(sym.signature[:120])
+            if sym.doc:
+                parts.append(f'"{sym.doc[:80]}"')
+            callers = graph.callers_of(sym.id)
+            if callers:
+                caller_names = [c.qualified_name for c in callers[:5]]
+                parts.append(f"← {', '.join(caller_names)}")
+            callees = graph.callees_of(sym.id)
+            if callees:
+                callee_names = [c.qualified_name for c in callees[:5]]
+                parts.append(f"→ {', '.join(callee_names)}")
+            file_block.append("  " + " | ".join(parts))
+        file_block.append("")
+
+        if max_tokens > 0:
+            block_text = "\n".join(file_block)
+            block_tokens = count_tokens(block_text)
+            if token_count + block_tokens > max_tokens:
+                rendered_files = sum(1 for l in lines if l.startswith("──"))
+                remaining_files = len(by_file) - rendered_files
+                remaining_symbols = sum(len(v) for k, v in by_file.items() if k >= file_path)
+                lines.append(f"... and {remaining_symbols} more symbols in {remaining_files} files (increase max_tokens to see all)")
+                break
+            token_count += block_tokens
+        lines.extend(file_block)
+
+    return "\n".join(lines)
