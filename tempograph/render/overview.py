@@ -1098,6 +1098,26 @@ def render_overview(graph: Tempo) -> str:
             f" — consider inlining"
         )
 
+    # S161: Hub files — source files imported by 10+ other files.
+    # High import fan-in = central dependency; a change here blasts everywhere.
+    # Only shown when >= 1 non-test file has 10+ unique importing files.
+    _s161_hubs = sorted(
+        [
+            (len([i for i in graph.importers_of(fp) if i in graph.files and not _is_test_file(i) and i != fp]), fp)
+            for fp in graph.files
+            if not _is_test_file(fp)
+        ],
+        reverse=True,
+    )
+    _s161_hubs = [(n, fp) for n, fp in _s161_hubs if n >= 10]
+    if _s161_hubs:
+        _s161_top3 = [fp.rsplit("/", 1)[-1] for _, fp in _s161_hubs[:3]]
+        _s161_str = ", ".join(_s161_top3)
+        lines.append(
+            f"hub files: {len(_s161_hubs)} files imported by 10+ others ({_s161_str})"
+            f" — changes here have wide blast radius"
+        )
+
     # Suggest directories to exclude — detect likely noise
     noisy = _detect_noisy_dirs(graph, modules)
     if noisy:

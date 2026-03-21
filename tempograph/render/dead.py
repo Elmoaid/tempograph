@@ -353,6 +353,36 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             _dc_str += f" +{len(_dead_consts) - 3} more"
         lines.append(f"dead constants: {len(_dead_consts)} unused constants/variables ({_dc_str})")
 
+    # S166: Zombie methods — dead methods that belong to classes with active (live) callers.
+    # These are particularly surprising: the class is used but the method is unreachable.
+    # Only shown when 2+ such zombie methods found.
+    _s166_zombies: list[str] = []
+    for _sym166, _conf166 in scored:
+        if _conf166 < 40:
+            continue
+        if _is_test_file(_sym166.file_path):
+            continue
+        if _sym166.kind.value != "method":
+            continue
+        # Find the parent class via CONTAINS edges (parent contains this method)
+        _parent_cls166 = next(
+            (
+                graph.symbols[e.source_id]
+                for e in graph.edges
+                if e.kind.value == "contains" and e.target_id == _sym166.id
+                and e.source_id in graph.symbols
+                and graph.symbols[e.source_id].kind.value == "class"
+            ),
+            None,
+        )
+        if _parent_cls166 is not None and len(graph.callers_of(_parent_cls166.id)) > 0:
+            _s166_zombies.append(_sym166.name)
+    if len(_s166_zombies) >= 2:
+        _z_str = ", ".join(_s166_zombies[:3])
+        if len(_s166_zombies) > 3:
+            _z_str += f" +{len(_s166_zombies) - 3} more"
+        lines.append(f"zombie methods: {len(_s166_zombies)} dead methods in live classes ({_z_str})")
+
     # S148: Largest dead fn — the single biggest dead symbol by line count.
     # Large dead code (>= 20 lines) = likely an abandoned feature, not a trivial stub.
     # Provides a high-value cleanup target: one deletion removes significant code mass.

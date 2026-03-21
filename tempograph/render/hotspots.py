@@ -650,6 +650,32 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 f" — highest combined velocity+complexity"
             )
 
+    # S164: Zero-test hotspot — the highest-ranked hotspot file has no corresponding test file.
+    # Hotspot files are changed most often; lacking tests makes them highest refactor risk.
+    # Only shown when the top hotspot file has no matching test file in the repo.
+    if scores:
+        _top164_fp = scores[0][1].file_path
+        _top164_base = _top164_fp.rsplit("/", 1)[-1]
+        _top164_stem = _top164_base.rsplit(".", 1)[0]
+        _s164_test_patterns = {
+            f"test_{_top164_stem}",
+            f"{_top164_stem}_test",
+            f"{_top164_stem}.test",
+            f"{_top164_stem}.spec",
+        }
+        _s164_has_test = any(
+            any(
+                p in fp.rsplit("/", 1)[-1].lower()
+                for p in _s164_test_patterns
+            )
+            for fp in graph.files
+            if _is_test_file(fp)
+        )
+        if not _s164_has_test:
+            lines.append(
+                f"\nzero-test hotspot: {_top164_base} — top hotspot with no matching test file"
+            )
+
     # S144: Recursive fns in hotspots — top-ranked symbols that call themselves.
     # Recursive functions are harder to modify: changing loop invariants or base cases
     # requires understanding the full recursion contract. Flag when 2+ are in top hotspots.

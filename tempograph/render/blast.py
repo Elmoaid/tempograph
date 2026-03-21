@@ -436,6 +436,32 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                 f" — package entry point, changes affect all importers"
             )
 
+    # S165: Call depth — BFS through CALLS edges from blast target, longest chain depth.
+    # Deep call chains (>= 4 hops) amplify risk: a change propagates through many stack frames.
+    # Only shown when BFS from any symbol in the target file reaches depth >= 4.
+    _s165_seed_ids = {s.id for s in symbols}
+    _s165_max_depth = 0
+    _s165_deepest_name = ""
+    for _seed_id165 in list(_s165_seed_ids)[:10]:  # cap BFS seeds for performance
+        _s165_visited: set[str] = {_seed_id165}
+        _s165_frontier = [(_seed_id165, 0)]
+        while _s165_frontier:
+            _cur_id165, _depth165 = _s165_frontier.pop(0)
+            if _depth165 > _s165_max_depth:
+                _s165_max_depth = _depth165
+                _s165_deepest_name = graph.symbols[_seed_id165].name if _seed_id165 in graph.symbols else ""
+            if _depth165 >= 6:  # safety cap
+                continue
+            for _callee165 in graph.callees_of(_cur_id165):
+                if _callee165.id not in _s165_visited:
+                    _s165_visited.add(_callee165.id)
+                    _s165_frontier.append((_callee165.id, _depth165 + 1))
+    if _s165_max_depth >= 4:
+        lines.append(
+            f"call depth: {_s165_max_depth} hops from {_s165_deepest_name}"
+            f" — deep call chain increases change blast"
+        )
+
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
 

@@ -1743,6 +1743,21 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
             if _inh_depth >= 3:
                 lines.append(f"\ninheritance depth: {_inh_depth} levels — deep hierarchy, high base-class coupling")
 
+    # S162: Overloaded name — the primary symbol's name appears in 3+ different files.
+    # Same name in many files = collision risk; reader context shifts when jumping between files.
+    # Only shown when the seed symbol name occurs in 3+ distinct source files.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim162 = _seed_syms[0]
+        _s162_files = {
+            s.file_path for s in graph.symbols.values()
+            if s.name == _prim162.name and not _is_test_file(s.file_path)
+        }
+        if len(_s162_files) >= 3:
+            lines.append(
+                f"\noverloaded name: '{_prim162.name}' appears in {len(_s162_files)} files"
+                f" — name collision risk when navigating"
+            )
+
     return "\n".join(lines)
 
 

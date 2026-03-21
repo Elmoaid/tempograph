@@ -11720,3 +11720,245 @@ class TestDiffNewSymbols:
         assert "new symbols" not in out, (
             f"'new symbols' must not appear when all fns have callers; got:\n{out}"
         )
+
+
+# ---------------------------------------------------------------------------
+# S161 — hub files (overview)
+# ---------------------------------------------------------------------------
+class TestOverviewHubFiles:
+    def test_hub_files_shown(self, tmp_path):
+        """S161: hub files shown when a file is imported by 10+ others."""
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        hub = tmp_path / "hub.py"
+        hub.write_text("def util(): pass\n")
+        for i in range(11):
+            f = tmp_path / f"importer_{i}.py"
+            f.write_text(f"from hub import util\ndef fn_{i}(): util()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "hub files" in out, f"'hub files' expected; got:\n{out}"
+
+    def test_hub_files_absent_when_low_fanin(self, tmp_path):
+        """S161: hub files not shown when max importers < 10."""
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        hub = tmp_path / "hub.py"
+        hub.write_text("def util(): pass\n")
+        for i in range(3):
+            f = tmp_path / f"importer_{i}.py"
+            f.write_text(f"from hub import util\ndef fn_{i}(): util()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "hub files" not in out, f"'hub files' must not appear; got:\n{out}"
+
+
+# ---------------------------------------------------------------------------
+# S162 — overloaded name (focused)
+# ---------------------------------------------------------------------------
+class TestFocusedOverloadedName:
+    def test_overloaded_name_shown(self, tmp_path):
+        """S162: overloaded name shown when same symbol name appears in 3+ files."""
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        for i in range(4):
+            (tmp_path / f"mod_{i}.py").write_text(f"def handle(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "handle")
+        assert "overloaded name" in out, f"'overloaded name' expected; got:\n{out}"
+
+    def test_overloaded_name_absent_for_unique_name(self, tmp_path):
+        """S162: overloaded name not shown when symbol is unique."""
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "only.py").write_text("def unique_fn_xyzzy(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "unique_fn_xyzzy")
+        assert "overloaded name" not in out, f"'overloaded name' must not appear; got:\n{out}"
+
+
+# ---------------------------------------------------------------------------
+# S163 — caller update needed (diff)
+# ---------------------------------------------------------------------------
+class TestDiffCallerUpdateNeeded:
+    def test_caller_update_needed_shown(self, tmp_path):
+        """S163: caller update needed when 3+ external files call changed symbols."""
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "core.py").write_text("def process(x): return x\n")
+        for i in range(4):
+            (tmp_path / f"client_{i}.py").write_text(
+                f"from core import process\ndef use_{i}(): process({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["core.py"])
+        assert "caller update needed" in out, f"'caller update needed' expected; got:\n{out}"
+
+    def test_caller_update_absent_when_few_callers(self, tmp_path):
+        """S163: caller update not shown when < 3 external callers."""
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "core.py").write_text("def process(x): return x\n")
+        (tmp_path / "client.py").write_text(
+            "from core import process\ndef use(): process(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["core.py"])
+        assert "caller update needed" not in out, (
+            f"'caller update needed' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S164 — zero-test hotspot (hotspots)
+# ---------------------------------------------------------------------------
+class TestHotspotsZeroTest:
+    def test_zero_test_hotspot_shown(self, tmp_path):
+        """S164: zero-test hotspot shown when top hotspot file lacks a test file."""
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        # Create a heavily-called file with no corresponding test file
+        (tmp_path / "engine.py").write_text(
+            "def run():\n    pass\n" * 10
+        )
+        for i in range(5):
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from engine import run\ndef do_{i}(): run()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "zero-test hotspot" in out, f"'zero-test hotspot' expected; got:\n{out}"
+
+    def test_zero_test_absent_when_test_exists(self, tmp_path):
+        """S164: zero-test hotspot not shown when a test file exists for the hotspot."""
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "engine.py").write_text(
+            "def run():\n    pass\n" * 10
+        )
+        for i in range(5):
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from engine import run\ndef do_{i}(): run()\n"
+            )
+        (tmp_path / "test_engine.py").write_text(
+            "from engine import run\ndef test_run(): run()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "zero-test hotspot" not in out, (
+            f"'zero-test hotspot' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S165 — call depth (blast)
+# ---------------------------------------------------------------------------
+class TestBlastCallDepth:
+    def test_call_depth_shown(self, tmp_path):
+        """S165: call depth shown when BFS from blast target reaches 4+ hops."""
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "root.py").write_text(
+            "from level1 import fn1\ndef root_fn(): fn1()\n"
+        )
+        (tmp_path / "level1.py").write_text(
+            "from level2 import fn2\ndef fn1(): fn2()\n"
+        )
+        (tmp_path / "level2.py").write_text(
+            "from level3 import fn3\ndef fn2(): fn3()\n"
+        )
+        (tmp_path / "level3.py").write_text(
+            "from level4 import fn4\ndef fn3(): fn4()\n"
+        )
+        (tmp_path / "level4.py").write_text("def fn4(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "root.py")
+        assert "call depth" in out, f"'call depth' expected; got:\n{out}"
+
+    def test_call_depth_absent_when_shallow(self, tmp_path):
+        """S165: call depth not shown when chain is < 4 hops."""
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "root.py").write_text(
+            "from leaf import fn_leaf\ndef root_fn(): fn_leaf()\n"
+        )
+        (tmp_path / "leaf.py").write_text("def fn_leaf(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "root.py")
+        assert "call depth" not in out, f"'call depth' must not appear; got:\n{out}"
+
+
+# ---------------------------------------------------------------------------
+# S166 — zombie methods (dead)
+# ---------------------------------------------------------------------------
+class TestDeadZombieMethods:
+    def test_zombie_methods_shown(self, tmp_path):
+        """S166: zombie methods shown when dead methods exist in live classes."""
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        # Live class (has callers) with dead methods
+        (tmp_path / "service.py").write_text(
+            "class Service:\n"
+            "    def active(self): return 1\n"
+            "    def zombie_a(self): return 2\n"
+            "    def zombie_b(self): return 3\n"
+            "    def zombie_c(self): return 4\n"
+            "    def zombie_d(self): return 5\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from service import Service\n"
+            "def main():\n"
+            "    s = Service()\n"
+            "    s.active()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "zombie methods" in out, f"'zombie methods' expected; got:\n{out}"
+
+    def test_zombie_methods_absent_when_all_live(self, tmp_path):
+        """S166: zombie methods not shown when all methods are called."""
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "service.py").write_text(
+            "class Service:\n"
+            "    def method_a(self): return 1\n"
+            "    def method_b(self): return 2\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from service import Service\n"
+            "def main():\n"
+            "    s = Service()\n"
+            "    s.method_a()\n"
+            "    s.method_b()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "zombie methods" not in out, (
+            f"'zombie methods' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# run_server entry point
+# ---------------------------------------------------------------------------
+
+class TestRunServer:
+    def test_run_server_calls_mcp_run(self, monkeypatch):
+        """run_server() delegates to mcp.run() — verify without blocking."""
+        from tempograph import server as srv_mod
+        called = []
+        monkeypatch.setattr(srv_mod.mcp, "run", lambda: called.append(True))
+        srv_mod.run_server()
+        assert called == [True]

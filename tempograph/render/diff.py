@@ -400,6 +400,30 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             _s160_str += f" +{len(_s160_new_syms) - 3} more"
         lines.append(f"new symbols: {len(_s160_new_syms)} exported fns/classes with 0 callers ({_s160_str})")
 
+    # S163: Caller update needed — symbols in the diff have callers in files NOT in the diff.
+    # These external call sites may need updating after the diff's logic change.
+    # Only shown when 3+ distinct external caller files exist.
+    _s163_changed_fps = set(normalized)
+    _s163_ext_callers: set[str] = set()
+    for _fp163 in normalized:
+        if _is_test_file(_fp163):
+            continue
+        for _sym163 in graph.symbols.values():
+            if _sym163.file_path != _fp163:
+                continue
+            for _caller163 in graph.callers_of(_sym163.id):
+                if _caller163.file_path not in _s163_changed_fps:
+                    _s163_ext_callers.add(_caller163.file_path)
+    if len(_s163_ext_callers) >= 3:
+        _s163_names = [fp.rsplit("/", 1)[-1] for fp in sorted(_s163_ext_callers)[:3]]
+        _s163_str = ", ".join(_s163_names)
+        if len(_s163_ext_callers) > 3:
+            _s163_str += f" +{len(_s163_ext_callers) - 3} more"
+        lines.append(
+            f"caller update needed: {len(_s163_ext_callers)} files call changed symbols but"
+            f" aren't in this diff ({_s163_str})"
+        )
+
     # S149: Mixed concern — diff touches both source and test files.
     # Mixing src+test changes in one commit complicates cherry-picks, bisects, and reverts.
     # Flag when the diff has 1+ source files AND 1+ test files.
