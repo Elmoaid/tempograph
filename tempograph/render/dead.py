@@ -10,7 +10,29 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         to reduce token output (~47% savings). Pass include_low=True to see all tiers.
     """
     dead = graph.find_dead_code()
-    if not dead:
+
+    # S569: Dead typing file — Python file that only contains typing imports (no indexed symbols)
+    # and has no importers. Pre-computed here so it can fire even when `dead` is empty.
+    _dead_typing_files569 = [
+        fp for fp, fi in graph.files.items()
+        if not _is_test_file(fp)
+        and not list(fi.symbols)
+        and any("typing" in imp.lower() for imp in fi.imports)
+        and not graph.importers_of(fp)
+    ]
+
+    # S605: Dead utility function — pre-computed to allow firing when `dead` is empty.
+    # Catches BOTH non-exported private utilities AND exported dead utilities with utility prefix.
+    _util_prefixes605_pre = ("get_", "make_", "create_", "build_", "generate_", "compute_", "fetch_")
+    _dead_util605_pre = [
+        sym for sym in graph.symbols.values()
+        if not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.startswith(p) for p in _util_prefixes605_pre)
+        and not graph.callers_of(sym.id)
+    ]
+
+    if not dead and not _dead_typing_files569 and not _dead_util605_pre:
         return "No dead code detected — all exported symbols are referenced."
 
     # Score each symbol
@@ -1453,6 +1475,1036 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         lines.append(
             f"dead subscriptions: {len(_s432_dead_subs)} unwired subscription fn(s) ({_sub_names432})"
             f" — events fire without listener; silently drops signals"
+        )
+
+    # S438: Dead migrations — migrate_*/migration_*/upgrade_*/downgrade_* helpers with 0 callers.
+    # Unapplied database migrations leave the schema out of sync with the ORM models;
+    # if migration helpers are dead, the schema change may never have been applied to production.
+    _s438_migration_prefixes = (
+        "migrate_", "migration_", "upgrade_", "downgrade_",
+        "apply_migration_", "run_migration_",
+    )
+    _s438_dead_migrations = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s438_migration_prefixes)
+    ]
+    if len(_s438_dead_migrations) >= 1:
+        _mig_names438 = ", ".join(s.name for s in _s438_dead_migrations[:3])
+        if len(_s438_dead_migrations) > 3:
+            _mig_names438 += f" +{len(_s438_dead_migrations) - 3} more"
+        lines.append(
+            f"dead migrations: {len(_s438_dead_migrations)} unapplied migration fn(s) ({_mig_names438})"
+            f" — schema changes may never have been applied; verify before deleting"
+        )
+
+    # S444: Dead CLI commands — main_*/cli_*/cmd_* functions with 0 callers.
+    # Unused CLI entry points may represent features removed from the CLI contract
+    # without removing the underlying code; deleting them is safe but must be coordinated
+    # with any documentation or scripts that reference the command name.
+    _s444_cli_prefixes = ("main_", "cmd_", "cli_", "command_", "run_command_", "handle_command_")
+    _s444_dead_cli = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s444_cli_prefixes)
+    ]
+    if len(_s444_dead_cli) >= 1:
+        _cli_names444 = ", ".join(s.name for s in _s444_dead_cli[:3])
+        if len(_s444_dead_cli) > 3:
+            _cli_names444 += f" +{len(_s444_dead_cli) - 3} more"
+        lines.append(
+            f"dead CLI commands: {len(_s444_dead_cli)} unused command fn(s) ({_cli_names444})"
+            f" — may be removed features; check docs and scripts before deleting"
+        )
+
+    # S450: Dead error handlers — handle_*/on_error_*/except_* functions with 0 callers.
+    # Unused error handlers suggest that error paths were wired up but then abandoned;
+    # the error may still propagate but is now unhandled, creating silent failure modes.
+    _s450_error_prefixes = (
+        "handle_error_", "handle_exception_", "on_error_", "on_exception_",
+        "except_", "catch_", "recover_",
+    )
+    _s450_dead_handlers = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s450_error_prefixes)
+    ]
+    if len(_s450_dead_handlers) >= 1:
+        _handler_names450 = ", ".join(s.name for s in _s450_dead_handlers[:3])
+        if len(_s450_dead_handlers) > 3:
+            _handler_names450 += f" +{len(_s450_dead_handlers) - 3} more"
+        lines.append(
+            f"dead error handlers: {len(_s450_dead_handlers)} unregistered error fn(s) ({_handler_names450})"
+            f" — error paths may be unhandled; verify before deleting"
+        )
+
+    # S456: Dead formatters — format_*/formatter_*/pretty_* functions with 0 callers.
+    # Dead formatting functions suggest a display layer was written but never wired up;
+    # data may be rendered without formatting, or the formatter was replaced but not cleaned up.
+    _s456_fmt_prefixes = (
+        "format_", "formatter_", "pretty_", "pretty_print_",
+        "render_output_", "display_",
+    )
+    _s456_dead_fmts = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s456_fmt_prefixes)
+    ]
+    if len(_s456_dead_fmts) >= 2:
+        _fmt_names456 = ", ".join(s.name for s in _s456_dead_fmts[:3])
+        if len(_s456_dead_fmts) > 3:
+            _fmt_names456 += f" +{len(_s456_dead_fmts) - 3} more"
+        lines.append(
+            f"dead formatters: {len(_s456_dead_fmts)} unused display fn(s) ({_fmt_names456})"
+            f" — output may be unformatted; verify display layer before deleting"
+        )
+
+    # S462: Dead validators — validate_*/check_*/verify_* functions with 0 callers.
+    # Unused validation functions suggest either the validation was bypassed (security risk)
+    # or the validated path was removed; either way, the constraint is no longer enforced.
+    _s462_val_prefixes = (
+        "validate_", "check_", "verify_", "assert_", "ensure_", "is_valid_",
+    )
+    _s462_dead_vals = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s462_val_prefixes)
+    ]
+    if len(_s462_dead_vals) >= 2:
+        _val_names462 = ", ".join(s.name for s in _s462_dead_vals[:3])
+        if len(_s462_dead_vals) > 3:
+            _val_names462 += f" +{len(_s462_dead_vals) - 3} more"
+        lines.append(
+            f"dead validators: {len(_s462_dead_vals)} unused validation fn(s) ({_val_names462})"
+            f" — validation may be bypassed; verify constraints still enforced before deleting"
+        )
+
+    # S468: Dead serializers — serialize_*/marshal_*/encode_* functions with 0 callers.
+    # Unused serializers suggest a data-export path was written but never wired up;
+    # the data may be exported without proper formatting, or consumers never existed.
+    _s468_serial_prefixes = (
+        "serialize_", "marshal_", "encode_", "to_json_", "to_dict_",
+        "export_", "dump_", "as_json_",
+    )
+    _s468_dead_serials = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s468_serial_prefixes)
+    ]
+    if len(_s468_dead_serials) >= 1:
+        _serial_names468 = ", ".join(s.name for s in _s468_dead_serials[:3])
+        if len(_s468_dead_serials) > 3:
+            _serial_names468 += f" +{len(_s468_dead_serials) - 3} more"
+        lines.append(
+            f"dead serializers: {len(_s468_dead_serials)} unused serializer fn(s) ({_serial_names468})"
+            f" — data export path may be missing; verify before deleting"
+        )
+
+    # S474: Dead initializers — setup_*/initialize_*/init_* functions with 0 callers.
+    # Unused setup functions suggest an initialization path was planned but never wired up;
+    # the component may be operating without proper initialization, using default/zero values.
+    _s474_init_prefixes = (
+        "setup_", "initialize_", "init_", "bootstrap_", "configure_", "startup_",
+    )
+    _s474_dead_inits = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s474_init_prefixes)
+    ]
+    if len(_s474_dead_inits) >= 1:
+        _init_names474 = ", ".join(s.name for s in _s474_dead_inits[:3])
+        if len(_s474_dead_inits) > 3:
+            _init_names474 += f" +{len(_s474_dead_inits) - 3} more"
+        lines.append(
+            f"dead initializers: {len(_s474_dead_inits)} uncalled setup fn(s) ({_init_names474})"
+            f" — component may be running without initialization; verify defaults before deleting"
+        )
+
+    # S480: Dead debug helpers — debug_*/log_debug_*/dump_* functions with 0 callers.
+    # Unused debug helpers are usually safe to delete but indicate that the debugging
+    # path they supported was abandoned; verify the production path they were testing still works.
+    _s480_debug_prefixes = (
+        "debug_", "log_debug_", "dump_", "print_debug_", "trace_", "verbose_",
+        "debug_print_", "debug_log_",
+    )
+    _s480_dead_debug = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s480_debug_prefixes)
+    ]
+    if len(_s480_dead_debug) >= 2:
+        _dbg_names480 = ", ".join(s.name for s in _s480_dead_debug[:3])
+        if len(_s480_dead_debug) > 3:
+            _dbg_names480 += f" +{len(_s480_dead_debug) - 3} more"
+        lines.append(
+            f"dead debug helpers: {len(_s480_dead_debug)} unused debug fn(s) ({_dbg_names480})"
+            f" — safe to delete; verify the path they were debugging still works"
+        )
+
+    # S487: Dead context managers — class defines __enter__/__exit__ but is never imported.
+    # A context manager that is never used means the resource management path is untested;
+    # if the class is later used, teardown bugs surface at runtime.
+    _s487_cm_names: list[str] = []
+    _s487_seen_files: set[str] = set()
+    for _s487sym in graph.symbols.values():
+        if (
+            _s487sym.kind.value == "method"
+            and _s487sym.name == "__enter__"
+            and not _is_test_file(_s487sym.file_path)
+            and _s487sym.file_path not in _s487_seen_files
+        ):
+            _callers487 = [
+                e for e in graph.edges
+                if e.kind.value == "calls" and e.target_id == _s487sym.id
+            ]
+            _importers487 = graph.importers_of(_s487sym.file_path)
+            if not _callers487 and not _importers487:
+                _cls487 = next(
+                    (
+                        s for s in graph.symbols.values()
+                        if s.kind.value == "class" and s.file_path == _s487sym.file_path
+                    ),
+                    None,
+                )
+                if _cls487:
+                    _s487_cm_names.append(_cls487.name)
+                    _s487_seen_files.add(_s487sym.file_path)
+    if _s487_cm_names:
+        lines.append(
+            f"dead context managers: {', '.join(_s487_cm_names[:3])} define __enter__/__exit__"
+            f" but are never used with `with` — teardown logic is untested"
+        )
+
+    # S493: Dead event handlers — on_*/handle_*/listen_* functions with 0 callers.
+    # Event handler functions that are never called suggest a wiring was accidentally lost;
+    # they look like entry points but lead nowhere, creating silent gaps in event coverage.
+    _s493_handler_prefixes = (
+        "on_", "handle_", "listen_", "when_", "on_event_", "receive_", "dispatch_",
+    )
+    _s493_dead_handlers = [
+        sym for sym, conf in scored
+        if conf >= 40
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s493_handler_prefixes)
+    ]
+    if len(_s493_dead_handlers) >= 2:
+        _h_names493 = ", ".join(s.name for s in _s493_dead_handlers[:3])
+        if len(_s493_dead_handlers) > 3:
+            _h_names493 += f" +{len(_s493_dead_handlers) - 3} more"
+        lines.append(
+            f"dead event handlers: {len(_s493_dead_handlers)} unused handler fn(s) ({_h_names493})"
+            f" — may indicate event wiring was accidentally lost; verify these are truly unreachable"
+        )
+
+    # S499: Dead class methods — `@classmethod` or `@staticmethod` functions with 0 callers.
+    # Unused class/static methods are deceptive: they look like utilities but are never invoked,
+    # suggesting they were added for future use and forgot, or a refactor left them behind.
+    _s499_dunder_skip = {"__init__", "__str__", "__repr__", "__enter__", "__exit__", "__new__"}
+    _s499_dead_class_methods = []
+    for _sym499 in graph.symbols.values():
+        # Parser assigns kind="function" to @classmethod/@staticmethod (not "method")
+        # and requires a parent class to distinguish from top-level functions.
+        if (
+            not _is_test_file(_sym499.file_path)
+            and _sym499.kind.value == "function"
+            and _sym499.name not in _s499_dunder_skip
+            and _sym499.parent_id
+            and _sym499.parent_id in graph.symbols
+            and graph.symbols[_sym499.parent_id].kind.value == "class"
+        ):
+            _callers499 = [
+                e for e in graph.edges if e.kind.value == "calls" and e.target_id == _sym499.id
+            ]
+            if not _callers499 and not graph.importers_of(_sym499.file_path):
+                _s499_dead_class_methods.append(_sym499)
+    if len(_s499_dead_class_methods) >= 2:
+        _cm_names499 = ", ".join(s.name for s in _s499_dead_class_methods[:3])
+        if len(_s499_dead_class_methods) > 3:
+            _cm_names499 += f" +{len(_s499_dead_class_methods) - 3} more"
+        lines.append(
+            f"dead class methods: {len(_s499_dead_class_methods)} unused @classmethod/@staticmethod"
+            f" ({_cm_names499}) — may be abandoned utilities; verify intent before deleting"
+        )
+
+    # S505: Dead property methods — @property methods with 0 callers.
+    # Dead properties often represent stale getters from a refactored data model;
+    # they block renaming the underlying attribute because any future reader may touch them.
+    _s505_prop_prefixes = ("get_", "is_", "has_", "can_", "should_", "needs_")
+    _raw_callers505 = getattr(graph, "_callers", {})
+    _s505_dead_props = [
+        sym for sym in graph.symbols.values()
+        if not _is_test_file(sym.file_path)
+        and sym.kind.value == "method"
+        and not graph.callers_of(sym.id)
+        and not _raw_callers505.get(sym.id)
+        and not graph.importers_of(sym.file_path)
+        and any(sym.name.lower().startswith(p) for p in _s505_prop_prefixes)
+    ]
+    if len(_s505_dead_props) >= 2:
+        _p_names505 = ", ".join(s.name for s in _s505_dead_props[:3])
+        if len(_s505_dead_props) > 3:
+            _p_names505 += f" +{len(_s505_dead_props) - 3} more"
+        lines.append(
+            f"dead property methods: {len(_s505_dead_props)} unused getter-style method(s) ({_p_names505})"
+            f" — stale getters block attribute renames; remove before refactoring the data model"
+        )
+
+    # S512: Dead test utilities — setup_/teardown_/fixture_ functions with 0 callers in test files.
+    # Leftover test helpers that are never called inflate test file complexity without providing
+    # coverage; they mislead about what is actually tested.
+    _s512_test_util_prefixes = ("setup_", "teardown_", "fixture_", "mock_", "stub_", "fake_", "helper_test")
+    _s512_dead_test_utils = [
+        sym for sym in graph.symbols.values()
+        if _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s512_test_util_prefixes)
+        and not graph.callers_of(sym.id)
+        and not getattr(graph, "_callers", {}).get(sym.id)
+    ]
+    if len(_s512_dead_test_utils) >= 2:
+        _tu_names512 = ", ".join(s.name for s in _s512_dead_test_utils[:3])
+        if len(_s512_dead_test_utils) > 3:
+            _tu_names512 += f" +{len(_s512_dead_test_utils) - 3} more"
+        lines.append(
+            f"dead test utilities: {len(_s512_dead_test_utils)} unused test helper(s) ({_tu_names512})"
+            f" — stale helpers mislead about test coverage; remove to clarify actual test scope"
+        )
+
+    # S536: Dead abstract base class — Abstract*/Protocol class with no subclasses and no callers.
+    # An abstract class that was never implemented is pure dead weight; it cannot be instantiated
+    # and its only value was as a type contract — which is now unrealized.
+    _s536_dead_abc = [
+        sym for sym in graph.symbols.values()
+        if not _is_test_file(sym.file_path)
+        and sym.kind.value == "class"
+        and (
+            sym.name.startswith("Abstract")
+            or sym.name.startswith("Base")
+            or sym.name.endswith("ABC")
+            or sym.name.endswith("Protocol")
+            or sym.name.endswith("Interface")
+        )
+        and not any(
+            e.kind.value in ("inherits", "implements") and e.target_id == sym.id
+            for e in graph.edges
+        )
+        and not graph.callers_of(sym.id)
+        and not graph.importers_of(sym.file_path)
+    ]
+    if _s536_dead_abc:
+        _abc_names536 = ", ".join(s.name for s in _s536_dead_abc[:3])
+        if len(_s536_dead_abc) > 3:
+            _abc_names536 += f" +{len(_s536_dead_abc) - 3} more"
+        lines.append(
+            f"dead abstract classes: {len(_s536_dead_abc)} unimplemented abstract/base class(es) ({_abc_names536})"
+            f" — never implemented; the type contract was never realized; safe to remove"
+        )
+
+    # S543: Dead dataclass — dataclass class with 0 callers in files that use dataclasses.
+    # Unused dataclasses are data models that were designed but never wired up;
+    # they silently expand the schema surface and mislead future code about active models.
+    _s542_dc_files = {
+        fp for fp, fi in graph.files.items()
+        if any("dataclass" in imp for imp in fi.imports)
+    }
+    _s542_dead_dc = [
+        sym for sym in graph.symbols.values()
+        if not _is_test_file(sym.file_path)
+        and sym.kind.value == "class"
+        and sym.file_path in _s542_dc_files
+        and not graph.callers_of(sym.id)
+        and not graph.importers_of(sym.file_path)
+    ]
+    if _s542_dead_dc:
+        _dc_names542 = ", ".join(s.name for s in _s542_dead_dc[:3])
+        if len(_s542_dead_dc) > 3:
+            _dc_names542 += f" +{len(_s542_dead_dc) - 3} more"
+        lines.append(
+            f"dead dataclasses: {len(_s542_dead_dc)} unused dataclass(es) ({_dc_names542})"
+            f" — designed but never instantiated; verify intent and remove stale models"
+        )
+
+    # S530: Dead module constants — SCREAMING_SNAKE_CASE names at module level with 0 callers.
+    # Unused module-level constants accumulate from feature flags, thresholds, and magic values
+    # that were never cleaned up; they mislead about the codebase's active configuration surface.
+    _s530_dead_constants = [
+        sym for sym in graph.symbols.values()
+        if not _is_test_file(sym.file_path)
+        and sym.kind.value == "variable"
+        and sym.name == sym.name.upper()
+        and "_" in sym.name
+        and len(sym.name) >= 3
+        and not sym.parent_id
+        and not graph.callers_of(sym.id)
+        and not graph.importers_of(sym.file_path)
+    ]
+    if len(_s530_dead_constants) >= 3:
+        _const_names530 = ", ".join(s.name for s in _s530_dead_constants[:3])
+        if len(_s530_dead_constants) > 3:
+            _const_names530 += f" +{len(_s530_dead_constants) - 3} more"
+        lines.append(
+            f"dead constants: {len(_s530_dead_constants)} unused SCREAMING_SNAKE constant(s) ({_const_names530})"
+            f" — stale config values mislead about active thresholds; audit before deleting"
+        )
+
+    # S524: Dead exception classes — custom exception classes with 0 callers in non-imported files.
+    # Unused exception classes bloat the error hierarchy and mislead about what errors a module raises;
+    # they often result from copy-pasted exception hierarchies that were never wired up.
+    _s524_exc_suffixes = ("error", "exception", "fault", "failure", "warning")
+    _s524_dead_exc = [
+        sym for sym in graph.symbols.values()
+        if not _is_test_file(sym.file_path)
+        and sym.kind.value == "class"
+        and any(sym.name.lower().endswith(s) for s in _s524_exc_suffixes)
+        and not graph.callers_of(sym.id)
+        and not graph.importers_of(sym.file_path)
+    ]
+    if _s524_dead_exc:
+        _exc_names524 = ", ".join(s.name for s in _s524_dead_exc[:3])
+        if len(_s524_dead_exc) > 3:
+            _exc_names524 += f" +{len(_s524_dead_exc) - 3} more"
+        lines.append(
+            f"dead exception classes: {len(_s524_dead_exc)} unused exception class(es) ({_exc_names524})"
+            f" — bloats error hierarchy and misleads callers; verify intent before deleting"
+        )
+
+    # S518: Dead magic methods — dunder display/comparison methods with 0 callers in non-imported files.
+    # __str__/__repr__/__len__ in files with no importers indicate abandoned model classes;
+    # magic methods are rarely flagged as dead code but the whole class is likely removable.
+    _s518_dunder_targets = frozenset(("__str__", "__repr__", "__len__", "__iter__", "__contains__", "__format__"))
+    _s518_dead_dunders = [
+        sym for sym in graph.symbols.values()
+        if not _is_test_file(sym.file_path)
+        and sym.kind.value == "method"
+        and sym.name in _s518_dunder_targets
+        and not graph.callers_of(sym.id)
+        and not graph.importers_of(sym.file_path)
+    ]
+    if len(_s518_dead_dunders) >= 2:
+        _du_names518 = ", ".join(s.name for s in _s518_dead_dunders[:3])
+        if len(_s518_dead_dunders) > 3:
+            _du_names518 += f" +{len(_s518_dead_dunders) - 3} more"
+        lines.append(
+            f"dead magic methods: {len(_s518_dead_dunders)} unused dunder method(s) ({_du_names518})"
+            f" — orphaned display/comparison methods in dead files; whole class is likely removable"
+        )
+
+    # S545: Dead value object — data/schema/payload class with 0 callers in non-imported files.
+    # Value objects (DTOs, schemas, payloads) defined but never instantiated represent abandoned
+    # API contracts; they are especially easy to miss because they have no logic to trigger errors.
+    _s542_vo_suffixes = ("data", "schema", "payload", "dto", "record", "config", "settings", "response", "request")
+    _s542_dead_vos = [
+        sym for sym in graph.symbols.values()
+        if not _is_test_file(sym.file_path)
+        and sym.kind.value == "class"
+        and any(sym.name.lower().endswith(s) for s in _s542_vo_suffixes)
+        and not graph.callers_of(sym.id)
+        and not graph.importers_of(sym.file_path)
+    ]
+    if _s542_dead_vos:
+        _vo_names542 = ", ".join(s.name for s in _s542_dead_vos[:3])
+        if len(_s542_dead_vos) > 3:
+            _vo_names542 += f" +{len(_s542_dead_vos) - 3} more"
+        lines.append(
+            f"dead value objects: {len(_s542_dead_vos)} unused data/schema class(es) ({_vo_names542})"
+            f" — abandoned API contracts; verify no serialization hooks before deleting"
+        )
+
+    # S551: Dead CLI handler — unused functions with cmd_/do_/handle_/on_ prefixes in non-imported files.
+    # CLI and event handler functions that are never called represent abandoned command surface;
+    # they clutter help output, inflate entry-point lists, and mislead tool discovery.
+    _cli_prefixes551 = ("cmd_", "do_", "handle_", "on_", "command_")
+    _dead_cli551 = [
+        sym for sym in graph.symbols.values()
+        if not _is_test_file(sym.file_path)
+        and sym.kind.value == "function"
+        and any(sym.name.startswith(p) for p in _cli_prefixes551)
+        and not graph.callers_of(sym.id)
+        and not graph.importers_of(sym.file_path)
+    ]
+    if len(_dead_cli551) >= 2:
+        _cli_names551 = ", ".join(s.name for s in _dead_cli551[:3])
+        if len(_dead_cli551) > 3:
+            _cli_names551 += f" +{len(_dead_cli551) - 3} more"
+        lines.append(
+            f"dead handlers: {len(_dead_cli551)} unused command/event handler(s) ({_cli_names551})"
+            f" — abandoned command surface; audit intent and remove or wire up before next release"
+        )
+
+    # S557: Dead factory — unused factory/builder functions (create_*/make_*/build_*) in non-imported files.
+    # Factory functions are creation contracts; if they have no callers and their file has no importers,
+    # the construction pattern was abandoned mid-implementation.
+    _factory_prefixes557 = ("create_", "make_", "build_", "new_", "from_")
+    _dead_factories557 = [
+        sym for sym in graph.symbols.values()
+        if not _is_test_file(sym.file_path)
+        and sym.kind.value == "function"
+        and any(sym.name.startswith(p) for p in _factory_prefixes557)
+        and not graph.callers_of(sym.id)
+        and not graph.importers_of(sym.file_path)
+    ]
+    if len(_dead_factories557) >= 2:
+        _fac_names557 = ", ".join(s.name for s in _dead_factories557[:3])
+        if len(_dead_factories557) > 3:
+            _fac_names557 += f" +{len(_dead_factories557) - 3} more"
+        lines.append(
+            f"dead factories: {len(_dead_factories557)} unused factory/builder function(s) ({_fac_names557})"
+            f" — abandoned construction patterns; verify intent and remove or wire up"
+        )
+
+    # S563: Dead validator — unused functions with validate_/check_/verify_/assert_ prefix in non-imported files.
+    # Validation functions that are never called represent abandoned input guards;
+    # their absence means callers silently skip validation, creating hidden injection points.
+    _validator_prefixes563 = ("validate_", "check_", "verify_", "assert_", "ensure_")
+    _dead_validators563 = [
+        sym for sym in graph.symbols.values()
+        if not _is_test_file(sym.file_path)
+        and sym.kind.value == "function"
+        and any(sym.name.startswith(p) for p in _validator_prefixes563)
+        and not graph.callers_of(sym.id)
+        and not graph.importers_of(sym.file_path)
+    ]
+    if len(_dead_validators563) >= 2:
+        _val_names563 = ", ".join(s.name for s in _dead_validators563[:3])
+        if len(_dead_validators563) > 3:
+            _val_names563 += f" +{len(_dead_validators563) - 3} more"
+        lines.append(
+            f"dead validators: {len(_dead_validators563)} unused validation function(s) ({_val_names563})"
+            f" — abandoned input guards; callers silently skip these checks; wire up or remove"
+        )
+
+    # S569: Dead typing file (computed near top, before early return)
+    if _dead_typing_files569:
+        _tf_names569 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _dead_typing_files569[:3])
+        if len(_dead_typing_files569) > 3:
+            _tf_names569 += f" +{len(_dead_typing_files569) - 3} more"
+        lines.append(
+            f"dead type aliases: {len(_dead_typing_files569)} typing-only file(s) with no importers ({_tf_names569})"
+            f" — stale type definitions from refactored APIs; safe to remove after confirming no runtime use"
+        )
+
+    # S575: Dead context manager — unused class with __enter__ and __exit__ dunder methods.
+    # Context managers defined but never instantiated represent abandoned resource management;
+    # their with-block protocol is never invoked and resource cleanup never happens.
+    _cm_dunder575 = frozenset(("__enter__", "__exit__"))
+    _dead_cm575: list = []
+    for _sym575 in graph.symbols.values():
+        if (
+            not _is_test_file(_sym575.file_path)
+            and _sym575.kind.value == "class"
+            and not graph.callers_of(_sym575.id)
+            and not graph.importers_of(_sym575.file_path)
+        ):
+            _children575 = {c.name for c in graph.children_of(_sym575.id)}
+            if _cm_dunder575.issubset(_children575):
+                _dead_cm575.append(_sym575)
+    if _dead_cm575:
+        _cm_names575 = ", ".join(s.name for s in _dead_cm575[:3])
+        if len(_dead_cm575) > 3:
+            _cm_names575 += f" +{len(_dead_cm575) - 3} more"
+        lines.append(
+            f"dead context managers: {len(_dead_cm575)} unused context manager class(es) ({_cm_names575})"
+            f" — __enter__/__exit__ never invoked; resource cleanup never happens; remove or wire up"
+        )
+
+    # S586: Dead service class — unused class whose name ends with a service-layer suffix
+    # (Manager, Service, Controller, Registry, Repository, Handler, Provider, Dispatcher).
+    # These heavyweight wiring-layer classes are commonly created but never integrated.
+    _svc_suffixes586 = ("Manager", "Service", "Controller", "Registry",
+                        "Repository", "Handler", "Provider", "Dispatcher")
+    _dead_svc586: list = []
+    for _sym586 in graph.symbols.values():
+        if (
+            not _is_test_file(_sym586.file_path)
+            and _sym586.kind.value == "class"
+            and _sym586.name.endswith(_svc_suffixes586)
+            and not graph.callers_of(_sym586.id)
+            and not graph.importers_of(_sym586.file_path)
+        ):
+            _dead_svc586.append(_sym586)
+    if _dead_svc586:
+        _svc_names586 = ", ".join(s.name for s in _dead_svc586[:3])
+        if len(_dead_svc586) > 3:
+            _svc_names586 += f" +{len(_dead_svc586) - 3} more"
+        lines.append(
+            f"dead service classes: {len(_dead_svc586)} unused service-layer class(es) ({_svc_names586})"
+            f" — never instantiated or imported; wiring was never completed; remove or integrate"
+        )
+
+    # S592: Dead exception class — unused class whose name ends with Error, Exception, or Warning.
+    # Custom exceptions that are never raised or caught represent abandoned error-handling design;
+    # they add noise to exception hierarchies and mislead readers about error contracts.
+    _exc_suffixes592 = ("Error", "Exception", "Warning", "Fault", "Failure")
+    _dead_exc592: list = []
+    for _sym592 in graph.symbols.values():
+        if (
+            not _is_test_file(_sym592.file_path)
+            and _sym592.kind.value == "class"
+            and _sym592.name.endswith(_exc_suffixes592)
+            and not graph.callers_of(_sym592.id)
+            and not graph.importers_of(_sym592.file_path)
+        ):
+            _dead_exc592.append(_sym592)
+    if _dead_exc592:
+        _exc_names592 = ", ".join(s.name for s in _dead_exc592[:3])
+        if len(_dead_exc592) > 3:
+            _exc_names592 += f" +{len(_dead_exc592) - 3} more"
+        lines.append(
+            f"dead exception classes: {len(_dead_exc592)} unused exception class(es) ({_exc_names592})"
+            f" — never raised or caught; remove or integrate into error-handling contract"
+        )
+
+    # S598: Dead module — source file with symbols but zero importers and zero callers.
+    # An entire file that is never imported and none of its symbols are called anywhere
+    # is a strong signal that the module is abandoned and safe to remove.
+    _s598_dead_modules = [
+        fp for fp, fi in graph.files.items()
+        if not _is_test_file(fp)
+        and list(fi.symbols)
+        and not graph.importers_of(fp)
+        and not any(graph.callers_of(sym_id) for sym_id in fi.symbols)
+    ]
+    if _s598_dead_modules:
+        _mod_names598 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s598_dead_modules[:3])
+        if len(_s598_dead_modules) > 3:
+            _mod_names598 += f" +{len(_s598_dead_modules) - 3} more"
+        lines.append(
+            f"dead modules: {len(_s598_dead_modules)} entire file(s) unreachable ({_mod_names598})"
+            f" — no importers and no cross-file callers; likely abandoned; safe to remove"
+        )
+
+    # S605: Dead utility function (pre-computed near top to allow firing when dead[] is empty)
+    if _dead_util605_pre:
+        _util_names605 = ", ".join(s.name for s in _dead_util605_pre[:3])
+        if len(_dead_util605_pre) > 3:
+            _util_names605 += f" +{len(_dead_util605_pre) - 3} more"
+        lines.append(
+            f"dead utility functions: {len(_dead_util605_pre)} unused factory/utility function(s) ({_util_names605})"
+            f" — never called; the use case they were written for never materialized; remove or promote"
+        )
+
+    # S611: Dead large class — unused class spanning 30+ lines.
+    # A large class that is never instantiated or imported represents significant invested effort
+    # that never paid off; it likely contains stale logic that diverged from the live codebase.
+    _dead_large611 = [
+        s for s in dead
+        if s.kind.value == "class"
+        and s.line_count >= 30
+        and not _is_test_file(s.file_path)
+    ]
+    if _dead_large611:
+        _large_names611 = ", ".join(
+            f"{s.name} ({s.line_count}L)" for s in _dead_large611[:3]
+        )
+        if len(_dead_large611) > 3:
+            _large_names611 += f" +{len(_dead_large611) - 3} more"
+        lines.append(
+            f"dead large class: {len(_dead_large611)} unused class(es) over 30 lines ({_large_names611})"
+            f" — significant effort invested but never used; stale logic likely; safe to remove"
+        )
+
+    # S617: Dead async function — unused function whose signature contains "async def".
+    # An async function that is never awaited represents an abandoned coroutine design;
+    # it may be a partially-implemented feature or leftover from a refactored async layer.
+    _dead_async617 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and (s.signature or "").startswith("async ")
+    ]
+    if _dead_async617:
+        _async_names617 = ", ".join(s.name for s in _dead_async617[:3])
+        if len(_dead_async617) > 3:
+            _async_names617 += f" +{len(_dead_async617) - 3} more"
+        lines.append(
+            f"dead async functions: {len(_dead_async617)} unused async function(s) ({_async_names617})"
+            f" — never awaited; likely abandoned coroutine design; remove or wire into async context"
+        )
+
+    # S623: Dead constant — exported module-level variable with SCREAMING_SNAKE_CASE name, no callers.
+    # Unused constants accumulate as the codebase evolves; they represent configuration
+    # or magic values that were once used but never cleaned up.
+    _dead_consts623 = [
+        s for s in dead
+        if s.kind.value in ("constant", "variable")
+        and not _is_test_file(s.file_path)
+        and s.name == s.name.upper()
+        and len(s.name) >= 3
+        and "_" in s.name or s.name.isupper()
+    ]
+    if _dead_consts623:
+        _const_names623 = ", ".join(s.name for s in _dead_consts623[:3])
+        if len(_dead_consts623) > 3:
+            _const_names623 += f" +{len(_dead_consts623) - 3} more"
+        lines.append(
+            f"dead constants: {len(_dead_consts623)} unused SCREAMING_SNAKE_CASE variable(s) ({_const_names623})"
+            f" — orphaned configuration; remove or re-wire to avoid misleading future readers"
+        )
+
+    # S629: Dead callback — unused function/method with callback/handler/listener/hook suffix.
+    # These naming patterns signal event-driven intent; an unregistered callback is a
+    # dead wire — the event contract was designed but the wiring was never completed.
+    _cb_suffixes629 = ("_callback", "_handler", "_listener", "_hook", "_receiver", "_observer")
+    _dead_cb629 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().endswith(sfx) for sfx in _cb_suffixes629)
+    ]
+    if _dead_cb629:
+        _cb_names629 = ", ".join(s.name for s in _dead_cb629[:3])
+        if len(_dead_cb629) > 3:
+            _cb_names629 += f" +{len(_dead_cb629) - 3} more"
+        lines.append(
+            f"dead callbacks: {len(_dead_cb629)} unused callback/handler function(s) ({_cb_names629})"
+            f" — dead wire; event contract was designed but never wired; remove or register"
+        )
+
+    # S635: Dead deprecated symbol — unused exported symbol with "deprecated" or "obsolete" in its doc.
+    # Symbols explicitly marked deprecated but still exported are technical debt traps;
+    # callers may still depend on them even though maintainers intend removal.
+    _depr_keywords635 = ("deprecated", "obsolete", "do not use", "do_not_use", "legacy")
+    _dead_depr635 = [
+        s for s in dead
+        if not _is_test_file(s.file_path)
+        and any(kw in (s.doc or "").lower() for kw in _depr_keywords635)
+    ]
+    if _dead_depr635:
+        _depr_names635 = ", ".join(s.name for s in _dead_depr635[:3])
+        if len(_dead_depr635) > 3:
+            _depr_names635 += f" +{len(_dead_depr635) - 3} more"
+        lines.append(
+            f"dead deprecated: {len(_dead_depr635)} deprecated-marked symbol(s) are unused ({_depr_names635})"
+            f" — safe removal targets; deprecated intent + no callers = clean delete"
+        )
+
+    # S641: Dead inner class — unused nested class (parent_id is not None, kind == class).
+    # Inner classes that are never instantiated may be leftover design artifacts;
+    # they carry cognitive overhead without providing value.
+    _dead_inner641 = [
+        s for s in dead
+        if s.kind.value == "class"
+        and s.parent_id is not None
+        and not _is_test_file(s.file_path)
+    ]
+    if _dead_inner641:
+        _inner_names641 = ", ".join(s.name for s in _dead_inner641[:3])
+        if len(_dead_inner641) > 3:
+            _inner_names641 += f" +{len(_dead_inner641) - 3} more"
+        lines.append(
+            f"dead inner classes: {len(_dead_inner641)} unused nested class(es) ({_inner_names641})"
+            f" — leftover nested design; remove to reduce cognitive overhead"
+        )
+
+    # S647: Dead mixin/base class — unused class with "Mixin", "Base", or "Abstract" in its name.
+    # Mixins and base classes designed for inheritance but never subclassed are
+    # orphaned extension points; they represent planned reuse that never materialized.
+    _mixin_markers647 = ("mixin", "base", "abstract", "abcmixin", "interfacemixin")
+    _dead_mixins647 = [
+        s for s in dead
+        if s.kind.value == "class"
+        and not _is_test_file(s.file_path)
+        and any(m in s.name.lower() for m in _mixin_markers647)
+    ]
+    if _dead_mixins647:
+        _mixin_names647 = ", ".join(s.name for s in _dead_mixins647[:3])
+        if len(_dead_mixins647) > 3:
+            _mixin_names647 += f" +{len(_dead_mixins647) - 3} more"
+        lines.append(
+            f"dead mixins: {len(_dead_mixins647)} unused Mixin/Base class(es) ({_mixin_names647})"
+            f" — planned reuse that never materialized; remove unless extension is imminent"
+        )
+
+    # S653: Dead protocol/interface — unused class with "Protocol" or "Interface" in its name.
+    # Protocol and Interface classes define behavioral contracts; if unused, the contract
+    # was designed but no implementation adopted it — likely abandoned architecture.
+    _dead_proto653 = [
+        s for s in dead
+        if s.kind.value == "class"
+        and not _is_test_file(s.file_path)
+        and any(m in s.name for m in ("Protocol", "Interface", "ABC", "Abstract"))
+        and not any(m in s.name for m in ("Mixin", "Base"))  # covered by S647
+    ]
+    if _dead_proto653:
+        _proto_names653 = ", ".join(s.name for s in _dead_proto653[:3])
+        if len(_dead_proto653) > 3:
+            _proto_names653 += f" +{len(_dead_proto653) - 3} more"
+        lines.append(
+            f"dead protocols: {len(_dead_proto653)} unused Protocol/Interface class(es) ({_proto_names653})"
+            f" — unimplemented contract; remove or provide at least one concrete implementation"
+        )
+
+    # S659: Dead empty class — unused class with no method children (shell class).
+    # A class with no methods may be a placeholder, a stub that was never fleshed out,
+    # or a configuration class that became dead when the feature was abandoned.
+    _dead_empty659 = [
+        s for s in dead
+        if s.kind.value == "class"
+        and not _is_test_file(s.file_path)
+        and not graph.children_of(s.id)  # no children at all
+    ]
+    if _dead_empty659:
+        _empty_names659 = ", ".join(s.name for s in _dead_empty659[:3])
+        if len(_dead_empty659) > 3:
+            _empty_names659 += f" +{len(_dead_empty659) - 3} more"
+        lines.append(
+            f"dead empty classes: {len(_dead_empty659)} unused class(es) with no children ({_empty_names659})"
+            f" — placeholder or abandoned stub; safe to delete"
+        )
+
+    # S665: Dead annotated function — dead function with a `->` return type annotation.
+    # Functions with explicit return annotations were designed as intentional API;
+    # an annotated-but-unused function is a more deliberate artifact than an unannotated one.
+    _dead_annotated665 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and "->" in (s.signature or "")
+    ]
+    if _dead_annotated665:
+        _ann_names665 = ", ".join(s.name for s in _dead_annotated665[:3])
+        if len(_dead_annotated665) > 3:
+            _ann_names665 += f" +{len(_dead_annotated665) - 3} more"
+        lines.append(
+            f"dead annotated functions: {len(_dead_annotated665)} unused typed function(s) ({_ann_names665})"
+            f" — annotated APIs that were never called; intentional design that was abandoned"
+        )
+
+    # S671: Dead module — all exported symbols in a non-test file are dead (entire file unused).
+    # When every exported symbol in a file is unused, the whole module is a candidate for removal;
+    # this is stronger evidence than individual dead symbols scattered across files.
+    _dead_files671: dict[str, list[Symbol]] = {}
+    for _s671 in dead:
+        if not _is_test_file(_s671.file_path) and _s671.parent_id is None:
+            _dead_files671.setdefault(_s671.file_path, []).append(_s671)
+    _full_dead671 = []
+    for _fp671, _dsyms671 in _dead_files671.items():
+        _fi671 = graph.files.get(_fp671)
+        if _fi671:
+            _all_top671 = [
+                s for s in graph.symbols.values()
+                if s.file_path == _fp671 and s.parent_id is None
+            ]
+            if _all_top671 and len(_dsyms671) == len(_all_top671):
+                _full_dead671.append(_fp671)
+    if _full_dead671:
+        _mod_names671 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _full_dead671[:3])
+        if len(_full_dead671) > 3:
+            _mod_names671 += f" +{len(_full_dead671) - 3} more"
+        lines.append(
+            f"dead module(s): {len(_full_dead671)} file(s) fully unused ({_mod_names671})"
+            f" — entire file has no live consumers; candidate for deletion"
+        )
+
+    # S677: Dead overloaded name — 3+ dead symbols share the same name (copy-paste drift).
+    # Multiple dead functions with the same name across files indicate widespread duplication
+    # that was never activated; none of the copies survived to production use.
+    _dead_name_counts677: dict[str, int] = {}
+    for _s677 in dead:
+        if _s677.kind.value in ("function", "method") and not _is_test_file(_s677.file_path):
+            _dead_name_counts677[_s677.name] = _dead_name_counts677.get(_s677.name, 0) + 1
+    _overloaded677 = [(name, cnt) for name, cnt in _dead_name_counts677.items() if cnt >= 3]
+    if _overloaded677:
+        _top677 = sorted(_overloaded677, key=lambda x: -x[1])[:2]
+        _label677 = ", ".join(f"'{n}' ×{c}" for n, c in _top677)
+        lines.append(
+            f"dead overloaded names: {len(_overloaded677)} name(s) dead in 3+ files ({_label677})"
+            f" — copy-paste drift; duplicated functions were never called anywhere"
+        )
+
+    # S683: Dead long functions — unused functions with 10+ lines (significant speculative work).
+    # A large dead function represents substantial development effort that was never activated;
+    # the more lines, the more deliberate the original intent — and the higher the removal cost.
+    _dead_long683 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and s.line_count >= 10
+    ]
+    if _dead_long683:
+        _long_names683 = ", ".join(s.name for s in _dead_long683[:3])
+        if len(_dead_long683) > 3:
+            _long_names683 += f" +{len(_dead_long683) - 3} more"
+        lines.append(
+            f"dead long functions: {len(_dead_long683)} unused function(s) with 10+ lines ({_long_names683})"
+            f" — substantial speculative work; review intent before deleting"
+        )
+
+    # S689: Dead derived class — dead class that inherits from another class (has a base class).
+    # A dead class that was designed to extend a hierarchy represents architectural planning
+    # that was never activated; it may indicate an abandoned feature or incomplete refactor.
+    _dead_derived689 = [
+        s for s in dead
+        if s.kind.value == "class"
+        and not _is_test_file(s.file_path)
+        and s.signature
+        and "(" in s.signature
+        and ")" in s.signature
+        and s.signature.split("(", 1)[1].split(")", 1)[0].strip() not in ("", "object")
+    ]
+    if _dead_derived689:
+        _der_names689 = ", ".join(s.name for s in _dead_derived689[:3])
+        if len(_dead_derived689) > 3:
+            _der_names689 += f" +{len(_dead_derived689) - 3} more"
+        lines.append(
+            f"dead derived classes: {len(_dead_derived689)} unused subclass(es) ({_der_names689})"
+            f" — abandoned subclass design; verify base class is still the right abstraction"
+        )
+
+    # S695: Dead test utility — unused functions in source files with test-utility names.
+    # Functions named mock_*, stub_*, fake_*, or *_fixture in non-test files are test helpers
+    # that leaked into production modules; they should either be moved or removed.
+    _test_util_kws695 = ("mock", "stub", "fake", "fixture")
+    _dead_test_util695 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and any(kw in s.name.lower() for kw in _test_util_kws695)
+    ]
+    if _dead_test_util695:
+        _tu_names695 = ", ".join(s.name for s in _dead_test_util695[:3])
+        if len(_dead_test_util695) > 3:
+            _tu_names695 += f" +{len(_dead_test_util695) - 3} more"
+        lines.append(
+            f"dead test utilities: {len(_dead_test_util695)} test-utility name(s) in source files ({_tu_names695})"
+            f" — test helpers in production code; move to test files or remove"
+        )
+
+    # S701: Dead factory functions — unused functions whose names start with create/make/build/factory.
+    # Factory functions represent construction logic for features that were never integrated;
+    # the naming pattern signals intentional design that was abandoned before wiring.
+    _factory_prefixes701 = ("create", "make", "build", "factory")
+    _dead_factories701 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().startswith(pfx) for pfx in _factory_prefixes701)
+    ]
+    if _dead_factories701:
+        _fac_names701 = ", ".join(s.name for s in _dead_factories701[:3])
+        if len(_dead_factories701) > 3:
+            _fac_names701 += f" +{len(_dead_factories701) - 3} more"
+        lines.append(
+            f"dead factory functions: {len(_dead_factories701)} unused factory function(s) ({_fac_names701})"
+            f" — abandoned construction logic; feature was never wired up"
+        )
+
+    # S707: Dead event handlers — unused functions with event-handler naming patterns.
+    # Functions named on_*, handle_*, or *_handler are written to respond to events;
+    # if they're dead, the event they were designed for was removed or never wired up.
+    _handler_patterns707 = ("on_", "handle_")
+    _handler_suffix707 = ("_handler", "_listener", "_callback")
+    _dead_handlers707 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and (
+            any(s.name.lower().startswith(pfx) for pfx in _handler_patterns707)
+            or any(s.name.lower().endswith(sfx) for sfx in _handler_suffix707)
+        )
+    ]
+    if _dead_handlers707:
+        _hdl_names707 = ", ".join(s.name for s in _dead_handlers707[:3])
+        if len(_dead_handlers707) > 3:
+            _hdl_names707 += f" +{len(_dead_handlers707) - 3} more"
+        lines.append(
+            f"dead event handlers: {len(_dead_handlers707)} unused handler function(s) ({_hdl_names707})"
+            f" — event was removed or never wired; remove or reconnect to event source"
+        )
+
+    # S713: Dead serialization functions — unused functions for data format conversion.
+    # Serialization functions (serialize/deserialize/encode/decode/marshal/unmarshal) are
+    # written for specific data formats; dead ones signal format changes or abandoned integrations.
+    _ser_kws713 = ("serialize", "deserialize", "encode", "decode", "marshal", "unmarshal")
+    _dead_ser713 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and any(kw in s.name.lower() for kw in _ser_kws713)
+    ]
+    if _dead_ser713:
+        _ser_names713 = ", ".join(s.name for s in _dead_ser713[:3])
+        if len(_dead_ser713) > 3:
+            _ser_names713 += f" +{len(_dead_ser713) - 3} more"
+        lines.append(
+            f"dead serialization functions: {len(_dead_ser713)} unused format function(s) ({_ser_names713})"
+            f" — data format changed or integration was abandoned"
+        )
+
+    # S719: Dead config loaders — unused functions with config-loading name patterns.
+    # Config loaders (load_config, parse_settings, read_conf) that are never called indicate
+    # abandoned configuration strategies or superseded loading mechanisms.
+    _loader_pfx719 = ("load_", "parse_", "read_")
+    _cfg_kws719 = ("config", "setting", "conf", "cfg")
+    _dead_loaders719 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().startswith(pfx) for pfx in _loader_pfx719)
+        and any(kw in s.name.lower() for kw in _cfg_kws719)
+    ]
+    if _dead_loaders719:
+        _ldr_names719 = ", ".join(s.name for s in _dead_loaders719[:3])
+        if len(_dead_loaders719) > 3:
+            _ldr_names719 += f" +{len(_dead_loaders719) - 3} more"
+        lines.append(
+            f"dead config loaders: {len(_dead_loaders719)} unused config-loading function(s) ({_ldr_names719})"
+            f" — abandoned config strategy or superseded loading mechanism"
+        )
+
+    # S725: Dead async functions — unused functions with an async signature.
+    # Async functions indicate concurrent or I/O workflows; dead ones signal abandoned parallel
+    # execution strategies, superseded event loops, or incomplete async migrations.
+    _dead_async725 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and s.signature is not None
+        and s.signature.lstrip().startswith("async")
+    ]
+    if _dead_async725:
+        _async_names725 = ", ".join(s.name for s in _dead_async725[:3])
+        if len(_dead_async725) > 3:
+            _async_names725 += f" +{len(_dead_async725) - 3} more"
+        lines.append(
+            f"dead async functions: {len(_dead_async725)} unused async function(s) ({_async_names725})"
+            f" — abandoned async workflow or incomplete async migration"
+        )
+
+    # S731: Dead migration functions — unused functions with migration-related names.
+    # Migration functions (migrate, upgrade, downgrade) that are never called indicate
+    # abandoned schema migrations, version upgrade paths, or skipped data transformations.
+    _mig_kws731 = ("migrate", "upgrade", "downgrade", "rollback", "rollforward")
+    _dead_migs731 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and any(kw in s.name.lower() for kw in _mig_kws731)
+    ]
+    if _dead_migs731:
+        _mig_names731 = ", ".join(s.name for s in _dead_migs731[:3])
+        if len(_dead_migs731) > 3:
+            _mig_names731 += f" +{len(_dead_migs731) - 3} more"
+        lines.append(
+            f"dead migration functions: {len(_dead_migs731)} unused migration function(s) ({_mig_names731})"
+            f" — abandoned migration or skipped upgrade path"
         )
 
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")

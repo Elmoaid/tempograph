@@ -104,50 +104,6 @@ class PHPHandlerMixin:
         if body:
             self._php_scan_calls(body, sym_id)
 
-    # ── PHP property ───────────────────────────────────────
-
-    def _handle_php_property(self, node: Node, class_id: str) -> None:
-        """Extract a class property declaration ($name, $email, etc.)."""
-        # Find property_element → variable_name for the property name
-        prop_elem = None
-        exported = True  # public by default
-        for child in node.children:
-            if child.type == "visibility_modifier":
-                vis = _node_text(child, self.source)
-                if vis in ("private", "protected"):
-                    exported = False
-            elif child.type == "property_element":
-                prop_elem = child
-        if not prop_elem:
-            return
-        var_node = None
-        for child in prop_elem.children:
-            if child.type == "variable_name":
-                var_node = child
-                break
-        if not var_node:
-            return
-        raw_name = _node_text(var_node, self.source)
-        # Strip leading '$' from PHP variable names
-        name = raw_name.lstrip("$") if raw_name else ""
-        if not name:
-            return
-        sym_id = self._make_id(name)
-        sym = Symbol(
-            id=sym_id, name=name,
-            qualified_name=f"{self._parent_qualified_name()}.{name}" if self._symbol_stack else name,
-            kind=SymbolKind.VARIABLE, language=self.language,
-            file_path=self.file_path,
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            signature=_node_text(node, self.source).rstrip(";").strip(),
-            exported=exported,
-            parent_id=class_id,
-            byte_size=node.end_byte - node.start_byte,
-        )
-        self.symbols.append(sym)
-        self.edges.append(Edge(EdgeKind.CONTAINS, class_id, sym_id))
-
     # ── PHP class ──────────────────────────────────────────
 
     def _handle_php_class(self, node: Node) -> None:
@@ -191,7 +147,7 @@ class PHPHandlerMixin:
                             node.start_point[0] + 1,
                         ))
 
-        # Walk body for methods and properties
+        # Walk body for properties and methods
         body = node.child_by_field_name("body")
         if body:
             self._symbol_stack.append(sym_id)
@@ -269,6 +225,66 @@ class PHPHandlerMixin:
                 elif child.type == "property_declaration":
                     self._handle_php_property(child, sym_id)
             self._symbol_stack.pop()
+
+    # ── PHP property ───────────────────────────────────────
+
+    def _handle_php_property(self, node: Node, parent_id: str) -> None:
+        """Extract a class/trait property_declaration node as a VARIABLE symbol."""
+        # Collect modifier/type info from children before property_element
+        exported = True  # default: public
+        type_name: str | None = None
+        prop_elem: Node | None = None
+
+        _TYPE_NODES = {
+            "primitive_type", "named_type", "union_type",
+            "intersection_type", "nullable_type",
+        }
+
+        for child in node.children:
+            t = child.type
+            if t == "visibility_modifier":
+                vis = _node_text(child, self.source)
+                if vis in ("private", "protected"):
+                    exported = False
+            elif t in _TYPE_NODES:
+                type_name = _node_text(child, self.source)
+            elif t == "property_element":
+                prop_elem = child
+
+        if prop_elem is None:
+            return
+
+        # property_element → variable_name → name
+        var_node = None
+        for child in prop_elem.children:
+            if child.type == "variable_name":
+                var_node = child
+                break
+        if var_node is None:
+            return
+
+        # Strip leading $
+        raw = _node_text(var_node, self.source)
+        name = raw.lstrip("$")
+        if not name:
+            return
+
+        sym_id = self._make_id(name)
+        sig = f"${name}" + (f": {type_name}" if type_name else "")
+        sym = Symbol(
+            id=sym_id, name=name,
+            qualified_name=f"{self._parent_qualified_name()}.{name}" if self._symbol_stack else name,
+            kind=SymbolKind.VARIABLE, language=self.language,
+            file_path=self.file_path,
+            line_start=node.start_point[0] + 1,
+            line_end=node.end_point[0] + 1,
+            signature=sig,
+            exported=exported,
+            parent_id=parent_id,
+            byte_size=node.end_byte - node.start_byte,
+        )
+        self.symbols.append(sym)
+        self.edges.append(Edge(EdgeKind.CONTAINS, parent_id, sym_id))
 
     # ── PHP call scanning ──────────────────────────────────
 
