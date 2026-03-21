@@ -34940,3 +34940,200 @@ class TestDeadProtocolsS737:
         assert "dead protocols" not in out, (
             f"'dead protocols' must not appear when ABC class is used; got:\n{out}"
         )
+
+
+# ---------------------------------------------------------------------------
+# S738 – S743
+# ---------------------------------------------------------------------------
+
+class TestModuleLevelVariableS738:
+    def test_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        # config.py imported by 3 source files
+        (tmp_path / "config.py").write_text(
+            "TIMEOUT = 30\n"
+        )
+        (tmp_path / "a.py").write_text("from config import TIMEOUT\ndef fa(): return TIMEOUT\n")
+        (tmp_path / "b.py").write_text("from config import TIMEOUT\ndef fb(): return TIMEOUT\n")
+        (tmp_path / "c.py").write_text("from config import TIMEOUT\ndef fc(): return TIMEOUT\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "TIMEOUT")
+        assert "module-level variable" in out, (
+            f"Expected 'module-level variable' for global constant in widely imported file; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text(
+            "def process(): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from core import process\ndef run(): process()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process")
+        assert "module-level variable" not in out, (
+            f"'module-level variable' must not appear for a function symbol; got:\n{out}"
+        )
+
+
+class TestHighConstantDensityS739:
+    def test_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # Many constants, few functions
+        constants = "\n".join(f"CONST_{i} = {i}" for i in range(10))
+        (tmp_path / "constants.py").write_text(constants + "\n")
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "high constant density" in out, (
+            f"Expected 'high constant density' when vars >> functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # Balanced: many functions, few constants
+        fns = "\n".join(f"def fn{i}(): pass" for i in range(8))
+        (tmp_path / "core.py").write_text(fns + "\nX = 1\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "high constant density" not in out, (
+            f"'high constant density' must not appear when functions dominate; got:\n{out}"
+        )
+
+
+class TestMiddlewareBlastS740:
+    def test_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "middleware.py").write_text(
+            "def auth_check(request): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from middleware import auth_check\ndef handle(req): auth_check(req)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "middleware.py")
+        assert "middleware blast" in out, (
+            f"Expected 'middleware blast' for middleware.py; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "router.py").write_text("def route(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from router import route\ndef run(): route()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "router.py")
+        assert "middleware blast" not in out, (
+            f"'middleware blast' must not appear for non-middleware file; got:\n{out}"
+        )
+
+
+class TestConfigDataFileDiffS741:
+    def test_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "settings.json").write_text('{"timeout": 30}')
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "settings.json"])
+        assert "config data file" in out, (
+            f"Expected 'config data file' when .json file is in diff; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "utils.py"])
+        assert "config data file" not in out, (
+            f"'config data file' must not appear for Python-only diff; got:\n{out}"
+        )
+
+
+class TestCrossPackageHotspotS742:
+    def test_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        # process called from 3 different top-level directories
+        (tmp_path / "core.py").write_text("def process(): pass\n")
+        for pkg in ("alpha", "beta", "gamma"):
+            d = tmp_path / pkg
+            d.mkdir()
+            callers = "\n".join(f"def fn{i}(): process()" for i in range(3))
+            (d / "code.py").write_text(
+                "from core import process\n" + callers + "\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "cross-package hotspot" in out, (
+            f"Expected 'cross-package hotspot' when callers from 3+ dirs; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        # process called only from one directory
+        callers = "\n".join(f"def caller{i}(): process()" for i in range(8))
+        (tmp_path / "core.py").write_text("def process(): pass\n")
+        (tmp_path / "consumers.py").write_text(
+            "from core import process\n" + callers + "\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "cross-package hotspot" not in out, (
+            f"'cross-package hotspot' must not appear when callers are in 1 dir; got:\n{out}"
+        )
+
+
+class TestDeadCacheFunctionsS743:
+    def test_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "cache.py").write_text(
+            "def cache_result(key, val): pass\n"
+            "def memoize_query(fn): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead cache functions" in out, (
+            f"Expected 'dead cache functions' for unused cache/memoize fns; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "cache.py").write_text(
+            "def cache_result(key, val): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from cache import cache_result\n"
+            "def main(): cache_result('k', 1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead cache functions" not in out, (
+            f"'dead cache functions' must not appear when cache fn is called; got:\n{out}"
+        )

@@ -1957,6 +1957,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — domain changes cascade to serializers, validators, and all consumers"
         )
 
+    # S740: Middleware/decorator blast — blast target has a middleware or decorator filename.
+    # Middleware and decorator files intercept all code paths that pass through them;
+    # changes affect every route or call wrapped by this middleware/decorator.
+    _mw_kws740 = ("middleware", "decorator", "wrapper", "interceptor", "hook")
+    _blast_stem740 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].replace(".py", "").lower()
+    if any(kw in _blast_stem740 for kw in _mw_kws740):
+        lines.append(
+            f"middleware blast: {_fp589.rsplit('/', 1)[-1]} is a middleware/decorator file"
+            f" — cross-cutting concern; changes affect every code path using this wrapper"
+        )
+
     return "\n".join(lines)
 
 

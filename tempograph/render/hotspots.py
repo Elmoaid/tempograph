@@ -2297,5 +2297,24 @@ def _collect_hotspots_signals(
                     f" — high fan-in AND fan-out; changes propagate in all directions"
                 )
 
+    # S742: Cross-package hotspot — the top hotspot is called from 3+ different top-level directories.
+    # Cross-package coupling concentrates architectural dependency at one symbol; changes to it
+    # force coordinated updates across multiple subsystems.
+    if scores and scores[0]:
+        _top742 = scores[0][1]
+        if _top742 is not None and not _is_test_file(_top742.file_path):
+            _callers742 = graph.callers_of(_top742.id)
+            _caller_dirs742 = {
+                c.file_path.replace("\\", "/").split("/")[0]
+                for c in _callers742
+                if not _is_test_file(c.file_path)
+            }
+            if len(_caller_dirs742) >= 3:
+                out.append(
+                    f"\ncross-package hotspot: {_top742.name} is called from"
+                    f" {len(_caller_dirs742)} different top-level directories"
+                    f" — architectural dependency magnet; coupling spans the whole codebase"
+                )
+
     return out
 

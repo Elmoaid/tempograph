@@ -3543,6 +3543,27 @@ def _signals_focused_fn_advanced(
                     f" — god class candidate; consider splitting into focused collaborators"
                 )
 
+    # S738: Module-level variable — focused symbol is a global variable/constant imported widely.
+    # Mutable module-level state shared across many files creates hidden coupling;
+    # any change to the value ripples to every importer without a clear interface contract.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim738 = _seed_syms[0]
+        if (
+            _prim738.kind.value in ("variable", "constant")
+            and not _is_test_file(_prim738.file_path)
+            and _prim738.parent_id is None
+        ):
+            _file_importers738 = [
+                f for f in graph.importers_of(_prim738.file_path)
+                if f != _prim738.file_path
+            ]
+            if len(_file_importers738) >= 3:
+                lines.append(
+                    f"\nmodule-level variable: {_prim738.name} is a global variable in a file"
+                    f" imported by {len(_file_importers738)} modules"
+                    f" — shared mutable state can cause hidden coupling across all importers"
+                )
+
     return lines
 
 

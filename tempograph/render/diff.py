@@ -396,6 +396,21 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — verify deployment order: DB migration must run in coordination with code changes"
         )
 
+    # S741: Config data file in diff — diff includes non-Python data/config files.
+    # Config file changes affect runtime behavior without any code change; they can alter
+    # feature flags, database connections, or application settings silently.
+    _data_exts741 = {".json", ".yaml", ".yml", ".toml", ".env", ".ini", ".cfg", ".csv"}
+    _data_files741 = [
+        f for f in changed_files
+        if any(f.endswith(ext) for ext in _data_exts741)
+    ]
+    if _data_files741:
+        _df_name741 = _data_files741[0].replace("\\", "/").rsplit("/", 1)[-1]
+        lines.append(
+            f"config data file: {_df_name741} is a data/config file in the diff"
+            f" — runtime behavior change without code change; verify all environments updated"
+        )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 

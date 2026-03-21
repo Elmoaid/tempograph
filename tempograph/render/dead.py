@@ -2526,6 +2526,25 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — abstraction designed but no active implementations remain; remove or implement"
         )
 
+    # S743: Dead cache functions — unused functions with caching/memoization names.
+    # Caching functions that are never called indicate abandoned performance optimizations
+    # or superseded caching strategies; they add complexity without delivering benefit.
+    _cache_kws743 = ("cache", "memo", "memoize", "cached", "memoized")
+    _dead_cache743 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and any(kw in s.name.lower() for kw in _cache_kws743)
+    ]
+    if _dead_cache743:
+        _cache_names743 = ", ".join(s.name for s in _dead_cache743[:3])
+        if len(_dead_cache743) > 3:
+            _cache_names743 += f" +{len(_dead_cache743) - 3} more"
+        lines.append(
+            f"dead cache functions: {len(_dead_cache743)} unused caching function(s) ({_cache_names743})"
+            f" — abandoned performance optimization or superseded caching strategy"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

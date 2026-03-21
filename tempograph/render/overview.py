@@ -2891,6 +2891,24 @@ def _signals_async_oop(
                 f" — consider organizing into subdirectories as the codebase grows"
             )
 
+    # S739: High constant density — the repo has more than twice as many variables/constants
+    # as functions. Config-heavy or data-heavy repos may lack abstraction; constants scattered
+    # across files make configuration management harder.
+    _all_syms739 = list(graph.symbols.values())
+    _fn_count739 = sum(
+        1 for s in _all_syms739
+        if s.kind.value in ("function", "method") and not _is_test_file(s.file_path)
+    )
+    _var_count739 = sum(
+        1 for s in _all_syms739
+        if s.kind.value in ("variable", "constant") and not _is_test_file(s.file_path)
+    )
+    if _fn_count739 > 0 and _var_count739 > _fn_count739 * 2:
+        lines.append(
+            f"high constant density: {_var_count739} variables/constants vs {_fn_count739} functions"
+            f" — config-heavy repo; verify constants are not scattered across multiple files"
+        )
+
     return lines
 
 
