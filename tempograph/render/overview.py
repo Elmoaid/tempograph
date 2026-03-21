@@ -2304,6 +2304,18 @@ def _signals_async_oop(
             f" — blocking calls in async context stall the event loop; audit sync→async call boundaries"
         )
 
+    # S532: Test-heavy repo — test files exceed 50% of total indexed files.
+    # More test code than source code can indicate over-specification of implementation details,
+    # or that tests weren't cleaned up after source was removed. Both increase maintenance burden.
+    _s532_test_n = sum(1 for fp in graph.files if _is_test_file(fp))
+    _s532_total_n = len(graph.files)
+    if _s532_total_n >= 10 and _s532_test_n / _s532_total_n > 0.50:
+        _s532_pct = int(_s532_test_n / _s532_total_n * 100)
+        lines.append(
+            f"test-heavy: {_s532_pct}% of files are test files ({_s532_test_n}/{_s532_total_n})"
+            f" — verify tests weren't left behind after source was deleted"
+        )
+
     # S526: Dense codebase — average source file has 200+ lines.
     # Large average file size signals monolith tendencies; files become harder to navigate,
     # review, and test when they grow above ~200 lines. Consider splitting by responsibility.

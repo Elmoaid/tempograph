@@ -25740,3 +25740,266 @@ class TestDeadModuleConstantsS530:
         assert "dead constants" not in out, (
             f"'dead constants' must not appear when config.py is imported; got:\n{out}"
         )
+
+# ── S531: Mutable default argument focused ────────────────────────────────────
+
+class TestMutableDefaultFocusedS531:
+    """S531: Focused function with mutable default argument emits mutable default signal."""
+
+    def test_mutable_default_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def append_to(item, result=[]):\n"
+            "    result.append(item)\n"
+            "    return result\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from utils import append_to\ndef run(): return append_to(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "append_to")
+        assert "mutable default" in out, (
+            f"Expected 'mutable default' for function with =[]; got:\n{out}"
+        )
+
+    def test_mutable_default_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def append_to(item, result=None):\n"
+            "    if result is None: result = []\n"
+            "    result.append(item)\n"
+            "    return result\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from utils import append_to\ndef run(): return append_to(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "append_to")
+        assert "mutable default" not in out, (
+            f"'mutable default' must not appear for =None default; got:\n{out}"
+        )
+
+
+# ── S532: Test-heavy repo overview ────────────────────────────────────────────
+
+class TestTestHeavyRepoOverviewS532:
+    """S532: >50% of files being test files emits test-heavy signal."""
+
+    def test_test_heavy_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+        import os
+
+        # 3 source files, 8 test files = 73% tests
+        for i in range(3):
+            (tmp_path / f"service_{i}.py").write_text(f"def func_{i}(): return {i}\n")
+        os.makedirs(tmp_path / "tests", exist_ok=True)
+        for i in range(8):
+            (tmp_path / "tests" / f"test_service_{i}.py").write_text(
+                f"from service_{i % 3} import func_{i % 3}\ndef test_fn(): assert func_{i % 3}() == {i % 3}\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "test-heavy" in out, (
+            f"Expected 'test-heavy' for repo with 73% test files; got:\n{out}"
+        )
+
+    def test_test_heavy_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+        import os
+
+        # 8 source files, 2 test files = 20% tests
+        for i in range(8):
+            (tmp_path / f"module_{i}.py").write_text(f"def func_{i}(): return {i}\n")
+        os.makedirs(tmp_path / "tests", exist_ok=True)
+        for i in range(2):
+            (tmp_path / "tests" / f"test_module_{i}.py").write_text(
+                f"from module_{i} import func_{i}\ndef test_fn(): assert func_{i}() == {i}\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "test-heavy" not in out, (
+            f"'test-heavy' must not appear when tests are minority of files; got:\n{out}"
+        )
+
+
+# ── S533: Type stub paired blast ──────────────────────────────────────────────
+
+class TestTypeStubPairedBlastS533:
+    """S533: Blast target with a .pyi stub file emits type stub paired signal."""
+
+    def test_type_stub_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "api.py").write_text("def get_data(key: str) -> dict: return {}\n")
+        (tmp_path / "api.pyi").write_text("def get_data(key: str) -> dict: ...\n")
+        (tmp_path / "app.py").write_text(
+            "from api import get_data\ndef run(): return get_data('x')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="api.py")
+        assert "type stub paired" in out, (
+            f"Expected 'type stub paired' for api.py with api.pyi; got:\n{out}"
+        )
+
+    def test_type_stub_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def helper(): return 1\n")
+        (tmp_path / "app.py").write_text(
+            "from utils import helper\ndef run(): return helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="utils.py")
+        assert "type stub paired" not in out, (
+            f"'type stub paired' must not appear when no .pyi stub exists; got:\n{out}"
+        )
+
+
+# ── S534: Hot path diff ────────────────────────────────────────────────────────
+
+class TestHotPathDiffS534:
+    """S534: Diff touching a file with a top-5 hotspot symbol emits hot path signal."""
+
+    def test_hot_path_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text(
+            "def hot_func(x): return x * 2\n"
+        )
+        callers = "".join(
+            f"from core import hot_func\ndef caller_{i}(): return hot_func({i})\n"
+            for i in range(5)
+        )
+        (tmp_path / "callers.py").write_text(callers)
+        (tmp_path / "other.py").write_text("def unrelated(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["core.py"])
+        assert "hot path diff" in out, (
+            f"Expected 'hot path diff' for diff touching file with a hotspot; got:\n{out}"
+        )
+
+    def test_hot_path_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text(
+            "def hot_func(x): return x * 2\n"
+        )
+        callers = "".join(
+            f"from core import hot_func\ndef caller_{i}(): return hot_func({i})\n"
+            for i in range(5)
+        )
+        (tmp_path / "callers.py").write_text(callers)
+        (tmp_path / "unrelated.py").write_text("def side_func(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        # Only diff the unrelated file — not the hot path file
+        out = render_diff_context(g, ["unrelated.py"])
+        assert "hot path diff" not in out, (
+            f"'hot path diff' must not appear when diff avoids the hotspot file; got:\n{out}"
+        )
+
+
+# ── S535: Class hierarchy hotspot ─────────────────────────────────────────────
+
+class TestClassHierarchyHotspotS535:
+    """S535: Top hotspot class with subclasses emits class hierarchy hotspot signal."""
+
+    def test_class_hierarchy_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "base.py").write_text(
+            "class BaseProcessor:\n"
+            "    def run(self): pass\n"
+            "\n"
+            "class FastProcessor(BaseProcessor):\n"
+            "    def run(self): return 'fast'\n"
+            "\n"
+            "class SlowProcessor(BaseProcessor):\n"
+            "    def run(self): return 'slow'\n"
+        )
+        callers = "".join(
+            f"from base import BaseProcessor\ndef make_{i}(): return BaseProcessor()\n"
+            for i in range(5)
+        )
+        (tmp_path / "factory.py").write_text(callers)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "class hierarchy hotspot" in out, (
+            f"Expected 'class hierarchy hotspot' for most-called class with subclasses; got:\n{out}"
+        )
+
+    def test_class_hierarchy_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text(
+            "class Worker:\n"
+            "    def run(self): return 1\n"
+        )
+        callers = "".join(
+            f"from core import Worker\ndef make_{i}(): return Worker()\n"
+            for i in range(5)
+        )
+        (tmp_path / "factory.py").write_text(callers)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "class hierarchy hotspot" not in out, (
+            f"'class hierarchy hotspot' must not appear for class with no subclasses; got:\n{out}"
+        )
+
+
+# ── S536: Dead abstract base class dead ───────────────────────────────────────
+
+class TestDeadAbstractClassS536:
+    """S536: Unimplemented Abstract*/Base* class with 0 callers emits dead abstract classes signal."""
+
+    def test_dead_abstract_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "contracts.py").write_text(
+            "class AbstractStorage:\n"
+            "    def save(self): raise NotImplementedError\n"
+            "    def load(self): raise NotImplementedError\n"
+            "\n"
+            "class BaseHandler:\n"
+            "    def handle(self): raise NotImplementedError\n"
+        )
+        (tmp_path / "main.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead abstract classes" in out, (
+            f"Expected 'dead abstract classes' for unimplemented Abstract/Base classes; got:\n{out}"
+        )
+
+    def test_dead_abstract_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "contracts.py").write_text(
+            "class AbstractStorage:\n"
+            "    def save(self): raise NotImplementedError\n"
+        )
+        (tmp_path / "impl.py").write_text(
+            "from contracts import AbstractStorage\n"
+            "class FileStorage(AbstractStorage):\n"
+            "    def save(self): return True\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from impl import FileStorage\ndef run(): return FileStorage()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead abstract classes" not in out, (
+            f"'dead abstract classes' must not appear when abstract class is imported; got:\n{out}"
+        )
