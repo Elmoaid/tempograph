@@ -2146,6 +2146,70 @@ class TestDeadCodeTestFileFilter:
         )
 
 
+class TestDeadCodeGroupByFile:
+    """Tests for dead code grouping improvements (S21).
+
+    Dead code output groups symbols by file, sorts files by dead symbol count
+    (most-contaminated first), shows per-file count in header, and caps
+    per-file symbol display at 10 with an overflow note.
+    """
+
+    def _build(self, tmp_path, files: dict) -> object:
+        from tempograph.builder import build_graph
+
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_file_count_shown_in_header(self, tmp_path):
+        """File header shows dead symbol count: 'filename (N dead symbols)'."""
+        from tempograph.render import render_dead_code
+
+        g = self._build(tmp_path, {
+            "a.py": "def orphan1():\n    pass\n\ndef orphan2():\n    pass\n",
+        })
+        out = render_dead_code(g, include_low=True)
+
+        assert "a.py" in out, f"Must show a.py; got:\n{out}"
+        # Should show count in header
+        assert "dead symbol" in out, f"Must show dead symbol count in header; got:\n{out}"
+
+    def test_files_sorted_by_dead_count_descending(self, tmp_path):
+        """Files with more dead symbols appear before files with fewer."""
+        from tempograph.render import render_dead_code
+
+        g = self._build(tmp_path, {
+            # b.py has 1 dead symbol
+            "b.py": "def lone():\n    pass\n",
+            # a.py has 3 dead symbols
+            "a.py": (
+                "def dead1():\n    pass\n\n"
+                "def dead2():\n    pass\n\n"
+                "def dead3():\n    pass\n"
+            ),
+        })
+        out = render_dead_code(g, include_low=True)
+
+        pos_a = out.find("a.py")
+        pos_b = out.find("b.py")
+        assert pos_a < pos_b, (
+            f"a.py (3 dead) must appear before b.py (1 dead); pos_a={pos_a}, pos_b={pos_b}"
+        )
+
+    def test_per_file_overflow_capped_at_ten(self, tmp_path):
+        """Files with > 10 dead symbols show first 10 plus overflow note."""
+        from tempograph.render import render_dead_code
+
+        # Create a file with 12 dead functions
+        funcs = "\n\n".join(f"def dead{i}():\n    pass" for i in range(12))
+        g = self._build(tmp_path, {"big.py": funcs + "\n"})
+        out = render_dead_code(g, include_low=True)
+
+        assert "big.py" in out, f"Must show big.py; got:\n{out}"
+        assert "... and" in out, f"Must show overflow note for >10 symbols; got:\n{out}"
+        assert "more" in out, f"Overflow note must contain 'more'; got:\n{out}"
+
+
 class TestFileVolatilityWarning:
     """Tests for file volatility annotation in render_focused.
 

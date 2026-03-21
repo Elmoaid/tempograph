@@ -2048,13 +2048,21 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         by_file: dict[str, list[tuple[Symbol, int]]] = {}
         for sym, conf in shown:
             by_file.setdefault(sym.file_path, []).append((sym, conf))
-        for fp in sorted(by_file):
-            lines.append(f"  {fp}{_last_touched(fp)}:")
-            for sym, conf in sorted(by_file[fp], key=lambda x: x[0].line_start):
+        # Sort files: most dead symbols first (most-contaminated first)
+        sorted_files = sorted(by_file.items(), key=lambda x: -len(x[1]))
+        for fp, file_syms in sorted_files:
+            n = len(file_syms)
+            sym_label = f"{n} dead symbol{'s' if n != 1 else ''}"
+            lines.append(f"  {fp} ({sym_label}){_last_touched(fp)}:")
+            by_line = sorted(file_syms, key=lambda x: x[0].line_start)
+            shown_syms = by_line[:10]
+            for sym, conf in shown_syms:
                 lc = sym.line_count
                 total_lines += lc
                 age = _sym_age(sym)
                 lines.append(f"    {sym.kind.value} {sym.qualified_name} (L{sym.line_start}-{sym.line_end}, {lc} lines) [confidence: {conf}]{age}")
+            if len(by_line) > 10:
+                lines.append(f"    ... and {len(by_line) - 10} more")
             lines.append("")
 
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
