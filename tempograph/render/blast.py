@@ -2069,6 +2069,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — changes affect startup sequence, argument parsing, and all initialization logic"
         )
 
+    # S800: Plugin/hook registration blast — blast target is a plugin registry file.
+    # Plugin registry files map hook names to handlers; changes affect all consumers
+    # of the plugin system, which may be external and not tracked in the call graph.
+    _stem800 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].replace(".py", "").lower()
+    _plugin_kws800 = ("plugin", "plugins", "registry", "register", "hooks", "extensions", "middleware")
+    if any(kw == _stem800 or _stem800.startswith(kw + "_") or _stem800.endswith("_" + kw) for kw in _plugin_kws800):
+        lines.append(
+            f"plugin registry blast: {_fp589.rsplit('/', 1)[-1]} is a plugin/hook registry file"
+            f" — changes here affect all registered handlers, including external plugins"
+        )
+
     return "\n".join(lines)
 
 
