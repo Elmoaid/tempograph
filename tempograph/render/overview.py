@@ -3124,6 +3124,17 @@ def _signals_async_oop(
                 f" — files may benefit from splitting to improve navigability"
             )
 
+    # S823: Test-heavy repo — test files outnumber source files 2:1 or more.
+    # Over-investment in tests relative to source code may indicate over-engineering,
+    # duplicated test scenarios, or abandoned source modules with surviving tests.
+    _src_files823 = [fp for fp in graph.files if not _is_test_file(fp)]
+    _tst_files823 = [fp for fp in graph.files if _is_test_file(fp)]
+    if len(_src_files823) >= 3 and len(_tst_files823) >= len(_src_files823) * 2:
+        lines.append(
+            f"test-heavy repo: {len(_tst_files823)} test files vs {len(_src_files823)} source files"
+            f" — test suite is 2×+ the source; check for duplicated scenarios or orphaned tests"
+        )
+
     return lines
 
 
