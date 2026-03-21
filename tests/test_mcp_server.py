@@ -5486,3 +5486,41 @@ class TestFocusSimilarFunctions:
         })
         out = render_focused(g, "User")
         assert "similar:" not in out, f"similar: must not appear for CLASS; got:\n{out}"
+
+
+class TestDiffBlastAnnotationOnChangedFiles:
+    """S44: Diff mode — '[blast: N]' annotation on each changed file header.
+
+    Changed files with >= 2 importers show '[blast: N]' inline in the
+    Changed files list. Files with no/few importers must not show it.
+    """
+
+    def test_blast_annotation_shown_for_widely_imported_file(self, tmp_path):
+        """'[blast: N]' appears when changed file has >= 2 importers."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_diff_context
+
+        (tmp_path / "core.py").write_text("def fn(): pass\ndef gn(): pass\n")
+        (tmp_path / "user1.py").write_text("from core import fn\ndef a(): fn()\n")
+        (tmp_path / "user2.py").write_text("from core import gn\ndef b(): gn()\n")
+        (tmp_path / "user3.py").write_text("from core import fn, gn\ndef c(): fn(); gn()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["core.py"])
+
+        assert "[blast:" in out, (
+            f"Expected [blast: N] annotation for core.py with 3 importers; got:\n{out}"
+        )
+
+    def test_blast_annotation_absent_for_isolated_file(self, tmp_path):
+        """'[blast: N]' absent when changed file has 0 or 1 importers."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_diff_context
+
+        (tmp_path / "standalone.py").write_text("def fn(): pass\n")
+        (tmp_path / "main.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["standalone.py"])
+
+        assert "[blast:" not in out, (
+            f"[blast: N] must not appear for file with 0 importers; got:\n{out}"
+        )
