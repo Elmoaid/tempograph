@@ -7022,3 +7022,45 @@ class TestHotspotsComplexityDensity:
         assert "Dense:" not in out, (
             f"'Dense:' must not appear for trivial functions; got:\n{out}"
         )
+
+
+class TestDiffUnchangedTests:
+    """S65: Diff mode — 'Unchanged tests:' for source files changed without updating their test.
+
+    When source.py is in the diff but test_source.py exists in the graph and is NOT in the diff,
+    shows a reminder to update tests.
+    """
+
+    def _build(self, tmp_path, files: dict):
+        from tempograph.builder import build_graph
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_unchanged_tests_shown_when_test_not_in_diff(self, tmp_path):
+        """'Unchanged tests:' appears when source changed but test file exists and wasn't changed."""
+        from tempograph.render import render_diff_context
+
+        g = self._build(tmp_path, {
+            "auth.py": "def login(): pass\n",
+            "test_auth.py": "from auth import login\ndef test_login(): pass\n",
+        })
+        out = render_diff_context(g, ["auth.py"])  # test_auth.py NOT in diff
+        assert "Unchanged tests:" in out, (
+            f"Expected 'Unchanged tests:' when test_auth.py not in diff; got:\n{out}"
+        )
+        assert "test_auth.py" in out, (
+            f"Expected 'test_auth.py' named in output; got:\n{out}"
+        )
+
+    def test_unchanged_tests_absent_when_no_test_exists(self, tmp_path):
+        """'Unchanged tests:' absent when no matching test file exists."""
+        from tempograph.render import render_diff_context
+
+        g = self._build(tmp_path, {
+            "orphan.py": "def func(): pass\n",
+        })
+        out = render_diff_context(g, ["orphan.py"])
+        assert "Unchanged tests:" not in out, (
+            f"'Unchanged tests:' must not appear when no test file exists; got:\n{out}"
+        )
