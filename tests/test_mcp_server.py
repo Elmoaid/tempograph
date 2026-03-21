@@ -3249,7 +3249,7 @@ class TestFileBlastCountRanking:
         g = self._build(tmp_path, files)
         out = render_hotspots(g, top_n=5)
         assert "blast:" in out, f"Should annotate file with 22 dependents; got:\n{out}"
-        assert "files depend on this" in out
+        assert "files depend" in out
 
     def test_blast_annotation_silent_below_threshold(self, tmp_path, monkeypatch):
         """render_hotspots does NOT annotate files with <20 external dependents."""
@@ -3268,3 +3268,59 @@ class TestFileBlastCountRanking:
         g = self._build(tmp_path, files)
         out = render_hotspots(g, top_n=5)
         assert "blast:" not in out, f"Should NOT annotate file with only 5 dependents; got:\n{out}"
+
+    def test_classify_file_helper(self):
+        """_classify_file correctly identifies test, config, and source files."""
+        from tempograph.render import _classify_file
+
+        assert _classify_file("test_foo.py") == "test"
+        assert _classify_file("foo_test.py") == "test"
+        assert _classify_file("conftest.py") == "test"
+        assert _classify_file("foo.test.ts") == "test"
+        assert _classify_file("bar.spec.js") == "test"
+        assert _classify_file("pyproject.toml") == "config"
+        assert _classify_file("package.json") == "config"
+        assert _classify_file("jest.config.js") == "config"
+        assert _classify_file("foo.py") == "source"
+        assert _classify_file("utils.ts") == "source"
+        assert _classify_file("render.py") == "source"
+
+    def test_blast_annotation_shows_category_breakdown_mixed(self, tmp_path, monkeypatch):
+        """blast annotation shows (N source, M test) breakdown when dependents include tests."""
+        import tempograph.git as git_mod
+        monkeypatch.setattr(git_mod, "file_change_velocity", lambda repo, recent_days=7: {})
+
+        files = {"hub.py": "def hub_func():\n    pass\n"}
+        for i in range(15):
+            files[f"user_{i}.py"] = f"from hub import hub_func\ndef t{i}():\n    hub_func()\n"
+        for i in range(8):
+            files[f"test_user_{i}.py"] = f"from hub import hub_func\ndef test_{i}():\n    hub_func()\n"
+
+        from tempograph.render import render_hotspots
+        g = self._build(tmp_path, files)
+        out = render_hotspots(g, top_n=5)
+
+        assert "blast:" in out, f"Should annotate with 23 dependents; got:\n{out}"
+        assert "source" in out, f"Should include 'source' category; got:\n{out}"
+        assert "test" in out, f"Should include 'test' category; got:\n{out}"
+
+    def test_blast_annotation_source_only_no_test_label(self, tmp_path, monkeypatch):
+        """blast annotation omits 'test' label when all dependents are source files."""
+        import tempograph.git as git_mod
+        monkeypatch.setattr(git_mod, "file_change_velocity", lambda repo, recent_days=7: {})
+
+        files = {"hub.py": "def hub_func():\n    pass\n"}
+        for i in range(22):
+            files[f"user_{i}.py"] = f"from hub import hub_func\ndef t{i}():\n    hub_func()\n"
+
+        from tempograph.render import render_hotspots
+        g = self._build(tmp_path, files)
+        out = render_hotspots(g, top_n=5)
+
+        assert "blast:" in out, f"Should annotate with 22 source dependents; got:\n{out}"
+        assert "source" in out, f"Should include 'source' category; got:\n{out}"
+        # No test files as dependents, so 'test' category should not appear
+        lines_with_blast = [l for l in out.splitlines() if "blast:" in l]
+        assert all("test" not in l for l in lines_with_blast), (
+            f"'test' label should be absent when no test dependents; blast lines: {lines_with_blast}"
+        )

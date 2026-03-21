@@ -1341,17 +1341,36 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
     return "\n".join(lines)
 
 
-def _file_blast_count(graph: Tempo, file_path: str) -> int:
-    """Count unique external files that depend on this file (importers + external callers).
+def _classify_file(path: str) -> str:
+    """Classify a file as 'test', 'config', or 'source' by filename patterns."""
+    import os
+    name = os.path.basename(path)
+    if (name.startswith("test_") or name.endswith("_test.py")
+            or name == "conftest.py" or ".test." in name or ".spec." in name):
+        return "test"
+    _CONFIG_NAMES = {
+        "setup.py", "setup.cfg", "pyproject.toml", "package.json",
+        "package-lock.json", "yarn.lock", "Makefile", "makefile",
+        "CMakeLists.txt", "tox.ini", "pytest.ini", ".flake8",
+        "requirements.txt", "Cargo.toml", "go.mod", "pom.xml",
+        "build.gradle", "Gemfile", "tsconfig.json",
+    }
+    if name in _CONFIG_NAMES or ".config." in name:
+        return "config"
+    return "source"
 
-    This is the file-level blast radius: if file_path changes, how many other
-    files are directly affected? Captures both import-level and call-level coupling
-    that per-symbol cross_file misses (a file with 10 small helpers each called
-    once from different files has high file-blast but low per-symbol cross_file).
+
+def _file_blast_info(graph: Tempo, file_path: str) -> dict[str, int]:
+    """Count external dependent files categorized as source/test/config.
+
+    Returns dict with keys: "total", "source", "test", "config".
+    This is the file-level blast radius with category context: agents care whether
+    their change breaks prod code (source), test infrastructure (test), or build
+    tooling (config). Same total, different risk profile.
     """
     fi = graph.files.get(file_path)
     if not fi:
-        return 0
+        return {"total": 0, "source": 0, "test": 0, "config": 0}
     dependent_files: set[str] = set()
     # Direct importers
     for imp in graph.importers_of(file_path):
@@ -1364,7 +1383,22 @@ def _file_blast_count(graph: Tempo, file_path: str) -> int:
         for caller in graph.callers_of(sym_id):
             if caller.file_path and caller.file_path != file_path:
                 dependent_files.add(caller.file_path)
-    return len(dependent_files)
+    counts: dict[str, int] = {"source": 0, "test": 0, "config": 0}
+    for f in dependent_files:
+        counts[_classify_file(f)] += 1
+    counts["total"] = len(dependent_files)
+    return counts
+
+
+def _file_blast_count(graph: Tempo, file_path: str) -> int:
+    """Count unique external files that depend on this file (importers + external callers).
+
+    This is the file-level blast radius: if file_path changes, how many other
+    files are directly affected? Captures both import-level and call-level coupling
+    that per-symbol cross_file misses (a file with 10 small helpers each called
+    once from different files has high file-blast but low per-symbol cross_file).
+    """
+    return _file_blast_info(graph, file_path)["total"]
 
 
 def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
@@ -1383,9 +1417,9 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
     except Exception:
         pass
 
-    # Blast count cache: file_path → number of external dependent files
+    # Blast info cache: file_path → categorized dependent file counts
     # Computed once per file, not per symbol, to avoid redundant traversal
-    blast_cache: dict[str, int] = {}
+    blast_cache: dict[str, dict[str, int]] = {}
 
     scores: list[tuple[float, Symbol]] = []
 
@@ -1425,8 +1459,8 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         # Cached per file since many symbols share the same file_path.
         if sym.file_path:
             if sym.file_path not in blast_cache:
-                blast_cache[sym.file_path] = _file_blast_count(graph, sym.file_path)
-            bc = blast_cache[sym.file_path]
+                blast_cache[sym.file_path] = _file_blast_info(graph, sym.file_path)
+            bc = blast_cache[sym.file_path]["total"]
             if bc > 0:
                 score *= 1.0 + math.log2(1.0 + bc) * 0.1
 
@@ -1478,9 +1512,12 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 )
         # File blast count warning: many external dependents = high coordination cost
         if sym.file_path and sym.file_path in blast_cache:
-            bc = blast_cache[sym.file_path]
+            binfo = blast_cache[sym.file_path]
+            bc = binfo["total"]
             if bc >= 20:
-                warnings.append(f"blast: {bc} files depend on this — changes need broad review")
+                parts = [f"{binfo[cat]} {cat}" for cat in ("source", "test", "config") if binfo.get(cat, 0) > 0]
+                breakdown = f" ({', '.join(parts)})" if parts else ""
+                warnings.append(f"blast: {bc} files depend{breakdown} — changes need broad review")
         if warnings:
             lines.append(f"    → {'; '.join(warnings)}")
 
