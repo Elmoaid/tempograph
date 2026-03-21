@@ -8011,3 +8011,39 @@ class TestFocusFileSiblings:
         assert "in this file:" not in out, (
             f"'in this file:' must not appear for single-symbol file; got:\n{out}"
         )
+
+
+class TestFocusSiblingHot:
+    """S81: Focus shows 'also hot: fn_a (N), fn_b (M)' when 2+ other hot functions in same file."""
+
+    def test_sibling_hot_shown_when_multiple_hot_siblings(self, tmp_path):
+        """Seed file has 2 other functions each with 3+ cross-file callers → 'also hot:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "api.py").write_text(
+            "def seed(): pass\ndef hot_a(): pass\ndef hot_b(): pass\ndef hot_c(): pass\n"
+        )
+        for i in range(4):
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from api import hot_a, hot_b, hot_c\n"
+                f"def use_{i}(): return hot_a() + hot_b() + hot_c()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "seed")
+        assert "also hot:" in out, (
+            f"Expected 'also hot:' when 3 hot sibling functions in same file; got:\n{out}"
+        )
+
+    def test_sibling_hot_absent_when_no_hot_siblings(self, tmp_path):
+        """Seed file has no other functions with 3+ cross-file callers → no 'also hot:'."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "api.py").write_text("def seed(): pass\ndef helper(): pass\n")
+        (tmp_path / "main.py").write_text("from api import seed\ndef run(): return seed()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "seed")
+        assert "also hot:" not in out, (
+            f"'also hot:' must not appear when no hot siblings; got:\n{out}"
+        )
