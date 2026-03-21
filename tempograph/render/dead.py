@@ -2719,6 +2719,27 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
                 f" — entire constants file may be safe to remove"
             )
 
+    # S803: Dead exception classes — unused exception/error class definitions.
+    # Dead exception classes indicate removed error handling paths or replaced error hierarchies;
+    # they create confusion for maintainers who wonder which errors to catch.
+    _dead_exc803 = [
+        s for s in dead
+        if s.kind.value == "class"
+        and not _is_test_file(s.file_path)
+        and (
+            s.name.endswith("Error") or s.name.endswith("Exception")
+            or s.name.endswith("Warning") or s.name.endswith("Fault")
+        )
+    ]
+    if _dead_exc803:
+        _exc_names803 = ", ".join(s.name for s in _dead_exc803[:3])
+        if len(_dead_exc803) > 3:
+            _exc_names803 += f" +{len(_dead_exc803) - 3} more"
+        lines.append(
+            f"dead exception classes: {len(_dead_exc803)} unused exception class(es) ({_exc_names803})"
+            f" — removed error handling paths; these exceptions are never raised or caught"
+        )
+
     # S797: Dead API endpoint — dead functions in files named with api/endpoint/view/handler.
     # Dead API handlers indicate removed routes or abandoned API versions;
     # they may still accept requests if routing configuration wasn't updated.
