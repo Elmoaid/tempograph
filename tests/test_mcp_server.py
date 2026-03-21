@@ -7212,3 +7212,51 @@ class TestOverviewPrivateLeak:
         assert "private leak" not in out, (
             f"'private leak' must not appear when _ fns are only used internally; got:\n{out}"
         )
+
+
+class TestOverviewQuickWins:
+    """S66: Overview mode — 'quick wins:' dead code hint.
+
+    Shows top 3 non-exported, 0-caller functions with 15+ lines.
+    Absent when there are fewer than 2 such symbols or the repo is too small.
+    """
+
+    def test_quick_wins_shown_for_large_dead_private_fns(self, tmp_path):
+        """Two large private 0-caller functions appear in quick wins."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        dead_body = "    pass\n" * 15
+        (tmp_path / "lib.py").write_text(
+            "def _stale_a():\n" + dead_body +
+            "def _stale_b():\n" + dead_body +
+            "def active():\n    return 1\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from lib import active\ndef run(): return active()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "quick wins:" in out, (
+            f"Expected 'quick wins:' for large dead private functions; got:\n{out}"
+        )
+        assert "_stale_a" in out or "_stale_b" in out, (
+            f"Expected stale function names in quick wins; got:\n{out}"
+        )
+
+    def test_quick_wins_absent_when_all_functions_called(self, tmp_path):
+        """No quick wins when all private functions have callers."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "utils.py").write_text(
+            "def _helper(x):\n    return x * 2\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from utils import _helper\ndef run(x): return _helper(x)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "quick wins:" not in out, (
+            f"'quick wins:' must not appear when all functions have callers; got:\n{out}"
+        )

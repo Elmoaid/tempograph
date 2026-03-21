@@ -373,6 +373,25 @@ def render_overview(graph: Tempo) -> str:
             _pl_str += f" +{len(_private_leaks) - 4} more"
         lines.append(f"private leak ({len(_private_leaks)}): {_pl_str} — _ symbols called externally")
 
+    # Quick-win dead code: largest non-test, non-exported functions with 0 callers.
+    # Agents get immediate cleanup targets without running full dead_code mode.
+    # Threshold: line_count >= 15 to avoid flagging trivial 1-2 line helpers.
+    _quick_wins = sorted(
+        [
+            (sym.line_count, sym)
+            for sym in graph.symbols.values()
+            if sym.kind.value in ("function", "method")
+            and not sym.exported
+            and not _is_test_file(sym.file_path)
+            and sym.line_count >= 15
+            and not graph.callers_of(sym.id)
+        ],
+        key=lambda x: -x[0],
+    )[:3]
+    if len(_quick_wins) >= 2:
+        _qw_parts = [f"{sym.name} ({lc}L)" for lc, sym in _quick_wins]
+        lines.append(f"quick wins: {', '.join(_qw_parts)} — no callers, likely dead")
+
     # Potentially unused modules: source files with 0 source importers AND no test coverage.
     # Flags entire floating modules that nothing depends on and nothing tests — either dead
     # features or undiscovered entry points agents should investigate.
