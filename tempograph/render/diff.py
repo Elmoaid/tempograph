@@ -1739,4 +1739,21 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — wide-scope diff; review each module's invariants independently"
             )
 
+    # S596: Changelog or readme in diff — diff includes documentation files.
+    # Documentation changes alongside code are good; documentation-only changes
+    # (without source) may indicate stale docs being retroactively updated.
+    _doc_markers596 = ("CHANGELOG", "CHANGES", "HISTORY", "RELEASE", "README", "CONTRIBUTING", "NOTICE")
+    _doc_files596 = [
+        f for f in changed_files
+        if any(f.rsplit("/", 1)[-1].upper().startswith(m) for m in _doc_markers596)
+    ]
+    if _doc_files596:
+        _doc_name596 = _doc_files596[0].rsplit("/", 1)[-1]
+        _has_src596 = any(not _is_test_file(f) and f not in _doc_files596 for f in changed_files)
+        _paired596 = "paired with source changes" if _has_src596 else "no accompanying source changes"
+        lines.append(
+            f"docs in diff: {_doc_name596} changed ({_paired596})"
+            f" — verify documentation accurately reflects the current code state"
+        )
+
     return "\n".join(lines)
