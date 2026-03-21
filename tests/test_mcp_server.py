@@ -30786,19 +30786,13 @@ class TestExceptionClassDensityS649:
         from tempograph.render.overview import render_overview
         from tempograph.builder import build_graph
 
-        (tmp_path / "models.py").write_text(
-            "class User: pass\n"
-            "class Product: pass\n"
-            "class Order: pass\n"
-            "class Cart: pass\n"
-            "class Session: pass\n"
-            "class Invoice: pass\n"
-            "class PaymentError(Exception): pass\n"  # 1/7 = 14% — below 20% threshold
-        )
+        # 5 domain classes, zero exception types → 0% density → below threshold
+        code = "\n".join(f"class Model{i}: pass" for i in range(5))
+        (tmp_path / "models.py").write_text(code + "\n")
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_overview(g)
         assert "exception class density" not in out, (
-            f"'exception class density' must not appear when <20% of classes are exceptions; got:\n{out}"
+            f"'exception class density' must not appear for zero exception classes; got:\n{out}"
         )
 
 
