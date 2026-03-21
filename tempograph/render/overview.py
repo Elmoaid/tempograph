@@ -2576,6 +2576,25 @@ def _signals_async_oop(
                     f" — independent module collection; no shared entry point to trace end-to-end"
                 )
 
+    # S631: Procedural style — 10+ exported functions but zero exported classes in source files.
+    # No exported classes suggests the codebase uses a procedural rather than OOP style;
+    # this is fine intentionally but unexpected in frameworks that rely on class-based dispatch.
+    _s631_src = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_s631_src) >= 5:
+        _exported_fns631 = sum(
+            1 for s in graph.symbols.values()
+            if s.exported and s.kind.value in ("function",) and not _is_test_file(s.file_path)
+        )
+        _exported_cls631 = sum(
+            1 for s in graph.symbols.values()
+            if s.exported and s.kind.value == "class" and not _is_test_file(s.file_path)
+        )
+        if _exported_fns631 >= 10 and _exported_cls631 == 0:
+            lines.append(
+                f"procedural style: {_exported_fns631} exported functions, 0 exported classes"
+                f" — no OOP surface; verify this is intentional for the framework in use"
+            )
+
     return lines
 
 

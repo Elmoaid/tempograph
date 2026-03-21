@@ -2177,6 +2177,24 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — dead wire; event contract was designed but never wired; remove or register"
         )
 
+    # S635: Dead deprecated symbol — unused exported symbol with "deprecated" or "obsolete" in its doc.
+    # Symbols explicitly marked deprecated but still exported are technical debt traps;
+    # callers may still depend on them even though maintainers intend removal.
+    _depr_keywords635 = ("deprecated", "obsolete", "do not use", "do_not_use", "legacy")
+    _dead_depr635 = [
+        s for s in dead
+        if not _is_test_file(s.file_path)
+        and any(kw in (s.doc or "").lower() for kw in _depr_keywords635)
+    ]
+    if _dead_depr635:
+        _depr_names635 = ", ".join(s.name for s in _dead_depr635[:3])
+        if len(_dead_depr635) > 3:
+            _depr_names635 += f" +{len(_dead_depr635) - 3} more"
+        lines.append(
+            f"dead deprecated: {len(_dead_depr635)} deprecated-marked symbol(s) are unused ({_depr_names635})"
+            f" — safe removal targets; deprecated intent + no callers = clean delete"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
