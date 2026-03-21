@@ -2301,8 +2301,8 @@ class TestFileVolatilityWarning:
         from tempograph.git import file_commit_counts
 
         g = build_graph(REPO_PATH, exclude_dirs=["archive"])
-        # Inject a high-churn count for render.py (15 commits > threshold of 10)
-        mock_counts = {"tempograph/render.py": 15}
+        # Inject a high-churn count for focused.py (15 commits > threshold of 10)
+        mock_counts = {"tempograph/render/focused.py": 15}
         file_commit_counts.cache_clear()
         with patch("tempograph.git.file_commit_counts", return_value=mock_counts):
             out = render_focused(g, "render_focused", max_tokens=8000)
@@ -5399,8 +5399,8 @@ class TestDiffChangeVelocityAnnotation:
         g = build_graph(repo, use_cache=False)
 
         # Inject a mock velocity so the test is deterministic
-        with patch.object(tg, "file_change_velocity", return_value={"tempograph/render.py": 5.0}):
-            out = render_diff_context(g, ["tempograph/render.py"])
+        with patch.object(tg, "file_change_velocity", return_value={"tempograph/render/focused.py": 5.0}):
+            out = render_diff_context(g, ["tempograph/render/focused.py"])
 
         assert "/wk]" in out, (
             f"Expected [Nx/wk] annotation when velocity is 5.0; got:\n{out}"
@@ -10140,4 +10140,69 @@ class TestFocusUntestedCallers:
         out = render_focused(g, "helper")
         assert "untested callers:" not in out, (
             f"'untested callers:' must not appear when callers have tests; got:\n{out}"
+        )
+
+
+class TestS117HubModules:
+    """S117: render_architecture annotates hub modules (2+ importers, 10+ edges)."""
+
+    def test_hub_module_detected(self, tmp_path):
+        """A module imported by 4 others with many edges → 'Hub modules:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_architecture
+
+        (tmp_path / "utils").mkdir()
+        (tmp_path / "utils" / "__init__.py").write_text("")
+        (tmp_path / "utils" / "core.py").write_text("def helper():\n    pass\n" * 15)
+        for i in range(4):
+            (tmp_path / f"mod{i}").mkdir()
+            (tmp_path / f"mod{i}" / "__init__.py").write_text("")
+            (tmp_path / f"mod{i}" / "service.py").write_text(
+                f"from utils.core import helper\ndef svc{i}():\n    helper()\n" * 4
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_architecture(g)
+        assert "Hub modules:" in out, (
+            f"Expected 'Hub modules:' annotation for heavily-imported utils; got:\n{out}"
+        )
+        assert "utils" in out.split("Hub modules:")[-1], (
+            f"Expected 'utils' named in Hub modules section; got:\n{out}"
+        )
+
+    def test_hub_module_shows_dependents_count(self, tmp_path):
+        """Hub annotation format includes dependent count."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_architecture
+
+        (tmp_path / "shared").mkdir()
+        (tmp_path / "shared" / "__init__.py").write_text("")
+        (tmp_path / "shared" / "lib.py").write_text("def util():\n    pass\n" * 10)
+        for i in range(3):
+            (tmp_path / f"svc{i}").mkdir()
+            (tmp_path / f"svc{i}" / "__init__.py").write_text("")
+            (tmp_path / f"svc{i}" / "app.py").write_text(
+                f"from shared.lib import util\ndef fn{i}():\n    util()\n" * 5
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_architecture(g)
+        if "Hub modules:" in out:
+            assert "dependents" in out, (
+                f"Hub modules line should mention dependents count; got:\n{out}"
+            )
+
+    def test_low_connectivity_module_not_hub(self, tmp_path):
+        """Module imported by only 1 other module must NOT be flagged as hub."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_architecture
+
+        (tmp_path / "lib").mkdir()
+        (tmp_path / "lib" / "__init__.py").write_text("")
+        (tmp_path / "lib" / "util.py").write_text("def helper():\n    pass\n")
+        (tmp_path / "app.py").write_text(
+            "from lib.util import helper\ndef run():\n    helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_architecture(g)
+        assert "Hub modules:" not in out, (
+            f"Single-importer module must not be flagged as hub; got:\n{out}"
         )
