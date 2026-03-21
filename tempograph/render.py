@@ -2820,6 +2820,24 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
 
     lines = [f"Blast radius for {file_path}:", ""]
 
+    # S108: File age in blast header — how recently was this file last committed?
+    # Freshly touched = actively being developed = changes need extra care.
+    # Old = potentially ossified — touching it after long stability carries surprise risk.
+    if graph.root:
+        try:
+            from .git import file_last_modified_days as _fld_blast  # noqa: PLC0415
+            _blast_age = _fld_blast(graph.root, file_path)
+            if _blast_age is not None:
+                if _blast_age <= 3:
+                    _age_label = f"last touched: {_blast_age}d ago (active)"
+                elif _blast_age >= 90:
+                    _age_label = f"last touched: {_blast_age}d ago (stable)"
+                else:
+                    _age_label = f"last touched: {_blast_age}d ago"
+                lines.append(_age_label)
+        except Exception:
+            pass
+
     # Direct importers
     importers = graph.importers_of(file_path)
     if importers:
@@ -3942,6 +3960,26 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 lines.append(f"Stable hot: {', '.join(_sh_parts)} — unchanged 60d+, high coupling")
         except Exception:
             pass
+
+    # S107: Import bottleneck — the file most depended on by other source files.
+    # A heavily-imported file that's also actively churning = maximum blast risk.
+    # Shows top file with importer count + velocity if available.
+    _hs_importer_counts: dict[str, int] = {}
+    for fp in graph.files:
+        if _is_test_file(fp):
+            continue
+        _n_imp = len({
+            i for i in graph.importers_of(fp)
+            if i in graph.files and not _is_test_file(i) and i != fp
+        })
+        if _n_imp >= 5:
+            _hs_importer_counts[fp] = _n_imp
+    if _hs_importer_counts:
+        _bn_fp, _bn_n = max(_hs_importer_counts.items(), key=lambda x: x[1])
+        _bn_velo = velocity.get(_bn_fp, 0.0)
+        _bn_velo_str = f", {_bn_velo:.1f}/wk" if _bn_velo >= 1.0 else ""
+        lines.append("")
+        lines.append(f"Import bottleneck: {_bn_fp.rsplit('/', 1)[-1]} ({_bn_n} dependents{_bn_velo_str})")
 
     return "\n".join(lines)
 
