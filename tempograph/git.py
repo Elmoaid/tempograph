@@ -243,6 +243,7 @@ def recently_modified_files(repo: str, n_commits: int = 5) -> set[str]:
     return {line for line in out.splitlines() if line.strip()}
 
 
+@functools.lru_cache(maxsize=512)
 def file_last_modified_days(repo: str, file_path: str) -> int | None:
     """Return the number of days since `file_path` was last committed.
 

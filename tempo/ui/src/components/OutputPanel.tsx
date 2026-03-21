@@ -1,5 +1,5 @@
 import { useState, useEffect, type RefObject } from "react";
-import { Copy, Check, Save, Search, ThumbsUp, ThumbsDown, X, ChevronDown, ChevronRight } from "lucide-react";
+import { Copy, Check, Save, Search, ThumbsUp, ThumbsDown, X, ChevronDown, ChevronRight, WrapText } from "lucide-react";
 import type { ModeInfo } from "./modes";
 import { formatAge } from "./modes";
 import { ArgsInput } from "./ArgsInput";
@@ -82,6 +82,7 @@ export function OutputPanel(props: OutputPanelProps) {
   const hasKitSections = isKitMode && kitSections.length > 0;
 
   const [expandedModes, setExpandedModes] = useState<Set<string>>(new Set());
+  const [wrapEnabled, setWrapEnabled] = useState(() => localStorage.getItem("tempo_output_wrap") !== "false");
 
   // Load expanded state from localStorage when kit mode or sections change
   useEffect(() => {
@@ -128,6 +129,22 @@ export function OutputPanel(props: OutputPanelProps) {
                 <Save size={10} aria-hidden="true" />
               </button>
             </>
+          )}
+          {modeOutput && (
+            <button
+              className="btn btn-ghost"
+              onClick={() => {
+                const next = !wrapEnabled;
+                setWrapEnabled(next);
+                localStorage.setItem("tempo_output_wrap", String(next));
+              }}
+              title={wrapEnabled ? "Disable line wrap" : "Enable line wrap"}
+              aria-label={wrapEnabled ? "Disable line wrap" : "Enable line wrap"}
+              aria-pressed={wrapEnabled}
+              style={{ padding: "2px 6px", fontSize: 10, opacity: wrapEnabled ? 1 : 0.45 }}
+            >
+              <WrapText size={10} aria-hidden="true" />
+            </button>
           )}
           <button
             className="btn btn-ghost"
@@ -239,7 +256,7 @@ export function OutputPanel(props: OutputPanelProps) {
                         </span>
                       </button>
                       {expanded && (
-                        <pre className="output" style={{ margin: 0, borderRadius: 0, maxHeight: 300, overflow: "auto" }}>
+                        <pre className="output" style={{ margin: 0, borderRadius: 0, maxHeight: 300, overflow: "auto", whiteSpace: wrapEnabled ? "pre-wrap" : "pre" }}>
                           {content}
                         </pre>
                       )}
@@ -248,7 +265,7 @@ export function OutputPanel(props: OutputPanelProps) {
                 })}
               </div>
             ) : (
-              <pre className="output" role="region" aria-label="Mode output" aria-live="polite" style={{ maxHeight: activeMode === "prepare" ? "calc(100% - 96px)" : "calc(100% - 64px)", overflow: "auto" }}>{filteredOutput}</pre>
+              <pre className="output" role="region" aria-label="Mode output" aria-live="polite" style={{ maxHeight: activeMode === "prepare" ? "calc(100% - 96px)" : "calc(100% - 64px)", overflow: "auto", whiteSpace: wrapEnabled ? "pre-wrap" : "pre" }}>{filteredOutput}</pre>
             )}
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>
               <span style={{ fontSize: 9, color: "var(--text-tertiary)", marginRight: 2 }}>Helpful?</span>

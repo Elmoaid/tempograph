@@ -35,7 +35,7 @@ export const MODES: ModeInfo[] = [
   { mode: "token_stats", label: "Token Stats", icon: Coins, tag: "ai", desc: "Per-mode token usage history — optimize your context budget." },
 ];
 
-export const HISTORY_MAX = 8;
+export const HISTORY_MAX = 5;
 export const historyKey = (mode: string) => `tempo-history-${mode}`;
 
 export const loadHistory = (mode: string): string[] => {
