@@ -2365,6 +2365,22 @@ def _signals_async_oop(
             f" — multiple runtimes increase cognitive overhead and reduce unified static analysis coverage"
         )
 
+    # S559: Single entry point — exactly 1 recognized entry point file in the repo.
+    # A single-entry-point codebase funnels all traffic through one file; it is the highest-value
+    # target for both breakage and optimization; changes to it affect every execution path.
+    _s559_entry_names = frozenset(("main.py", "app.py", "server.py", "cli.py", "run.py", "index.js", "index.ts"))
+    _s559_entry_files = [
+        fp for fp in graph.files
+        if fp.replace("\\", "/").rsplit("/", 1)[-1].lower() in _s559_entry_names
+        and not _is_test_file(fp)
+    ]
+    if len(_s559_entry_files) == 1:
+        _ep_name559 = _s559_entry_files[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"single entry point: {_ep_name559} is the only entry point"
+            f" — all execution flows through this file; changes here affect every code path"
+        )
+
     return lines
 
 

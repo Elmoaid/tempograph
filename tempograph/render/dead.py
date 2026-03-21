@@ -1947,6 +1947,27 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — abandoned construction patterns; verify intent and remove or wire up"
         )
 
+    # S563: Dead validator — unused functions with validate_/check_/verify_/assert_ prefix in non-imported files.
+    # Validation functions that are never called represent abandoned input guards;
+    # their absence means callers silently skip validation, creating hidden injection points.
+    _validator_prefixes563 = ("validate_", "check_", "verify_", "assert_", "ensure_")
+    _dead_validators563 = [
+        sym for sym in graph.symbols.values()
+        if not _is_test_file(sym.file_path)
+        and sym.kind.value == "function"
+        and any(sym.name.startswith(p) for p in _validator_prefixes563)
+        and not graph.callers_of(sym.id)
+        and not graph.importers_of(sym.file_path)
+    ]
+    if len(_dead_validators563) >= 2:
+        _val_names563 = ", ".join(s.name for s in _dead_validators563[:3])
+        if len(_dead_validators563) > 3:
+            _val_names563 += f" +{len(_dead_validators563) - 3} more"
+        lines.append(
+            f"dead validators: {len(_dead_validators563)} unused validation function(s) ({_val_names563})"
+            f" — abandoned input guards; callers silently skip these checks; wire up or remove"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

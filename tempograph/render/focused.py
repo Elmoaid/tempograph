@@ -3025,6 +3025,21 @@ def _signals_focused_fn_advanced(
                 f" — callers are accruing technical debt; migrate to the replacement before removal"
             )
 
+    # S564: Variadic function — focused function accepts *args or **kwargs.
+    # Variadic signatures make call sites harder to type-check and audit;
+    # callers can pass unexpected argument counts silently, especially after signature changes.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim564 = next((s for s in _seed_syms if s.kind.value in ("function", "method")), None)
+        if _prim564 and not _is_test_file(_prim564.file_path):
+            _sig564 = _prim564.signature or ""
+            _param564 = _sig564.split("(", 1)[1].rsplit(")", 1)[0] if "(" in _sig564 else ""
+            if "*args" in _param564 or "**kwargs" in _param564:
+                lines.append(
+                    f"\nvariadic function: {_prim564.name} accepts {'*args' if '*args' in _param564 else ''}"
+                    f"{'/**kwargs' if '**kwargs' in _param564 else ''} — callers bypass type checking;"
+                    f" add specific overloads or narrower signatures when possible"
+                )
+
     return lines
 
 
