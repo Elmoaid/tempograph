@@ -1907,5 +1907,17 @@ def _collect_hotspots_signals(
                 f" — package boundary is a chokepoint; changes affect all package consumers"
             )
 
+    # S597: Narrow hotspot spread — all top-5 hotspots share the same file.
+    # When the hottest symbols are all co-located, that file is a bottleneck;
+    # consider splitting responsibilities to reduce change collision risk.
+    if len(scores) >= 5:
+        _top5_files597 = [s.file_path for _, s in scores[:5] if not _is_test_file(s.file_path)]
+        if len(set(_top5_files597)) == 1:
+            _narrow_file597 = _top5_files597[0].rsplit("/", 1)[-1]
+            out.append(
+                f"\nnarrow hotspot spread: all top 5 hotspots are in {_narrow_file597}"
+                f" — this file is a bottleneck; split responsibilities to reduce change collision"
+            )
+
     return out
 

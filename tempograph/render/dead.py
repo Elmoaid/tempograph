@@ -2060,6 +2060,25 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — never raised or caught; remove or integrate into error-handling contract"
         )
 
+    # S598: Dead module — source file with symbols but zero importers and zero callers.
+    # An entire file that is never imported and none of its symbols are called anywhere
+    # is a strong signal that the module is abandoned and safe to remove.
+    _s598_dead_modules = [
+        fp for fp, fi in graph.files.items()
+        if not _is_test_file(fp)
+        and list(fi.symbols)
+        and not graph.importers_of(fp)
+        and not any(graph.callers_of(sym_id) for sym_id in fi.symbols)
+    ]
+    if _s598_dead_modules:
+        _mod_names598 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s598_dead_modules[:3])
+        if len(_s598_dead_modules) > 3:
+            _mod_names598 += f" +{len(_s598_dead_modules) - 3} more"
+        lines.append(
+            f"dead modules: {len(_s598_dead_modules)} entire file(s) unreachable ({_mod_names598})"
+            f" — no importers and no cross-file callers; likely abandoned; safe to remove"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

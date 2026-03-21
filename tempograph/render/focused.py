@@ -3105,6 +3105,41 @@ def _signals_focused_fn_advanced(
                     f" — consider inlining or making private; not a reusable API"
                 )
 
+    # S593: Overloaded name — focused symbol's name shadows a Python builtin.
+    # Functions named list, dict, id, type, input, etc. shadow builtins silently,
+    # causing subtle bugs when the shadowing symbol is in scope.
+    _BUILTINS593 = frozenset((
+        "list", "dict", "set", "tuple", "type", "id", "input", "format",
+        "filter", "map", "zip", "sum", "max", "min", "len", "range",
+        "open", "print", "str", "int", "float", "bool", "bytes", "object",
+    ))
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim593 = _seed_syms[0]
+        if (
+            _prim593.name in _BUILTINS593
+            and _prim593.kind.value in ("function", "method", "class")
+            and not _is_test_file(_prim593.file_path)
+        ):
+            lines.append(
+                f"\nbuiltin shadow: {_prim593.name} shadows a Python builtin"
+                f" — callers that expect the builtin will silently use this instead; rename to avoid confusion"
+            )
+
+    # S599: No callers — focused symbol is a function/method with zero callers in the graph.
+    # Zero callers means the symbol is either an entry point, dead code, or only called
+    # dynamically; agents should verify which case applies before modifying.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim599 = _seed_syms[0]
+        if (
+            _prim599.kind.value in ("function", "method")
+            and not _is_test_file(_prim599.file_path)
+            and not graph.callers_of(_prim599.id)
+        ):
+            lines.append(
+                f"\nno callers: {_prim599.name} has zero callers in the graph"
+                f" — entry point, dead code, or dynamically dispatched; verify intent before removing"
+            )
+
     return lines
 
 
