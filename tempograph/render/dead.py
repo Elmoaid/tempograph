@@ -1691,6 +1691,29 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — may indicate event wiring was accidentally lost; verify these are truly unreachable"
         )
 
+    # S499: Dead class methods — `@classmethod` or `@staticmethod` functions with 0 callers.
+    # Unused class/static methods are deceptive: they look like utilities but are never invoked,
+    # suggesting they were added for future use and forgot, or a refactor left them behind.
+    _s499_dead_class_methods = [
+        sym for sym, conf in scored
+        if conf >= 40
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value == "method"
+        and sym.name not in ("__init__", "__str__", "__repr__", "__enter__", "__exit__")
+        and (
+            (sym.signature or "").startswith("@classmethod")
+            or (sym.signature or "").startswith("@staticmethod")
+        )
+    ]
+    if len(_s499_dead_class_methods) >= 2:
+        _cm_names499 = ", ".join(s.name for s in _s499_dead_class_methods[:3])
+        if len(_s499_dead_class_methods) > 3:
+            _cm_names499 += f" +{len(_s499_dead_class_methods) - 3} more"
+        lines.append(
+            f"dead class methods: {len(_s499_dead_class_methods)} unused @classmethod/@staticmethod"
+            f" ({_cm_names499}) — may be abandoned utilities; verify intent before deleting"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

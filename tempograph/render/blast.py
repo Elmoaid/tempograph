@@ -1430,6 +1430,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — complex functions carry higher regression risk; add tests before modifying"
         )
 
+    # S496: Package init blast — blast target is a package __init__.py.
+    # Init files define the public interface of a package; any change to imports or re-exports
+    # silently breaks every consumer that relies on the package's public API.
+    _basename496 = file_path.rsplit("/", 1)[-1]
+    if _basename496 == "__init__.py" and importers:
+        lines.append(
+            f"package init blast: {file_path} is a package interface"
+            f" used by {len(importers)} file(s)"
+            f" — changes to __init__.py re-exports propagate to all consumers; review every import"
+        )
+
     return "\n".join(lines)
 
 

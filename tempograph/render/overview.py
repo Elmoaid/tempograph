@@ -2239,6 +2239,21 @@ def _signals_async_oop(
                 f" — high merge-conflict risk; consider splitting by responsibility"
             )
 
+    # S495: Star imports — 3+ source files use `from X import *`.
+    # Star imports pollute the namespace and make it impossible to trace where symbols come from;
+    # a name collision silently overrides the previous binding without any error.
+    _s495_star_files: list[str] = []
+    for _fp495, _fi495 in graph.files.items():
+        if _is_test_file(_fp495):
+            continue
+        if any("import *" in _imp for _imp in (_fi495.imports or [])):
+            _s495_star_files.append(_fp495)
+    if len(_s495_star_files) >= 3:
+        lines.append(
+            f"star imports: {len(_s495_star_files)} source file(s) use `import *`"
+            f" — wildcard imports hide symbol origins and risk silent name collisions"
+        )
+
     return lines
 
 
