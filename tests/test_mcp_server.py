@@ -8289,3 +8289,36 @@ class TestFocusTestScenarios:
         assert "scenarios:" not in out, (
             f"'scenarios:' must not appear when no test callers; got:\n{out}"
         )
+
+
+class TestOverviewAvgComplexity:
+    """S82: Overview 'fn sizes' line includes 'avg cx: N.N' when source functions have complexity data."""
+
+    def test_avg_cx_shown_in_fn_sizes_line(self, tmp_path):
+        """Functions with complexity data → 'avg cx:' appended to fn sizes line."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        # Functions with branches to generate complexity > 1
+        code = "\n".join(
+            f"def fn_{i}(x):\n    if x: return x\n    if x > 0: return -x\n    return 0\n"
+            for i in range(6)
+        )
+        (tmp_path / "module.py").write_text(code)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "avg cx:" in out, (
+            f"Expected 'avg cx:' in fn sizes line for functions with complexity; got:\n{out}"
+        )
+
+    def test_avg_cx_absent_when_too_few_functions(self, tmp_path):
+        """Fewer than 5 functions → fn sizes line not shown, no avg cx."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "tiny.py").write_text("def a(): pass\ndef b(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "avg cx:" not in out, (
+            f"'avg cx:' must not appear for tiny repos with < 5 functions; got:\n{out}"
+        )

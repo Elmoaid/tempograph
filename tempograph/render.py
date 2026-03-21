@@ -242,6 +242,18 @@ def render_overview(graph: Tempo) -> str:
     _fn_total = sum(_fn_sizes.values())
     if _fn_total >= 5:
         _fs_parts = [f"{k}: {v}" for k, v in _fn_sizes.items() if v > 0]
+        # S82: Append avg complexity to the fn sizes line.
+        # avg cx > 5 = dense; 2-5 = moderate; < 2 = clean.
+        _cx_vals = [
+            sym.complexity
+            for sym in graph.symbols.values()
+            if sym.kind.value in ("function", "method")
+            and not _is_test_file(sym.file_path)
+            and sym.complexity >= 1
+        ]
+        if _cx_vals:
+            _avg_cx = sum(_cx_vals) / len(_cx_vals)
+            _fs_parts.append(f"avg cx: {_avg_cx:.1f}")
         lines.append(f"fn sizes: {', '.join(_fs_parts)}")
 
     # Largest functions: top 3 non-test functions by line count.
@@ -1901,6 +1913,36 @@ def _build_symbol_block_lines(
                 for _lineno, _tag, _note in _hits[:3]:
                     _suffix = f': "{_note}"' if _note else ""
                     block_lines.append(f"{indent}  {_tag.lower()}: L{_lineno}{_suffix}")
+        except Exception:
+            pass
+    # S82: Side-effect scanner — detect I/O patterns in the function body.
+    # Pure functions are safest to refactor; DB/file/network functions need more care.
+    # Regex-based, no AST needed; scans the function's source lines.
+    if depth == 0 and sym.kind.value in ("function", "method") and graph.root:
+        try:
+            import os as _os2, re as _re2  # noqa: PLC0415
+            _fp2 = _os2.path.join(graph.root, sym.file_path)
+            if _os2.path.isfile(_fp2):
+                with open(_fp2, encoding="utf-8", errors="replace") as _fh2:
+                    _body = "".join(_fh2.readlines()[sym.line_start - 1:sym.line_end])
+                _effects: list[str] = []
+                # DB: SQL queries, ORM calls, cursor operations
+                if _re2.search(r'(execute|cursor|session\.query|db\.|\.save\(|\.commit\(|SELECT|INSERT|UPDATE|DELETE)', _body, _re2.IGNORECASE):
+                    _effects.append("db")
+                # File I/O
+                if _re2.search(r'(open\(|write\(|read\(|os\.path|shutil\.|pathlib|json\.dump|json\.load|yaml\.)', _body):
+                    _effects.append("file")
+                # Network / HTTP
+                if _re2.search(r'(requests\.|httpx\.|aiohttp\.|urllib\.|fetch\(|http\.|socket\.|grpc\.)', _body):
+                    _effects.append("network")
+                # Subprocess / shell
+                if _re2.search(r'(subprocess\.|os\.system\(|os\.popen\(|Popen\()', _body):
+                    _effects.append("subprocess")
+                # Mutation of shared state (class attributes, globals)
+                if _re2.search(r'self\.\w+\s*=(?!=)', _body) or _re2.search(r'global', _body):
+                    _effects.append("mutates state")
+                if _effects:
+                    block_lines.append(f"{indent}  effects: {', '.join(_effects)}")
         except Exception:
             pass
     if sym.signature and depth < 2:
