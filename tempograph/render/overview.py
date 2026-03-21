@@ -3124,6 +3124,18 @@ def _signals_async_oop(
                 f" — files may benefit from splitting to improve navigability"
             )
 
+    # S835: Deeply nested codebase — average file path depth is 3+ directory levels.
+    # Deeply nested file trees increase cognitive load when navigating the codebase;
+    # imports become verbose and finding files by name alone becomes error-prone.
+    _all_fps835 = [fp for fp in graph.files if not _is_test_file(fp)]
+    if _all_fps835:
+        _avg_depth835 = sum(len(fp.replace("\\", "/").split("/")) - 1 for fp in _all_fps835) / len(_all_fps835)
+        if _avg_depth835 >= 3:
+            lines.append(
+                f"deep nesting: avg path depth {_avg_depth835:.1f} levels across {len(_all_fps835)} source files"
+                f" — deeply nested; imports are verbose and files are hard to locate by name"
+            )
+
     # S829: No module-level constants — codebase has functions but no named constants.
     # Repos with no constants use magic values directly; reviewers cannot tell if
     # numeric literals are intentional limits or accidental values.
