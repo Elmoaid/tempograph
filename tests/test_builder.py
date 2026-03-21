@@ -17,7 +17,7 @@ def _build(tmp_path: Path, files: dict[str, str], **kwargs) -> object:
 
 # ── Basic symbol extraction ───────────────────────────────────────────────────
 
-class TestBasicExtraction:
+class TestBuildGraph:
     def test_python_function_extracted(self, tmp_path):
         g = _build(tmp_path, {"utils.py": "def greet(): pass\n"})
         assert any(s.name == "greet" for s in g.symbols.values())
