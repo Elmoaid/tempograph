@@ -2876,6 +2876,758 @@ def _signals_async_oop(
             f" — all logic in one file; consider splitting into modules as complexity grows"
         )
 
+    # S733: Flat repo — all source files are in the root directory with no subdirectories.
+    # Flat repos work at small scale but become hard to navigate as file count grows;
+    # organize into subdirectories before cognitive overhead becomes a problem.
+    _src_files733 = [
+        fp for fp in graph.files
+        if not _is_test_file(fp) and fp.endswith(".py")
+    ]
+    if len(_src_files733) >= 5:
+        _has_subdir733 = any("/" in fp.replace("\\", "/") for fp in _src_files733)
+        if not _has_subdir733:
+            lines.append(
+                f"flat repo: all {len(_src_files733)} source files are in the root directory"
+                f" — consider organizing into subdirectories as the codebase grows"
+            )
+
+    # S739: High constant density — the repo has more than twice as many variables/constants
+    # as functions. Config-heavy or data-heavy repos may lack abstraction; constants scattered
+    # across files make configuration management harder.
+    _all_syms739 = list(graph.symbols.values())
+    _fn_count739 = sum(
+        1 for s in _all_syms739
+        if s.kind.value in ("function", "method") and not _is_test_file(s.file_path)
+    )
+    _var_count739 = sum(
+        1 for s in _all_syms739
+        if s.kind.value in ("variable", "constant") and not _is_test_file(s.file_path)
+    )
+    if _fn_count739 > 0 and _var_count739 > _fn_count739 * 2:
+        lines.append(
+            f"high constant density: {_var_count739} variables/constants vs {_fn_count739} functions"
+            f" — config-heavy repo; verify constants are not scattered across multiple files"
+        )
+
+    # S745: Test concentration — more than 80% of test symbols are in one test file.
+    # When tests are heavily concentrated in one file, the test suite becomes monolithic;
+    # it's hard to navigate, slow to run selectively, and prone to test coupling.
+    _test_files745 = [fp for fp in graph.files if _is_test_file(fp)]
+    if len(_test_files745) >= 2:
+        _total_test_syms745 = sum(
+            len(graph.files[fp].symbols) for fp in _test_files745 if fp in graph.files
+        )
+        if _total_test_syms745 > 0:
+            for _tfp745 in _test_files745:
+                _file_syms745 = len(graph.files[_tfp745].symbols) if _tfp745 in graph.files else 0
+                if _file_syms745 / _total_test_syms745 > 0.80:
+                    lines.append(
+                        f"test concentration: {_tfp745.rsplit('/', 1)[-1]} has"
+                        f" {_file_syms745}/{_total_test_syms745}"
+                        f" ({_file_syms745 / _total_test_syms745:.0%}) of all test symbols"
+                        f" — monolithic test file; split into feature-specific test modules"
+                    )
+                    break
+
+    # S751: Single test file — the repo has source symbols but only one test file.
+    # A single test file often means tests were added as an afterthought and coverage
+    # is shallow; as the codebase grows, one test file becomes a maintenance bottleneck.
+    _all_test_fps751 = [fp for fp in graph.files if _is_test_file(fp)]
+    _src_syms751 = [
+        s for s in graph.symbols.values()
+        if not _is_test_file(s.file_path) and s.parent_id is None
+        and s.kind.value not in ("unknown", "module")
+    ]
+    if len(_all_test_fps751) == 1 and len(_src_syms751) >= 5:
+        lines.append(
+            f"single test file: all tests in {_all_test_fps751[0].rsplit('/', 1)[-1]}"
+            f" — one test file for {len(_src_syms751)} source symbols; split by module as the project grows"
+        )
+
+    # S757: Constant-heavy repo — ratio of constants/variables to functions exceeds 2:1.
+    # When a codebase has far more constants than functions, it may have config sprawl,
+    # magic numbers distributed across files, or a fragmented configuration architecture.
+    _const_syms757 = sum(
+        1 for s in graph.symbols.values()
+        if s.kind.value in ("constant", "variable")
+        and not _is_test_file(s.file_path)
+        and s.parent_id is None
+    )
+    _fn_syms757 = sum(
+        1 for s in graph.symbols.values()
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and s.parent_id is None
+    )
+    if _fn_syms757 >= 3 and _const_syms757 >= _fn_syms757 * 2:
+        lines.append(
+            f"constant-heavy repo: {_const_syms757} constants vs {_fn_syms757} functions"
+            f" — config sprawl likely; consolidate constants into dedicated config modules"
+        )
+
+    # S763: Classless repo — the repo has no classes at all (purely functional style).
+    # A classless codebase is deliberately functional; adding classes changes the design
+    # paradigm and may conflict with existing patterns — consider modules/functions instead.
+    _class_syms763 = sum(
+        1 for s in graph.symbols.values()
+        if s.kind.value == "class" and not _is_test_file(s.file_path)
+    )
+    _src_fn763 = sum(
+        1 for s in graph.symbols.values()
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and s.parent_id is None
+    )
+    if _class_syms763 == 0 and _src_fn763 >= 5:
+        lines.append(
+            f"classless repo: no classes found — purely functional style with {_src_fn763} top-level functions;"
+            f" new classes would break the established paradigm"
+        )
+
+    # S769: High method-to-class ratio — average methods per class exceeds 10.
+    # Classes with many methods are often "god objects" or service classes that do too much;
+    # high method counts signal that a class has accumulated too many responsibilities.
+    _classes769 = [
+        s for s in graph.symbols.values()
+        if s.kind.value == "class" and not _is_test_file(s.file_path)
+    ]
+    if len(_classes769) >= 2:
+        _total_methods769 = sum(
+            sum(1 for c in graph.symbols.values() if c.parent_id == cls.id and c.kind.value in ("function", "method"))
+            for cls in _classes769
+        )
+        _avg769 = _total_methods769 / len(_classes769)
+        if _avg769 >= 10:
+            lines.append(
+                f"high method-to-class ratio: avg {_avg769:.1f} methods per class"
+                f" — classes are large; consider splitting responsibilities"
+            )
+
+    # S775: Large average file size — avg source file exceeds 200 lines.
+    # When source files average more than 200 lines, the codebase has large files
+    # that are hard to navigate and review — consider splitting into smaller modules.
+    _src_files775 = [fi for fp, fi in graph.files.items() if not _is_test_file(fp)]
+    if len(_src_files775) >= 3:
+        _total_lines775 = sum(fi.line_count if fi.line_count else 0 for fi in _src_files775)
+        _avg_lines775 = _total_lines775 / len(_src_files775)
+        if _avg_lines775 >= 200:
+            lines.append(
+                f"large avg file size: {_avg_lines775:.0f} avg lines per source file"
+                f" — files are large; consider splitting into smaller, focused modules"
+            )
+
+    # S787: High import coupling — the most-imported file is imported by > 50% of source files.
+    # When a single file is imported by more than half the codebase, it becomes a structural
+    # singleton; any breaking change requires touching every importer simultaneously.
+    _src_fps787 = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_src_fps787) >= 4:
+        _max_importers787 = 0
+        _max_fp787 = None
+        for _fp787 in _src_fps787:
+            _cnt787 = len([f for f in graph.importers_of(_fp787) if not _is_test_file(f)])
+            if _cnt787 > _max_importers787:
+                _max_importers787 = _cnt787
+                _max_fp787 = _fp787
+        _threshold787 = len(_src_fps787) * 0.5
+        if _max_fp787 and _max_importers787 >= _threshold787:
+            lines.append(
+                f"high import coupling: {_max_fp787.rsplit('/', 1)[-1]} imported by"
+                f" {_max_importers787}/{len(_src_fps787)} source files (>{_threshold787:.0f})"
+                f" — structural singleton; breaking changes require touching all importers"
+            )
+
+    # S781: Many small files — average source file is under 10 lines with 5+ source files.
+    # Over-fragmented codebases split logic into many tiny files, increasing navigation
+    # cost and import overhead; consider consolidating into fewer coherent modules.
+    _src_files781 = [fi for fp, fi in graph.files.items() if not _is_test_file(fp)]
+    if len(_src_files781) >= 5:
+        _avg_lines781 = sum(fi.line_count or 0 for fi in _src_files781) / len(_src_files781)
+        if _avg_lines781 < 10:
+            lines.append(
+                f"many small files: {len(_src_files781)} source files averaging {_avg_lines781:.1f} lines"
+                f" — over-fragmented; consider consolidating related modules"
+            )
+
+    # S793: Deep nesting — majority of source files are 3+ directory levels deep.
+    # Codebases where most files are deeply nested are over-organized; navigation
+    # requires traversing many directories and imports become verbose.
+    _all_src793 = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_all_src793) >= 5:
+        _deep793 = [fp for fp in _all_src793 if fp.replace("\\", "/").count("/") >= 3]
+        if len(_deep793) / len(_all_src793) > 0.5:
+            lines.append(
+                f"deep nesting: {len(_deep793)}/{len(_all_src793)} source files"
+                f" at 3+ directory levels — over-organized structure increases navigation cost"
+            )
+
+    # S799: No entry point diversity — repo has only one entry point (low resilience).
+    # Repos with a single entry point have a single failure point for the entire startup
+    # path; adding CLI/worker entry points improves operational flexibility.
+    _entry799 = [
+        s for s in graph.symbols.values()
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and s.name in ("main", "run", "start", "app", "application", "create_app", "entry")
+        and s.parent_id is None
+        and not graph.callers_of(s.id)
+    ]
+    _total_src799 = sum(1 for fp in graph.files if not _is_test_file(fp))
+    if len(_entry799) == 1 and _total_src799 >= 5:
+        lines.append(
+            f"no entry diversity: only one entry function ({_entry799[0].name} in"
+            f" {_entry799[0].file_path.rsplit('/', 1)[-1]}) — one startup path;"
+            f" consider adding CLI or worker entry points for resilience"
+        )
+
+    # S805: Multi-language repo — codebase uses 3+ distinct programming languages.
+    # Repos with 3+ languages require contributors to context-switch across ecosystems;
+    # each language adds tooling, linting, and dependency management overhead.
+    _langs805 = set(
+        lang for fp, fi in graph.files.items()
+        if not _is_test_file(fp)
+        for lang in [fi.language.value]
+        if lang not in ("unknown", "text", "markdown", "json", "yaml", "toml", "html", "css")
+    )
+    if len(_langs805) >= 3:
+        lines.append(
+            f"multi-language repo: {len(_langs805)} programming languages detected ({', '.join(sorted(_langs805)[:4])})"
+            f" — cross-language codebase; ensure tooling covers all languages"
+        )
+
+    # S817: No docstring coverage — 10+ public functions but none have docstrings.
+    # Undocumented codebases rely entirely on code readability; agents and reviewers
+    # cannot infer intent from names alone, increasing onboarding and review cost.
+    _pub_fns817 = [
+        s for s in graph.symbols.values()
+        if s.kind.value in ("function",)
+        and s.parent_id is None
+        and not s.name.startswith("_")
+        and not _is_test_file(s.file_path)
+    ]
+    if len(_pub_fns817) >= 10:
+        _with_doc817 = [s for s in _pub_fns817 if s.doc]
+        if not _with_doc817:
+            lines.append(
+                f"no docstring coverage: {len(_pub_fns817)} public functions with zero docstrings"
+                f" — undocumented API; intent cannot be inferred from names alone"
+            )
+
+    # S811: Large average file size — average source file line count exceeds 300.
+    # Oversized files accumulate multiple responsibilities; they increase cognitive load
+    # and are a leading indicator of future hotspots and refactoring pressure.
+    _src_files811 = [fi for fp, fi in graph.files.items() if not _is_test_file(fp)]
+    if _src_files811:
+        _avg_lines811 = sum(fi.line_count for fi in _src_files811) / len(_src_files811)
+        if _avg_lines811 > 300:
+            lines.append(
+                f"large avg file size: {_avg_lines811:.0f} lines per source file on average"
+                f" — files may benefit from splitting to improve navigability"
+            )
+
+    # S835: Deeply nested codebase — average file path depth is 3+ directory levels.
+    # Deeply nested file trees increase cognitive load when navigating the codebase;
+    # imports become verbose and finding files by name alone becomes error-prone.
+    _all_fps835 = [fp for fp in graph.files if not _is_test_file(fp)]
+    if _all_fps835:
+        _avg_depth835 = sum(len(fp.replace("\\", "/").split("/")) - 1 for fp in _all_fps835) / len(_all_fps835)
+        if _avg_depth835 >= 3:
+            lines.append(
+                f"deep nesting: avg path depth {_avg_depth835:.1f} levels across {len(_all_fps835)} source files"
+                f" — deeply nested; imports are verbose and files are hard to locate by name"
+            )
+
+    # S829: No module-level constants — codebase has functions but no named constants.
+    # Repos with no constants use magic values directly; reviewers cannot tell if
+    # numeric literals are intentional limits or accidental values.
+    _fns829 = [s for s in graph.symbols.values() if s.kind.value == "function" and not _is_test_file(s.file_path)]
+    _consts829 = [s for s in graph.symbols.values() if s.kind.value in ("constant", "variable") and s.parent_id is None and not _is_test_file(s.file_path)]
+    if len(_fns829) >= 5 and not _consts829:
+        lines.append(
+            f"no module constants: {len(_fns829)} functions but zero named constants"
+            f" — magic values in source; consider extracting thresholds and limits to named constants"
+        )
+
+    # S823: Test-heavy repo — test files outnumber source files 2:1 or more.
+    # Over-investment in tests relative to source code may indicate over-engineering,
+    # duplicated test scenarios, or abandoned source modules with surviving tests.
+    _src_files823 = [fp for fp in graph.files if not _is_test_file(fp)]
+    _tst_files823 = [fp for fp in graph.files if _is_test_file(fp)]
+    if len(_src_files823) >= 3 and len(_tst_files823) >= len(_src_files823) * 2:
+        lines.append(
+            f"test-heavy repo: {len(_tst_files823)} test files vs {len(_src_files823)} source files"
+            f" — test suite is 2×+ the source; check for duplicated scenarios or orphaned tests"
+        )
+
+    # S841: No async functions — codebase has many functions but none are async.
+    # A repo with zero async functions may be using blocking I/O; async-naive
+    # patterns can become bottlenecks when services are later integrated with async frameworks.
+    _all_fns841 = [s for s in graph.symbols.values() if s.kind.value == "function" and not _is_test_file(s.file_path)]
+    _async_fns841 = [s for s in _all_fns841 if (s.signature or "").lstrip().startswith("async ")]
+    if len(_all_fns841) >= 10 and not _async_fns841:
+        lines.append(
+            f"no async functions: {len(_all_fns841)} functions but none are async"
+            f" — all synchronous; blocking I/O may become a bottleneck in async frameworks"
+        )
+
+    # S847: Many small modules — repo has 10+ files all under 20 lines.
+    # A repo with many tiny modules has over-fragmented its logic; each function
+    # is isolated in its own file, making cross-cutting concerns hard to see.
+    _src_files847 = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_src_files847) >= 10:
+        _small_files847 = [fp for fp in _src_files847 if graph.files[fp].line_count < 20]
+        if len(_small_files847) == len(_src_files847):
+            lines.append(
+                f"many small modules: all {len(_src_files847)} source files are under 20 lines"
+                f" — over-fragmented; consider consolidating related small modules"
+            )
+
+    # S859: Low module cohesion — many source files each have 5+ top-level functions.
+    # When many modules each expose many unrelated functions, the codebase lacks
+    # cohesion; functions should be grouped by shared data or purpose, not by accident.
+    _src_fps859 = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_src_fps859) >= 5:
+        _high_fn_files859 = []
+        for _fp859 in _src_fps859:
+            _fi859 = graph.files[_fp859]
+            _top_fns859 = [
+                graph.symbols[sid] for sid in _fi859.symbols
+                if sid in graph.symbols
+                and graph.symbols[sid].kind.value == "function"
+                and graph.symbols[sid].parent_id is None
+            ]
+            if len(_top_fns859) >= 5:
+                _high_fn_files859.append(_fp859)
+        if len(_high_fn_files859) >= len(_src_fps859) * 0.5:
+            lines.append(
+                f"low cohesion: {len(_high_fn_files859)}/{len(_src_fps859)} files each expose 5+ top-level functions"
+                f" — functions may not be grouped by shared purpose; consider grouping by domain"
+            )
+
+    # S853: High dead ratio — over 40% of exported source symbols are unused.
+    # A repo where most of its public API is dead is accumulating significant cleanup debt;
+    # maintaining dead symbols wastes review time and creates misleading documentation.
+    _all_exported853 = [
+        s for s in graph.symbols.values()
+        if not _is_test_file(s.file_path)
+        and s.parent_id is None
+        and not s.name.startswith("_")
+    ]
+    if len(_all_exported853) >= 10:
+        _dead853 = graph.find_dead_code()
+        _dead_ids853 = {s.id for s in _dead853}
+        _dead_exported853 = [s for s in _all_exported853 if s.id in _dead_ids853]
+        _ratio853 = len(_dead_exported853) / len(_all_exported853)
+        if _ratio853 >= 0.4:
+            lines.append(
+                f"high dead ratio: {len(_dead_exported853)}/{len(_all_exported853)} exported symbols ({_ratio853:.0%}) appear unused"
+                f" — significant cleanup debt; review dead code before adding more public API"
+            )
+
+    # S865: Abstract-heavy codebase — 3+ classes with Abstract/Base prefix or ABC suffix.
+    # Many abstract base classes indicate a deep class hierarchy; agents must understand
+    # which concrete implementations exist and whether all contracts are satisfied.
+    _abstract_classes865 = [
+        s for s in graph.symbols.values()
+        if s.kind.value == "class"
+        and not _is_test_file(s.file_path)
+        and (s.name.startswith("Abstract") or s.name.startswith("Base") or s.name.endswith("ABC"))
+    ]
+    if len(_abstract_classes865) >= 3:
+        _abc_names865 = ", ".join(s.name for s in _abstract_classes865[:3])
+        lines.append(
+            f"abstract-heavy: {len(_abstract_classes865)} abstract/base classes ({_abc_names865})"
+            f" — deep class hierarchy; verify all contracts are implemented by concrete subclasses"
+        )
+
+    # S883: Monolith file — one file contains 50%+ of all source symbols.
+    # A single file dominating the symbol count indicates a concentration of logic;
+    # changes to it carry higher blast radius than changes to smaller, focused files.
+    _src_syms883 = [
+        s for s in graph.symbols.values()
+        if not _is_test_file(s.file_path) and s.kind.value in ("function", "method", "class")
+    ]
+    if len(_src_syms883) >= 6:
+        _file_counts883: dict[str, int] = {}
+        for s in _src_syms883:
+            _file_counts883[s.file_path] = _file_counts883.get(s.file_path, 0) + 1
+        _top_file883, _top_count883 = max(_file_counts883.items(), key=lambda x: x[1])
+        _pct883 = int(_top_count883 / len(_src_syms883) * 100)
+        if _pct883 >= 50:
+            lines.append(
+                f"monolith file: {_top_file883.rsplit('/', 1)[-1]} contains {_pct883}% of source symbols"
+                f" — concentrated logic; changes have wide blast radius"
+            )
+
+    # S877: Low docstring coverage — 70%+ of exported non-test functions lack docstrings.
+    # Undocumented functions require reading the full body to understand intent; agents
+    # generating or modifying code in this codebase should add docstrings proactively.
+    _src_fns877 = [
+        s for s in graph.symbols.values()
+        if s.kind.value in ("function", "method")
+        and s.exported
+        and not _is_test_file(s.file_path)
+    ]
+    if len(_src_fns877) >= 5:
+        _undoc877 = [s for s in _src_fns877 if not s.doc]
+        _undoc_pct877 = int(len(_undoc877) / len(_src_fns877) * 100)
+        if _undoc_pct877 >= 70:
+            lines.append(
+                f"low doc coverage: {_undoc_pct877}% of exported functions lack docstrings"
+                f" — undocumented codebase; read function bodies carefully to infer intent"
+            )
+
+    # S871: No test files — repo has 5+ source files but no test files.
+    # An untested codebase means all changes carry undetected regression risk;
+    # agents should flag any behavior changes as potentially breaking.
+    _test_files871 = [fp for fp in graph.files if _is_test_file(fp)]
+    if not _test_files871 and len(graph.files) >= 5:
+        lines.append(
+            f"no test files: {len(graph.files)} source files but no test files detected"
+            f" — untested codebase; changes carry higher risk of undetected regressions"
+        )
+
+    # S889: High fan-in file — one file is imported by 5+ other source files.
+    # Files with high fan-in are critical infrastructure; any change triggers a
+    # large blast radius across the dependency tree of importing modules.
+    _fan_in889: dict[str, int] = {}
+    for fp889 in graph.files:
+        if not _is_test_file(fp889):
+            importers889 = graph.importers_of(fp889)
+            count889 = sum(1 for i in importers889 if not _is_test_file(i))
+            if count889 > 0:
+                _fan_in889[fp889] = count889
+    if _fan_in889:
+        _top_fp889, _top_in889 = max(_fan_in889.items(), key=lambda x: x[1])
+        if _top_in889 >= 5:
+            lines.append(
+                f"high fan-in: {_top_fp889.rsplit('/', 1)[-1]} imported by {_top_in889} files"
+                f" — critical infrastructure; changes here have wide blast radius"
+            )
+
+    # S895: Circular import pair — two source files mutually import each other.
+    # Circular imports create tight coupling and make isolated testing impossible;
+    # they are a common source of import-order errors and refactoring difficulty.
+    _seen_pairs895: set[tuple[str, str]] = set()
+    for fp895 in graph.files:
+        if _is_test_file(fp895):
+            continue
+        importers895 = {i for i in graph.importers_of(fp895) if not _is_test_file(i)}
+        for imp895 in importers895:
+            if fp895 in {i for i in graph.importers_of(imp895) if not _is_test_file(i)}:
+                pair895 = tuple(sorted([fp895.rsplit("/", 1)[-1], imp895.rsplit("/", 1)[-1]]))
+                _seen_pairs895.add(pair895)  # type: ignore[arg-type]
+    if _seen_pairs895:
+        _ex895 = sorted(_seen_pairs895)[0]
+        lines.append(
+            f"circular imports: {len(_seen_pairs895)} mutual import pair(s)"
+            f" — e.g. {_ex895[0]} ↔ {_ex895[1]}; circular imports create tight coupling"
+        )
+
+    # S901: Flat structure — all source files are in a single root directory.
+    # A flat codebase with 5+ files and no subdirectories becomes hard to navigate
+    # as it grows; consider grouping by module or domain to improve discoverability.
+    if len(graph.files) >= 5:
+        _src_files901 = [fp for fp in graph.files if not _is_test_file(fp)]
+        _dirs901 = {
+            fp.replace("\\", "/").rsplit("/", 1)[0] if "/" in fp.replace("\\", "/") else "."
+            for fp in _src_files901
+        }
+        if len(_dirs901) == 1 and "." in _dirs901 and len(_src_files901) >= 5:
+            lines.append(
+                f"flat structure: all {len(_src_files901)} source files are in the root directory"
+                f" — no subdirectory organization; consider grouping by module as codebase grows"
+            )
+
+    # S907: High constant ratio — repo has more constants than functions (config-heavy codebase).
+    # A constant-heavy repo often has scattered configuration values mixed with business logic;
+    # centralizing into dedicated config files improves discoverability and reduces change risk.
+    _all_fns907 = [
+        s for s in graph.symbols.values()
+        if s.kind.value in ("function", "method") and not _is_test_file(s.file_path)
+    ]
+    _all_consts907 = [
+        s for s in graph.symbols.values()
+        if s.kind.value == "constant" and not _is_test_file(s.file_path)
+    ]
+    if len(_all_fns907) >= 5 and len(_all_consts907) > len(_all_fns907):
+        lines.append(
+            f"high constant ratio: {len(_all_consts907)} constants vs {len(_all_fns907)} functions"
+            f" — constant-heavy codebase; consider centralizing configuration into dedicated files"
+        )
+
+    # S913: Test-heavy codebase — test files outnumber source files 2:1 or more.
+    # An unusually high test-to-code ratio may indicate orphaned tests, large integration
+    # test suites, or test files that outlasted the features they cover.
+    _test_fps913 = [fp for fp in graph.files if _is_test_file(fp)]
+    _src_fps913 = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_src_fps913) >= 3 and len(_test_fps913) >= len(_src_fps913) * 2:
+        lines.append(
+            f"test-heavy: {len(_test_fps913)} test files vs {len(_src_fps913)} source files"
+            f" — unusually high test/source ratio; check for orphaned or over-duplicated tests"
+        )
+
+    # S919: No entry points — repo has no recognizable main/run/start/execute function.
+    # A codebase without entry points is hard to understand at a glance; agents should
+    # check for hidden entry points in __main__ blocks or framework-driven invocations.
+    _entry_names919 = {"main", "run", "start", "execute", "launch", "serve", "app"}
+    _src_syms919 = [
+        s for s in graph.symbols.values()
+        if s.kind.value in ("function", "method")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+    ]
+    if len(_src_syms919) >= 5 and not any(s.name in _entry_names919 for s in _src_syms919):
+        lines.append(
+            f"no entry point: no main/run/start/execute function found in {len(_src_syms919)} source functions"
+            f" — unclear invocation path; check for __main__ blocks or framework-driven entry points"
+        )
+
+    # S925: Mixed language repo — both Python and JavaScript/TypeScript files coexist.
+    # Multi-language repos require agents to understand cross-language contracts; changes
+    # to shared interfaces (APIs, schemas, events) must be reflected in both languages.
+    _py_files925 = [fp for fp in graph.files if fp.endswith(".py") and not _is_test_file(fp)]
+    _js_files925 = [fp for fp in graph.files if fp.endswith((".js", ".ts", ".jsx", ".tsx"))]
+    if len(_py_files925) >= 2 and len(_js_files925) >= 2:
+        lines.append(
+            f"mixed languages: {len(_py_files925)} Python file(s) and {len(_js_files925)} JS/TS file(s)"
+            f" — cross-language repo; ensure shared API contracts are updated consistently"
+        )
+
+    # S931: Large public API — repo exports 20+ top-level functions or classes.
+    # A very large public surface is harder to maintain; agents should be conservative
+    # about adding new exports and check that any removed exports have no consumers.
+    _public_syms931 = [
+        s for s in graph.symbols.values()
+        if s.kind.value in ("function", "class")
+        and s.parent_id is None
+        and not s.name.startswith("_")
+        and not _is_test_file(s.file_path)
+    ]
+    if len(_public_syms931) >= 20:
+        lines.append(
+            f"large public API: {len(_public_syms931)} exported top-level symbols"
+            f" — wide public surface; be conservative adding exports; check consumers before removing"
+        )
+
+    # S937: No constants — repo has no module-level constants (potential magic values in code).
+    # Codebases without defined constants often embed magic numbers and strings inline;
+    # this makes thresholds, limits, and configuration values hard to find and change safely.
+    _all_consts937 = [
+        s for s in graph.symbols.values()
+        if s.kind.value == "constant" and not _is_test_file(s.file_path)
+    ]
+    _src_syms937 = [
+        s for s in graph.symbols.values()
+        if s.kind.value in ("function", "method") and not _is_test_file(s.file_path)
+    ]
+    if len(_src_syms937) >= 5 and not _all_consts937:
+        lines.append(
+            f"no constants: no module-level constants found across {len(_src_syms937)} source functions"
+            f" — may indicate magic values in code; consider extracting thresholds and config into constants"
+        )
+
+    # S943: Function-only codebase — all source symbols are top-level functions; no class methods.
+    # A codebase with no class methods is fully procedural; agents should avoid suggesting
+    # OOP refactors unless there's clear evidence of state that needs encapsulation.
+    _all_methods943 = [
+        s for s in graph.symbols.values()
+        if s.kind.value == "method"
+        and not _is_test_file(s.file_path)
+    ]
+    _all_fns943 = [
+        s for s in graph.symbols.values()
+        if s.kind.value == "function"
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+    ]
+    if len(_all_fns943) >= 5 and not _all_methods943:
+        lines.append(
+            f"function-only: {len(_all_fns943)} top-level functions, 0 class methods"
+            f" — fully procedural codebase; avoid OOP refactor suggestions without clear encapsulation need"
+        )
+
+    # S949: All-private codebase — every source function/class is prefixed with _.
+    # A codebase with no public API may be designed as an internal library;
+    # adding public symbols here should be intentional — undocumented exports create accidental APIs.
+    _src_syms949 = [
+        s for s in graph.symbols.values()
+        if s.kind.value in ("function", "class")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+    ]
+    if len(_src_syms949) >= 5:
+        _public949 = [s for s in _src_syms949 if not s.name.startswith("_")]
+        if not _public949:
+            lines.append(
+                f"all-private: {len(_src_syms949)} source symbols found, none are public"
+                f" — internal-only codebase; adding exports should be intentional to avoid accidental APIs"
+            )
+
+    # S955: Mega function — any source function exceeds 200 lines.
+    # A function this large almost always mixes concerns; adding features risks subtle breakage
+    # in unrelated logic buried in the same body.
+    _mega955 = None
+    for _s955 in graph.symbols.values():
+        if (
+            _s955.kind.value == "function"
+            and _s955.parent_id is None
+            and not _is_test_file(_s955.file_path)
+            and _s955.line_count >= 200
+        ):
+            if _mega955 is None or _s955.line_count > _mega955.line_count:
+                _mega955 = _s955
+    if _mega955 is not None:
+        lines.append(
+            f"mega function: {_mega955.name} spans {_mega955.line_count} lines"
+            f" — exceeds 200-line threshold; candidate for mandatory decomposition before any new additions"
+        )
+
+    # S961: Flat architecture — all source files are at the root level with no subdirectory structure.
+    # Flat repos with many files have no module boundaries; a growing flat codebase accumulates
+    # coupling across everything and becomes harder to reason about incrementally.
+    _src_files961 = [
+        fp for fp in graph.files
+        if not _is_test_file(fp) and "/" not in fp.replace("\\", "/").lstrip("./")
+    ]
+    _all_src_files961 = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_all_src_files961) >= 8 and len(_src_files961) == len(_all_src_files961):
+        lines.append(
+            f"flat architecture: all {len(_all_src_files961)} source files are at the root level"
+            f" — no module boundaries; consider introducing package subdirectories as the codebase grows"
+        )
+
+    # S967: No tests at all — the repo has zero test files.
+    # Without any test files, changes cannot be verified against regression;
+    # agents should treat all changes as high risk regardless of apparent simplicity.
+    _test_files967 = [fp for fp in graph.files if _is_test_file(fp)]
+    _src_files967 = [fp for fp in graph.files if not _is_test_file(fp)]
+    if not _test_files967 and len(_src_files967) >= 3:
+        lines.append(
+            f"no tests: 0 test files detected in {len(_src_files967)} source file(s)"
+            f" — no regression safety net; all changes carry high risk regardless of apparent scope"
+        )
+
+    # S973: Lone class — exactly one class exists alongside many functions.
+    # A single class in an otherwise function-oriented codebase often acts as a namespace;
+    # this may indicate an incomplete OOP migration or a namespace anti-pattern.
+    _src_classes973 = [
+        s for s in graph.symbols.values()
+        if s.kind.value == "class" and s.parent_id is None and not _is_test_file(s.file_path)
+    ]
+    _src_fns973 = [
+        s for s in graph.symbols.values()
+        if s.kind.value == "function" and s.parent_id is None and not _is_test_file(s.file_path)
+    ]
+    if len(_src_classes973) == 1 and len(_src_fns973) >= 10:
+        lines.append(
+            f"lone class: only 1 class ({_src_classes973[0].name}) among {len(_src_fns973)} functions"
+            f" — may be a namespace class; verify it adds value over module-level functions"
+        )
+
+    # S979: No classes — codebase has only top-level functions, no classes defined.
+    # A purely functional codebase means OOP patterns (polymorphism, encapsulation)
+    # are handled via closures or modules; agents should avoid class-based refactors.
+    _src_classes979 = [
+        s for s in graph.symbols.values()
+        if s.kind.value == "class" and not _is_test_file(s.file_path)
+    ]
+    _src_fns979 = [
+        s for s in graph.symbols.values()
+        if s.kind.value == "function" and s.parent_id is None and not _is_test_file(s.file_path)
+    ]
+    if not _src_classes979 and len(_src_fns979) >= 5:
+        _nfiles979 = len({s.file_path for s in _src_fns979})
+        lines.append(
+            f"no classes: {len(_src_fns979)} source functions across {_nfiles979} file(s) with 0 class definitions"
+            f" — purely functional codebase; OOP abstractions replaced by modules and closures"
+        )
+
+    # S985: No entrypoint — codebase has no obvious entry point function.
+    # Without a clear entry point, execution flow is ambiguous; agents may misidentify
+    # the primary code path when tracing bugs or reasoning about change impact.
+    _entry_names985 = {"main", "run", "__main__", "start", "app", "entry", "entrypoint"}
+    _has_entry985 = any(
+        s.name.lower() in _entry_names985
+        and s.kind.value == "function"
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        for s in graph.symbols.values()
+    )
+    _src_fns985 = [
+        s for s in graph.symbols.values()
+        if s.kind.value == "function" and not _is_test_file(s.file_path)
+    ]
+    if not _has_entry985 and len(_src_fns985) >= 5:
+        lines.append(
+            f"no entrypoint: no main/run/start function found among {len(_src_fns985)} source function(s)"
+            f" — entry point is unclear; execution flow harder to trace for agents and reviewers"
+        )
+
+    # S991: God class — a single class has 8 or more methods.
+    # A class with many methods accumulates multiple responsibilities; changes to one
+    # responsibility risk unintended coupling to others, making the class hard to test safely.
+    _class_method_counts991: dict[str, tuple[str, int]] = {}
+    for s in graph.symbols.values():
+        if s.kind.value == "method" and s.parent_id is not None and not _is_test_file(s.file_path):
+            _cname991 = s.parent_id.rsplit("::", 1)[-1] if "::" in s.parent_id else s.parent_id
+            _class_method_counts991[s.parent_id] = (_cname991, _class_method_counts991.get(s.parent_id, (_cname991, 0))[1] + 1)
+    _god_classes991 = [(name, cnt) for _, (name, cnt) in _class_method_counts991.items() if cnt >= 8]
+    if _god_classes991:
+        _top_god991 = max(_god_classes991, key=lambda x: x[1])
+        lines.append(
+            f"god class candidate: {_top_god991[0]} has {_top_god991[1]} methods"
+            f" — single class accumulating many responsibilities; changes may have unintended coupling"
+        )
+
+    # S997: Test heavy — test suite defines far more functions than source.
+    # When test count significantly exceeds source function count, CI slows and
+    # tests become brittle; agents may need to update many tests per code change.
+    _src_fns997 = [
+        s for s in graph.symbols.values()
+        if s.kind.value == "function" and s.parent_id is None and not _is_test_file(s.file_path)
+    ]
+    _test_fns997 = [
+        s for s in graph.symbols.values()
+        if s.kind.value in ("function", "test") and _is_test_file(s.file_path) and s.name.startswith("test_")
+    ]
+    if len(_src_fns997) >= 2 and len(_test_fns997) >= len(_src_fns997) * 3:
+        lines.append(
+            f"test heavy: {len(_test_fns997)} test functions for {len(_src_fns997)} source functions"
+            f" — high test burden; CI may be slow and expect many test updates per code change"
+        )
+
+    # S1003: Deep nesting — codebase contains files nested 3 or more directory levels deep.
+    # Deeply nested source files indicate complex package hierarchies; agents must track
+    # long import paths and may miss files hidden in rarely explored subdirectories.
+    _root1003 = graph.root.replace("\\", "/").rstrip("/")
+    _deep_files1003 = [
+        fp for fp in graph.files
+        if fp.replace("\\", "/").replace(_root1003 + "/", "").count("/") >= 3
+        and not _is_test_file(fp)
+    ]
+    if _deep_files1003:
+        _deepest1003 = max(_deep_files1003, key=lambda fp: fp.replace("\\", "/").replace(_root1003 + "/", "").count("/"))
+        _depth1003 = _deepest1003.replace("\\", "/").replace(_root1003 + "/", "").count("/")
+        lines.append(
+            f"deep nesting: {len(_deep_files1003)} source file(s) nested {_depth1003}+ levels deep"
+            f" — complex package hierarchy; agents may miss deeply nested modules"
+        )
+
+    # S1009: Mixed languages — codebase spans 3 or more distinct programming languages.
+    # Multi-language repos require agents to switch language context frequently;
+    # cross-language call boundaries are harder to trace and may hide type or contract mismatches.
+    _lang_counts1009 = {
+        lang: count
+        for lang, count in graph.stats.get("languages", {}).items()
+        if count > 0
+    }
+    if len(_lang_counts1009) >= 3:
+        _lang_list1009 = ", ".join(k for k, _ in sorted(_lang_counts1009.items(), key=lambda x: -x[1])[:5])
+        lines.append(
+            f"mixed languages: {len(_lang_counts1009)} languages detected ({_lang_list1009})"
+            f" — multi-language repo; cross-language call boundaries are harder to trace for agents"
+        )
+
     return lines
 
 
