@@ -344,3 +344,69 @@ class TestComputeComplexityDirect:
         assert node is not None
         cx = p._compute_complexity(node)
         assert cx >= 2
+
+
+# ── _current_parent_id ────────────────────────────────────────────────────────
+
+class TestCurrentParentId:
+    def test_empty_stack_returns_none(self):
+        p = _parser("")
+        assert p._current_parent_id() is None
+
+    def test_returns_top_of_stack(self):
+        p = _parser("")
+        p._symbol_stack = ["file.py::A", "file.py::A.method"]
+        assert p._current_parent_id() == "file.py::A.method"
+
+    def test_single_item_stack(self):
+        p = _parser("")
+        p._symbol_stack = ["file.py::Cls"]
+        assert p._current_parent_id() == "file.py::Cls"
+
+    def test_nested_class_method_gets_class_as_parent(self):
+        code = "class MyClass:\n    def my_method(self): pass\n"
+        syms, _, _ = _parser(code).parse()
+        method = next(s for s in syms if s.name == "my_method")
+        assert method.parent_id is not None
+        assert "MyClass" in method.parent_id
+
+
+# ── Tempo.importers_of ────────────────────────────────────────────────────────
+
+class TestImportersOf:
+    def _build(self, tmp_path, files: dict[str, str]):
+        from tempograph.builder import build_graph
+        from pathlib import Path
+        for name, content in files.items():
+            p = Path(tmp_path) / name
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content)
+        return build_graph(str(tmp_path), use_cache=False, use_config=False)
+
+    def test_importers_returns_list(self, tmp_path):
+        g = self._build(tmp_path, {
+            "utils.py": "def helper(): pass\n",
+            "app.py": "from utils import helper\ndef run(): helper()\n",
+        })
+        result = g.importers_of("utils.py")
+        assert isinstance(result, list)
+
+    def test_imported_file_has_importer(self, tmp_path):
+        g = self._build(tmp_path, {
+            "core.py": "def base(): pass\n",
+            "app.py": "from core import base\ndef run(): base()\n",
+        })
+        importers = g.importers_of("core.py")
+        assert any("app.py" in fp for fp in importers)
+
+    def test_non_imported_file_has_no_importers(self, tmp_path):
+        g = self._build(tmp_path, {
+            "standalone.py": "def fn(): pass\n",
+        })
+        result = g.importers_of("standalone.py")
+        assert result == []
+
+    def test_importers_of_missing_file_returns_empty(self, tmp_path):
+        g = self._build(tmp_path, {"a.py": "x = 1\n"})
+        result = g.importers_of("nonexistent.py")
+        assert result == []
