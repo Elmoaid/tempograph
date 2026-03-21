@@ -7468,3 +7468,59 @@ class TestOverviewDebtHot:
         assert "debt hot:" not in out, (
             f"'debt hot:' must not appear in clean repo; got:\n{out}"
         )
+
+
+class TestOverviewStableCore:
+    """S66: Overview — 'stable core:' for high-import files rarely changed (>=30d, >=5 importers).
+
+    Foundational infrastructure files that are both widely depended upon AND stable
+    are the highest-risk files to change — agents need to see this.
+    Only shown when git repo available AND 2+ qualifying files found.
+    """
+
+    def _build(self, tmp_path, files: dict):
+        from tempograph.builder import build_graph
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_stable_core_absent_without_git(self, tmp_path):
+        """'stable core:' absent when not in a git repo (no commit history)."""
+        from tempograph.render import render_overview
+
+        # core.py has 5+ importers but tmp_path is not a git repo → no git data
+        g = self._build(tmp_path, {
+            "core.py": "def process(x): return x\n",
+            "a.py": "from core import process\n",
+            "b.py": "from core import process\n",
+            "c.py": "from core import process\n",
+            "d.py": "from core import process\n",
+            "e.py": "from core import process\n",
+        })
+        out = render_overview(g)
+        assert "stable core:" not in out, (
+            f"'stable core:' must not appear without git history; got:\n{out}"
+        )
+
+    def test_stable_core_shown_with_mocked_stable_files(self, tmp_path):
+        """'stable core:' shows when 2+ high-import files have not changed in 30+ days."""
+        from unittest.mock import patch
+        from tempograph.render import render_overview
+
+        g = self._build(tmp_path, {
+            "core.py": "def process(x): return x\ndef helper(x): return x+1\n",
+            "utils.py": "def util(x): return x * 2\ndef fmt(x): return str(x)\n",
+            "a.py": "from core import process\nfrom utils import util\n",
+            "b.py": "from core import process\nfrom utils import util\n",
+            "c.py": "from core import process\nfrom utils import util\n",
+            "d.py": "from core import process\nfrom utils import util\n",
+            "e.py": "from core import process\nfrom utils import util\n",
+        })
+        g.root = str(tmp_path)
+
+        with patch("tempograph.git.file_last_modified_days", return_value=60):
+            out = render_overview(g)
+
+        assert "stable core:" in out, (
+            f"Expected 'stable core:' when 2+ files have 5+ importers and are 60d stable; got:\n{out}"
+        )
