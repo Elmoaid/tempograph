@@ -1378,4 +1378,21 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — authentication/cryptography logic; requires security review before merging"
         )
 
+    # S460: Schema migration in diff — diff touches database migration files.
+    # Migrations are irreversible in production; an incorrect migration can corrupt
+    # the database, and a rolled-back deploy may leave the schema in a broken state.
+    _s460_migration_words = ("migration", "migrate", "alembic", "flyway", "liquibase", "schema")
+    _s460_migration_files = [
+        f for f in changed_files
+        if any(w in f.lower().replace("-", "_") for w in _s460_migration_words)
+        or "/migrations/" in f.replace("\\", "/")
+        or "/migrate/" in f.replace("\\", "/")
+    ]
+    if _s460_migration_files:
+        _mig_names460 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s460_migration_files[:2])
+        lines.append(
+            f"schema migration: {_mig_names460} in diff"
+            f" — database schema changes are irreversible in production; test rollback path"
+        )
+
     return "\n".join(lines)

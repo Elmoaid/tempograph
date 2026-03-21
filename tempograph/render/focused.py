@@ -2636,6 +2636,24 @@ def _signals_focused_fn_advanced(
                         f" — signature changes break all conforming types; update every implementation"
                     )
 
+    # S457: High parameter count — focused function/method has 6+ parameters.
+    # Functions with many parameters are hard to call correctly and hard to test;
+    # they often indicate that the function is doing too much or needs a parameter object.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim457 = next((s for s in _seed_syms if s.kind.value in ("function", "method")), None)
+        if _prim457 and _prim457.signature:
+            _raw457 = _prim457.signature.split("(", 1)[-1].rstrip("):")
+            _params457 = [
+                p.strip()
+                for p in _raw457.split(",")
+                if p.strip() and p.strip() not in ("self", "cls", "*", "**kwargs", "*args")
+            ]
+            if len(_params457) >= 6:
+                lines.append(
+                    f"\nhigh parameter count: {_prim457.name} takes {len(_params457)} parameters"
+                    f" — hard to call and test; consider a parameter object or splitting the function"
+                )
+
     # S350: Orphaned symbol — focused symbol has 0 callers and the file is not imported anywhere.
     # Zero-caller symbols in unimported files may be dead code that was never wired up
     # during a refactor; modifying them has no effect unless the file is imported first.

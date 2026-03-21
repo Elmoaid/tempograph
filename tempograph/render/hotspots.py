@@ -1551,5 +1551,28 @@ def _collect_hotspots_signals(
                 f" — changes break every test that depends on it; refactor carefully"
             )
 
+    # S461: Bottleneck function — single function accounts for majority of cross-file calls.
+    # When one function is called from many more places than the next highest, removing or
+    # changing it has outsized impact; it acts as a chokepoint for the entire dependency graph.
+    if len(scores) >= 2:
+        _top461 = scores[0][1]
+        _second461 = scores[1][1]
+        _top_callers461 = len([
+            e for e in graph.edges
+            if e.kind.value == "calls" and e.target_id == _top461.id
+            and graph.symbols.get(e.source_id, _top461).file_path != _top461.file_path
+        ])
+        _second_callers461 = len([
+            e for e in graph.edges
+            if e.kind.value == "calls" and e.target_id == _second461.id
+            and graph.symbols.get(e.source_id, _second461).file_path != _second461.file_path
+        ])
+        if not _is_test_file(_top461.file_path) and _second_callers461 > 0 and _top_callers461 >= _second_callers461 * 4:
+            out.append(
+                f"\nbottleneck function: {_top461.name} has {_top_callers461}× cross-file callers"
+                f" vs {_second_callers461} for the next hotspot"
+                f" — chokepoint function; changes here cascade broadly"
+            )
+
     return out
 
