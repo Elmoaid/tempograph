@@ -1837,6 +1837,25 @@ def _signals_structure(
                     f" — god module risk; split into focused modules before growing further"
                 )
 
+    # S409: High constants ratio — 40%+ of non-test source symbols are constants/variables.
+    # A high proportion of top-level variables suggests the codebase is configuration-heavy
+    # or has magic values scattered across modules rather than centralized config.
+    _s409_src_syms = [
+        s for s in graph.symbols.values()
+        if not _is_test_file(s.file_path)
+    ]
+    _s409_const_syms = [
+        s for s in _s409_src_syms
+        if s.kind.value in ("variable", "constant")
+    ]
+    if len(_s409_src_syms) >= 10 and len(_s409_const_syms) / len(_s409_src_syms) >= 0.40:
+        _s409_pct = len(_s409_const_syms) / len(_s409_src_syms)
+        lines.append(
+            f"high constants ratio: {len(_s409_const_syms)} of {len(_s409_src_syms)} symbols"
+            f" ({_s409_pct:.0%}) are constants/variables"
+            f" — consider centralizing config; scattered magic values impede testability"
+        )
+
     return lines
 
 

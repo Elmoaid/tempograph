@@ -1415,4 +1415,22 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                     f" — init files should only re-export; move logic to a dedicated module"
                 )
 
+    # S412: Hotspot with no test coverage — top hotspot file has no corresponding test file.
+    # Hotspot files accumulate the most change pressure yet are the least protected when
+    # they have no test counterpart; regressions in hotspots are the most costly to fix.
+    if scores:
+        _top412 = scores[0][1]
+        if not _is_test_file(_top412.file_path):
+            _name412 = _top412.file_path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+            _test_files412 = [
+                fp for fp in graph.files
+                if _is_test_file(fp) and _name412 in fp
+            ]
+            if not _test_files412:
+                lines.append(
+                    f"\nuntested hotspot: {_top412.file_path.rsplit('/', 1)[-1]} has no"
+                    f" corresponding test file"
+                    f" — hotspot files change most often; add tests before the next modification"
+                )
+
     return "\n".join(lines)  # ALWAYS return here — never inside a conditional block
