@@ -1737,6 +1737,23 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — single-purpose wrapper; consider merging into the most frequent caller"
         )
 
+    # S644: Pure class module — all exported symbols in blast target are class definitions.
+    # A file with only classes (no module-level functions) is an object factory;
+    # constructor signature changes break all callers without any function-level hint.
+    _exported_syms644 = [
+        s for s in graph.symbols.values()
+        if s.file_path == _fp589 and s.exported and s.parent_id is None
+        and not _is_test_file(s.file_path)
+    ]
+    if len(_exported_syms644) >= 2:
+        _all_classes644 = all(s.kind.value == "class" for s in _exported_syms644)
+        if _all_classes644:
+            lines.append(
+                f"pure class module: all {len(_exported_syms644)} exported symbols in"
+                f" {_fp589.rsplit('/', 1)[-1]} are classes"
+                f" — constructor changes break all callers; consider making init params keyword-only"
+            )
+
     return "\n".join(lines)
 
 

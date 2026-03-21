@@ -2213,6 +2213,25 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — leftover nested design; remove to reduce cognitive overhead"
         )
 
+    # S647: Dead mixin/base class — unused class with "Mixin", "Base", or "Abstract" in its name.
+    # Mixins and base classes designed for inheritance but never subclassed are
+    # orphaned extension points; they represent planned reuse that never materialized.
+    _mixin_markers647 = ("mixin", "base", "abstract", "abcmixin", "interfacemixin")
+    _dead_mixins647 = [
+        s for s in dead
+        if s.kind.value == "class"
+        and not _is_test_file(s.file_path)
+        and any(m in s.name.lower() for m in _mixin_markers647)
+    ]
+    if _dead_mixins647:
+        _mixin_names647 = ", ".join(s.name for s in _dead_mixins647[:3])
+        if len(_dead_mixins647) > 3:
+            _mixin_names647 += f" +{len(_dead_mixins647) - 3} more"
+        lines.append(
+            f"dead mixins: {len(_dead_mixins647)} unused Mixin/Base class(es) ({_mixin_names647})"
+            f" — planned reuse that never materialized; remove unless extension is imminent"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

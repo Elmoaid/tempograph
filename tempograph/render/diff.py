@@ -168,6 +168,25 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — cross-runtime change; may require multiple specialists to review correctly"
         )
 
+    # S645: Lockfile in diff — diff includes a dependency lockfile.
+    # Lockfile changes signal dependency updates; these deserve extra scrutiny
+    # since transitive dependency updates can introduce breaking changes or vulnerabilities.
+    _lock_names645 = (
+        "requirements.txt", "requirements.lock", "pipfile.lock", "poetry.lock",
+        "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "cargo.lock",
+        "gemfile.lock", "composer.lock", "go.sum",
+    )
+    _lock_files645 = [
+        f for f in changed_files
+        if f.rsplit("/", 1)[-1].lower() in _lock_names645
+    ]
+    if _lock_files645:
+        _lock_name645 = _lock_files645[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"lockfile in diff: {_lock_name645} ({len(_lock_files645)} lockfile(s) changed)"
+            f" — dependency update; review transitive changes for breaking or vulnerable packages"
+        )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 
