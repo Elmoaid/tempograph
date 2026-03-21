@@ -2387,6 +2387,25 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — test helpers in production code; move to test files or remove"
         )
 
+    # S701: Dead factory functions — unused functions whose names start with create/make/build/factory.
+    # Factory functions represent construction logic for features that were never integrated;
+    # the naming pattern signals intentional design that was abandoned before wiring.
+    _factory_prefixes701 = ("create", "make", "build", "factory")
+    _dead_factories701 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().startswith(pfx) for pfx in _factory_prefixes701)
+    ]
+    if _dead_factories701:
+        _fac_names701 = ", ".join(s.name for s in _dead_factories701[:3])
+        if len(_dead_factories701) > 3:
+            _fac_names701 += f" +{len(_dead_factories701) - 3} more"
+        lines.append(
+            f"dead factory functions: {len(_dead_factories701)} unused factory function(s) ({_fac_names701})"
+            f" — abandoned construction logic; feature was never wired up"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

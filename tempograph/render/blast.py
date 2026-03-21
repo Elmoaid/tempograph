@@ -1870,6 +1870,23 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — wide coupling; interface changes require coordinated updates across the codebase"
         )
 
+    # S698: Single export — blast target file exports exactly 1 public top-level symbol.
+    # A file with one exported symbol is a candidate for consolidation;
+    # callers could import the symbol from a parent module to reduce file proliferation.
+    _fi698 = graph.files.get(_fp589)
+    if _fi698 and not _is_test_file(_fp589):
+        _pub_syms698 = [
+            s for s in graph.symbols.values()
+            if s.file_path == _fp589
+            and s.parent_id is None
+            and s.kind.value not in ("unknown", "module")
+        ]
+        if len(_pub_syms698) == 1:
+            lines.append(
+                f"single export: {_fp589.rsplit('/', 1)[-1]} exports only '{_pub_syms698[0].name}'"
+                f" — single-symbol file; consider consolidating into a parent module"
+            )
+
     return "\n".join(lines)
 
 

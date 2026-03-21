@@ -2774,6 +2774,27 @@ def _signals_async_oop(
                 f" — check for mutable globals; prefer dependency injection or module-level constants"
             )
 
+    # S697: Low test proxy — source has 5x+ more symbols than test symbols.
+    # When the production codebase greatly outnumbers test code, changes are under-tested;
+    # this is a structural proxy for coverage gaps.
+    _src_syms697 = sum(
+        1 for s in graph.symbols.values()
+        if not _is_test_file(s.file_path) and s.parent_id is None
+        and s.kind.value not in ("unknown", "module")
+    )
+    _test_syms697 = sum(
+        1 for s in graph.symbols.values()
+        if _is_test_file(s.file_path) and s.parent_id is None
+        and s.kind.value not in ("unknown", "module")
+    )
+    if _src_syms697 >= 5 and _test_syms697 > 0 and _src_syms697 >= _test_syms697 * 5:
+        lines.append(
+            f"low test proxy: {_src_syms697} source symbols vs {_test_syms697} test symbols"
+            f" — source outpaces tests by {_src_syms697 // max(_test_syms697, 1)}x; likely under-tested"
+        )
+    elif _src_syms697 >= 5 and _test_syms697 == 0:
+        pass  # covered by S667 (no tests detected)
+
     return lines
 
 

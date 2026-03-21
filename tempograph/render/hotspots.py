@@ -2185,5 +2185,27 @@ def _collect_hotspots_signals(
                         f" — thin wrapper; consider inlining the class"
                     )
 
+    # S700: Package cluster — top 2 hotspots are in the same directory (module-level bottleneck).
+    # When the highest-ranked hotspots share a parent directory, that package is a focal point;
+    # its internal coupling is high and changes to the package ripple across many consumers.
+    if len(scores) >= 2:
+        _top700 = scores[0][1]
+        _second700 = scores[1][1]
+        if (
+            _top700 is not None
+            and _second700 is not None
+            and not _is_test_file(_top700.file_path)
+            and not _is_test_file(_second700.file_path)
+            and _top700.file_path != _second700.file_path
+        ):
+            _dir700_top = _top700.file_path.replace("\\", "/").rsplit("/", 1)[0]
+            _dir700_sec = _second700.file_path.replace("\\", "/").rsplit("/", 1)[0]
+            if _dir700_top and _dir700_top == _dir700_sec:
+                _pkg_name700 = _dir700_top.rsplit("/", 1)[-1]
+                out.append(
+                    f"\npackage cluster: top 2 hotspots both in {_pkg_name700}/"
+                    f" — module-level bottleneck; consider splitting or extracting an interface"
+                )
+
     return out
 

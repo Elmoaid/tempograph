@@ -310,6 +310,24 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — schema change; verify backward compatibility and deployment order"
         )
 
+    # S699: Non-code diff — all changed files have non-source extensions (config/data/binary).
+    # A diff that touches only non-code files (YAML, JSON, TOML, images, etc.) signals
+    # a configuration or infrastructure change with no logic modifications.
+    _code_exts699 = {
+        "py", "js", "ts", "jsx", "tsx", "go", "rs", "java", "kt",
+        "cs", "cpp", "c", "h", "rb", "php", "swift", "scala", "ex", "exs",
+    }
+    if changed_files:
+        _is_non_code699 = []
+        for _cf699 in changed_files:
+            _ext699 = _cf699.rsplit(".", 1)[-1].lower() if "." in _cf699.rsplit("/", 1)[-1] else ""
+            _is_non_code699.append(_ext699 not in _code_exts699)
+        if all(_is_non_code699):
+            lines.append(
+                f"non-code diff: all {len(changed_files)} changed file(s) are non-source files"
+                f" — config/infra change only; no logic modifications in this diff"
+            )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 
