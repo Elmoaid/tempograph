@@ -2107,5 +2107,22 @@ def _collect_hotspots_signals(
                 f" — single-file bottleneck; changes here have outsized blast radius"
             )
 
+    # S676: Test-only callers — top hotspot has callers but all are from test files.
+    # A production symbol called exclusively from tests is a test-facing internal;
+    # it may be over-exposed API or a sign that tests bypass the intended public interface.
+    if scores and scores[0]:
+        _top676 = scores[0][1]
+        if (
+            _top676 is not None
+            and not _is_test_file(_top676.file_path)
+            and _top676.kind.value in ("function", "method", "class")
+        ):
+            _callers676 = graph.callers_of(_top676.id)
+            if _callers676 and all(_is_test_file(c.file_path) for c in _callers676):
+                out.append(
+                    f"\ntest-only callers: {_top676.name} is called exclusively from test files"
+                    f" ({len(_callers676)} test caller(s)) — over-exposed internal or tests bypassing public API"
+                )
+
     return out
 
