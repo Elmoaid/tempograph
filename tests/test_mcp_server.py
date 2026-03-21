@@ -28618,3 +28618,200 @@ class TestNoCallersFocusedS599:
         assert "no callers" not in out, (
             f"'no callers' must not appear for function with a caller; got:\n{out}"
         )
+
+
+class TestDeprecatedCallersFocusedS600:
+    """S600: Focused symbol whose all callers are in legacy files emits deprecated-callers signal."""
+
+    def test_deprecated_callers_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def old_api(): pass\n")
+        (tmp_path / "legacy_adapter.py").write_text(
+            "from core import old_api\ndef wrap(): old_api()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "old_api")
+        assert "deprecated callers" in out, (
+            f"Expected 'deprecated callers' when all callers are in legacy files; got:\n{out}"
+        )
+
+    def test_deprecated_callers_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def helper(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from core import helper\ndef run(): helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper")
+        assert "deprecated callers" not in out, (
+            f"'deprecated callers' must not appear when callers are in normal files; got:\n{out}"
+        )
+
+
+class TestFlatRepoOverviewS601:
+    """S601: 10+ source files all in root directory emits flat-repo signal."""
+
+    def test_flat_repo_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        for i in range(10):
+            (tmp_path / f"module_{i}.py").write_text(f"def fn_{i}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "flat repo" in out, (
+            f"Expected 'flat repo' for 10 root-level files; got:\n{out}"
+        )
+
+    def test_flat_repo_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        pkg = tmp_path / "mypkg"
+        pkg.mkdir()
+        for i in range(5):
+            (pkg / f"mod_{i}.py").write_text(f"def fn_{i}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "flat repo" not in out, (
+            f"'flat repo' must not appear when fewer than 10 root files; got:\n{out}"
+        )
+
+
+class TestNoTestCoverageBlastS602:
+    """S602: Blast target with no corresponding test file emits no-test-coverage signal."""
+
+    def test_no_test_coverage_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "calculator.py").write_text(
+            "def add(a, b): return a + b\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from calculator import add\ndef run(): add(1, 2)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "calculator.py")
+        assert "no test coverage" in out, (
+            f"Expected 'no test coverage' when no test file exists for calculator.py; got:\n{out}"
+        )
+
+    def test_no_test_coverage_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "calculator.py").write_text(
+            "def add(a, b): return a + b\n"
+        )
+        (tmp_path / "test_calculator.py").write_text(
+            "from calculator import add\ndef test_add(): assert add(1, 2) == 3\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "calculator.py")
+        assert "no test coverage" not in out, (
+            f"'no test coverage' must not appear when test_calculator.py exists; got:\n{out}"
+        )
+
+
+class TestMigrationInDiffS603:
+    """S603: Diff with a migration file emits migration-in-diff signal."""
+
+    def test_migration_in_diff_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        mig_dir = tmp_path / "migrations"
+        mig_dir.mkdir()
+        (mig_dir / "0001_add_users.sql").write_text("CREATE TABLE users (id INT);\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "migrations/0001_add_users.sql"])
+        assert "migration in diff" in out, (
+            f"Expected 'migration in diff' when migration file is changed; got:\n{out}"
+        )
+
+    def test_migration_in_diff_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "utils.py"])
+        assert "migration in diff" not in out, (
+            f"'migration in diff' must not appear for non-migration files; got:\n{out}"
+        )
+
+
+class TestTestHotspotS604:
+    """S604: Top hotspot in a test file emits test-hotspot signal."""
+
+    def test_test_hotspot_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        # A shared helper in a test file called from many other test files
+        (tmp_path / "test_helpers.py").write_text("def shared_setup(): return {}\n")
+        for i in range(5):
+            (tmp_path / f"test_mod_{i}.py").write_text(
+                f"from test_helpers import shared_setup\ndef test_{i}(): shared_setup()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "test hotspot:" in out, (
+            f"Expected 'test hotspot:' when top hotspot is in a test file; got:\n{out}"
+        )
+
+    def test_test_hotspot_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def process(x): return x\n")
+        (tmp_path / "app.py").write_text(
+            "from core import process\ndef run(): process(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "\ntest hotspot:" not in out, (
+            f"'\\ntest hotspot:' must not appear when top hotspot is in a source file; got:\n{out}"
+        )
+
+
+class TestDeadUtilityFunctionS605:
+    """S605: Exported utility function never called emits dead-utility-functions signal."""
+
+    def test_dead_utility_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "helpers.py").write_text(
+            "def get_config(): return {}\ndef make_cache(): return []\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead utility functions" in out, (
+            f"Expected 'dead utility functions' for unused get_config, make_cache; got:\n{out}"
+        )
+
+    def test_dead_utility_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "helpers.py").write_text(
+            "def get_config(): return {}\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from helpers import get_config\ndef run(): get_config()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead utility functions" not in out, (
+            f"'dead utility functions' must not appear when utility is called; got:\n{out}"
+        )
+
+

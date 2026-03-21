@@ -2481,6 +2481,21 @@ def _signals_async_oop(
                 f" — procedural style or domain models are unexported/missing"
             )
 
+    # S601: Flat repo — 10+ source files all in the root directory with no subdirectories.
+    # A flat layout is fine for scripts but signals that the codebase has outgrown its structure;
+    # consider grouping related files into packages.
+    _s601_root_files = [
+        fp for fp in graph.files
+        if not _is_test_file(fp)
+        and "/" not in fp.replace("\\", "/")
+        and fp.endswith(".py")
+    ]
+    if len(_s601_root_files) >= 10:
+        lines.append(
+            f"flat repo: {len(_s601_root_files)} source files all in the root directory"
+            f" — consider organizing into packages as the codebase grows"
+        )
+
     return lines
 
 

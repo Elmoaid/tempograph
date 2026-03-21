@@ -59,6 +59,21 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — no code changes, but config errors can change behavior, timeouts, or security policies"
         )
 
+    # S603: Migration file in diff — moved before early return (migration files aren't indexed).
+    _migration_patterns603_early = ("/migrations/", "/migration/", "/migrate/", "/alembic/")
+    _migration_exts603_early = (".sql", ".migration")
+    _mig_early603 = [
+        f for f in changed_files
+        if any(p in f.replace("\\", "/") for p in _migration_patterns603_early)
+        or any(f.lower().endswith(e) for e in _migration_exts603_early)
+    ]
+    if _mig_early603:
+        _mig_name603_early = _mig_early603[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"migration in diff: {_mig_name603_early} ({len(_mig_early603)} migration file(s))"
+            f" — database migrations are irreversible; ensure rollback plan exists before deploying"
+        )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 
@@ -1754,6 +1769,23 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
         lines.append(
             f"docs in diff: {_doc_name596} changed ({_paired596})"
             f" — verify documentation accurately reflects the current code state"
+        )
+
+    # S603: Migration file in diff — diff includes a database migration file.
+    # Migrations are irreversible in production; review carefully and ensure
+    # rollback scripts are ready before deploying.
+    _migration_patterns603 = ("/migrations/", "/migration/", "/migrate/", "/alembic/")
+    _migration_exts603 = (".sql", ".migration")
+    _migration_files603 = [
+        f for f in changed_files
+        if any(p in f.replace("\\", "/") for p in _migration_patterns603)
+        or any(f.lower().endswith(e) for e in _migration_exts603)
+    ]
+    if _migration_files603:
+        _mig_name603 = _migration_files603[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"migration in diff: {_mig_name603} ({len(_migration_files603)} migration file(s))"
+            f" — database migrations are irreversible; ensure rollback plan exists before deploying"
         )
 
     return "\n".join(lines)
