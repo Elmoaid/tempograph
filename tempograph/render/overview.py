@@ -2464,6 +2464,23 @@ def _signals_async_oop(
                 f" — uniform stack; language-specific linting and type tools apply globally"
             )
 
+    # S594: No public classes — 5+ source files but zero exported class symbols detected.
+    # A repo with only functions and no public classes may be intentionally procedural,
+    # or may indicate that domain models are missing or unexported.
+    _s594_src_fps = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_s594_src_fps) >= 5:
+        _s594_exported_classes = [
+            sym for sym in graph.symbols.values()
+            if not _is_test_file(sym.file_path)
+            and sym.exported
+            and sym.kind.value == "class"
+        ]
+        if not _s594_exported_classes:
+            lines.append(
+                f"no public classes: {len(_s594_src_fps)} source files but zero exported class symbols"
+                f" — procedural style or domain models are unexported/missing"
+            )
+
     return lines
 
 

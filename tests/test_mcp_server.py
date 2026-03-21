@@ -28183,3 +28183,438 @@ class TestDeadExceptionClassS592:
         assert "dead exception classes" not in out, (
             f"'dead exception classes' must not appear when error class is imported; got:\n{out}"
         )
+
+
+# ── S593: Builtin shadow focused ──────────────────────────────────────────────
+
+class TestBuiltinShadowFocusedS593:
+    """S593: Function shadowing a Python builtin emits builtin shadow signal."""
+
+    def test_builtin_shadow_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "compat.py").write_text(
+            "def list(iterable):\n"
+            "    return [x for x in iterable if x is not None]\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "list")
+        assert "builtin shadow" in out, (
+            f"Expected 'builtin shadow' for function named 'list'; got:\n{out}"
+        )
+
+    def test_builtin_shadow_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def filter_nulls(iterable):\n"
+            "    return [x for x in iterable if x is not None]\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "filter_nulls")
+        assert "builtin shadow" not in out, (
+            f"'builtin shadow' must not appear for non-builtin name; got:\n{out}"
+        )
+
+
+# ── S594: No public classes overview ──────────────────────────────────────────
+
+class TestNoPublicClassesOverviewS594:
+    """S594: 5+ source files with no exported classes emits no public classes signal."""
+
+    def test_no_classes_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        for name in ["alpha", "beta", "gamma", "delta", "epsilon"]:
+            (tmp_path / f"{name}.py").write_text(f"def {name}_fn(): return None\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no public classes" in out, (
+            f"Expected 'no public classes' for repo with only functions; got:\n{out}"
+        )
+
+    def test_no_classes_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        (tmp_path / "models.py").write_text("class User:\n    def __init__(self): pass\n")
+        (tmp_path / "service.py").write_text("def get_user(): pass\n")
+        (tmp_path / "utils.py").write_text("def fmt(x): return str(x)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no public classes" not in out, (
+            f"'no public classes' must not appear when exported class exists; got:\n{out}"
+        )
+
+
+# ── S595: Low blast radius ─────────────────────────────────────────────────────
+
+class TestLowBlastRadiusS595:
+    """S595: Blast target with 0-1 non-test importers emits low blast radius signal."""
+
+    def test_low_blast_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "isolated.py").write_text("def helper(): return 42\n")
+        (tmp_path / "main.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "isolated.py")
+        assert "low blast radius" in out, (
+            f"Expected 'low blast radius' for file with no importers; got:\n{out}"
+        )
+
+    def test_low_blast_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def process(x): return x\n")
+        for i in range(3):
+            (tmp_path / f"consumer{i}.py").write_text(
+                f"from core import process\ndef run_{i}(): return process({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "core.py")
+        assert "low blast radius" not in out, (
+            f"'low blast radius' must not appear for file with 3+ importers; got:\n{out}"
+        )
+
+
+# ── S596: Docs in diff ─────────────────────────────────────────────────────────
+
+class TestDocsInDiffS596:
+    """S596: Diff with CHANGELOG/README emits docs in diff signal."""
+
+    def test_docs_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["app.py", "CHANGELOG.md"])
+        assert "docs in diff" in out, (
+            f"Expected 'docs in diff' when CHANGELOG is in diff; got:\n{out}"
+        )
+
+    def test_docs_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["app.py", "utils.py"])
+        assert "docs in diff" not in out, (
+            f"'docs in diff' must not appear for non-docs files; got:\n{out}"
+        )
+
+
+# ── S597: Narrow hotspot spread ───────────────────────────────────────────────
+
+class TestNarrowHotspotSpreadS597:
+    """S597: All top-5 hotspots in same file emits narrow hotspot spread signal."""
+
+    def test_narrow_spread_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        fns = "\n".join(f"def fn{i}(): pass" for i in range(6))
+        (tmp_path / "core.py").write_text(
+            fns + "\n"
+            "def hub():\n"
+            + "".join(f"    fn{i}()\n" for i in range(6))
+        )
+        callers = "\n".join(
+            f"from core import fn{i}\ndef use_{i}(): fn{i}()"
+            for i in range(5)
+        )
+        (tmp_path / "clients.py").write_text(callers + "\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "narrow hotspot spread" in out, (
+            f"Expected 'narrow hotspot spread' when top 5 hotspots in same file; got:\n{out}"
+        )
+
+    def test_narrow_spread_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        for i in range(5):
+            (tmp_path / f"module{i}.py").write_text(f"def fn{i}(): pass\n")
+        (tmp_path / "caller.py").write_text(
+            "\n".join(f"from module{i} import fn{i}\ndef use_{i}(): fn{i}()" for i in range(5))
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "narrow hotspot spread" not in out, (
+            f"'narrow hotspot spread' must not appear when hotspots spread across files; got:\n{out}"
+        )
+
+
+# ── S598: Dead modules dead ────────────────────────────────────────────────────
+
+class TestDeadModulesS598:
+    """S598: Source file with symbols but zero importers/callers emits dead modules signal."""
+
+    def test_dead_module_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "orphan.py").write_text(
+            "def abandoned_feature(): return 'old'\n"
+            "def another_old_fn(): return 'stale'\n"
+        )
+        (tmp_path / "main.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead modules" in out, (
+            f"Expected 'dead modules' for file with symbols but zero importers; got:\n{out}"
+        )
+
+    def test_dead_module_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        # utils.py is called from test_utils.py → has callers → not a dead module
+        (tmp_path / "utils.py").write_text("def add(a, b): return a + b\n")
+        (tmp_path / "test_utils.py").write_text(
+            "from utils import add\ndef test_add(): assert add(1, 2) == 3\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead modules" not in out, (
+            f"'dead modules' must not appear when module symbols have callers; got:\n{out}"
+        )
+
+
+class TestBuiltinShadowFocusedS593:
+    """S593: Focused function that shadows a Python builtin emits builtin-shadow signal."""
+
+    def test_builtin_shadow_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def list(items): return sorted(items)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "list")
+        assert "builtin shadow" in out, (
+            f"Expected 'builtin shadow' for function named 'list'; got:\n{out}"
+        )
+
+    def test_builtin_shadow_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def sort_items(items): return sorted(items)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "sort_items")
+        assert "builtin shadow" not in out, (
+            f"'builtin shadow' must not appear for non-builtin name; got:\n{out}"
+        )
+
+
+class TestNoPublicClassesOverviewS594:
+    """S594: 5+ source files with zero exported classes emits no-public-classes signal."""
+
+    def test_no_public_classes_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        for i in range(5):
+            (tmp_path / f"fn_{i}.py").write_text(f"def task_{i}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no public classes" in out, (
+            f"Expected 'no public classes' for function-only repo; got:\n{out}"
+        )
+
+    def test_no_public_classes_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        for i in range(5):
+            (tmp_path / f"mod_{i}.py").write_text(
+                f"class Widget{i}:\n    pass\ndef fn_{i}(): pass\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no public classes" not in out, (
+            f"'no public classes' must not appear when exported classes exist; got:\n{out}"
+        )
+
+
+class TestLowBlastRadiusS595:
+    """S595: Blast target with 0-1 non-test importers emits low-blast-radius signal."""
+
+    def test_low_blast_radius_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "obscure.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "obscure.py")
+        assert "low blast radius" in out, (
+            f"Expected 'low blast radius' for isolated file; got:\n{out}"
+        )
+
+    def test_low_blast_radius_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "shared.py").write_text("def helper(): pass\n")
+        for i in range(3):
+            (tmp_path / f"user_{i}.py").write_text(
+                f"from shared import helper\ndef fn_{i}(): helper()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "shared.py")
+        assert "low blast radius" not in out, (
+            f"'low blast radius' must not appear when file has 3 importers; got:\n{out}"
+        )
+
+
+class TestDocsInDiffS596:
+    """S596: Diff with README/CHANGELOG file emits docs-in-diff signal."""
+
+    def test_docs_in_diff_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "CHANGELOG.md").write_text("# v1.1\n- added run()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "CHANGELOG.md"])
+        assert "docs in diff" in out, (
+            f"Expected 'docs in diff' when CHANGELOG.md is changed; got:\n{out}"
+        )
+
+    def test_docs_in_diff_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "utils.py"])
+        assert "docs in diff" not in out, (
+            f"'docs in diff' must not appear for non-doc files; got:\n{out}"
+        )
+
+
+class TestNarrowHotspotSpreadS597:
+    """S597: All top-5 hotspots in same file emits narrow-hotspot-spread signal."""
+
+    def test_narrow_hotspot_spread_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        fns = "\n".join(
+            f"def fn{i}():\n    pass\n"
+            for i in range(6)
+        )
+        (tmp_path / "bottleneck.py").write_text(fns)
+        for i in range(6):
+            (tmp_path / f"caller_{i}.py").write_text(
+                "\n".join(
+                    f"from bottleneck import fn{j}\ndef use_{j}_{i}(): fn{j}()\n"
+                    for j in range(6)
+                )
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "narrow hotspot spread" in out, (
+            f"Expected 'narrow hotspot spread' when all hotspots in one file; got:\n{out}"
+        )
+
+    def test_narrow_hotspot_spread_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        # Each function is in a separate file
+        for i in range(5):
+            (tmp_path / f"mod_{i}.py").write_text(f"def fn_{i}(): pass\n")
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from mod_{i} import fn_{i}\ndef use_{i}(): fn_{i}()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "narrow hotspot spread" not in out, (
+            f"'narrow hotspot spread' must not appear when hotspots are spread across files; got:\n{out}"
+        )
+
+
+class TestDeadModuleS598:
+    """S598: Source file with symbols but no importers and no callers emits dead-modules signal."""
+
+    def test_dead_module_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "orphan.py").write_text(
+            "def abandoned(): pass\ndef never_called(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead modules" in out, (
+            f"Expected 'dead modules' for unreachable file; got:\n{out}"
+        )
+
+    def test_dead_module_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from utils import helper\ndef run(): helper()\n"
+        )
+        # Test files call the source functions — callers_of returns test callers too,
+        # so neither source file qualifies as a dead module.
+        (tmp_path / "test_utils.py").write_text(
+            "from utils import helper\ndef test_helper(): helper()\n"
+        )
+        (tmp_path / "test_app.py").write_text(
+            "from app import run\ndef test_run(): run()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead modules" not in out, (
+            f"'dead modules' must not appear when all source symbols have callers; got:\n{out}"
+        )
+
+
+class TestNoCallersFocusedS599:
+    """S599: Focused function with 0 callers emits no-callers signal."""
+
+    def test_no_callers_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "standalone.py").write_text(
+            "def entry_point(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "entry_point")
+        assert "no callers" in out, (
+            f"Expected 'no callers' for function with zero callers; got:\n{out}"
+        )
+
+    def test_no_callers_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "lib.py").write_text("def compute(): return 42\n")
+        (tmp_path / "app.py").write_text(
+            "from lib import compute\ndef run(): compute()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "compute")
+        assert "no callers" not in out, (
+            f"'no callers' must not appear for function with a caller; got:\n{out}"
+        )

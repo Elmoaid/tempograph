@@ -1629,6 +1629,19 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — changes affect all consumers of this package; star-import contracts may break"
         )
 
+    # S595: Low importer count — blast target has 0 or 1 importers outside tests.
+    # A file with no non-test importers is effectively internal to its module;
+    # changes have limited blast radius but the file may be a dead-end or orphan.
+    _non_test_importers595 = [fp for fp in importers if not _is_test_file(fp)]
+    if len(_non_test_importers595) <= 1 and not (
+        _fp589.endswith("__init__.py") or _fp589 == "__init__.py"
+    ):
+        _msg595 = "no non-test importers" if not _non_test_importers595 else f"1 non-test importer ({_non_test_importers595[0].rsplit('/', 1)[-1]})"
+        lines.append(
+            f"low blast radius: {file_path.rsplit('/', 1)[-1]} has {_msg595}"
+            f" — changes are locally contained; verify this file isn't an unreferenced orphan"
+        )
+
     return "\n".join(lines)
 
 
