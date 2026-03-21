@@ -2522,5 +2522,22 @@ def _collect_hotspots_signals(
                     f" — de-facto shared infrastructure; changes require cross-module coordination"
                 )
 
+    # S826: Large hotspot body — top hotspot function has many lines (50+).
+    # Hotspot functions with large bodies are hard to reason about under load;
+    # every caller is exposed to the full complexity of the function's internals.
+    if scores:
+        _top826 = scores[0][1]
+        if (
+            _top826 is not None
+            and not _is_test_file(_top826.file_path)
+            and _top826.kind.value in ("function", "method")
+            and _top826.line_count is not None
+            and _top826.line_count >= 50
+        ):
+            out.append(
+                f"\nlarge hotspot body: {_top826.name} is {_top826.line_count} lines long"
+                f" — top hotspot with large body; callers are exposed to full function complexity"
+            )
+
     return out
 

@@ -2114,6 +2114,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — changes here affect coverage and safety nets; verify no fixtures are inadvertently modified"
         )
 
+    # S824: High import count blast — blast target file has 10+ unique imports.
+    # Files with many imports are tightly coupled to many modules; changes in any
+    # dependency can cascade back and break the blast target in unexpected ways.
+    if _fp589 in graph.files:
+        _imports824 = graph.files[_fp589].imports
+        if len(_imports824) >= 10:
+            lines.append(
+                f"high import count: {_fp589.rsplit('/', 1)[-1]} has {len(_imports824)} imports"
+                f" — many dependencies; transitive blast radius is wider than direct importers suggest"
+            )
+
     return "\n".join(lines)
 
 

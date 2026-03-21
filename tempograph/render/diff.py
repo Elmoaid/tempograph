@@ -603,6 +603,20 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — package public API surface may have shifted; audit all downstream imports"
             )
 
+    # S825: Migration file in diff — changed files include database migration scripts.
+    # Migration files modify database schema; changes require coordination with DBAs,
+    # staging deployments, and are irreversible once applied to production.
+    _mig_kws825 = ("migration", "migrations", "migrate", "schema_change", "alembic", "flyway")
+    _mig_files825 = [
+        f for f in changed_files
+        if any(kw in f.replace("\\", "/").rsplit("/", 1)[-1].lower() for kw in _mig_kws825)
+    ]
+    if _mig_files825:
+        lines.append(
+            f"migration file in diff: {len(_mig_files825)} migration script(s) changed"
+            f" — schema changes are irreversible in production; coordinate with DBA team"
+        )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 

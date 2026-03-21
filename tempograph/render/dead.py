@@ -2816,6 +2816,25 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — no concrete implementation wired in; the design contract is orphaned"
         )
 
+    # S827: Dead migration functions — unused functions with migration/upgrade/rollback naming.
+    # Migration functions are critical data-transformation operations; dead ones indicate
+    # abandoned upgrade paths or replaced migration strategies that were never cleaned up.
+    _mig_prefixes827 = ("migrate_", "upgrade_", "rollback_", "revert_", "downgrade_")
+    _dead_mig827 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().startswith(p) for p in _mig_prefixes827)
+    ]
+    if _dead_mig827:
+        _mig_names827 = ", ".join(s.name for s in _dead_mig827[:3])
+        if len(_dead_mig827) > 3:
+            _mig_names827 += f" +{len(_dead_mig827) - 3} more"
+        lines.append(
+            f"dead migration functions: {len(_dead_mig827)} unused migration/rollback function(s) ({_mig_names827})"
+            f" — abandoned data-transformation paths; verify schema changes were completed"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

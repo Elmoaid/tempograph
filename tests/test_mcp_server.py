@@ -39084,3 +39084,214 @@ class TestDeadDataModelsS821:
         assert "dead data models" not in out, (
             f"'dead data models' must not appear when data class is used; got:\n{out}"
         )
+
+
+# ===========================================================================
+# S822 – S827
+# ===========================================================================
+
+# ── S822: Dense module focus ────────────────────────────────────────────────
+
+class TestDenseModuleFocusS822:
+    """S822: Focused symbol in file with 10+ top-level symbols emits dense-module signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        funcs = "\n".join(f"def fn_{i}(): pass" for i in range(11))
+        (tmp_path / "dense.py").write_text(funcs + "\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "fn_0")
+        assert "dense module" in out, (
+            f"Expected 'dense module' for file with 11 functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "small.py").write_text(
+            "def fn_a(): pass\ndef fn_b(): pass\ndef fn_c(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "fn_a")
+        assert "dense module" not in out, (
+            f"'dense module' must not appear for file with 3 functions; got:\n{out}"
+        )
+
+
+# ── S823: Test-heavy repo ──────────────────────────────────────────────────
+
+class TestTestHeavyRepoS823:
+    """S823: Test files outnumber source 2:1 emits test-heavy-repo signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        for i in range(3):
+            (tmp_path / f"src_{i}.py").write_text(f"def fn_{i}(): pass\n")
+        tests = tmp_path / "tests"
+        tests.mkdir()
+        for i in range(7):
+            (tests / f"test_src_{i}.py").write_text(f"def test_{i}(): assert True\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "test-heavy repo" in out, (
+            f"Expected 'test-heavy repo' for 7 tests vs 3 source files; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        for i in range(5):
+            (tmp_path / f"src_{i}.py").write_text(f"def fn_{i}(): pass\n")
+        tests = tmp_path / "tests"
+        tests.mkdir()
+        for i in range(4):
+            (tests / f"test_{i}.py").write_text(f"def test_{i}(): assert True\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "test-heavy repo" not in out, (
+            f"'test-heavy repo' must not appear with balanced test/source ratio; got:\n{out}"
+        )
+
+
+# ── S824: High import count blast ──────────────────────────────────────────
+
+class TestHighImportCountBlastS824:
+    """S824: Blast target with 10+ imports emits high-import-count signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        # Create 11 helper modules and a hub that imports them all
+        for i in range(11):
+            (tmp_path / f"helper_{i}.py").write_text(f"def help_{i}(): pass\n")
+        imports = "\n".join(f"from helper_{i} import help_{i}" for i in range(11))
+        (tmp_path / "hub.py").write_text(imports + "\ndef run(): help_0()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "hub.py")
+        assert "high import count" in out, (
+            f"Expected 'high import count' for file with 11 imports; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "simple.py").write_text(
+            "from os import path\ndef run(): return path.join('a', 'b')\n"
+        )
+        (tmp_path / "app.py").write_text("from simple import run\ndef main(): run()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "simple.py")
+        assert "high import count" not in out, (
+            f"'high import count' must not appear for low-import file; got:\n{out}"
+        )
+
+
+# ── S825: Migration file in diff ───────────────────────────────────────────
+
+class TestMigrationFileInDiffS825:
+    """S825: Migration scripts in diff emits migration-file-in-diff signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        (tmp_path / "migration_001_add_users.py").write_text("def up(): pass\ndef down(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "migration_001_add_users.py"])
+        assert "migration file in diff" in out, (
+            f"Expected 'migration file in diff' for migration script; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "utils.py"])
+        assert "migration file in diff" not in out, (
+            f"'migration file in diff' must not appear for non-migration files; got:\n{out}"
+        )
+
+
+# ── S826: Large hotspot body ────────────────────────────────────────────────
+
+class TestLargeHotspotBodyS826:
+    """S826: Top hotspot with 50+ lines emits large-hotspot-body signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        body = "def big_fn():\n" + "    x = 1\n" * 52
+        (tmp_path / "core.py").write_text(body)
+        for i in range(5):
+            (tmp_path / f"user_{i}.py").write_text(
+                f"from core import big_fn\ndef go_{i}(): big_fn()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "large hotspot body" in out, (
+            f"Expected 'large hotspot body' for 53-line hotspot; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def tiny(): return 1\n")
+        for i in range(5):
+            (tmp_path / f"user_{i}.py").write_text(
+                f"from core import tiny\ndef go_{i}(): tiny()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "large hotspot body" not in out, (
+            f"'large hotspot body' must not appear for 1-line hotspot; got:\n{out}"
+        )
+
+
+# ── S827: Dead migration functions ─────────────────────────────────────────
+
+class TestDeadMigrationFunctionsS827:
+    """S827: Unused migrate/upgrade/rollback functions emits dead-migration-functions signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "db.py").write_text(
+            "def migrate_add_column(): pass\n"
+            "def rollback_add_column(): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead migration functions" in out, (
+            f"Expected 'dead migration functions' for unused migrate fns; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "db.py").write_text("def migrate_add_column(): pass\n")
+        (tmp_path / "runner.py").write_text(
+            "from db import migrate_add_column\n"
+            "def deploy(): migrate_add_column()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead migration functions" not in out, (
+            f"'dead migration functions' must not appear when fn is called; got:\n{out}"
+        )
