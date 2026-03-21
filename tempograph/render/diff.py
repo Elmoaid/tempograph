@@ -741,6 +741,27 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — doc-only change; verify examples still match current implementation"
             )
 
+    # S969: Dependency file in diff — changed files include a package manifest.
+    # Dependency version changes can introduce breaking API changes, security vulnerabilities,
+    # or transitive conflicts that are invisible until runtime or integration test time.
+    if changed_files:
+        _dep_names969 = (
+            "requirements.txt", "requirements-dev.txt", "pyproject.toml",
+            "package.json", "package-lock.json", "yarn.lock",
+            "cargo.toml", "go.mod", "go.sum", "gemfile", "gemfile.lock",
+            "pom.xml", "build.gradle",
+        )
+        _dep_files969 = [
+            f for f in changed_files
+            if f.replace("\\", "/").rsplit("/", 1)[-1].lower() in _dep_names969
+        ]
+        if _dep_files969:
+            _dname969 = _dep_files969[0].replace("\\", "/").rsplit("/", 1)[-1]
+            lines.append(
+                f"dependency change: {len(_dep_files969)} dependency manifest(s) changed (e.g. {_dname969})"
+                f" — version bumps may introduce breaking API changes or transitive conflicts; review changelogs"
+            )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 
@@ -2682,27 +2703,6 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             lines.append(
                 f"test infra changed: {len(_infra_files963)} test infrastructure file(s) modified (e.g. {_iname963})"
                 f" — fixture changes silently affect all dependent tests; run the full test suite"
-            )
-
-    # S969: Dependency file in diff — changed files include a package manifest.
-    # Dependency version changes can introduce breaking API changes, security vulnerabilities,
-    # or transitive conflicts that are invisible until runtime or integration test time.
-    if changed_files:
-        _dep_names969 = (
-            "requirements.txt", "requirements-dev.txt", "pyproject.toml",
-            "package.json", "package-lock.json", "yarn.lock",
-            "cargo.toml", "go.mod", "go.sum", "gemfile", "gemfile.lock",
-            "pom.xml", "build.gradle",
-        )
-        _dep_files969 = [
-            f for f in changed_files
-            if f.replace("\\", "/").rsplit("/", 1)[-1].lower() in _dep_names969
-        ]
-        if _dep_files969:
-            _dname969 = _dep_files969[0].replace("\\", "/").rsplit("/", 1)[-1]
-            lines.append(
-                f"dependency change: {len(_dep_files969)} dependency manifest(s) changed (e.g. {_dname969})"
-                f" — version bumps may introduce breaking API changes or transitive conflicts; review changelogs"
             )
 
     return "\n".join(lines)
