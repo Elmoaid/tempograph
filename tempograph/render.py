@@ -2887,6 +2887,19 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         ]
         lines.append(f"Quick wins: {', '.join(_qw_parts)}")
 
+    # Largest dead: top 3 dead symbols by line count (high+medium confidence only).
+    # These are the highest ROI individual deletions — big functions that nobody calls.
+    _ld_candidates = sorted(
+        [(sym, conf) for sym, conf in scored if conf >= 40],
+        key=lambda x: -x[0].line_count,
+    )
+    if len(_ld_candidates) >= 2 and _ld_candidates[0][0].line_count >= 20:
+        _ld_parts = [
+            f"{sym.name} ({sym.line_count}L, conf:{conf})"
+            for sym, conf in _ld_candidates[:3]
+        ]
+        lines.append(f"Largest dead: {', '.join(_ld_parts)}")
+
     # Orphan files: files where ALL exported symbols are dead → delete the whole file.
     # More actionable than quick wins: one `rm` instead of N symbol deletions.
     _dead_sym_ids = {sym.id for sym, _ in scored}
