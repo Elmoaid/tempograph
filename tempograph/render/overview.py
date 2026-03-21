@@ -2534,6 +2534,21 @@ def _signals_async_oop(
             f" — bidirectional dependencies indicate poor module separation; refactor to break cycle"
         )
 
+    # S619: Large average file — average source file line count exceeds 200 lines.
+    # When the typical file is long, the codebase favors large monoliths over small modules;
+    # navigation and comprehension cost are both elevated.
+    _s619_src_files = {
+        fp: fi for fp, fi in graph.files.items()
+        if not _is_test_file(fp) and fi.line_count > 0
+    }
+    if len(_s619_src_files) >= 5:
+        _avg_lines619 = sum(fi.line_count for fi in _s619_src_files.values()) // len(_s619_src_files)
+        if _avg_lines619 > 200:
+            lines.append(
+                f"large average file: average source file is {_avg_lines619} lines"
+                f" — codebase favors monolithic files; navigation cost is elevated"
+            )
+
     return lines
 
 

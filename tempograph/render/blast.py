@@ -1678,6 +1678,23 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — deeply nested files are often under-tested and overlooked in reviews"
         )
 
+    # S620: Cross-package blast — blast file has importers from 3+ distinct top-level packages.
+    # When consumers span multiple top-level packages, a breaking change here requires
+    # coordinated updates across independent parts of the codebase.
+    _importer_roots620 = {
+        fp.replace("\\", "/").split("/")[0]
+        for fp in importers
+        if "/" in fp.replace("\\", "/")
+        and not _is_test_file(fp)
+    }
+    if len(_importer_roots620) >= 3:
+        _root_list620 = ", ".join(sorted(_importer_roots620)[:4])
+        lines.append(
+            f"cross-package blast: {file_path.rsplit('/', 1)[-1]} is used across"
+            f" {len(_importer_roots620)} top-level packages ({_root_list620})"
+            f" — breaking change here requires coordinated updates in multiple packages"
+        )
+
     return "\n".join(lines)
 
 

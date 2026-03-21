@@ -29215,3 +29215,221 @@ class TestDeadAsyncFunctionS617:
         assert "dead async functions" not in out, (
             f"'dead async functions' must not appear when async fn is imported; got:\n{out}"
         )
+
+
+# ── S618: Single-file consumer ────────────────────────────────────────────────
+
+class TestSingleFileConsumerS618:
+    """S618: Exported symbol called from exactly one non-test file emits single-file consumer."""
+
+    def test_single_consumer_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def process(x): return x\n")
+        (tmp_path / "user.py").write_text(
+            "from core import process\ndef run(): return process(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process")
+        assert "single-file consumer" in out, (
+            f"Expected 'single-file consumer' for exported fn with 1 caller file; got:\n{out}"
+        )
+
+    def test_single_consumer_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def process(x): return x\n")
+        (tmp_path / "user_a.py").write_text(
+            "from core import process\ndef run_a(): process(1)\n"
+        )
+        (tmp_path / "user_b.py").write_text(
+            "from core import process\ndef run_b(): process(2)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process")
+        assert "single-file consumer" not in out, (
+            f"'single-file consumer' must not appear when fn has 2+ caller files; got:\n{out}"
+        )
+
+
+# ── S619: Large average file ──────────────────────────────────────────────────
+
+class TestLargeAverageFileS619:
+    """S619: Average source file >200 lines emits large-average-file signal."""
+
+    def test_large_average_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        padding = "#\n" * 201
+        for i in range(5):
+            (tmp_path / f"module_{i}.py").write_text(
+                f"def fn_{i}(x): return x\n{padding}"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "large average file" in out, (
+            f"Expected 'large average file' when avg file is 200+ lines; got:\n{out}"
+        )
+
+    def test_large_average_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        for i in range(5):
+            (tmp_path / f"module_{i}.py").write_text(
+                f"def fn_{i}(x): return x\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "large average file" not in out, (
+            f"'large average file' must not appear for short files; got:\n{out}"
+        )
+
+
+# ── S620: Cross-package blast ─────────────────────────────────────────────────
+
+class TestCrossPackageBlastS620:
+    """S620: Blast file imported by 3+ top-level packages emits cross-package blast."""
+
+    def test_cross_package_blast_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def engine(): pass\n")
+        for pkg in ("pkgA", "pkgB", "pkgC"):
+            (tmp_path / pkg).mkdir()
+            (tmp_path / pkg / "mod.py").write_text(
+                f"from core import engine\ndef use(): engine()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "core.py")
+        assert "cross-package blast" in out, (
+            f"Expected 'cross-package blast' for file imported by 3 packages; got:\n{out}"
+        )
+
+    def test_cross_package_blast_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def engine(): pass\n")
+        (tmp_path / "pkg").mkdir()
+        for i in range(3):
+            (tmp_path / "pkg" / f"mod_{i}.py").write_text(
+                f"from core import engine\ndef use_{i}(): engine()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "core.py")
+        assert "cross-package blast" not in out, (
+            f"'cross-package blast' must not appear when all importers are in one package; got:\n{out}"
+        )
+
+
+# ── S621: Test file in diff ───────────────────────────────────────────────────
+
+class TestTestFileInDiffS621:
+    """S621: Diff including a test file emits test-files-in-diff signal."""
+
+    def test_test_file_in_diff_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["app.py", "test_models.py"])
+        assert "test files in diff" in out, (
+            f"Expected 'test files in diff' when test file is in diff; got:\n{out}"
+        )
+
+    def test_test_file_in_diff_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["app.py", "views.py"])
+        assert "test files in diff" not in out, (
+            f"'test files in diff' must not appear when no test files are changed; got:\n{out}"
+        )
+
+
+# ── S622: God-class hotspot ───────────────────────────────────────────────────
+
+class TestGodClassHotspotS622:
+    """S622: Top hotspot is a class with 5+ method children emits god-class-hotspot signal."""
+
+    def test_god_class_hotspot_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "god.py").write_text(
+            "class BigService:\n"
+            "    def init(self): pass\n"
+            "    def start(self): pass\n"
+            "    def stop(self): pass\n"
+            "    def status(self): pass\n"
+            "    def restart(self): pass\n"
+            "    def configure(self): pass\n"
+        )
+        for i in range(6):
+            (tmp_path / f"user{i}.py").write_text(
+                f"from god import BigService\n"
+                f"def task_{i}(): s = BigService(); s.start()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "god-class hotspot" in out, (
+            f"Expected 'god-class hotspot' for class with 6 methods and many callers; got:\n{out}"
+        )
+
+    def test_god_class_hotspot_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "worker.py").write_text("def process(x): return x\n")
+        for i in range(6):
+            (tmp_path / f"caller{i}.py").write_text(
+                f"from worker import process\ndef fn_{i}(): process({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "god-class hotspot" not in out, (
+            f"'god-class hotspot' must not appear for top-hotspot that is a function; got:\n{out}"
+        )
+
+
+# ── S623: Dead constants ──────────────────────────────────────────────────────
+
+class TestDeadConstantsS623:
+    """S623: Exported SCREAMING_SNAKE_CASE constant with no callers emits dead-constants signal."""
+
+    def test_dead_constants_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "config.py").write_text(
+            "MAX_RETRIES = 3\n"
+            "TIMEOUT_SECONDS = 30\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead constants" in out, (
+            f"Expected 'dead constants' for unused SCREAMING_SNAKE_CASE constants; got:\n{out}"
+        )
+
+    def test_dead_constants_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "config.py").write_text("MAX_RETRIES = 3\n")
+        (tmp_path / "runner.py").write_text(
+            "from config import MAX_RETRIES\n"
+            "def run():\n    return MAX_RETRIES\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead constants" not in out, (
+            f"'dead constants' must not appear when constants are imported; got:\n{out}"
+        )

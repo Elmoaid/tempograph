@@ -3181,6 +3181,25 @@ def _signals_focused_fn_advanced(
                     f" {len(_importers612)} importers — treat as stable API; breakage here is wide-reaching"
                 )
 
+    # S618: Single-file consumer — exported symbol called from exactly one non-test file.
+    # An exported symbol with one consumer is effectively private by usage; it should be
+    # made private or inlined unless the single consumer is a public facade.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim618 = _seed_syms[0]
+        if (
+            _prim618.kind.value in ("function", "method", "class")
+            and _prim618.exported
+            and not _is_test_file(_prim618.file_path)
+        ):
+            _callers618 = graph.callers_of(_prim618.id)
+            _caller_files618 = {c.file_path for c in _callers618 if not _is_test_file(c.file_path)}
+            if len(_caller_files618) == 1:
+                lines.append(
+                    f"\nsingle-file consumer: {_prim618.name} is exported but only used in"
+                    f" {next(iter(_caller_files618)).rsplit('/', 1)[-1]}"
+                    f" — consider making private; export contract is not exercised elsewhere"
+                )
+
     return lines
 
 

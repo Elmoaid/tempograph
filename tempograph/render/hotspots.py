@@ -1961,5 +1961,24 @@ def _collect_hotspots_signals(
                 f" — part of the module API; signature changes require coordinating all callers"
             )
 
+    # S622: Class hotspot with many methods — top hotspot is a class with 5+ method children.
+    # A heavily-called class with many methods is a god object candidate; it has multiple
+    # reasons to change and high cognitive load for anyone modifying it.
+    if scores:
+        _top622 = scores[0][1]
+        if (
+            not _is_test_file(_top622.file_path)
+            and _top622.kind.value == "class"
+        ):
+            _methods622 = [
+                c for c in graph.children_of(_top622.id)
+                if c.kind.value in ("method", "function")
+            ]
+            if len(_methods622) >= 5:
+                out.append(
+                    f"\ngod-class hotspot: {_top622.name} has {len(_methods622)} methods"
+                    f" — high-churn class with many responsibilities; consider splitting"
+                )
+
     return out
 

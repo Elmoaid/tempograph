@@ -99,6 +99,25 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — verify no secrets are tracked in VCS; rotate any credentials if leaked"
         )
 
+    # S621: Test file removed — diff includes deletion of a test file (path-based heuristic).
+    # Removing test files silently drops coverage; this is a high-risk operation that
+    # may hide regressions in the removed tests' coverage area.
+    _deleted_tests621 = [
+        f for f in changed_files
+        if _is_test_file(f)
+        and (
+            f.rsplit("/", 1)[-1].startswith("test_")
+            or f.rsplit("/", 1)[-1].endswith("_test.py")
+        )
+        and f.endswith(".py")
+    ]
+    if _deleted_tests621:
+        _del_name621 = _deleted_tests621[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"test files in diff: {_del_name621} ({len(_deleted_tests621)} test file(s) changed)"
+            f" — verify test removals don't silently drop coverage for modified areas"
+        )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 

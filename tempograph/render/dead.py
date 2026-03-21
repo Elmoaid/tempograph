@@ -2138,6 +2138,26 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — never awaited; likely abandoned coroutine design; remove or wire into async context"
         )
 
+    # S623: Dead constant — exported module-level variable with SCREAMING_SNAKE_CASE name, no callers.
+    # Unused constants accumulate as the codebase evolves; they represent configuration
+    # or magic values that were once used but never cleaned up.
+    _dead_consts623 = [
+        s for s in dead
+        if s.kind.value in ("constant", "variable")
+        and not _is_test_file(s.file_path)
+        and s.name == s.name.upper()
+        and len(s.name) >= 3
+        and "_" in s.name or s.name.isupper()
+    ]
+    if _dead_consts623:
+        _const_names623 = ", ".join(s.name for s in _dead_consts623[:3])
+        if len(_dead_consts623) > 3:
+            _const_names623 += f" +{len(_dead_consts623) - 3} more"
+        lines.append(
+            f"dead constants: {len(_dead_consts623)} unused SCREAMING_SNAKE_CASE variable(s) ({_const_names623})"
+            f" — orphaned configuration; remove or re-wire to avoid misleading future readers"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
