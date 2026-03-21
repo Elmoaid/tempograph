@@ -1341,6 +1341,27 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
         for rt in sorted(render_targets):
             lines.append(f"  {rt}")
 
+    # Transitive import cascade — BFS over import graph (cap: 5 levels, 200 files)
+    if importers:
+        _visited: set[str] = {file_path}
+        _by_depth: dict[int, int] = {}
+        _queue: list[tuple[str, int]] = [(fp, 1) for fp in importers]
+        while _queue:
+            fp, depth = _queue.pop(0)
+            if fp in _visited or depth > 5:
+                continue
+            if sum(_by_depth.values()) >= 200:
+                break
+            _visited.add(fp)
+            _by_depth[depth] = _by_depth.get(depth, 0) + 1
+            _queue.extend((nfp, depth + 1) for nfp in graph.importers_of(fp) if nfp not in _visited)
+        if len(_by_depth) > 1:  # only show when cascade goes beyond direct importers
+            _total = sum(_by_depth.values())
+            _max_d = max(_by_depth.keys())
+            _depth_str = ", ".join(f"d{d}:{_by_depth[d]}" for d in sorted(_by_depth.keys()))
+            lines.append(f"Transitive cascade: {_total} file(s) up to depth {_max_d} ({_depth_str})")
+            lines.append("")
+
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
 
