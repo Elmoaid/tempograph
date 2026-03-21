@@ -1000,6 +1000,20 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — changes here cascade through all dependent tests; run full test suite"
         )
 
+    # S359: Entrypoint blast — blast target is the application's main entry point.
+    # Entrypoints wire together all subsystems; changes to them affect startup behavior,
+    # argument parsing, and initialization order — subtle bugs that are hard to catch in unit tests.
+    _fp359 = file_path.rsplit("/", 1)[-1].lower()
+    _is_entry359 = _fp359 in (
+        "__main__.py", "main.py", "index.js", "index.ts", "app.py", "server.py",
+        "manage.py", "wsgi.py", "asgi.py", "entrypoint.py",
+    )
+    if _is_entry359 and importers:
+        lines.append(
+            f"entrypoint blast: {file_path.rsplit('/', 1)[-1]} is the application entrypoint"
+            f" — startup/init order changes are not unit-testable; test in integration or staging"
+        )
+
     # S353: Constants blast — blast target is a purely constants/enums file.
     # Pure constants files are deceptively "safe" to edit; downstream consumers may depend
     # on specific values via hardcoded literals, making renames or reorders silently breaking.

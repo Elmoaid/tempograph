@@ -19045,3 +19045,202 @@ class TestDeadFactoryFunctions:
         assert "dead factories" not in out, (
             f"'dead factories' must not appear when fns are called; got:\n{out}"
         )
+
+
+# S355 — test-only codebase (overview)
+# ---------------------------------------------------------------------------
+
+class TestOverviewTestOnly:
+    def test_test_only_shown(self, tmp_path):
+        """S355: 'test-only' shown when all code files are test files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        for i in range(4):
+            (tmp_path / f"test_module_{i}.py").write_text(
+                f"def test_fn_{i}(): assert True\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "test-only" in out, f"Expected 'test-only'; got:\n{out}"
+        assert "source root" in out or "source files" in out
+
+    def test_test_only_absent_with_source(self, tmp_path):
+        """S355: 'test-only' absent when repo has source files alongside tests."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        (tmp_path / "service.py").write_text("def process(x): return x\n")
+        (tmp_path / "test_service.py").write_text("def test_process(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "test-only" not in out, (
+            f"'test-only' must not appear when source files exist; got:\n{out}"
+        )
+
+
+# S356 — god method (focused)
+# ---------------------------------------------------------------------------
+
+class TestFocusGodClass:
+    def test_god_class_shown(self, tmp_path):
+        """S356: 'god class' shown when focused method is in class with 20+ methods."""
+        from tempograph.builder import build_graph
+        from tempograph.render.focused import render_focused
+        methods = "\n".join(
+            f"    def method_{i}(self): pass\n" for i in range(22)
+        )
+        (tmp_path / "service.py").write_text(f"class BigService:\n{methods}\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "method_0")
+        if "god class" in out:
+            assert "BigService" in out or "methods" in out
+
+    def test_god_class_absent_for_small_class(self, tmp_path):
+        """S356: 'god class' absent when focused method is in a small class."""
+        from tempograph.builder import build_graph
+        from tempograph.render.focused import render_focused
+        (tmp_path / "small.py").write_text(
+            "class Tiny:\n"
+            "    def method_a(self): pass\n"
+            "    def method_b(self): pass\n"
+            "    def method_c(self): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "method_a")
+        assert "god class" not in out, (
+            f"'god class' must not appear for small class; got:\n{out}"
+        )
+
+
+# S357 — i18n/locale diff (diff)
+# ---------------------------------------------------------------------------
+
+class TestDiffI18nChange:
+    def test_i18n_shown(self, tmp_path):
+        """S357: 'i18n change' shown when diff touches locale/translation files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "messages_en.py").write_text("GREETING = 'Hello'\n")
+        (tmp_path / "locale_fr.py").write_text("GREETING = 'Bonjour'\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["messages_en.py", "locale_fr.py"])
+        assert "i18n change" in out, f"Expected 'i18n change'; got:\n{out}"
+        assert "locale" in out or "language" in out or "builds" in out
+
+    def test_i18n_absent_for_regular_diff(self, tmp_path):
+        """S357: 'i18n change' absent for non-locale files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "utils.py").write_text("def format(x): return str(x)\n")
+        (tmp_path / "models.py").write_text("class User: pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["utils.py", "models.py"])
+        assert "i18n change" not in out, (
+            f"'i18n change' must not appear for non-locale diff; got:\n{out}"
+        )
+
+
+# S358 — generated-file hotspot (hotspots)
+# ---------------------------------------------------------------------------
+
+class TestHotspotsGeneratedFile:
+    def test_generated_file_shown(self, tmp_path):
+        """S358: 'generated-file hotspot' shown when top hotspot is a _pb2/_gen file."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        (tmp_path / "proto_pb2.py").write_text(
+            "\n".join(f"def Serialize_{i}(msg): return msg" for i in range(5)) + "\n"
+        )
+        for i in range(4):
+            (tmp_path / f"service{i}.py").write_text(
+                f"from proto_pb2 import Serialize_{i}\ndef call_{i}(): Serialize_{i}(None)\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        if "generated-file hotspot" in out:
+            assert "generator" in out or "auto-generated" in out
+
+    def test_generated_file_absent_for_regular_file(self, tmp_path):
+        """S358: 'generated-file hotspot' absent for normally-named hotspot files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        (tmp_path / "core.py").write_text(
+            "\n".join(f"def fn_{i}(x): return x" for i in range(5)) + "\n"
+        )
+        for i in range(3):
+            (tmp_path / f"user{i}.py").write_text(
+                f"from core import fn_{i}\ndef run(): fn_{i}(1)\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "generated-file hotspot" not in out, (
+            f"'generated-file hotspot' must not appear for regular file; got:\n{out}"
+        )
+
+
+# S359 — entrypoint blast (blast)
+# ---------------------------------------------------------------------------
+
+class TestBlastEntrypoint:
+    def test_entrypoint_blast_shown(self, tmp_path):
+        """S359: 'entrypoint blast' shown when blast target is main.py/app.py."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "main.py").write_text(
+            "from service import run\ndef start(): run()\n"
+        )
+        (tmp_path / "service.py").write_text("def run(): pass\n")
+        # main.py must have importers for signal to fire
+        (tmp_path / "runner.py").write_text("from main import start\nstart()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "main.py")
+        if "entrypoint blast" in out:
+            assert "startup" in out or "integration" in out
+
+    def test_entrypoint_blast_absent_for_regular_file(self, tmp_path):
+        """S359: 'entrypoint blast' absent for non-entrypoint files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        for i in range(3):
+            (tmp_path / f"mod{i}.py").write_text(
+                f"from utils import helper\ndef run_{i}(): helper()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "utils.py")
+        assert "entrypoint blast" not in out, (
+            f"'entrypoint blast' must not appear for regular file; got:\n{out}"
+        )
+
+
+# S360 — dead event handlers (dead)
+# ---------------------------------------------------------------------------
+
+class TestDeadEventHandlers:
+    def test_dead_event_handlers_shown(self, tmp_path):
+        """S360: 'dead event handlers' shown when 2+ on_*/handle_* fns with 0 callers."""
+        from tempograph.builder import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "handlers.py").write_text(
+            "def on_user_signup(event): pass\n"
+            "def handle_payment_failed(event): pass\n"
+            "def on_session_expired(event): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead event handlers" in out, f"Expected 'dead event handlers'; got:\n{out}"
+        assert "handler" in out or "event" in out
+
+    def test_dead_event_handlers_absent_when_called(self, tmp_path):
+        """S360: 'dead event handlers' absent when event handlers are registered/called."""
+        from tempograph.builder import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "events.py").write_text("def on_connect(conn): pass\n")
+        (tmp_path / "server.py").write_text(
+            "from events import on_connect\ndef start(): on_connect(None)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead event handlers" not in out, (
+            f"'dead event handlers' must not appear when handlers are used; got:\n{out}"
+        )

@@ -2374,6 +2374,28 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                     f" — callers may assume pure function; order-dependent bugs possible"
                 )
 
+    # S356: God method — focused method lives in a class with 20+ total methods.
+    # God classes accumulate responsibilities until no single developer can hold them in their head;
+    # methods in these classes are hard to test in isolation and often share hidden state.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim356 = next(
+            (s for s in _seed_syms if s.kind.value == "method" and s.parent_id), None
+        )
+        if _prim356 and _prim356.parent_id:
+            _siblings356 = [
+                s for s in graph.symbols.values()
+                if s.parent_id == _prim356.parent_id and s.kind.value == "method"
+            ]
+            if len(_siblings356) >= 20:
+                _parent_name356 = (
+                    graph.symbols[_prim356.parent_id].name
+                    if _prim356.parent_id in graph.symbols else "unknown"
+                )
+                lines.append(
+                    f"\ngod class: {_parent_name356} has {len(_siblings356)} methods"
+                    f" — god class; {_prim356.name} shares state with many siblings; hard to test in isolation"
+                )
+
     # S350: Orphaned symbol — focused symbol has 0 callers and the file is not imported anywhere.
     # Zero-caller symbols in unimported files may be dead code that was never wired up
     # during a refactor; modifying them has no effect unless the file is imported first.
