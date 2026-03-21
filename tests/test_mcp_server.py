@@ -7064,3 +7064,62 @@ class TestDiffUnchangedTests:
         assert "Unchanged tests:" not in out, (
             f"'Unchanged tests:' must not appear when no test file exists; got:\n{out}"
         )
+
+
+class TestFocusRecursionDetection:
+    """S63: Focus mode — recursion detection for depth-0 seeds.
+
+    Self-recursive functions show '[recursive]' as a sub-line.
+    Mutually recursive functions show '[recursive: mutual with X]'.
+    Non-recursive functions must NOT get any recursive annotation.
+    """
+
+    def test_self_recursion_detected(self, tmp_path):
+        """Directly self-calling function gets '[recursive]' annotation."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "fib.py").write_text(
+            "def fib(n):\n"
+            "    if n <= 1: return n\n"
+            "    return fib(n-1) + fib(n-2)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "fib")
+        assert "[recursive]" in out, (
+            f"Expected '[recursive]' for self-recursive fib; got:\n{out}"
+        )
+
+    def test_mutual_recursion_detected(self, tmp_path):
+        """Mutually recursive pair shows '[recursive: mutual with X]' annotation."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "mutual.py").write_text(
+            "def is_even(n):\n"
+            "    if n == 0: return True\n"
+            "    return is_odd(n - 1)\n"
+            "def is_odd(n):\n"
+            "    if n == 0: return False\n"
+            "    return is_even(n - 1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "is_even")
+        assert "recursive: mutual with is_odd" in out, (
+            f"Expected 'recursive: mutual with is_odd'; got:\n{out}"
+        )
+
+    def test_no_recursive_annotation_for_normal_function(self, tmp_path):
+        """Non-recursive function must NOT get any recursive annotation."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "utils.py").write_text(
+            "def double(x):\n    return x * 2\n"
+            "def triple(x):\n    return x * 3\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "double")
+        assert "[recursive" not in out, (
+            f"Non-recursive function must not get '[recursive' annotation; got:\n{out}"
+        )
