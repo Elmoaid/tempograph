@@ -6071,3 +6071,70 @@ class TestBlastRecentCallers:
         assert "blast radius growing" in out, (
             f"Expected 'blast radius growing' in output; got:\n{out}"
         )
+
+
+class TestDeadCodeTransitivelyDead:
+    """S53: Dead code — 'Transitively dead (N):' section for symbols only called by dead code.
+
+    When a symbol has callers, but ALL its callers are themselves dead (in the dead code
+    set), it's effectively dead. Shows agents a wider picture of removable code.
+    """
+
+    def _build(self, tmp_path, files: dict):
+        from tempograph.builder import build_graph
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_transitively_dead_shown_when_all_callers_dead(self, tmp_path):
+        """'Transitively dead' appears when a symbol's only callers are dead code."""
+        from tempograph.render import render_dead_code
+
+        # dead_func is dead (no callers, not imported)
+        # helper is only called by dead_func → transitively dead
+        g = self._build(tmp_path, {
+            "lib.py": (
+                "def helper(x):\n"
+                "    return x + 1\n"
+                "\n"
+                "def dead_func():\n"
+                "    return helper(42)\n"
+            ),
+        })
+        out = render_dead_code(g)
+        assert "Transitively dead" in out, (
+            f"Expected 'Transitively dead' when all callers are dead; got:\n{out}"
+        )
+        assert "only called by dead code" in out, (
+            f"Expected 'only called by dead code' note; got:\n{out}"
+        )
+
+    def test_transitively_dead_absent_when_live_callers_exist(self, tmp_path):
+        """'Transitively dead' absent when a symbol has at least one live caller."""
+        from tempograph.render import render_dead_code
+
+        # helper called by: dead_func (dead) AND live_func (live — called from entry.py)
+        # entry.py calls live_func → live_func.id in referenced_any → NOT in dead set
+        g = self._build(tmp_path, {
+            "lib.py": (
+                "def helper(x):\n"
+                "    return x + 1\n"
+                "\n"
+                "def dead_func():\n"
+                "    return helper(42)\n"
+            ),
+            "app.py": (
+                "from lib import helper\n"
+                "def live_func():\n"
+                "    return helper(10)\n"
+            ),
+            "entry.py": (
+                "from app import live_func\n"
+                "def main():\n"
+                "    return live_func()\n"
+            ),
+        })
+        out = render_dead_code(g)
+        assert "Transitively dead" not in out, (
+            f"'Transitively dead' must not appear when live callers exist; got:\n{out}"
+        )
