@@ -5619,3 +5619,45 @@ class TestOverviewAPISurface:
         assert "API surface:" not in out, (
             f"API surface: must not appear for tiny repo (<5 exports); got:\n{out}"
         )
+
+
+class TestOverviewDepDepth:
+    """S47: Overview — 'dep depth: N (a.py → b.py → ...)' deepest import chain.
+
+    Only shown when chain depth >= 5. For shallow repos or non-import chains
+    the line must be absent.
+    """
+
+    def test_dep_depth_shown_for_deep_chain(self, tmp_path):
+        """dep depth: line appears when import chain is >= 5 files deep."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        # Build a chain: a → b → c → d → e → f (6 deep)
+        (tmp_path / "a.py").write_text("from b import fn_b\ndef fn_a(): fn_b()\n")
+        (tmp_path / "b.py").write_text("from c import fn_c\ndef fn_b(): fn_c()\n")
+        (tmp_path / "c.py").write_text("from d import fn_d\ndef fn_c(): fn_d()\n")
+        (tmp_path / "d.py").write_text("from e import fn_e\ndef fn_d(): fn_e()\n")
+        (tmp_path / "e.py").write_text("from f import fn_f\ndef fn_e(): fn_f()\n")
+        (tmp_path / "f.py").write_text("def fn_f(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+
+        assert "dep depth:" in out, (
+            f"Expected dep depth: line for 6-file import chain; got:\n{out}"
+        )
+        assert "→" in out, f"Expected arrow in dep depth chain; got:\n{out}"
+
+    def test_dep_depth_absent_for_shallow_chain(self, tmp_path):
+        """dep depth: line absent when no chain reaches depth 5."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "app.py").write_text("from utils import fn\ndef main(): fn()\n")
+        (tmp_path / "utils.py").write_text("def fn(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+
+        assert "dep depth:" not in out, (
+            f"dep depth: must not appear for shallow 2-file chain; got:\n{out}"
+        )
