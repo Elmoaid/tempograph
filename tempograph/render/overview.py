@@ -3223,6 +3223,22 @@ def _signals_async_oop(
                 f" — significant cleanup debt; review dead code before adding more public API"
             )
 
+    # S865: Abstract-heavy codebase — 3+ classes with Abstract/Base prefix or ABC suffix.
+    # Many abstract base classes indicate a deep class hierarchy; agents must understand
+    # which concrete implementations exist and whether all contracts are satisfied.
+    _abstract_classes865 = [
+        s for s in graph.symbols.values()
+        if s.kind.value == "class"
+        and not _is_test_file(s.file_path)
+        and (s.name.startswith("Abstract") or s.name.startswith("Base") or s.name.endswith("ABC"))
+    ]
+    if len(_abstract_classes865) >= 3:
+        _abc_names865 = ", ".join(s.name for s in _abstract_classes865[:3])
+        lines.append(
+            f"abstract-heavy: {len(_abstract_classes865)} abstract/base classes ({_abc_names865})"
+            f" — deep class hierarchy; verify all contracts are implemented by concrete subclasses"
+        )
+
     return lines
 
 

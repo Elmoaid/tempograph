@@ -709,6 +709,25 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — package public surface changed; all importers of this package are affected"
             )
 
+    # S867: Dependency definition in diff — diff includes requirements/package.json/pyproject.
+    # Changes to dependency files affect the entire dependency tree; version bumps can
+    # introduce breaking changes or security vulnerabilities across the codebase.
+    _dep_markers867 = (
+        "requirements", "pyproject", "setup.py", "setup.cfg", "Pipfile",
+        "package.json", "Cargo.toml", "go.mod", "pom.xml", "build.gradle",
+    )
+    _dep_files867 = [
+        f for f in changed_files
+        if any(f.rsplit("/", 1)[-1].lower() == m.lower()
+               or f.rsplit("/", 1)[-1].lower().startswith(m.lower().rstrip("."))
+               for m in _dep_markers867)
+    ]
+    if _dep_files867:
+        lines.append(
+            f"dependency file in diff: {len(_dep_files867)} dependency definition file(s) changed"
+            f" — version changes affect the whole codebase; verify compatibility across all consumers"
+        )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 
