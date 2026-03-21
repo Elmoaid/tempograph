@@ -3504,6 +3504,23 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
         _tdf_str = ", ".join(_tests_in_diff)
         lines.append(f"Tests in diff: {_tdf_str} ✓")
 
+    # S114: Test ratio for changed source files — how many changed files have test coverage.
+    # Complements "Unchanged tests" (lists specifics) with a summary ratio.
+    # Only shown for diffs with 3+ changed source files (smaller diffs too noisy).
+    _src_changed = [fp for fp in normalized if not _is_test_file(fp)]
+    if len(_src_changed) >= 3:
+        _all_proj_tests = {fp for fp in graph.files if _is_test_file(fp)}
+        if _all_proj_tests:
+            _src_with_tests = sum(
+                1 for fp in _src_changed
+                if any(fp.rsplit("/", 1)[-1].rsplit(".", 1)[0] in t for t in _all_proj_tests)
+            )
+            _src_total = len(_src_changed)
+            _src_pct = int(_src_with_tests / _src_total * 100)
+            # Only show when partial coverage (neither 0% nor 100%)
+            if 0 < _src_with_tests < _src_total:
+                lines.append(f"test coverage: {_src_with_tests}/{_src_total} changed files have tests ({_src_pct}%)")
+
     # S102: Private callers — count of non-exported callers of changed exported symbols.
     # Agents often focus on external API consumers, but internal private callers also
     # need updating after a signature change. This surfaces the hidden internal blast.
@@ -3792,6 +3809,22 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             ]
             lines.append("")
             lines.append(f"Untested hotspots: {', '.join(_uh_parts)}")
+
+    # S113: Hot coverage ratio — fraction of top hotspot symbols that have test coverage.
+    # Aggregates the per-symbol [tested]/[no tests] badges into a single health signal.
+    # Only shown when test files exist AND at least 5 non-test hotspot symbols are scored.
+    if _all_test_fps_hs and scores:
+        _hs_non_test = [(sc, sym) for sc, sym in scores[:top_n] if not _is_test_file(sym.file_path)]
+        if len(_hs_non_test) >= 5:
+            _hs_tested_count = 0
+            for _sc2, _sym2 in _hs_non_test:
+                _base2 = _sym2.file_path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+                if any(_base2 in t for t in _all_test_fps_hs):
+                    _hs_tested_count += 1
+            _hs_total = len(_hs_non_test)
+            _hs_pct = int(_hs_tested_count / _hs_total * 100)
+            if _hs_pct <= 70:  # only show when coverage gap is notable
+                lines.append(f"hot coverage: {_hs_tested_count}/{_hs_total} top symbols have tests ({_hs_pct}%)")
 
     # Churn risk: symbols that are BOTH complex (cx≥15) AND actively churning (≥3/wk).
     # These are the highest-priority refactor targets — changing frequently AND hard to reason about.

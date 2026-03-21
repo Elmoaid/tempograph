@@ -9924,3 +9924,89 @@ class TestHotspotsChurnSpike:
         assert "Churn spike:" not in out, (
             f"'Churn spike:' must not appear for steady-velocity file; got:\n{out}"
         )
+
+
+class TestHotspotsHotCoverage:
+    """S113: Hotspots 'hot coverage: N/M top symbols have tests (X%)'."""
+
+    def test_hot_coverage_shown_when_low_test_ratio(self, tmp_path):
+        """Test project with few hot symbols covered → 'hot coverage:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        # 7 source files (no tests for most) + 1 test file for only one
+        (tmp_path / "test_alpha.py").write_text(
+            "from alpha import fn_0\ndef test_fn(): fn_0()\n"
+        )
+        for i in range(7):
+            content = f"def fn_{i}(x):\n"
+            for j in range(8):
+                content += f"    if x == {j}: return {j}\n"
+            content += "    return 0\n"
+            (tmp_path / f"alpha.py" if i == 0 else tmp_path / f"mod_{i}.py").write_text(content)
+        for i in range(1, 7):
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from mod_{i} import fn_{i}\ndef run(): return fn_{i}(1)\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "hot coverage:" in out, (
+            f"Expected 'hot coverage:' for low test ratio; got:\n{out}"
+        )
+
+    def test_hot_coverage_absent_for_fully_tested_hotspots(self, tmp_path):
+        """All hotspot symbols have matching test files → no 'hot coverage:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        # All source files have a test counterpart
+        for i in range(5):
+            content = "".join(f"def fn_{j}(x): return x + {j}\n" for j in range(3))
+            (tmp_path / f"src_{i}.py").write_text(content)
+            (tmp_path / f"test_src_{i}.py").write_text(
+                f"from src_{i} import fn_0\ndef test_fn(): fn_0(1)\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "hot coverage:" not in out, (
+            f"'hot coverage:' must not appear when coverage >= 70%; got:\n{out}"
+        )
+
+
+class TestDiffTestRatio:
+    """S114: Diff 'test coverage: N/M changed files have tests (X%)'."""
+
+    def test_test_ratio_shown_for_partial_coverage(self, tmp_path):
+        """4 changed source files, 2 have tests → 'test coverage: 2/4' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_diff_context
+
+        for i in range(4):
+            (tmp_path / f"module_{i}.py").write_text(f"def fn_{i}(): return {i}\n")
+        # Only 2 of 4 have test files
+        for i in range(2):
+            (tmp_path / f"test_module_{i}.py").write_text(
+                f"from module_{i} import fn_{i}\ndef test_it(): fn_{i}()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=[f"module_{i}.py" for i in range(4)])
+        assert "test coverage:" in out and "/4 changed files" in out, (
+            f"Expected 'test coverage: N/4 changed files' for partial coverage; got:\n{out}"
+        )
+
+    def test_test_ratio_absent_when_all_files_covered(self, tmp_path):
+        """All 3 changed source files have tests → no ratio shown (all covered)."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_diff_context
+
+        for i in range(3):
+            (tmp_path / f"svc_{i}.py").write_text(f"def run_{i}(): return {i}\n")
+            (tmp_path / f"test_svc_{i}.py").write_text(
+                f"from svc_{i} import run_{i}\ndef test_it(): run_{i}()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=[f"svc_{i}.py" for i in range(3)])
+        # When all files are covered (100%), ratio should NOT be shown
+        assert "test coverage:" not in out or "3/3" not in out, (
+            f"'test coverage:' should not show 3/3 (fully covered); got:\n{out}"
+        )
