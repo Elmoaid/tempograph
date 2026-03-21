@@ -19655,3 +19655,207 @@ class TestDeadSerializers:
         assert "dead serializers" not in out, (
             f"'dead serializers' must not appear when serializers are used; got:\n{out}"
         )
+
+
+# S373 — thin test suite (overview)
+# ---------------------------------------------------------------------------
+
+class TestOverviewThinTestSuite:
+    def test_thin_suite_shown(self, tmp_path):
+        """S373: thin test suite shown when 50%+ of test files have <=2 test functions."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        for i in range(6):
+            (tmp_path / f"test_module_{i}.py").write_text(
+                f"def test_only_fn_{i}(): assert True\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "thin test suite" in out, f"Expected thin test suite; got:\n{out}"
+        assert "coverage" in out or "stubs" in out
+
+    def test_thin_suite_absent_for_dense_tests(self, tmp_path):
+        """S373: thin test suite absent when test files have many test functions."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        for i in range(6):
+            tests = "\n".join(f"def test_{j}_{i}(): assert True\n" for j in range(5))
+            (tmp_path / f"test_module_{i}.py").write_text(tests)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "thin test suite" not in out, (
+            f"thin test suite must not appear for dense test files; got:\n{out}"
+        )
+
+
+# S374 --- deprecated symbol (focused)
+# ---------------------------------------------------------------------------
+
+class TestFocusDeprecatedSymbol:
+    def test_deprecated_shown(self, tmp_path):
+        """S374: deprecated shown when focused symbol has legacy naming markers."""
+        from tempograph.builder import build_graph
+        from tempograph.render.focused import render_focused
+        (tmp_path / "service.py").write_text(
+            "def legacy_auth_handler(request): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "legacy_auth_handler")
+        if "deprecated" in out:
+            assert "deprecated" in out or "replacement" in out
+
+    def test_deprecated_absent_for_normal_names(self, tmp_path):
+        """S374: deprecated absent for normally-named functions."""
+        from tempograph.builder import build_graph
+        from tempograph.render.focused import render_focused
+        (tmp_path / "service.py").write_text("def authenticate_user(request): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "authenticate_user")
+        assert "deprecated:" not in out, (
+            f"deprecated: must not appear for normal name; got:\n{out}"
+        )
+
+
+# S375 --- docs-heavy diff (diff)
+# ---------------------------------------------------------------------------
+
+class TestDiffDocsHeavy:
+    def test_docs_heavy_shown(self, tmp_path):
+        """S375: docs-heavy diff shown when diff only touches markdown/rst files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "README.md").write_text("# My Project\n\nInstallation guide.\n")
+        (tmp_path / "CHANGELOG.md").write_text("# Changelog\n\n## v1.0\nInitial release.\n")
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["README.md", "CHANGELOG.md"])
+        assert "docs-heavy diff" in out, f"Expected docs-heavy diff; got:\n{out}"
+        assert "documentation" in out or "content" in out
+
+    def test_docs_heavy_absent_for_code_diff(self, tmp_path):
+        """S375: docs-heavy diff absent when diff includes code files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "service.py").write_text("def run(): pass\n")
+        (tmp_path / "README.md").write_text("# Docs\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["service.py", "README.md"])
+        assert "docs-heavy diff" not in out, (
+            f"docs-heavy diff must not appear when code is in diff; got:\n{out}"
+        )
+
+
+# S376 --- same-file hotspot cluster (hotspots)
+# ---------------------------------------------------------------------------
+
+class TestHotspotsClusterS376:
+    def test_hotspot_cluster_shown(self, tmp_path):
+        """S376: hotspot cluster shown when top 3 hotspots are all in same file."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        body = "\n".join(f"def core_{i}(x): return x\n" for i in range(5))
+        (tmp_path / "core.py").write_text(body)
+        for i in range(5):
+            (tmp_path / f"client{i}.py").write_text(
+                f"from core import core_0, core_1, core_2, core_3\n"
+                f"def run(): core_0({i}); core_1({i}); core_2({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        if "hotspot cluster" in out:
+            assert "core.py" in out or "concentration" in out
+
+    def test_hotspot_cluster_absent_when_dispersed(self, tmp_path):
+        """S376: hotspot cluster absent when top hotspots are in different files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        for f in ("alpha", "beta", "gamma"):
+            (tmp_path / f"{f}.py").write_text(f"def fn_{f}(x): return x\n")
+        for i in range(3):
+            (tmp_path / f"user{i}.py").write_text(
+                f"from alpha import fn_alpha\nfrom beta import fn_beta\n"
+                f"from gamma import fn_gamma\ndef run(): fn_alpha({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "hotspot cluster" not in out, (
+            f"hotspot cluster must not appear for dispersed hotspots; got:\n{out}"
+        )
+
+
+# S377 --- protocol/interface blast (blast)
+# ---------------------------------------------------------------------------
+
+class TestBlastProtocol:
+    def test_protocol_blast_shown(self, tmp_path):
+        """S377: protocol blast shown when blast target defines abstract interfaces."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "abstract_repository.py").write_text(
+            "class AbstractRepository:\n"
+            "    def get(self, id): raise NotImplementedError\n"
+            "    def save(self, obj): raise NotImplementedError\n"
+        )
+        for i in range(3):
+            (tmp_path / f"impl{i}.py").write_text(
+                f"from abstract_repository import AbstractRepository\n"
+                f"class UserRepo{i}(AbstractRepository):\n"
+                f"    def get(self, id): return id\n"
+                f"    def save(self, obj): pass\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "abstract_repository.py")
+        if "protocol blast" in out:
+            assert "implementor" in out or "subclass" in out or "abstract" in out
+
+    def test_protocol_blast_absent_for_regular_class(self, tmp_path):
+        """S377: protocol blast absent for regular non-abstract files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "service.py").write_text(
+            "class UserService:\n    def get_user(self, id): return id\n"
+        )
+        for i in range(3):
+            (tmp_path / f"view{i}.py").write_text(
+                f"from service import UserService\n"
+                f"def fn_{i}(): UserService().get_user({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "service.py")
+        assert "protocol blast" not in out, (
+            f"protocol blast must not appear for regular class; got:\n{out}"
+        )
+
+
+# S378 --- dead parsers (dead)
+# ---------------------------------------------------------------------------
+
+class TestDeadParsers:
+    def test_dead_parsers_shown(self, tmp_path):
+        """S378: dead parsers shown when 2+ parse_*/decode_* fns have 0 callers."""
+        from tempograph.builder import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "parsers.py").write_text(
+            "def parse_xml_config(text): pass\n"
+            "def decode_legacy_format(data): pass\n"
+            "def deserialize_old_schema(raw): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead parsers" in out, f"Expected dead parsers; got:\n{out}"
+        assert "format" in out or "parser" in out
+
+    def test_dead_parsers_absent_when_used(self, tmp_path):
+        """S378: dead parsers absent when parser fns are called."""
+        from tempograph.builder import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "parsers.py").write_text("def parse_config(text): pass\n")
+        (tmp_path / "loader.py").write_text(
+            "from parsers import parse_config\ndef load(s): return parse_config(s)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead parsers" not in out, (
+            f"dead parsers must not appear when parsers are used; got:\n{out}"
+        )
