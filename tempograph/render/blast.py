@@ -1000,6 +1000,30 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — changes here cascade through all dependent tests; run full test suite"
         )
 
+    # S377: Protocol/interface blast — blast target defines abstract interfaces or Protocol classes.
+    # Protocol/ABC files define contracts that many concrete classes implement;
+    # changes to the interface propagate to every implementor, not just direct importers.
+    _s377_syms = [s for s in graph.symbols.values() if s.file_path == file_path]
+    _s377_abstract_names = (
+        "protocol", "interface", "abstract", "abc", "base_class", "base_model",
+        "iservice", "irepository", "ihandler",
+    )
+    _s377_fp_lower = file_path.lower()
+    _s377_is_protocol = (
+        any(p in _s377_fp_lower for p in _s377_abstract_names)
+        or any(
+            s.name.lower().startswith(p)
+            for s in _s377_syms
+            for p in ("Base", "Abstract", "Protocol", "Interface", "I")
+            if len(s.name) > 2
+        )
+    )
+    if _s377_is_protocol and importers:
+        lines.append(
+            f"protocol blast: {file_path.rsplit('/', 1)[-1]} defines abstract interface(s)"
+            f" — every implementor is affected; check all concrete subclasses for breaking changes"
+        )
+
     # S371: Utility belt blast — blast target has 15+ exported symbols each imported by different files.
     # A utility belt file is essentially an undifferentiated bag of helpers; it's hard to know
     # which helpers are truly safe to modify without understanding all consumer patterns.
