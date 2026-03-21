@@ -851,4 +851,22 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 f" — frequent changes mean frequent contract churn for callers"
             )
 
-        return "\n".join(lines)
+    # S223: Mono-class file — the top hotspot file is dominated by a single large class.
+    # A huge central class is hard to test, hard to extend, and concentrates cognitive load.
+    # Only shown when the top hotspot file has 1 class that contains >= 50% of its symbols.
+    if scores:
+        _top223_fp = scores[0][1].file_path
+        _top223_syms = [s for s in graph.symbols.values() if s.file_path == _top223_fp]
+        _top223_classes = [s for s in _top223_syms if s.kind.value == "class"]
+        if len(_top223_classes) == 1 and len(_top223_syms) >= 6:
+            _cls223 = _top223_classes[0]
+            _cls223_children = graph.children_of(_cls223.id)
+            if len(_cls223_children) >= len(_top223_syms) * 0.5:
+                _top223_base = _top223_fp.rsplit("/", 1)[-1]
+                lines.append(
+                    f"\nmono-class file: {_top223_base} dominated by {_cls223.name}"
+                    f" ({len(_cls223_children)} of {len(_top223_syms)} symbols)"
+                    f" — consider splitting into smaller classes"
+                )
+
+    return "\n".join(lines)
