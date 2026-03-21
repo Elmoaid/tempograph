@@ -5,6 +5,7 @@ import concurrent.futures
 import fnmatch
 import json
 import os
+import subprocess
 from pathlib import Path
 from typing import Sequence
 
@@ -273,6 +274,57 @@ _TEST_SUFFIXES = (
 _DOC_EXTENSIONS = frozenset({".md", ".rst", ".txt", ".adoc"})
 
 
+# Cache for _get_hot_files keyed on (repo_root, head_sha).
+# Invalidated automatically when HEAD changes (new commit = new SHA = cache miss).
+_hot_files_cache: dict[tuple[str, str], set[str]] = {}
+
+
+def _get_head_sha(repo: str) -> str | None:
+    """Read HEAD commit SHA via direct file read, subprocess fallback.
+
+    Direct file read avoids ~16ms subprocess overhead (measures <1ms).
+    Handles normal repos, worktrees, detached HEAD, and packed refs.
+    """
+    try:
+        git_path = Path(repo) / ".git"
+        if git_path.is_file():
+            raw = git_path.read_text().strip()
+            git_dir = (Path(repo) / raw[8:]).resolve() if raw.startswith("gitdir: ") else None
+        elif git_path.is_dir():
+            git_dir = git_path
+        else:
+            git_dir = None
+
+        if git_dir:
+            head_file = git_dir / "HEAD"
+            if head_file.exists():
+                head = head_file.read_text().strip()
+                if not head.startswith("ref: "):
+                    return head  # Detached HEAD
+                ref = head[5:]
+                ref_file = git_dir / ref
+                if ref_file.exists():
+                    return ref_file.read_text().strip()
+                # Worktree: shared refs live in commondir
+                commondir_file = git_dir / "commondir"
+                if commondir_file.exists():
+                    commondir = (git_dir / commondir_file.read_text().strip()).resolve()
+                    ref_file = commondir / ref
+                    if ref_file.exists():
+                        return ref_file.read_text().strip()
+    except (OSError, ValueError):
+        pass
+    # Subprocess fallback for edge cases (packed refs, unusual layouts)
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo,
+            capture_output=True, text=True, timeout=5,
+        )
+        return r.stdout.strip() if r.returncode == 0 else None
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return None
+
+
 def _get_hot_files(repo: str) -> set[str]:
     """Return candidate hot file paths for temporal weighting.
 
@@ -280,16 +332,29 @@ def _get_hot_files(repo: str) -> set[str]:
     is actively editing right now. If the working tree is clean, fall back to the
     last 2 commits so a freshly-committed session still gets a signal.
 
-    Both git subprocesses run in parallel threads (independent read-only ops).
-    On a clean repo this saves ~9ms vs sequential fallback (36% reduction).
+    Results are cached per (repo, HEAD SHA). Cache hit avoids ~20ms of git
+    subprocess overhead. Invalidated automatically on new commits.
     """
+    head_sha = _get_head_sha(repo)
+    if head_sha:
+        cache_key = (os.path.realpath(repo), head_sha)
+        cached = _hot_files_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
         fut_working = ex.submit(changed_files_vs_head, repo)
         fut_recent = ex.submit(recently_modified_files, repo, 2)
         working = set(fut_working.result())
         if working:
-            return working
-        return fut_recent.result()
+            result = working
+        else:
+            result = fut_recent.result()
+
+    if head_sha:
+        _hot_files_cache[cache_key] = result  # type: ignore[possibly-undefined]
+
+    return result
 
 
 def _is_hot_source_file(path: str) -> bool:
