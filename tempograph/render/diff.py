@@ -1617,4 +1617,13 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — deleted or renamed; confirm removals are intentional and consumers were updated"
         )
 
+    # S549: Large diff — 8+ files changed in a single diff.
+    # Broad diffs reduce reviewer attention per file and increase the probability of
+    # missed errors; each additional file adds compounding review fatigue.
+    if len(changed_files) >= 8:
+        lines.append(
+            f"large diff: {len(changed_files)} files changed"
+            f" — broad diffs reduce per-file reviewer attention; consider splitting into smaller PRs"
+        )
+
     return "\n".join(lines)

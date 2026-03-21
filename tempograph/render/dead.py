@@ -1905,6 +1905,27 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — abandoned API contracts; verify no serialization hooks before deleting"
         )
 
+    # S551: Dead CLI handler — unused functions with cmd_/do_/handle_/on_ prefixes in non-imported files.
+    # CLI and event handler functions that are never called represent abandoned command surface;
+    # they clutter help output, inflate entry-point lists, and mislead tool discovery.
+    _cli_prefixes551 = ("cmd_", "do_", "handle_", "on_", "command_")
+    _dead_cli551 = [
+        sym for sym in graph.symbols.values()
+        if not _is_test_file(sym.file_path)
+        and sym.kind.value == "function"
+        and any(sym.name.startswith(p) for p in _cli_prefixes551)
+        and not graph.callers_of(sym.id)
+        and not graph.importers_of(sym.file_path)
+    ]
+    if len(_dead_cli551) >= 2:
+        _cli_names551 = ", ".join(s.name for s in _dead_cli551[:3])
+        if len(_dead_cli551) > 3:
+            _cli_names551 += f" +{len(_dead_cli551) - 3} more"
+        lines.append(
+            f"dead handlers: {len(_dead_cli551)} unused command/event handler(s) ({_cli_names551})"
+            f" — abandoned command surface; audit intent and remove or wire up before next release"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

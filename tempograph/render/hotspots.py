@@ -1786,5 +1786,21 @@ def _collect_hotspots_signals(
                     f" — changes cascade to all implementing classes; coordinate with implementors"
                 )
 
+    # S550: Private hotspot — top hotspot is a private (_-prefixed) function heavily called externally.
+    # Private symbols called from many external sites indicate an accidental public API;
+    # the naming contradiction misleads maintainers about intended encapsulation.
+    if scores:
+        _top550 = scores[0][1]
+        if (
+            not _is_test_file(_top550.file_path)
+            and _top550.name.startswith("_")
+            and not _top550.name.startswith("__")
+            and _top550.kind.value in ("function", "method")
+        ):
+            out.append(
+                f"\nprivate hotspot: {_top550.name} is private but heavily called"
+                f" — accidental public API; rename without _ or expose via a public wrapper"
+            )
+
     return out
 
