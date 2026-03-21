@@ -7658,3 +7658,36 @@ class TestDiffSymbolsTouched:
         assert "symbols touched" not in out, (
             f"'symbols touched' must not appear for test-only diffs; got:\n{out}"
         )
+
+
+class TestHotspotsFileComplexityRank:
+    """S73: Hotspots shows 'File complexity:' section for top files by total cyclomatic complexity."""
+
+    def test_file_complexity_shown_for_complex_files(self, tmp_path):
+        """Two files with high total complexity → 'File complexity:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        # Build two files with multiple complex functions
+        body = "    if a:\n        if b:\n            if c:\n                return 1\n    return 0\n"
+        funcs_a = "\n".join(f"def fn_a{i}(a, b, c):\n{body}" for i in range(4))
+        funcs_b = "\n".join(f"def fn_b{i}(a, b, c):\n{body}" for i in range(4))
+        (tmp_path / "module_a.py").write_text(funcs_a)
+        (tmp_path / "module_b.py").write_text(funcs_b)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "File complexity:" in out, (
+            f"Expected 'File complexity:' for files with high total cx; got:\n{out}"
+        )
+
+    def test_file_complexity_absent_for_simple_repo(self, tmp_path):
+        """Files with trivial functions (cx=1 each) → no 'File complexity:' section."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        (tmp_path / "simple.py").write_text("def a(): pass\ndef b(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "File complexity:" not in out, (
+            f"'File complexity:' must not appear for trivial files; got:\n{out}"
+        )
