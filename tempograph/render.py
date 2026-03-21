@@ -782,6 +782,22 @@ def render_overview(graph: Tempo) -> str:
         _chain_names = [_short(fp) for fp in _best_chain]
         lines.append(f"dep depth: {len(_best_chain)} ({' → '.join(_chain_names[:5])}{'...' if len(_best_chain) > 5 else ''})")
 
+    # S93: Complexity concentration — % of total cyclomatic complexity held in top-N files.
+    # High concentration = most cognitive burden in few files = clear refactoring targets.
+    # Only shown when 5+ source files AND top-3 files hold >= 50% of total complexity.
+    _src_file_cx: dict[str, int] = {}
+    for _sym in graph.symbols.values():
+        if not _is_test_file(_sym.file_path) and _sym.complexity >= 1:
+            _src_file_cx[_sym.file_path] = _src_file_cx.get(_sym.file_path, 0) + _sym.complexity
+    _total_cx = sum(_src_file_cx.values())
+    if _total_cx >= 10 and len(_src_file_cx) >= 5:
+        _cx_sorted = sorted(_src_file_cx.items(), key=lambda x: -x[1])
+        _top3_cx = sum(cx for _, cx in _cx_sorted[:3])
+        _pct = int(_top3_cx / _total_cx * 100)
+        if _pct >= 60:
+            _cxc_parts = [f"{fp.rsplit('/', 1)[-1]}:{cx}" for fp, cx in _cx_sorted[:3]]
+            lines.append(f"cx concentration: {_pct}% in top 3 files ({', '.join(_cxc_parts)})")
+
     # Circular imports: flag immediately in overview so agents don't miss them.
     # Details are in `--mode deps` but overview gives a quick count + first cycle.
     try:

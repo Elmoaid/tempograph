@@ -9021,3 +9021,47 @@ class TestDeadCodeComplexDead:
         assert "Complex dead:" not in out, (
             f"'Complex dead:' must not appear for low-cx dead functions; got:\n{out}"
         )
+
+
+class TestOverviewComplexityConcentration:
+    """S93: Overview 'cx concentration: X% in top 3 files' when complexity is concentrated."""
+
+    def test_concentration_shown_when_one_file_dominates(self, tmp_path):
+        """One highly complex file among 5+ simpler ones → 'cx concentration:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        # Build 1 complex file + 4 simple ones
+        heavy = "def fn(x):\n"
+        for i in range(10):
+            heavy += f"    if x > {i}: return {i}\n"
+        heavy += "    return 0\n"
+        (tmp_path / "heavy.py").write_text(heavy)
+        for i in range(5):
+            (tmp_path / f"simple_{i}.py").write_text(f"def fn_{i}(): return {i}\n")
+
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "cx concentration:" in out, (
+            f"Expected 'cx concentration:' when one file has most complexity; got:\n{out}"
+        )
+        assert "%" in out, f"Expected percentage in concentration line; got:\n{out}"
+
+    def test_concentration_absent_when_complexity_is_spread(self, tmp_path):
+        """Complexity spread across many files → no 'cx concentration:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        # Build 6 files each with similar complexity
+        for i in range(6):
+            code = f"def fn_{i}(x):\n"
+            for j in range(3):
+                code += f"    if x > {j}: return {j}\n"
+            code += "    return 0\n"
+            (tmp_path / f"module_{i}.py").write_text(code)
+
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "cx concentration:" not in out, (
+            f"'cx concentration:' must not appear when complexity is evenly spread; got:\n{out}"
+        )
