@@ -1715,6 +1715,34 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
             if len(_methods150) >= 8:
                 lines.append(f"\nclass size: {len(_methods150)} methods — large class, consider decomposition")
 
+    # S155: Inheritance depth — BFS up INHERITS edges from seed class to count chain depth.
+    # Deep chains (>= 3 levels) indicate high coupling to base class behavior.
+    # Only shown when seed is a class and inheritance depth >= 3.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim155 = _seed_syms[0]
+        if _prim155.kind.value in ("class", "interface"):
+            _inh_depth = 0
+            _inh_visited: set[str] = {_prim155.id}
+            _inh_current = _prim155.id
+            while True:
+                # Find parent class via INHERITS edge (source=child, target=parent)
+                from ..types import EdgeKind as _EK155
+                _parent155 = next(
+                    (graph.symbols[e.target_id] for e in graph.edges
+                     if e.kind == _EK155.INHERITS and e.source_id == _inh_current
+                     and e.target_id in graph.symbols and e.target_id not in _inh_visited),
+                    None
+                )
+                if _parent155 is None:
+                    break
+                _inh_depth += 1
+                _inh_visited.add(_parent155.id)
+                _inh_current = _parent155.id
+                if _inh_depth >= 10:  # safety cap
+                    break
+            if _inh_depth >= 3:
+                lines.append(f"\ninheritance depth: {_inh_depth} levels — deep hierarchy, high base-class coupling")
+
     return "\n".join(lines)
 
 

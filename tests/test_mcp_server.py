@@ -11495,3 +11495,124 @@ class TestOverviewSingleCallerFns:
         assert "single-caller fns" not in out, (
             f"'single-caller fns' must not appear when shared fns have multiple callers; got:\n{out}"
         )
+
+
+class TestFocusInheritanceDepth:
+    """S155: Focus — 'inheritance depth: N levels — deep hierarchy' for chains >= 3."""
+
+    def test_deep_inheritance_shown(self, tmp_path):
+        """Class with 3+ levels of inheritance → 'inheritance depth:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "base.py").write_text("class Base:\n    def base_fn(self): pass\n")
+        (tmp_path / "mid.py").write_text(
+            "from base import Base\nclass Mid(Base):\n    def mid_fn(self): pass\n"
+        )
+        (tmp_path / "child.py").write_text(
+            "from child2 import Child2\nclass Child(Mid):\n    def child_fn(self): pass\n"
+        )
+        (tmp_path / "child2.py").write_text(
+            "from mid import Mid\nclass Child2(Mid):\n    def child2_fn(self): pass\n"
+        )
+        (tmp_path / "leaf.py").write_text(
+            "from child2 import Child2\nclass Leaf(Child2):\n    def leaf_fn(self): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "Leaf")
+        assert "inheritance depth" in out, (
+            f"Expected 'inheritance depth' for 3-level chain; got:\n{out}"
+        )
+
+    def test_shallow_inheritance_not_flagged(self, tmp_path):
+        """Class with 1-level inheritance → 'inheritance depth:' NOT shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "base.py").write_text("class Base:\n    def fn(self): pass\n")
+        (tmp_path / "child.py").write_text(
+            "from base import Base\nclass Child(Base):\n    def fn(self): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "Child")
+        assert "inheritance depth" not in out, (
+            f"'inheritance depth' must not appear for shallow (1-level) chain; got:\n{out}"
+        )
+
+
+class TestHotspotsTopRisk:
+    """S156: Hotspots — 'top risk: fn — cx=N, N/wk — highest combined velocity+complexity'."""
+
+    def test_top_risk_shown_when_velocity_and_complex(self, tmp_path):
+        """Top hotspot with velocity >= 2 AND cx >= 10 → 'top risk:' shown."""
+        from unittest.mock import patch
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        fn_body = "def risky_fn(x):\n" + "".join(f"    if x == {i}: return {i}\n" for i in range(12)) + "    return 0\n"
+        (tmp_path / "risky.py").write_text(fn_body)
+        for i in range(4):
+            (tmp_path / f"c_{i}.py").write_text(
+                f"from risky import risky_fn\ndef go(): risky_fn({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        with patch("tempograph.git.file_change_velocity") as mock_vel:
+            mock_vel.return_value = {"risky.py": 3.0}
+            out = render_hotspots(g)
+        assert "top risk" in out, (
+            f"Expected 'top risk' for cx>=10 + velocity>=2 symbol; got:\n{out}"
+        )
+
+    def test_top_risk_absent_for_slow_file(self, tmp_path):
+        """High complexity but low velocity → 'top risk:' NOT shown."""
+        from unittest.mock import patch
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        fn_body = "def complex_fn(x):\n" + "".join(f"    if x == {i}: return {i}\n" for i in range(12)) + "    return 0\n"
+        (tmp_path / "stable.py").write_text(fn_body)
+        for i in range(4):
+            (tmp_path / f"u_{i}.py").write_text(
+                f"from stable import complex_fn\ndef go(): complex_fn({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        with patch("tempograph.git.file_change_velocity") as mock_vel:
+            mock_vel.return_value = {"stable.py": 0.5}
+            out = render_hotspots(g)
+        assert "top risk" not in out, (
+            f"'top risk' must not appear for low-velocity file; got:\n{out}"
+        )
+
+
+class TestOverviewDeepestPath:
+    """S157: Overview — 'deepest path: dir/sub/sub/ (N levels) — deeply nested'."""
+
+    def test_deep_path_shown(self, tmp_path):
+        """Codebase with 4+ nested dirs → 'deepest path:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        import os
+        deep = tmp_path / "a" / "b" / "c" / "d"
+        deep.mkdir(parents=True)
+        (deep / "module.py").write_text("def fn():\n    pass\n")
+        (tmp_path / "main.py").write_text("def main():\n    pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "deepest path" in out, (
+            f"Expected 'deepest path' for 4-level nested structure; got:\n{out}"
+        )
+
+    def test_deep_path_absent_for_flat_repo(self, tmp_path):
+        """Flat or shallow repo → 'deepest path:' NOT shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "a").mkdir()
+        (tmp_path / "a" / "lib.py").write_text("def fn():\n    pass\n")
+        (tmp_path / "main.py").write_text("def main():\n    pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "deepest path" not in out, (
+            f"'deepest path' must not appear for shallow repo; got:\n{out}"
+        )

@@ -1065,6 +1065,22 @@ def render_overview(graph: Tempo) -> str:
                 f" — test coverage is thin"
             )
 
+    # S157: Deepest module — the most deeply nested directory path in the project.
+    # Deep nesting (>= 4 levels) indicates over-structured architecture.
+    # Only shown when 3+ files exist and max depth >= 4.
+    _s157_max_depth = 0
+    _s157_max_dir = ""
+    for _fp157 in graph.files:
+        if _is_test_file(_fp157):
+            continue
+        _parts157 = _fp157.split("/")
+        _depth157 = len(_parts157) - 1  # dirs only, not the file itself
+        if _depth157 > _s157_max_depth:
+            _s157_max_depth = _depth157
+            _s157_max_dir = "/".join(_parts157[:-1])
+    if len(graph.files) >= 2 and _s157_max_depth >= 4:
+        lines.append(f"deepest path: {_s157_max_dir}/ ({_s157_max_depth} levels) — deeply nested structure")
+
     # S154: Single-caller fns — source functions called by exactly one other function.
     # These are prime inlining candidates; many single-caller fns = over-extracted code.
     # Only shown when 5+ such functions found.
