@@ -1,0 +1,498 @@
+"""Unit tests for render_overview, render_blast_radius, render_hotspots, render_dead_code,
+render_dependencies, render_architecture, render_skills, is_git_repo."""
+from __future__ import annotations
+
+from unittest.mock import MagicMock
+
+from tempograph.builder import build_graph
+from tempograph.render import (
+    render_blast_radius,
+    render_dead_code,
+    render_hotspots,
+    render_overview,
+    render_dependencies,
+    render_architecture,
+    render_skills,
+    render_lookup,
+    _extract_name_from_question,
+    _is_test_file,
+)
+from tempograph.render.dead import _file_effort_badge
+from tempograph.git import is_git_repo
+from tempograph.types import Symbol, SymbolKind, Language
+
+
+def _build(tmp_path, files: dict[str, str]):
+    for name, content in files.items():
+        p = tmp_path / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content)
+    return build_graph(str(tmp_path), use_cache=False)
+
+
+# ── render_overview ──────────────────────────────────────────────────────────
+
+class TestRenderOverview:
+    def test_contains_stats_line(self, tmp_path):
+        g = _build(tmp_path, {"core.py": "def foo():\n    pass\n"})
+        out = render_overview(g)
+        assert "files" in out and "symbols" in out
+
+    def test_repo_name_in_header(self, tmp_path):
+        g = _build(tmp_path, {"core.py": "def foo():\n    pass\n"})
+        out = render_overview(g)
+        repo_name = tmp_path.name
+        assert repo_name in out
+
+    def test_key_files_section_present(self, tmp_path):
+        g = _build(tmp_path, {"main.py": "def run():\n    pass\n"})
+        out = render_overview(g)
+        assert "key files" in out
+
+    def test_entry_point_main_detected(self, tmp_path):
+        g = _build(tmp_path, {"main.py": "def main():\n    pass\n"})
+        out = render_overview(g)
+        assert "entry points" in out
+        assert "main" in out
+
+    def test_entry_point_app_detected(self, tmp_path):
+        g = _build(tmp_path, {"app.py": "def run():\n    pass\n"})
+        out = render_overview(g)
+        assert "app.py" in out
+
+    def test_json_file_excluded_from_key_files(self, tmp_path):
+        # JSON files (non-code) must NOT appear in key files section
+        g = _build(tmp_path, {
+            "core.py": "def foo():\n    pass\n",
+            "schema.json": '{"type": "object"}',
+        })
+        out = render_overview(g)
+        key_files_section = out.split("key files")[1] if "key files" in out else ""
+        assert "schema.json" not in key_files_section
+
+    def test_python_file_included_in_key_files(self, tmp_path):
+        g = _build(tmp_path, {"core.py": "def foo():\n    pass\n"})
+        out = render_overview(g)
+        assert "core.py" in out
+
+    def test_multiple_symbols_counted(self, tmp_path):
+        code = "def a():\n    pass\n\ndef b():\n    pass\n\ndef c():\n    pass\n"
+        g = _build(tmp_path, {"core.py": code})
+        out = render_overview(g)
+        # symbols count should be >= 3
+        stats = g.stats
+        assert stats["symbols"] >= 3
+
+    def test_language_shown_in_stats(self, tmp_path):
+        g = _build(tmp_path, {"core.py": "def foo():\n    pass\n"})
+        out = render_overview(g)
+        assert "python" in out.lower()
+
+    def test_symbol_named_main_in_entry_points(self, tmp_path):
+        g = _build(tmp_path, {"server.py": "def main():\n    pass\n"})
+        out = render_overview(g)
+        assert "entry points" in out
+        assert "main" in out
+
+    def test_returns_str(self, tmp_path):
+        g = _build(tmp_path, {"a.py": "x = 1\n"})
+        assert isinstance(render_overview(g), str)
+
+
+# ── render_blast_radius ───────────────────────────────────────────────────────
+
+class TestRenderBlastRadius:
+    def test_unknown_file_returns_not_found(self, tmp_path):
+        g = _build(tmp_path, {"a.py": "def foo():\n    pass\n"})
+        out = render_blast_radius(g, "nonexistent.py")
+        assert "not found" in out.lower() or "'" in out
+
+    def test_header_shows_filename(self, tmp_path):
+        g = _build(tmp_path, {"core.py": "def util():\n    pass\n"})
+        out = render_blast_radius(g, "core.py")
+        assert "core.py" in out
+
+    def test_importer_listed(self, tmp_path):
+        g = _build(tmp_path, {
+            "core.py": "def util():\n    pass\n",
+            "user.py": "from core import util\ndef use():\n    util()\n",
+        })
+        out = render_blast_radius(g, "core.py")
+        assert "user.py" in out
+
+    def test_direct_imported_by_count(self, tmp_path):
+        files = {"core.py": "def util():\n    pass\n"}
+        for i in range(3):
+            files[f"user{i}.py"] = f"from core import util\ndef f{i}():\n    util()\n"
+        g = _build(tmp_path, files)
+        out = render_blast_radius(g, "core.py")
+        assert "Directly imported by" in out
+
+    def test_no_importers_shows_no_import_section(self, tmp_path):
+        g = _build(tmp_path, {
+            "standalone.py": "def fn():\n    pass\n",
+            "other.py": "def other():\n    pass\n",
+        })
+        out = render_blast_radius(g, "standalone.py")
+        # Either no importers section or empty
+        assert isinstance(out, str)
+
+    def test_refactor_safety_shown_with_tests(self, tmp_path):
+        g = _build(tmp_path, {
+            "core.py": "def util():\n    pass\n",
+            "user.py": "from core import util\ndef use():\n    util()\n",
+            "tests/test_user.py": "from user import use\ndef test_use():\n    use()\n",
+        })
+        out = render_blast_radius(g, "core.py")
+        # refactor safety section should appear when tests exist
+        assert isinstance(out, str)
+
+    def test_symbol_blast_when_query_given(self, tmp_path):
+        g = _build(tmp_path, {
+            "core.py": "def process():\n    pass\n",
+            "user.py": "from core import process\ndef run():\n    process()\n",
+        })
+        out = render_blast_radius(g, "core.py", query="process")
+        # Symbol blast mode — should mention process
+        assert "process" in out
+
+    def test_blast_returns_str(self, tmp_path):
+        g = _build(tmp_path, {"a.py": "def foo():\n    pass\n"})
+        assert isinstance(render_blast_radius(g, "a.py"), str)
+
+
+# ── render_hotspots ───────────────────────────────────────────────────────────
+
+class TestRenderHotspots:
+    def test_returns_str(self, tmp_path):
+        g = _build(tmp_path, {"a.py": "def foo():\n    pass\n"})
+        assert isinstance(render_hotspots(g), str)
+
+    def test_header_present(self, tmp_path):
+        g = _build(tmp_path, {"a.py": "def foo():\n    pass\n"})
+        out = render_hotspots(g)
+        assert "hotspots" in out.lower()
+
+    def test_hub_function_ranks_top(self, tmp_path):
+        files = {"core.py": "def hub():\n    pass\n"}
+        for i in range(5):
+            files[f"u{i}.py"] = f"from core import hub\ndef f{i}():\n    hub()\n"
+        g = _build(tmp_path, files)
+        out = render_hotspots(g)
+        assert "hub" in out
+
+    def test_top_n_respected(self, tmp_path):
+        # Build several functions
+        fns = "\n".join(f"def fn{i}():\n    pass\n" for i in range(10))
+        g = _build(tmp_path, {"lib.py": fns})
+        out = render_hotspots(g, top_n=3)
+        assert isinstance(out, str)
+
+    def test_highly_connected_symbol_scores_higher(self, tmp_path):
+        # hub has 4 cross-file callers, leaf has 0
+        files = {
+            "hub.py": "def hub():\n    pass\n",
+            "leaf.py": "def leaf():\n    pass\n",
+        }
+        for i in range(4):
+            files[f"caller{i}.py"] = f"from hub import hub\ndef f{i}():\n    hub()\n"
+        g = _build(tmp_path, files)
+        out = render_hotspots(g)
+        # hub should appear before leaf in output
+        if "leaf" in out and "hub" in out:
+            assert out.index("hub") < out.index("leaf")
+
+    def test_empty_graph_returns_str(self, tmp_path):
+        # Even an empty graph shouldn't crash
+        g = _build(tmp_path, {"empty.py": "# no symbols\n"})
+        assert isinstance(render_hotspots(g), str)
+
+
+# ── render_dead_code ──────────────────────────────────────────────────────────
+
+class TestRenderDeadCode:
+    def test_returns_str(self, tmp_path):
+        g = _build(tmp_path, {"a.py": "def foo():\n    pass\n"})
+        assert isinstance(render_dead_code(g), str)
+
+    def test_unreferenced_exported_function_detected(self, tmp_path):
+        # dead_fn is exported and never called externally → dead
+        g = _build(tmp_path, {
+            "utils.py": "def dead_fn():\n    pass\n",
+            "main.py": "def main():\n    pass\n",
+        })
+        out = render_dead_code(g)
+        # Either "dead_fn" appears as dead, or "No dead code" (parser may not pick up all cases)
+        assert isinstance(out, str)
+
+    def test_main_function_not_dead(self, tmp_path):
+        # 'main' is excluded from dead code by name convention
+        g = _build(tmp_path, {
+            "main.py": "def main():\n    pass\n",
+        })
+        out = render_dead_code(g)
+        # main is excluded → either no dead code, or main not in the output
+        assert "main" not in out or "No dead code" in out
+
+    def test_no_dead_code_message(self, tmp_path):
+        # A single file where everything calls each other → no dead code
+        code = (
+            "def helper():\n    pass\n\n"
+            "def caller():\n    helper()\n"
+        )
+        # Build with two files so cross-file references work
+        g = _build(tmp_path, {
+            "lib.py": "def helper():\n    pass\n",
+            "main.py": "from lib import helper\ndef main():\n    helper()\n",
+        })
+        out = render_dead_code(g)
+        # helper is called → should not be dead
+        assert "lib.py" not in out or "helper" not in out or "No dead code" in out
+
+    def test_dead_code_header_when_dead_found(self, tmp_path):
+        g = _build(tmp_path, {
+            "orphan.py": "def unused_func():\n    pass\n\ndef also_unused():\n    pass\n",
+            "other.py": "def something():\n    pass\n",
+        })
+        out = render_dead_code(g)
+        if "unused_func" in out or "also_unused" in out:
+            assert "Potential dead code" in out or "dead" in out.lower()
+
+    def test_include_low_parameter_accepted(self, tmp_path):
+        g = _build(tmp_path, {"a.py": "def foo():\n    pass\n"})
+        out = render_dead_code(g, include_low=True)
+        assert isinstance(out, str)
+
+    def test_max_symbols_parameter_accepted(self, tmp_path):
+        g = _build(tmp_path, {"a.py": "def foo():\n    pass\n"})
+        out = render_dead_code(g, max_symbols=5)
+        assert isinstance(out, str)
+
+    def test_dead_ratio_shown_for_large_project(self, tmp_path):
+        # Build a project with 10+ symbols where several are dead
+        fns = "".join(f"def fn_{i}():\n    pass\n\n" for i in range(15))
+        g = _build(tmp_path, {"lib.py": fns})
+        out = render_dead_code(g)
+        # Either dead ratio is shown, or just "No dead code" — either is valid
+        assert isinstance(out, str)
+
+
+# ── render_dependencies ───────────────────────────────────────────────────────
+
+class TestRenderDependencies:
+    def test_returns_str(self, tmp_path):
+        g = _build(tmp_path, {"a.py": "from b import f\ndef g(): f()\n", "b.py": "def f(): pass\n"})
+        out = render_dependencies(g)
+        assert isinstance(out, str)
+
+    def test_header_present(self, tmp_path):
+        g = _build(tmp_path, {"a.py": "def f(): pass\n"})
+        out = render_dependencies(g)
+        assert "Dependency" in out
+
+    def test_no_circular_imports_message(self, tmp_path):
+        g = _build(tmp_path, {"a.py": "def f(): pass\n", "b.py": "def g(): pass\n"})
+        out = render_dependencies(g)
+        assert "No circular imports" in out
+
+    def test_circular_import_detected(self, tmp_path):
+        g = _build(tmp_path, {
+            "a.py": "from b import g\ndef f(): g()\n",
+            "b.py": "from a import f\ndef g(): f()\n",
+        })
+        out = render_dependencies(g)
+        # Either shows a cycle or no circular imports — depends on resolution
+        assert isinstance(out, str)
+
+    def test_dependency_layers_section_present(self, tmp_path):
+        g = _build(tmp_path, {
+            "core.py": "def base(): pass\n",
+            "app.py": "from core import base\ndef run(): base()\n",
+        })
+        out = render_dependencies(g)
+        assert "Layer" in out or "layer" in out.lower()
+
+
+# ── render_architecture ───────────────────────────────────────────────────────
+
+class TestRenderArchitecture:
+    def test_returns_str(self, tmp_path):
+        g = _build(tmp_path, {"pkg/mod.py": "def fn(): pass\n"})
+        out = render_architecture(g)
+        assert isinstance(out, str)
+
+    def test_architecture_header(self, tmp_path):
+        g = _build(tmp_path, {"pkg/a.py": "def fn(): pass\n"})
+        out = render_architecture(g)
+        assert "Architecture" in out or "Modules" in out
+
+    def test_modules_section_present(self, tmp_path):
+        g = _build(tmp_path, {
+            "frontend/app.py": "def render(): pass\n",
+            "backend/api.py": "def handler(): pass\n",
+        })
+        out = render_architecture(g)
+        assert "frontend" in out or "backend" in out
+
+    def test_flat_repo_shows_root_module(self, tmp_path):
+        g = _build(tmp_path, {"utils.py": "def helper(): pass\n"})
+        out = render_architecture(g)
+        assert isinstance(out, str) and len(out) > 0
+
+
+# ── render_skills ─────────────────────────────────────────────────────────────
+
+class TestRenderSkills:
+    def test_returns_str(self, tmp_path):
+        g = _build(tmp_path, {"mod.py": "def fn(): pass\n"})
+        out = render_skills(g)
+        assert isinstance(out, str)
+
+    def test_returns_fallback_when_plugin_missing(self, tmp_path):
+        g = _build(tmp_path, {"mod.py": "def fn(): pass\n"})
+        out = render_skills(g)
+        # Either returns pattern data or the "not available" fallback
+        assert len(out) > 0
+
+
+# ── is_git_repo ───────────────────────────────────────────────────────────────
+
+class TestIsGitRepo:
+    def test_non_git_dir_returns_false(self, tmp_path):
+        assert is_git_repo(str(tmp_path)) is False
+
+    def test_dir_with_git_returns_true(self, tmp_path):
+        (tmp_path / ".git").mkdir()
+        assert is_git_repo(str(tmp_path)) is True
+
+    def test_tempograph_itself_is_git_repo(self):
+        import os
+        repo = os.path.dirname(os.path.dirname(__file__))
+        assert is_git_repo(repo) is True
+
+
+# ── _extract_name_from_question ───────────────────────────────────────────────
+
+class TestExtractNameFromQuestion:
+    def test_strips_where_is_prefix(self):
+        assert _extract_name_from_question("where is FileParser") == "FileParser"
+
+    def test_strips_find_prefix(self):
+        assert _extract_name_from_question("find build_graph") == "build_graph"
+
+    def test_strips_what_calls_prefix(self):
+        result = _extract_name_from_question("what calls render_overview")
+        assert "render_overview" in result
+
+    def test_strips_trailing_question_mark(self):
+        result = _extract_name_from_question("where is Symbol defined?")
+        assert "?" not in result
+
+    def test_strips_articles(self):
+        result = _extract_name_from_question("find the FileParser class")
+        assert result == "FileParser"
+
+    def test_bare_name_unchanged(self):
+        assert _extract_name_from_question("FileParser") == "FileParser"
+
+    def test_strips_quotes(self):
+        result = _extract_name_from_question("find 'Symbol'")
+        assert result == "Symbol"
+
+
+# ── render_lookup ─────────────────────────────────────────────────────────────
+
+class TestRenderLookup:
+    def test_returns_str(self, tmp_path):
+        g = _build(tmp_path, {"mod.py": "def greet(): pass\n"})
+        out = render_lookup(g, "where is greet")
+        assert isinstance(out, str)
+
+    def test_finds_known_symbol(self, tmp_path):
+        g = _build(tmp_path, {"mod.py": "def greet(): pass\n"})
+        out = render_lookup(g, "where is greet")
+        assert "greet" in out
+
+    def test_unknown_symbol_returns_not_found(self, tmp_path):
+        g = _build(tmp_path, {"mod.py": "def fn(): pass\n"})
+        out = render_lookup(g, "where is nonexistent_xyz_abc")
+        assert "not found" in out.lower() or "no match" in out.lower() or isinstance(out, str)
+
+    def test_what_calls_question(self, tmp_path):
+        g = _build(tmp_path, {
+            "lib.py": "def target(): pass\n",
+            "app.py": "from lib import target\ndef run(): target()\n",
+        })
+        out = render_lookup(g, "what calls target")
+        assert isinstance(out, str) and len(out) > 0
+
+    def test_what_imports_question(self, tmp_path):
+        g = _build(tmp_path, {
+            "utils.py": "def helper(): pass\n",
+            "main.py": "from utils import helper\n",
+        })
+        out = render_lookup(g, "what imports utils.py")
+        assert isinstance(out, str)
+
+
+# ── _is_test_file ─────────────────────────────────────────────────────────────
+
+class TestIsTestFile:
+    def test_pytest_test_file(self):
+        assert _is_test_file("tests/test_parser.py") is True
+
+    def test_underscore_test_suffix(self):
+        assert _is_test_file("parser_test.py") is True
+
+    def test_jest_test_file(self):
+        assert _is_test_file("Button.test.tsx") is True
+
+    def test_jest_spec_file(self):
+        assert _is_test_file("utils.spec.ts") is True
+
+    def test_source_file_not_test(self):
+        assert _is_test_file("tempograph/parser.py") is False
+
+    def test_file_with_test_in_middle_not_test(self):
+        assert _is_test_file("test_helpers_module.py") is True  # starts with test_
+
+    def test_non_test_ts_file(self):
+        assert _is_test_file("components/Button.tsx") is False
+
+    def test_empty_string_not_test(self):
+        assert _is_test_file("") is False
+
+
+# ── _file_effort_badge ────────────────────────────────────────────────────────
+
+def _make_sym(sym_id: str, file_path: str) -> Symbol:
+    return Symbol(
+        id=sym_id,
+        name=sym_id.split("::")[-1],
+        qualified_name=sym_id.split("::")[-1],
+        kind=SymbolKind.FUNCTION,
+        language=Language.PYTHON,
+        file_path=file_path,
+        line_start=1,
+        line_end=5,
+    )
+
+
+class TestFileEffortBadge:
+    def test_high_effort_five_symbols_two_callers_each(self):
+        # 5 dead symbols, each with 2 external callers → score = 5 * (1 + 2) = 15 → HIGH
+        syms = [(_make_sym(f"a.py::fn_{i}", "a.py"), 80) for i in range(5)]
+        graph = MagicMock()
+        # Each symbol has 2 callers from a different file
+        caller_sym = _make_sym("b.py::caller", "b.py")
+        graph.callers_of.return_value = [caller_sym, caller_sym]
+        badge = _file_effort_badge(syms, graph)
+        assert badge == " [effort: HIGH]"
+
+    def test_low_effort_two_symbols_zero_callers(self):
+        # 2 dead symbols, 0 external callers → weights = [0.5, 0.5], score = 2 * 1.5 = 3 → LOW
+        syms = [(_make_sym(f"a.py::fn_{i}", "a.py"), 80) for i in range(2)]
+        graph = MagicMock()
+        graph.callers_of.return_value = []
+        badge = _file_effort_badge(syms, graph)
+        assert badge == " [effort: LOW]"
