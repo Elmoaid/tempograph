@@ -30050,3 +30050,243 @@ class TestDeadDeprecatedS635:
         assert "dead deprecated" not in out, (
             f"'dead deprecated' must not appear when deprecated fn is still called; got:\n{out}"
         )
+
+
+# ── S636: Init-file symbol ────────────────────────────────────────────────────
+
+class TestInitFileSymbolS636:
+    """S636: Focused symbol in a package __init__.py emits init-file-symbol signal."""
+
+    def test_init_file_symbol_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        pkg = tmp_path / "mypkg"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text(
+            "def initialize(config):\n    return config\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from mypkg import initialize\ndef run(): initialize({})\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "initialize")
+        assert "init-file symbol" in out, (
+            f"Expected 'init-file symbol' for symbol in __init__.py; got:\n{out}"
+        )
+
+    def test_init_file_symbol_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def helper(x): return x\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper")
+        assert "init-file symbol" not in out, (
+            f"'init-file symbol' must not appear for symbol in regular module; got:\n{out}"
+        )
+
+
+# ── S637: Test-heavy symbols ──────────────────────────────────────────────────
+
+class TestTestHeavySymbolsS637:
+    """S637: Test symbols 3x source symbols emits test-heavy-symbols signal."""
+
+    def test_test_heavy_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        for i in range(5):
+            (tmp_path / f"src_{i}.py").write_text(f"def fn_{i}(x): return x\n")
+        for i in range(5):
+            (tmp_path / f"test_mod_{i}.py").write_text(
+                f"def test_a_{i}(): pass\n"
+                f"def test_b_{i}(): pass\n"
+                f"def test_c_{i}(): pass\n"
+                f"def test_d_{i}(): pass\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "test-heavy symbols" in out, (
+            f"Expected 'test-heavy symbols' when test symbols are 4x source; got:\n{out}"
+        )
+
+    def test_test_heavy_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        for i in range(5):
+            (tmp_path / f"src_{i}.py").write_text(
+                f"def fn_a_{i}(x): return x\ndef fn_b_{i}(x): return x + 1\n"
+            )
+        (tmp_path / "test_all.py").write_text("def test_basic(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "test-heavy symbols" not in out, (
+            f"'test-heavy symbols' must not appear when test symbols are few; got:\n{out}"
+        )
+
+
+# ── S638: Thin wrapper module ─────────────────────────────────────────────────
+
+class TestThinWrapperModuleS638:
+    """S638: Blast target with 1 symbol and 3+ importers emits thin-wrapper signal."""
+
+    def test_thin_wrapper_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "facade.py").write_text("def run(): pass\n")
+        for i in range(4):
+            (tmp_path / f"client_{i}.py").write_text(
+                f"from facade import run\ndef go_{i}(): run()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "facade.py")
+        assert "thin wrapper" in out, (
+            f"Expected 'thin wrapper' for module with 1 symbol and 4 importers; got:\n{out}"
+        )
+
+    def test_thin_wrapper_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "multi.py").write_text(
+            "def fn_a(): pass\ndef fn_b(): pass\ndef fn_c(): pass\n"
+        )
+        for i in range(4):
+            (tmp_path / f"user_{i}.py").write_text(
+                f"from multi import fn_a\ndef work_{i}(): fn_a()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "multi.py")
+        assert "thin wrapper" not in out, (
+            f"'thin wrapper' must not appear for module with multiple symbols; got:\n{out}"
+        )
+
+
+# ── S639: Polyglot diff ───────────────────────────────────────────────────────
+
+class TestPolyglotDiffS639:
+    """S639: Diff spanning 3+ code language extensions emits polyglot-diff signal."""
+
+    def test_polyglot_diff_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["app.py", "handler.js", "worker.go", "schema.rb"])
+        assert "polyglot diff" in out, (
+            f"Expected 'polyglot diff' when diff touches 4 languages; got:\n{out}"
+        )
+
+    def test_polyglot_diff_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["app.py", "utils.py"])
+        assert "polyglot diff" not in out, (
+            f"'polyglot diff' must not appear for single-language diff; got:\n{out}"
+        )
+
+
+# ── S640: Method hotspot cluster ──────────────────────────────────────────────
+
+class TestMethodHotspotClusterS640:
+    """S640: All top 5 non-test hotspots are methods emits method-hotspot-cluster signal."""
+
+    def test_method_cluster_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "svc.py").write_text(
+            "class ServiceA:\n"
+            "    def act(self): pass\n"
+            "class ServiceB:\n"
+            "    def run(self): pass\n"
+            "class ServiceC:\n"
+            "    def execute(self): pass\n"
+            "class ServiceD:\n"
+            "    def process(self): pass\n"
+            "class ServiceE:\n"
+            "    def handle(self): pass\n"
+        )
+        for i in range(5):
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from svc import ServiceA, ServiceB, ServiceC, ServiceD, ServiceE\n"
+                f"def task_{i}():\n"
+                f"    ServiceA().act(); ServiceB().run(); ServiceC().execute()\n"
+                f"    ServiceD().process(); ServiceE().handle()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "method hotspot cluster" in out, (
+            f"Expected 'method hotspot cluster' when all top hotspots are methods; got:\n{out}"
+        )
+
+    def test_method_cluster_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        for i in range(5):
+            (tmp_path / f"mod_{i}.py").write_text(f"def top_fn_{i}(x): return x\n")
+        for i in range(5):
+            (tmp_path / f"user_{i}.py").write_text(
+                "".join(f"from mod_{j} import top_fn_{j}\n" for j in range(5))
+                + f"def work_{i}(): " + "; ".join(f"top_fn_{j}({i})" for j in range(5)) + "\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "method hotspot cluster" not in out, (
+            f"'method hotspot cluster' must not appear when hotspots are top-level functions; got:\n{out}"
+        )
+
+
+# ── S641: Dead inner class ────────────────────────────────────────────────────
+
+class TestDeadInnerClassS641:
+    """S641: Unused nested class (parent_id not None) emits dead-inner-classes signal."""
+
+    def test_dead_inner_class_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        # User must be cross-file referenced so Config becomes a dead inner class
+        (tmp_path / "models.py").write_text(
+            "class User:\n"
+            "    class Config:\n"
+            "        table_name = 'users'\n"
+            "    def save(self): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from models import User\ndef create_user(): return User()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead inner classes" in out, (
+            f"Expected 'dead inner classes' for unused Config nested class; got:\n{out}"
+        )
+
+    def test_dead_inner_class_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        # User referenced AND Config accessed via User.Config() — no dead inner class
+        (tmp_path / "models.py").write_text(
+            "class User:\n"
+            "    class Config:\n"
+            "        table_name = 'users'\n"
+            "    def save(self): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from models import User\n"
+            "def create_user(): u = User(); cfg = User.Config(); return u\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead inner classes" not in out, (
+            f"'dead inner classes' must not appear when inner class is accessed; got:\n{out}"
+        )

@@ -2195,6 +2195,24 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — safe removal targets; deprecated intent + no callers = clean delete"
         )
 
+    # S641: Dead inner class — unused nested class (parent_id is not None, kind == class).
+    # Inner classes that are never instantiated may be leftover design artifacts;
+    # they carry cognitive overhead without providing value.
+    _dead_inner641 = [
+        s for s in dead
+        if s.kind.value == "class"
+        and s.parent_id is not None
+        and not _is_test_file(s.file_path)
+    ]
+    if _dead_inner641:
+        _inner_names641 = ", ".join(s.name for s in _dead_inner641[:3])
+        if len(_dead_inner641) > 3:
+            _inner_names641 += f" +{len(_dead_inner641) - 3} more"
+        lines.append(
+            f"dead inner classes: {len(_dead_inner641)} unused nested class(es) ({_inner_names641})"
+            f" — leftover nested design; remove to reduce cognitive overhead"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
