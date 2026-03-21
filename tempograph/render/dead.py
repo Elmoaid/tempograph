@@ -353,6 +353,27 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             _dc_str += f" +{len(_dead_consts) - 3} more"
         lines.append(f"dead constants: {len(_dead_consts)} unused constants/variables ({_dc_str})")
 
+    # S196: Dead fixtures — setup_*/teardown_* functions that are dead.
+    # Test fixture functions with 0 callers are often orphaned test infrastructure.
+    # Only shown when 2+ such dead fixture functions found.
+    _s196_dead_fixtures = [
+        sym for sym, conf in scored
+        if conf >= 40
+        and sym.kind.value in ("function", "method")
+        and (
+            sym.name.startswith("setup_") or sym.name.startswith("teardown_")
+            or sym.name.startswith("fixture_") or sym.name.startswith("create_")
+        )
+    ]
+    if len(_s196_dead_fixtures) >= 2:
+        _fix_names = [s.name for s in _s196_dead_fixtures[:3]]
+        _fix_str = ", ".join(_fix_names)
+        if len(_s196_dead_fixtures) > 3:
+            _fix_str += f" +{len(_s196_dead_fixtures) - 3} more"
+        lines.append(
+            f"dead fixtures: {len(_s196_dead_fixtures)} unused setup/teardown/fixture fns ({_fix_str})"
+        )
+
     # S190: Dead overrides — methods in a live class that override a parent method but have 0 callers.
     # A live class with an unused override = the child behavior is never triggered.
     # Only shown when >= 1 such method found with live class (has callers) but 0-caller override.

@@ -1118,6 +1118,29 @@ def render_overview(graph: Tempo) -> str:
             f" — changes here have wide blast radius"
         )
 
+    # S191: API-only files — source files where every tracked symbol is exported.
+    # Files where all symbols are public = pure API surface; any change risks breaking callers.
+    # Only shown when 2+ non-trivial source files (>= 3 symbols) are fully exported.
+    _s191_api_files: list[str] = []
+    for _fp191 in graph.files:
+        if _is_test_file(_fp191):
+            continue
+        _syms191 = [
+            s for s in graph.symbols.values()
+            if s.file_path == _fp191 and s.kind.value in ("function", "method", "class", "constant")
+        ]
+        if len(_syms191) >= 3 and all(s.exported for s in _syms191):
+            _s191_api_files.append(_fp191)
+    if len(_s191_api_files) >= 2:
+        _s191_names = [fp.rsplit("/", 1)[-1] for fp in _s191_api_files[:3]]
+        _s191_str = ", ".join(_s191_names)
+        if len(_s191_api_files) > 3:
+            _s191_str += f" +{len(_s191_api_files) - 3} more"
+        lines.append(
+            f"api-only files: {len(_s191_api_files)} files where all symbols are exported"
+            f" ({_s191_str}) — pure contract files, high breaking-change risk"
+        )
+
     # S185: Circular deps — pairs of source files that mutually import each other.
     # Circular imports introduce tight coupling and make testing or refactoring harder.
     # Only shown when >= 1 such circular pair is detected.

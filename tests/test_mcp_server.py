@@ -12901,3 +12901,246 @@ class TestDeadOverrides:
         assert "dead overrides" not in out, (
             f"'dead overrides' must not appear; got:\n{out}"
         )
+
+
+# ---------------------------------------------------------------------------
+# S191 — api-only files (overview)
+# ---------------------------------------------------------------------------
+class TestOverviewApiOnlyFiles:
+    def test_api_only_files_shown(self, tmp_path):
+        """S191: api-only files shown when 2+ files have all exported symbols."""
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        # Two pure-API files (all symbols exported)
+        (tmp_path / "api_a.py").write_text(
+            "def fn_one(): pass\ndef fn_two(): pass\ndef fn_three(): pass\n"
+        )
+        (tmp_path / "api_b.py").write_text(
+            "def endpoint_a(): pass\ndef endpoint_b(): pass\ndef endpoint_c(): pass\n"
+        )
+        # One mixed file for context
+        (tmp_path / "internal.py").write_text(
+            "def public_fn(): pass\ndef _private_fn(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "api-only files" in out, f"'api-only files' expected; got:\n{out}"
+
+    def test_api_only_files_absent_when_mixed(self, tmp_path):
+        """S191: api-only files not shown when files have private symbols."""
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "module.py").write_text(
+            "def public_fn(): pass\ndef _helper(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "api-only files" not in out, (
+            f"'api-only files' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S192 — callee complexity (focused)
+# ---------------------------------------------------------------------------
+class TestFocusedCalleeComplexity:
+    def test_callee_complexity_shown(self, tmp_path):
+        """S192: callee complexity shown when focused fn's callees avg cx >= 5."""
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        # Three complex callees (many branches = high cx)
+        for fn_name in ["parse_a", "parse_b", "parse_c"]:
+            branches = "\n".join(f"    if x == {i}: return {i}" for i in range(7))
+            (tmp_path / f"{fn_name}.py").write_text(
+                f"def {fn_name}(x):\n{branches}\n    return -1\n"
+            )
+        (tmp_path / "orchestrator.py").write_text(
+            "from parse_a import parse_a\n"
+            "from parse_b import parse_b\n"
+            "from parse_c import parse_c\n"
+            "def dispatch(x): return parse_a(x) or parse_b(x) or parse_c(x)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "dispatch")
+        assert "callee complexity" in out, f"'callee complexity' expected; got:\n{out}"
+
+    def test_callee_complexity_absent_for_simple_callees(self, tmp_path):
+        """S192: callee complexity not shown when callees are simple."""
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "util.py").write_text("def add(a, b): return a + b\n")
+        (tmp_path / "main.py").write_text(
+            "from util import add\ndef run(): return add(1, 2)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "run")
+        assert "callee complexity" not in out, (
+            f"'callee complexity' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S193 — migration file change (diff)
+# ---------------------------------------------------------------------------
+class TestDiffMigrationChange:
+    def test_migration_change_shown(self, tmp_path):
+        """S193: migration change shown when diff includes a migration-style file."""
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        migrations_dir = tmp_path / "migrations"
+        migrations_dir.mkdir()
+        (migrations_dir / "0001_initial.py").write_text(
+            "def upgrade(): pass\ndef downgrade(): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        # Find actual migration file path
+        mig_path = next((fp for fp in g.files if "migration" in fp), None)
+        if mig_path is None:
+            mig_path = "migrations/0001_initial.py"
+        out = render_diff_context(g, [mig_path])
+        assert "migration change" in out, f"'migration change' expected; got:\n{out}"
+
+    def test_migration_change_absent_for_regular_file(self, tmp_path):
+        """S193: migration change not shown for regular source files."""
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "handler.py").write_text("def handle(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["handler.py"])
+        assert "migration change" not in out, (
+            f"'migration change' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S194 — test file hotspot (hotspots)
+# ---------------------------------------------------------------------------
+class TestHotspotsTestFileHotspot:
+    def test_test_hotspot_shown(self, tmp_path):
+        """S194: test file hotspot shown when top hotspot is a test file."""
+        import subprocess
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        subprocess.run(["git", "init"], cwd=str(tmp_path), check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=str(tmp_path), check=True, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=str(tmp_path), check=True, capture_output=True)
+
+        # Create stable source file
+        (tmp_path / "core.py").write_text("def fn(): pass\n")
+        # Rapidly churning test file
+        test_file = tmp_path / "test_core.py"
+        test_file.write_text("from core import fn\ndef test_fn(): fn()\n")
+        subprocess.run(["git", "add", "."], cwd=str(tmp_path), check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=str(tmp_path), check=True, capture_output=True)
+
+        for i in range(8):
+            test_file.write_text(
+                f"from core import fn\ndef test_fn_{i}(): fn()\n"
+            )
+            subprocess.run(["git", "add", "test_core.py"], cwd=str(tmp_path), check=True, capture_output=True)
+            subprocess.run(["git", "commit", f"-m", f"update test {i}"], cwd=str(tmp_path), check=True, capture_output=True)
+
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "test file hotspot" in out, f"'test file hotspot' expected; got:\n{out}"
+
+    def test_test_hotspot_absent_when_top_is_source(self, tmp_path):
+        """S194: test file hotspot not shown when top hotspot is a source file."""
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "engine.py").write_text("def run(): pass\n")
+        for i in range(5):
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from engine import run\ndef do_{i}(): run()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "test file hotspot" not in out, (
+            f"'test file hotspot' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S195 — blast fan-out (blast)
+# ---------------------------------------------------------------------------
+class TestBlastFanOut:
+    def test_blast_fan_out_shown(self, tmp_path):
+        """S195: blast fan-out shown when blast file calls into 5+ external files."""
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        # Create 6 target files
+        for i in range(6):
+            (tmp_path / f"dep_{i}.py").write_text(f"def func_{i}(): pass\n")
+
+        imports = "\n".join(f"from dep_{i} import func_{i}" for i in range(6))
+        calls = "; ".join(f"func_{i}()" for i in range(6))
+        (tmp_path / "hub.py").write_text(
+            f"{imports}\ndef orchestrate(): {calls}\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "hub.py")
+        assert "blast fan-out" in out, f"'blast fan-out' expected; got:\n{out}"
+
+    def test_blast_fan_out_absent_when_few_callees(self, tmp_path):
+        """S195: blast fan-out not shown when calling into < 5 external files."""
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "dep.py").write_text("def helper(): pass\n")
+        (tmp_path / "hub.py").write_text(
+            "from dep import helper\ndef run(): helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "hub.py")
+        assert "blast fan-out" not in out, (
+            f"'blast fan-out' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S196 — dead fixtures (dead)
+# ---------------------------------------------------------------------------
+class TestDeadFixtures:
+    def test_dead_fixtures_shown(self, tmp_path):
+        """S196: dead fixtures shown when 2+ setup_*/teardown_* fns are dead."""
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "helpers.py").write_text(
+            "def setup_database(): pass\n"
+            "def teardown_database(): pass\n"
+            "def setup_cache(): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead fixtures" in out, f"'dead fixtures' expected; got:\n{out}"
+
+    def test_dead_fixtures_absent_when_used(self, tmp_path):
+        """S196: dead fixtures not shown when setup fns are called."""
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "helpers.py").write_text(
+            "def setup_database(): pass\n"
+            "def teardown_database(): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from helpers import setup_database, teardown_database\n"
+            "def main(): setup_database(); teardown_database()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead fixtures" not in out, (
+            f"'dead fixtures' must not appear; got:\n{out}"
+        )

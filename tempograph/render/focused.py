@@ -1743,6 +1743,26 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
             if _inh_depth >= 3:
                 lines.append(f"\ninheritance depth: {_inh_depth} levels — deep hierarchy, high base-class coupling")
 
+    # S192: Callee complexity — the focused symbol's external callees have high average complexity.
+    # Calling into complex functions means cognitive load is high even for simple-looking fns.
+    # Only shown when avg complexity of external callees >= 5 and 3+ external callees with cx data.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim192 = _seed_syms[0]
+        if _prim192.kind.value in ("function", "method"):
+            _callee_cx192 = [
+                c.complexity for c in graph.callees_of(_prim192.id)
+                if c.complexity is not None and c.complexity > 0
+                and c.file_path != _prim192.file_path
+            ]
+            if len(_callee_cx192) >= 3:
+                _avg_cx192 = sum(_callee_cx192) / len(_callee_cx192)
+                if _avg_cx192 >= 5.0:
+                    lines.append(
+                        f"\ncallee complexity: avg cx {_avg_cx192:.1f}"
+                        f" across {len(_callee_cx192)} callees"
+                        f" — calls into complex functions, high cognitive load"
+                    )
+
     # S186: Cross-file callee — the focused symbol calls functions in 3+ distinct external files.
     # Reaching out to many files means this fn is a coordination point; changes ripple widely.
     # Only shown when seed is a fn/method with callees in 3+ different files.
@@ -1827,6 +1847,69 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
             lines.append(
                 f"\noverloaded name: '{_prim162.name}' appears in {len(_s162_files)} files"
                 f" — name collision risk when navigating"
+            )
+
+    # S191: Cochange partners outside static graph — files that co-change with the seed
+    # file in git history but have NO import/call edge to it (hidden coupling).
+    # Git history catches runtime coupling, config coupling, and test fixture coupling
+    # that static analysis misses entirely.
+    # Only shown when 2+ such hidden co-editors exist with >= 3 co-changes each.
+    if _seed_syms and graph.root and token_count < max_tokens - 30:
+        try:
+            from ..git import cochange_pairs as _cp191, is_git_repo as _igr191
+            from ..types import EdgeKind as _EK191
+            if _igr191(graph.root):
+                _seed_fp191 = _seed_syms[0].file_path
+                # Files connected via any static edge to the seed file
+                _static_neighbors191: set[str] = set()
+                for _e191 in graph.edges:
+                    if _e191.kind in (_EK191.CALLS, _EK191.IMPORTS):
+                        _src191 = _e191.source_id.split("::")[0]
+                        _tgt191 = _e191.target_id.split("::")[0]
+                        if _src191 == _seed_fp191:
+                            _static_neighbors191.add(_tgt191)
+                        elif _tgt191 == _seed_fp191:
+                            _static_neighbors191.add(_src191)
+                _pairs191 = _cp191(graph.root, _seed_fp191, n=10)
+                _hidden191 = [
+                    p for p in _pairs191
+                    if p["path"] not in _static_neighbors191
+                    and p["path"] != _seed_fp191
+                    and not _is_test_file(p["path"])
+                    and p["count"] >= 3
+                ]
+                if len(_hidden191) >= 2:
+                    _h191_names = [p["path"].rsplit("/", 1)[-1] for p in _hidden191[:3]]
+                    _h191_str = ", ".join(_h191_names)
+                    if len(_hidden191) > 3:
+                        _h191_str += f" +{len(_hidden191) - 3} more"
+                    lines.append(
+                        f"\ncochange partners (not in call graph): {_h191_str}"
+                        f" — co-edit history suggests hidden coupling"
+                    )
+        except Exception:
+            pass
+
+    # S192: Test file pointer — when there's exactly one test file with a name matching
+    # the seed file's stem, surface it directly so agents know where to add tests.
+    # Only shown when no other test coverage signal was shown (avoids redundancy with S174).
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim192 = _seed_syms[0]
+        _stem192 = _prim192.file_path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+        _s192_test_fps = [
+            fp for fp in graph.files
+            if _is_test_file(fp) and _stem192 in fp.rsplit("/", 1)[-1]
+        ]
+        # Only show when exactly 1 matching test file (unambiguous pointer) and
+        # S174 didn't already surface >= 2 test callers
+        _s174_shown = _seed_syms and len({
+            c.file_path for c in graph.callers_of(_prim192.id)
+            if _is_test_file(c.file_path)
+        }) >= 2
+        if len(_s192_test_fps) == 1 and not _s174_shown:
+            _s192_name = _s192_test_fps[0].rsplit("/", 1)[-1]
+            lines.append(
+                f"\ntest file: {_s192_name} — add tests here for {_prim192.name}"
             )
 
     return "\n".join(lines)
