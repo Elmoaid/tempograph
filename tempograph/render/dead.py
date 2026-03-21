@@ -3284,12 +3284,12 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
     # S953: Dead serializer functions — unused to_dict/to_json/to_yaml/to_csv/serialize prefixed functions.
     # Dead serializers indicate output paths that were abandoned; callers may still expect
     # serialized output but receive None or raise AttributeError silently.
-    _ser_prefixes953 = ("to_dict", "to_json", "to_yaml", "to_csv", "to_xml", "serialize", "marshal", "export_")
+    _ser_prefixes953 = ("to_dict", "to_json", "to_yaml", "to_csv", "to_xml", "serialize_", "marshal_", "export_")
     _dead_serializers953 = [
         s for s in dead
         if s.kind.value in ("function", "method")
         and not _is_test_file(s.file_path)
-        and any(s.name.lower().startswith(p) or s.name.lower() == p.rstrip("_") for p in _ser_prefixes953)
+        and any(s.name.lower().startswith(p) for p in _ser_prefixes953)
     ]
     if _dead_serializers953:
         _ser_names953 = ", ".join(s.name for s in _dead_serializers953[:3])
