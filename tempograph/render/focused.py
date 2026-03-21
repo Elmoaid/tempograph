@@ -3787,6 +3787,24 @@ def _signals_focused_fn_advanced(
                     f" — implicitly couples to global/module state; hard to test in isolation"
                 )
 
+    # S822: Dense module focus — focused symbol lives in a file with 10+ top-level symbols.
+    # Dense modules accumulate responsibilities over time; the focused symbol may be hard
+    # to find and modify without understanding the full module context.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim822 = _seed_syms[0]
+        if not _is_test_file(_prim822.file_path):
+            _fi822 = graph.files.get(_prim822.file_path)
+            if _fi822:
+                _top_syms822 = [
+                    sid for sid in _fi822.symbols
+                    if sid in graph.symbols and graph.symbols[sid].parent_id is None
+                ]
+                if len(_top_syms822) >= 10:
+                    lines.append(
+                        f"\ndense module: {_prim822.file_path.rsplit('/', 1)[-1]} has {len(_top_syms822)} top-level symbols"
+                        f" — large module accumulating responsibilities; consider splitting"
+                    )
+
     return lines
 
 
