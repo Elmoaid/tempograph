@@ -373,6 +373,33 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             _dth_str += f" +{len(_dead_test_helpers) - 3} more"
         lines.append(f"dead test helpers: {len(_dead_test_helpers)} unused helper fns in test files ({_dth_str})")
 
+    # S153: Whole-file dead — source files where every symbol is a dead code candidate.
+    # These are likely entirely abandoned files; deleting them is safer than symbol-by-symbol.
+    # Only shown when 2+ such files found (1 might be a config/init file).
+    _dead_sym_files: dict[str, int] = {}
+    for sym, conf in scored:
+        if conf >= 40 and not _is_test_file(sym.file_path):
+            _dead_sym_files[sym.file_path] = _dead_sym_files.get(sym.file_path, 0) + 1
+    _whole_file_dead: list[str] = []
+    for _wf_fp, _wf_dead_count in _dead_sym_files.items():
+        _wf_fi = graph.files.get(_wf_fp)
+        if not _wf_fi:
+            continue
+        # Count total src symbols (not just dead ones) in this file
+        _wf_total = sum(
+            1 for sid in _wf_fi.symbols
+            if sid in graph.symbols
+            and graph.symbols[sid].kind.value in ("function", "method", "class")
+        )
+        if _wf_total >= 2 and _wf_dead_count >= _wf_total:
+            _whole_file_dead.append(_wf_fp)
+    if len(_whole_file_dead) >= 2:
+        _wfd_names = [fp.rsplit("/", 1)[-1] for fp in sorted(_whole_file_dead)[:3]]
+        _wfd_str = ", ".join(_wfd_names)
+        if len(_whole_file_dead) > 3:
+            _wfd_str += f" +{len(_whole_file_dead) - 3} more"
+        lines.append(f"whole-file dead: {len(_whole_file_dead)} files fully dead ({_wfd_str}) — candidates for deletion")
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

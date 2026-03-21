@@ -11419,3 +11419,79 @@ class TestBlastCrossLanguage:
         assert "cross-language blast" not in out, (
             f"'cross-language blast' must not appear for same-language imports; got:\n{out}"
         )
+
+
+class TestDeadWholeFileDead:
+    """S153: Dead code — 'whole-file dead: N files fully dead (file1, file2)'."""
+
+    def test_whole_file_dead_shown(self, tmp_path):
+        """2+ source files where all symbols are dead → 'whole-file dead:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        # Create 3 isolated files with no connections between them
+        for i in range(3):
+            (tmp_path / f"abandoned_{i}.py").write_text(
+                f"def old_fn_{i}(x):\n    return x\n"
+                f"def old_fn_{i}b(x):\n    return x * 2\n"
+            )
+        # Only one "active" file that has callers
+        (tmp_path / "main.py").write_text("def main():\n    pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "whole-file dead" in out, (
+            f"Expected 'whole-file dead' for 3 abandoned files; got:\n{out}"
+        )
+
+    def test_whole_file_dead_absent_when_files_used(self, tmp_path):
+        """Files with callers → 'whole-file dead:' NOT shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        (tmp_path / "lib.py").write_text("def fn_a():\n    pass\ndef fn_b():\n    pass\n")
+        (tmp_path / "app.py").write_text("from lib import fn_a, fn_b\ndef main():\n    fn_a(); fn_b()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "whole-file dead" not in out, (
+            f"'whole-file dead' must not appear when files have callers; got:\n{out}"
+        )
+
+
+class TestOverviewSingleCallerFns:
+    """S154: Overview — 'single-caller fns: N private fns have exactly 1 caller'."""
+
+    def test_single_caller_fns_shown(self, tmp_path):
+        """5+ private fns each called by exactly 1 other fn → 'single-caller fns:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        # 6 private helper fns, each called by exactly 1 caller fn
+        helpers = "\n".join(
+            f"def _helper_{i}(x):\n    return x + {i}" for i in range(6)
+        )
+        callers = "\n".join(
+            f"def caller_{i}(x):\n    return _helper_{i}(x)" for i in range(6)
+        )
+        (tmp_path / "module.py").write_text(helpers + "\n" + callers + "\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "single-caller fns" in out, (
+            f"Expected 'single-caller fns' for 6 private fns with 1 caller each; got:\n{out}"
+        )
+
+    def test_single_caller_fns_absent_for_shared_fns(self, tmp_path):
+        """Shared fns with multiple callers → 'single-caller fns:' NOT shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "shared.py").write_text(
+            "def _shared(x):\n    return x\n"
+            "def use_a():\n    return _shared(1)\n"
+            "def use_b():\n    return _shared(2)\n"
+            "def use_c():\n    return _shared(3)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "single-caller fns" not in out, (
+            f"'single-caller fns' must not appear when shared fns have multiple callers; got:\n{out}"
+        )

@@ -1065,6 +1065,23 @@ def render_overview(graph: Tempo) -> str:
                 f" — test coverage is thin"
             )
 
+    # S154: Single-caller fns — source functions called by exactly one other function.
+    # These are prime inlining candidates; many single-caller fns = over-extracted code.
+    # Only shown when 5+ such functions found.
+    _s154_single_callers = [
+        sym for sym in graph.symbols.values()
+        if sym.kind.value in ("function", "method")
+        and not _is_test_file(sym.file_path)
+        and sym.exported is False
+        and len({c.file_path for c in graph.callers_of(sym.id) if c.file_path != sym.file_path}) == 0
+        and len(graph.callers_of(sym.id)) == 1
+    ]
+    if len(_s154_single_callers) >= 5:
+        lines.append(
+            f"single-caller fns: {len(_s154_single_callers)} private fns have exactly 1 caller"
+            f" — consider inlining"
+        )
+
     # Suggest directories to exclude — detect likely noise
     noisy = _detect_noisy_dirs(graph, modules)
     if noisy:
