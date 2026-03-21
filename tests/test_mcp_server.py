@@ -44267,3 +44267,190 @@ class TestDeadTypeGuardsS947:
         )
 
 
+
+class TestAllPrivateClassS948:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "class DataManager:\n"
+            "    def _init_db(self): pass\n"
+            "    def _validate(self): pass\n"
+            "    def _cleanup(self): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "DataManager")
+        assert "all-private class" in out, (
+            f"'all-private class' expected for class with only private methods; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "class DataManager:\n"
+            "    def get_data(self): pass\n"
+            "    def _validate(self): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "DataManager")
+        assert "all-private class" not in out, (
+            f"'all-private class' must not appear when class has a public method; got:\n{out}"
+        )
+
+
+class TestAllPrivateCodebaseS949:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "internals.py").write_text(
+            "def _helper_a(): pass\n"
+            "def _helper_b(): pass\n"
+            "def _helper_c(): pass\n"
+            "def _helper_d(): pass\n"
+            "def _helper_e(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "all-private:" in out, (
+            f"'all-private:' expected when all 5+ source symbols are private; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "service.py").write_text(
+            "def _helper_a(): pass\n"
+            "def _helper_b(): pass\n"
+            "def _helper_c(): pass\n"
+            "def _helper_d(): pass\n"
+            "def public_fn(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "all-private:" not in out, (
+            f"'all-private:' must not appear when at least one public symbol exists; got:\n{out}"
+        )
+
+
+class TestContextManagerBlastS950:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "context_utils.py").write_text("def get_context(): pass\n")
+        (tmp_path / "main.py").write_text("from context_utils import get_context\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "context_utils.py")
+        assert "context manager blast" in out, (
+            f"'context manager blast' expected for context_utils.py; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "service.py").write_text("def process(): pass\n")
+        (tmp_path / "main.py").write_text("from service import process\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "service.py")
+        assert "context manager blast" not in out, (
+            f"'context manager blast' must not appear for service.py; got:\n{out}"
+        )
+
+
+class TestCrossLanguageDiffS951:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        (tmp_path / "server.js").write_text("function start() {}\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "server.js"])
+        assert "cross-language diff" in out, (
+            f"'cross-language diff' expected for mixed .py/.js diff; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "utils.py"])
+        assert "cross-language diff" not in out, (
+            f"'cross-language diff' must not appear for single-language diff; got:\n{out}"
+        )
+
+
+class TestClassBoundHotspotS952:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        fns = "".join(f"def fn_{i}(): pass\n" for i in range(20))
+        calls = "; ".join(f"fn_{i}()" for i in range(20))
+        (tmp_path / "engine.py").write_text(
+            fns
+            + "class Engine:\n"
+            + f"    def compute(self): {calls}\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "class-bound hotspot" in out, (
+            f"'class-bound hotspot' expected when top hotspot is a class method; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "utils.py").write_text(
+            "def helper_a(): pass\n"
+            "def helper_b(): pass\n"
+            "def process(): helper_a(); helper_b()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "class-bound hotspot" not in out, (
+            f"'class-bound hotspot' must not appear for standalone function; got:\n{out}"
+        )
+
+
+class TestDeadSerializersS953:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "model.py").write_text(
+            "def to_dict(obj): return {}\n"
+            "def to_json(obj): return '{}'\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead serializers" in out, (
+            f"'dead serializers' expected for unused to_dict/to_json; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "model.py").write_text("def to_dict(obj): return {}\n")
+        (tmp_path / "app.py").write_text(
+            "from model import to_dict\n"
+            "def run(x): return to_dict(x)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead serializers" not in out, (
+            f"'dead serializers' must not appear when to_dict is used; got:\n{out}"
+        )
+

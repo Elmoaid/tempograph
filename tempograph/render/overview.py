@@ -3446,6 +3446,23 @@ def _signals_async_oop(
             f" — fully procedural codebase; avoid OOP refactor suggestions without clear encapsulation need"
         )
 
+    # S949: All-private codebase — every source function/class is prefixed with _.
+    # A codebase with no public API may be designed as an internal library;
+    # adding public symbols here should be intentional — undocumented exports create accidental APIs.
+    _src_syms949 = [
+        s for s in graph.symbols.values()
+        if s.kind.value in ("function", "class")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+    ]
+    if len(_src_syms949) >= 5:
+        _public949 = [s for s in _src_syms949 if not s.name.startswith("_")]
+        if not _public949:
+            lines.append(
+                f"all-private: {len(_src_syms949)} source symbols found, none are public"
+                f" — internal-only codebase; adding exports should be intentional to avoid accidental APIs"
+            )
+
     return lines
 
 
