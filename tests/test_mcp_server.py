@@ -9307,3 +9307,40 @@ class TestHotspotsHighFanOut:
         assert "High fan-out:" not in out, (
             f"'High fan-out:' must not appear for function with 3 callees; got:\n{out}"
         )
+
+
+class TestDeadCodeRemovableLines:
+    """S98: Dead code header includes '~N lines removable' when >= 50 lines of dead code."""
+
+    def test_removable_lines_shown_when_many_dead_lines(self, tmp_path):
+        """Dead code totaling 50+ lines → '~N lines removable' in header."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        # Write a large uncalled function (50+ lines)
+        lines = ["def big_dead_fn():"]
+        for i in range(55):
+            lines.append(f"    x_{i} = {i}")
+        lines.append("    return x_0")
+        (tmp_path / "legacy.py").write_text("\n".join(lines) + "\n")
+
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "lines removable" in out, (
+            f"Expected 'lines removable' in header for 55+ line dead function; got:\n{out}"
+        )
+
+    def test_removable_lines_absent_when_small_dead_code(self, tmp_path):
+        """Small dead functions (< 50 total lines) → no 'lines removable' in header."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        (tmp_path / "utils.py").write_text(
+            "def unused_a(): return 1\n"
+            "def unused_b(): return 2\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "lines removable" not in out, (
+            f"'lines removable' must not appear for small dead code; got:\n{out}"
+        )
