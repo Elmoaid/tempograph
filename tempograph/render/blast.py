@@ -2335,6 +2335,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                 f" — minor changes ripple widely; test all consumers before merging"
             )
 
+    # S938: Loader blast — blast target is a file that loads, parses, or imports data.
+    # Loader files are often called at startup or on first access; errors in them
+    # can prevent the entire application from starting rather than causing isolated failures.
+    _loader_kws938 = ("loader", "load", "parser", "parse", "reader", "reader", "importer", "import_")
+    _fname938 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if any(_fname938 == kw or _fname938.endswith("_" + kw) or _fname938.startswith(kw + "_") for kw in _loader_kws938):
+        lines.append(
+            f"loader blast: {_fp589.rsplit('/', 1)[-1]} loads or parses data at startup"
+            f" — loader errors prevent application start; changes require extra caution and testing"
+        )
+
     return "\n".join(lines)
 
 

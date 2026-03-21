@@ -4096,6 +4096,21 @@ def _signals_focused_fn_advanced(
                     f" — large class; changes have higher coupling risk; consider extracting a smaller class"
                 )
 
+    # S936: Async method focus — focused symbol is an async/coroutine function.
+    # Async functions have implicit concurrency semantics; changes may introduce
+    # race conditions, missing awaits, or broken cancellation handling.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim936 = _seed_syms[0]
+        if (
+            _prim936.kind.value in ("function", "method")
+            and not _is_test_file(_prim936.file_path)
+            and (_prim936.signature or "").startswith("async ")
+        ):
+            lines.append(
+                f"\nasync method: {_prim936.name} is an async/coroutine function"
+                f" — async semantics require verifying await usage, cancellation handling, and concurrency safety"
+            )
+
     return lines
 
 

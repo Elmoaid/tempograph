@@ -3409,6 +3409,23 @@ def _signals_async_oop(
             f" — wide public surface; be conservative adding exports; check consumers before removing"
         )
 
+    # S937: No constants — repo has no module-level constants (potential magic values in code).
+    # Codebases without defined constants often embed magic numbers and strings inline;
+    # this makes thresholds, limits, and configuration values hard to find and change safely.
+    _all_consts937 = [
+        s for s in graph.symbols.values()
+        if s.kind.value == "constant" and not _is_test_file(s.file_path)
+    ]
+    _src_syms937 = [
+        s for s in graph.symbols.values()
+        if s.kind.value in ("function", "method") and not _is_test_file(s.file_path)
+    ]
+    if len(_src_syms937) >= 5 and not _all_consts937:
+        lines.append(
+            f"no constants: no module-level constants found across {len(_src_syms937)} source functions"
+            f" — may indicate magic values in code; consider extracting thresholds and config into constants"
+        )
+
     return lines
 
 

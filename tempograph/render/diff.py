@@ -2587,4 +2587,21 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                     f" — tests updated without source change; verify tests reflect the intended spec"
                 )
 
+    # S939: Interface file in diff — changed files include abstract or protocol definition files.
+    # Interface files define contracts; changes ripple to all implementors and callers
+    # and may require coordinated updates across multiple classes.
+    if changed_files:
+        _iface_kws939 = ("abstract", "interface", "protocol", "contract", "base", "abc")
+        _iface_files939 = [
+            f for f in changed_files
+            if any(kw in f.replace("\\", "/").rsplit("/", 1)[-1].lower() for kw in _iface_kws939)
+            and not _is_test_file(f)
+        ]
+        if _iface_files939:
+            _iname939 = _iface_files939[0].replace("\\", "/").rsplit("/", 1)[-1]
+            lines.append(
+                f"interface in diff: {len(_iface_files939)} interface/abstract file(s) changed (e.g. {_iname939})"
+                f" — interface changes ripple to all implementors; verify all implementors are updated"
+            )
+
     return "\n".join(lines)
