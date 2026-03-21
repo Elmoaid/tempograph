@@ -6295,3 +6295,44 @@ class TestDeadCodeLargestDead:
         assert "Largest dead:" not in out, (
             f"'Largest dead:' must not appear when dead functions are small; got:\n{out}"
         )
+
+
+class TestOverviewGodFiles:
+    """S56: Overview — 'god files:' section showing source files with >=15 exported symbols.
+
+    Signals undivided modules / god objects. Files with many exports are hard to navigate
+    and often indicate missing module boundaries.
+    """
+
+    def _build(self, tmp_path, files: dict):
+        from tempograph.builder import build_graph
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_god_files_shown_for_file_with_many_exports(self, tmp_path):
+        """'god files:' appears when a source file has >=15 exported symbols."""
+        from tempograph.render import render_overview
+
+        # Create a file with 16 exported functions
+        content = "\n".join(f"def func_{i}(x): return x + {i}" for i in range(16))
+        g = self._build(tmp_path, {"big_module.py": content})
+        out = render_overview(g)
+        assert "god files:" in out, (
+            f"Expected 'god files:' when file has 16 exported symbols; got:\n{out}"
+        )
+        assert "big_module.py" in out, (
+            f"Expected 'big_module.py' in god files section; got:\n{out}"
+        )
+
+    def test_god_files_absent_when_exports_below_threshold(self, tmp_path):
+        """'god files:' absent when no source file has >=15 exported symbols."""
+        from tempograph.render import render_overview
+
+        # Only 5 exported functions — below threshold
+        content = "\n".join(f"def func_{i}(x): return x" for i in range(5))
+        g = self._build(tmp_path, {"small_module.py": content})
+        out = render_overview(g)
+        assert "god files:" not in out, (
+            f"'god files:' must not appear when exports < 15; got:\n{out}"
+        )
