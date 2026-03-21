@@ -12,7 +12,7 @@ from .cache import check_cache, load_cache, make_cache_entry, save_cache
 from .storage import GraphDB, content_hash
 from .types import Tempo, Edge, EdgeKind, FileInfo, Language, Symbol, SymbolKind, EXTENSION_TO_LANGUAGE
 from .parser import FileParser
-from .git import is_git_repo, recently_modified_files, changed_files_vs_head
+from .git import is_git_repo, recently_modified_files, changed_files_vs_head, head_sha
 
 DEFAULT_IGNORE_DIRS = frozenset({
     "node_modules", ".git", "__pycache__", "target", "dist", "build",
@@ -273,6 +273,9 @@ _TEST_SUFFIXES = (
 _DOC_EXTENSIONS = frozenset({".md", ".rst", ".txt", ".adoc"})
 
 
+_hot_files_cache: dict[str, tuple[str, set[str]]] = {}
+
+
 def _get_hot_files(repo: str) -> set[str]:
     """Return candidate hot file paths for temporal weighting.
 
@@ -280,16 +283,37 @@ def _get_hot_files(repo: str) -> set[str]:
     is actively editing right now. If the working tree is clean, fall back to the
     last 2 commits so a freshly-committed session still gets a signal.
 
-    Both git subprocesses run in parallel threads (independent read-only ops).
-    On a clean repo this saves ~9ms vs sequential fallback (36% reduction).
+    Uses a HEAD-keyed cache: when the working tree is clean and HEAD hasn't
+    changed, the recently_modified_files result is deterministic — skip the
+    git-log subprocess and return the cached set.  Cache is per-process only
+    (module-level dict), invalidated automatically on new commits.
+
+    Cache hit (clean tree, same HEAD): 1 git subprocess  (changed_files_vs_head)
+    Cache miss (first call or new commit): 2 git subprocesses in parallel
+    head_sha uses filesystem reads (~0.2ms), not subprocess (~15ms).
     """
+    # Fast path: check cache before any subprocess calls.
+    # head_sha reads .git/HEAD from filesystem (~0.2ms, no subprocess).
+    sha = head_sha(repo)
+    if sha:
+        cached = _hot_files_cache.get(repo)
+        if cached and cached[0] == sha:
+            working = set(changed_files_vs_head(repo))
+            if not working:
+                return cached[1]
+            return working
+
+    # Cache miss or first call: parallel subprocess calls (same as original)
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
         fut_working = ex.submit(changed_files_vs_head, repo)
         fut_recent = ex.submit(recently_modified_files, repo, 2)
         working = set(fut_working.result())
         if working:
             return working
-        return fut_recent.result()
+        result = fut_recent.result()
+        if sha:
+            _hot_files_cache[repo] = (sha, result)
+        return result
 
 
 def _is_hot_source_file(path: str) -> bool:
