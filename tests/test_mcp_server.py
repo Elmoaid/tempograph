@@ -7353,3 +7353,38 @@ class TestFocusUndocumentedAnnotation:
         assert "[undocumented]" not in out, (
             f"'[undocumented]' must not appear for fn with only 2 caller files; got:\n{out}"
         )
+
+
+class TestDeadCodeSafeToDelete:
+    """S69: Dead code mode shows 'Safe to delete' section for conf >= 75 symbols."""
+
+    def test_safe_to_delete_shown_for_isolated_large_fn(self, tmp_path):
+        """Isolated file, large exported fn → conf >= 75 → 'Safe to delete' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        # Two 60-line functions in an isolated file: +30 +25 +10 +15 = 80 each
+        fn_body = "\n".join(["    pass"] * 58)
+        (tmp_path / "orphan.py").write_text(
+            f"def big_unused_fn():\n{fn_body}\ndef big_unused_fn2():\n{fn_body}\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "Safe to delete" in out, (
+            f"Expected 'Safe to delete' for isolated large fn (conf=80); got:\n{out}"
+        )
+        assert "big_unused_fn" in out, f"Expected function name in safe-to-delete; got:\n{out}"
+
+    def test_safe_to_delete_absent_when_file_has_importers(self, tmp_path):
+        """File with an importer loses +25 bonus → conf < 75 → no 'Safe to delete'."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        # imported file: conf = 30 + 0 + 10 = 40 (no importer bonus)
+        (tmp_path / "utils.py").write_text("def unused_util():\n    pass\n")
+        (tmp_path / "main.py").write_text("import utils\ndef run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "Safe to delete" not in out, (
+            f"'Safe to delete' must not appear when file has importers; got:\n{out}"
+        )

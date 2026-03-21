@@ -3331,9 +3331,10 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             _trd_str += f" +{len(_transitively_dead) - 4} more"
         lines.append(f"Transitively dead ({len(_transitively_dead)}): {_trd_str} — only called by dead code")
 
-    # S69: Safe-to-delete tier — conf >= 90 symbols, no caveats.
-    # These are the slam-dunk deletions: high certainty, no dispatch patterns, no test-only coverage.
-    _safe_delete = [(sym, conf) for sym, conf in scored if conf >= 90]
+    # S69: Safe-to-delete tier — conf >= 75 symbols.
+    # Requires: no callers (30) + no file importers (25) + no renderers (10) + large (15) = 80 max.
+    # Threshold 75 = slam-dunk deletions: file is isolated AND symbol is large. Subset of HIGH tier.
+    _safe_delete = [(sym, conf) for sym, conf in scored if conf >= 75]
     if len(_safe_delete) >= 2:
         _sd_parts = [f"{sym.name} ({sym.file_path.rsplit('/', 1)[-1]}, conf:{conf})" for sym, conf in _safe_delete[:4]]
         _sd_str = ", ".join(_sd_parts)
