@@ -2169,6 +2169,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                 f" — likely exports constants or type aliases; changes affect importers invisibly"
             )
 
+    # S854: Test helper blast — blast target is a shared test utility file.
+    # Test helper files are imported by many test modules; changing them can
+    # invalidate test assumptions across the suite in non-obvious ways.
+    _fname854 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    _test_helper_kws854 = ("test_utils", "test_helpers", "test_fixtures", "conftest", "fixtures", "factories")
+    if any(_fname854 == kw or _fname854.startswith(kw) for kw in _test_helper_kws854):
+        lines.append(
+            f"test helper blast: {_fp589.rsplit('/', 1)[-1]} is a shared test utility"
+            f" — changing test helpers invalidates assumptions across the test suite"
+        )
+
     return "\n".join(lines)
 
 

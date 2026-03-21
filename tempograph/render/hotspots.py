@@ -2594,5 +2594,19 @@ def _collect_hotspots_signals(
                     f" — top hotspot with async semantics; sync callers need event loop adapters"
                 )
 
+    # S856: Hotspot in legacy file — top hotspot lives in a file named with _old/_legacy/_v1.
+    # Code in legacy-named files is expected to be superseded; a hotspot here means
+    # callers are still routed to the deprecated path rather than the new implementation.
+    if scores:
+        _top856 = scores[0][1]
+        if _top856 is not None:
+            _fname856 = _top856.file_path.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+            _legacy_sfxs856 = ("_old", "_legacy", "_deprecated", "_v1", "_bak")
+            if any(_fname856.endswith(sfx) for sfx in _legacy_sfxs856):
+                out.append(
+                    f"\nlegacy file hotspot: {_top856.name} is in a legacy-named file ({_top856.file_path})"
+                    f" — top hotspot in deprecated module; callers should be migrated to the new path"
+                )
+
     return out
 
