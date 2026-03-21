@@ -2965,6 +2965,25 @@ def _signals_async_oop(
             f" — config sprawl likely; consolidate constants into dedicated config modules"
         )
 
+    # S763: Classless repo — the repo has no classes at all (purely functional style).
+    # A classless codebase is deliberately functional; adding classes changes the design
+    # paradigm and may conflict with existing patterns — consider modules/functions instead.
+    _class_syms763 = sum(
+        1 for s in graph.symbols.values()
+        if s.kind.value == "class" and not _is_test_file(s.file_path)
+    )
+    _src_fn763 = sum(
+        1 for s in graph.symbols.values()
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and s.parent_id is None
+    )
+    if _class_syms763 == 0 and _src_fn763 >= 5:
+        lines.append(
+            f"classless repo: no classes found — purely functional style with {_src_fn763} top-level functions;"
+            f" new classes would break the established paradigm"
+        )
+
     return lines
 
 
