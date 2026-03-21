@@ -2966,6 +2966,39 @@ def _signals_focused_fn_advanced(
                     f" — shared across all calls; mutations in one call silently affect future calls"
                 )
 
+    # S537: Private module export — focused exported symbol lives in a _-prefixed module file.
+    # Symbols in _internal.py / _utils.py are convention-private; exporting a public symbol
+    # from a private module contradicts the privacy signal and confuses consumers.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim537 = _seed_syms[0]
+        if _prim537.exported and not _is_test_file(_prim537.file_path):
+            _fp537 = _prim537.file_path.replace("\\", "/")
+            _basename537 = _fp537.rsplit("/", 1)[-1]
+            _is_private537 = (
+                _basename537.startswith("_") and _basename537 != "__init__.py"
+            ) or "/_" in _fp537
+            if _is_private537:
+                lines.append(
+                    f"\nprivate module: {_prim537.name} is exported from a private file"
+                    f" ({_basename537}) — public symbol in private module is confusing; move or re-export via __init__.py"
+                )
+
+    # S546: Optional return type — focused function's return type is Optional or X | None.
+    # Callers must handle the None case; forgetting a None-check is a common source of
+    # AttributeError at runtime; this signal flags functions that require defensive call sites.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim546 = _seed_syms[0]
+        _sig546 = _prim546.signature or ""
+        _has_optional546 = (
+            "Optional[" in _sig546
+            or ("-> None" not in _sig546 and "| None" in _sig546 and "->" in _sig546)
+        )
+        if _has_optional546:
+            lines.append(
+                f"\noptional return: {_prim546.name} returns Optional/None-typed result"
+                f" — every call site must handle the None case; missing checks cause AttributeError at runtime"
+            )
+
     return lines
 
 

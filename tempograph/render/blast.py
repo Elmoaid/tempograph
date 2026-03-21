@@ -1514,6 +1514,40 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — runtime values propagate everywhere; verify all consumers handle changed defaults"
         )
 
+    # S539: Circular import blast — blast target is part of a circular import cycle.
+    # Modifying a file involved in a circular import can break initialization order at runtime;
+    # Python partially evaluates circular imports so attribute access order during init matters.
+    _s539_fp_norm = file_path.replace("\\", "/")
+    _s539_outbound = {
+        e.target_id.replace("\\", "/") for e in graph.edges
+        if e.kind.value == "imports"
+        and e.source_id.replace("\\", "/") == _s539_fp_norm
+        and e.target_id.replace("\\", "/") != _s539_fp_norm
+    }
+    _s539_cycle_partners = [
+        dep for dep in _s539_outbound
+        if _s539_fp_norm in {
+            e.target_id.replace("\\", "/") for e in graph.edges
+            if e.kind.value == "imports" and e.source_id.replace("\\", "/") == dep
+        }
+    ]
+    if _s539_cycle_partners:
+        _cycle_name539 = _s539_cycle_partners[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"circular import blast: {file_path.rsplit('/', 1)[-1]} is in a circular import with {_cycle_name539}"
+            f" — changes affect init order; test module-level attribute access after any modification"
+        )
+
+    # S548: Module init blast — blast target is a package __init__.py file.
+    # __init__.py defines the public API of the entire package; changes cascade to every
+    # consumer of the package, not just direct importers of this file.
+    _fp548 = file_path.replace("\\", "/")
+    if _fp548.endswith("__init__.py") or _fp548 == "__init__.py":
+        lines.append(
+            f"module init: {file_path} is a package __init__ — changes cascade to all consumers of this package"
+            f"; re-exports in __init__ silently affect downstream importers"
+        )
+
     return "\n".join(lines)
 
 

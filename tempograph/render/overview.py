@@ -2339,6 +2339,17 @@ def _signals_async_oop(
             f" — likely uses framework conventions; infer entry context from framework docs"
         )
 
+    # S547: No tests — 5+ source files but zero test files detected.
+    # A codebase without tests offers no safety net for refactoring; any behavioral change
+    # is unverifiable; treat every modification as high-risk until tests are added.
+    _s547_src_count = sum(1 for fp in graph.files if not _is_test_file(fp))
+    _s547_test_count = sum(1 for fp in graph.files if _is_test_file(fp))
+    if _s547_src_count >= 5 and _s547_test_count == 0:
+        lines.append(
+            f"no tests: {_s547_src_count} source files, 0 test files detected"
+            f" — no safety net for refactoring; treat every change as high-risk"
+        )
+
     return lines
 
 

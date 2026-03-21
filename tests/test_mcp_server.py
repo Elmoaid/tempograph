@@ -26342,3 +26342,217 @@ class TestDeadDataclassS545:
         assert "dead dataclasses" not in out, (
             f"'dead dataclasses' must not appear when models.py is imported; got:\n{out}"
         )
+
+
+# ── S546: Optional return focused ─────────────────────────────────────────────
+
+class TestOptionalReturnFocusedS546:
+    """S546: Function with Optional/None return type emits optional return signal."""
+
+    def test_optional_return_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "parser.py").write_text(
+            "from typing import Optional\n"
+            "def find_token(text: str) -> Optional[str]:\n"
+            "    return text if text else None\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="find_token")
+        assert "optional return" in out, (
+            f"Expected 'optional return' for Optional[str] return; got:\n{out}"
+        )
+
+    def test_optional_return_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "parser.py").write_text(
+            "def find_token(text: str) -> str:\n"
+            "    return text\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="find_token")
+        assert "optional return" not in out, (
+            f"'optional return' must not appear for non-Optional return; got:\n{out}"
+        )
+
+
+# ── S547: No tests overview ────────────────────────────────────────────────────
+
+class TestNoTestsOverviewS547:
+    """S547: 5+ source files, 0 test files emits no tests signal."""
+
+    def test_no_tests_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        for i in range(6):
+            (tmp_path / f"module_{i}.py").write_text(f"def fn_{i}(): return {i}\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no tests" in out, (
+            f"Expected 'no tests' for 6 source files, 0 test files; got:\n{out}"
+        )
+
+    def test_no_tests_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        for i in range(5):
+            (tmp_path / f"module_{i}.py").write_text(f"def fn_{i}(): return {i}\n")
+        (tmp_path / "test_module.py").write_text("def test_fn(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no tests:" not in out, (
+            f"'no tests:' must not appear when a test file exists; got:\n{out}"
+        )
+
+
+# ── S548: Module init blast ────────────────────────────────────────────────────
+
+class TestModuleInitBlastS548:
+    """S548: Blast on __init__.py emits module init signal."""
+
+    def test_module_init_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        pkg = tmp_path / "mypackage"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text(
+            "from .core import run\ndef helper(): return 1\n"
+        )
+        (pkg / "core.py").write_text("def run(): return 0\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="mypackage/__init__.py")
+        assert "module init" in out, (
+            f"Expected 'module init' for __init__.py blast; got:\n{out}"
+        )
+
+    def test_module_init_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def helper(): return 1\n")
+        (tmp_path / "app.py").write_text(
+            "from utils import helper\ndef run(): return helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="utils.py")
+        assert "module init" not in out, (
+            f"'module init' must not appear for non-__init__.py file; got:\n{out}"
+        )
+
+
+# ── S549: Large diff ───────────────────────────────────────────────────────────
+
+class TestLargeDiffS549:
+    """S549: 8+ files changed emits large diff signal."""
+
+    def test_large_diff_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        for i in range(9):
+            (tmp_path / f"module_{i}.py").write_text(f"def fn_{i}(): return {i}\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, [f"module_{i}.py" for i in range(9)])
+        assert "large diff" in out, (
+            f"Expected 'large diff' for 9 files changed; got:\n{out}"
+        )
+
+    def test_large_diff_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        for i in range(5):
+            (tmp_path / f"module_{i}.py").write_text(f"def fn_{i}(): return {i}\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, [f"module_{i}.py" for i in range(5)])
+        assert "large diff" not in out, (
+            f"'large diff' must not appear for 5 files; got:\n{out}"
+        )
+
+
+# ── S550: Private hotspot ─────────────────────────────────────────────────────
+
+class TestPrivateHotspotS550:
+    """S550: Top hotspot is a private (_-prefixed) function emits private hotspot signal."""
+
+    def test_private_hotspot_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text(
+            "def _do_work(x): return x * 2\n"
+        )
+        callers = "".join(
+            f"from core import _do_work\ndef caller_{i}(x): return _do_work(x)\n"
+            for i in range(5)
+        )
+        (tmp_path / "users.py").write_text(callers)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "private hotspot" in out, (
+            f"Expected 'private hotspot' for heavily-called _do_work; got:\n{out}"
+        )
+
+    def test_private_hotspot_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text(
+            "def do_work(x): return x * 2\n"
+        )
+        callers = "".join(
+            f"from core import do_work\ndef caller_{i}(x): return do_work(x)\n"
+            for i in range(5)
+        )
+        (tmp_path / "users.py").write_text(callers)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "private hotspot" not in out, (
+            f"'private hotspot' must not appear for public function; got:\n{out}"
+        )
+
+
+# ── S551: Dead CLI handler dead ────────────────────────────────────────────────
+
+class TestDeadCliHandlerS551:
+    """S551: 2+ unused cmd_/do_/handle_ functions in non-imported file emits dead handlers signal."""
+
+    def test_dead_handlers_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "commands.py").write_text(
+            "def cmd_start(): pass\n"
+            "def cmd_stop(): pass\n"
+            "def cmd_status(): pass\n"
+        )
+        (tmp_path / "main.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead handlers" in out, (
+            f"Expected 'dead handlers' for unused cmd_ functions; got:\n{out}"
+        )
+
+    def test_dead_handlers_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "commands.py").write_text(
+            "def cmd_start(): pass\n"
+            "def cmd_stop(): pass\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from commands import cmd_start, cmd_stop\n"
+            "def run(): cmd_start(); cmd_stop()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead handlers" not in out, (
+            f"'dead handlers' must not appear when handlers are called; got:\n{out}"
+        )
