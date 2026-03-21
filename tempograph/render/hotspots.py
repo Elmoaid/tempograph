@@ -2581,5 +2581,18 @@ def _collect_hotspots_signals(
                     f" — deprecated symbol still heavily used; each caller is a migration debt item"
                 )
 
+    # S850: Async hotspot — top hotspot is an async function.
+    # Async hotspots introduce concurrency semantics; sync callers must use event loops
+    # or adapters, and every caller participates in the async execution context.
+    if scores:
+        _top850 = scores[0][1]
+        if _top850 is not None and not _is_test_file(_top850.file_path):
+            _sig850 = (_top850.signature or "").lstrip()
+            if _sig850.startswith("async ") and _top850.kind.value in ("function", "method"):
+                out.append(
+                    f"\nasync hotspot: {_top850.name} is an async function"
+                    f" — top hotspot with async semantics; sync callers need event loop adapters"
+                )
+
     return out
 

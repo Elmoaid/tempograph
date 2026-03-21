@@ -40202,3 +40202,239 @@ class TestDeadEventHandlersS845:
         assert "dead event handlers" not in out, (
             f"'dead event handlers' must not appear when handler is called; got:\n{out}"
         )
+
+
+# ── S846–S851 ──────────────────────────────────────────────────────────────────
+
+# ── S846: Many children focus ─────────────────────────────────────────────────
+
+class TestManyChildrenFocusS846:
+    """S846: Focused symbol with 10+ children emits many-children signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        methods = "\n".join(f"    def method_{i}(self): pass" for i in range(12))
+        (tmp_path / "god.py").write_text(
+            f"class GodClass:\n{methods}\n"
+        )
+        (tmp_path / "user.py").write_text(
+            "from god import GodClass\ndef run(): GodClass()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "GodClass")
+        assert "many children" in out, (
+            f"'many children' expected for class with 12 methods; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "slim.py").write_text(
+            "class SlimClass:\n    def method_a(self): pass\n    def method_b(self): pass\n"
+        )
+        (tmp_path / "user.py").write_text(
+            "from slim import SlimClass\ndef run(): SlimClass()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "SlimClass")
+        assert "many children" not in out, (
+            f"'many children' must not appear for class with 2 methods; got:\n{out}"
+        )
+
+
+# ── S847: Many small modules ──────────────────────────────────────────────────
+
+class TestManySmallModulesS847:
+    """S847: 10+ files all under 20 lines emits many-small-modules signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        for i in range(12):
+            (tmp_path / f"mod_{i}.py").write_text(f"def fn_{i}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "many small modules" in out, (
+            f"'many small modules' expected when 12 files all under 20 lines; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        for i in range(10):
+            (tmp_path / f"mod_{i}.py").write_text(f"def fn_{i}(): pass\n")
+        # One large file breaks the "all small" condition
+        (tmp_path / "large.py").write_text(
+            "\n".join(f"def helper_{i}(): pass" for i in range(25))
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "many small modules" not in out, (
+            f"'many small modules' must not appear when one file exceeds 20 lines; got:\n{out}"
+        )
+
+
+# ── S848: No symbol callers blast ─────────────────────────────────────────────
+
+class TestNoSymbolCallersBlastS848:
+    """S848: 3+ importers but no tracked callers emits no-symbol-callers signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "enums.py").write_text(
+            "STATUS_OK = 200\nSTATUS_ERR = 500\n"
+        )
+        for i in range(4):
+            (tmp_path / f"handler_{i}.py").write_text(
+                "from enums import STATUS_OK\n"
+                f"def respond_{i}(): return STATUS_OK\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "enums.py")
+        assert "no symbol callers" in out, (
+            f"'no symbol callers' expected for constants file with importers but no fn callers; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "core.py").write_text("def process(x): return x\n")
+        for i in range(4):
+            (tmp_path / f"caller_{i}.py").write_text(
+                "from core import process\n"
+                f"def run_{i}(): process({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "core.py")
+        assert "no symbol callers" not in out, (
+            f"'no symbol callers' must not appear when functions are directly called; got:\n{out}"
+        )
+
+
+# ── S849: Utility file in diff ────────────────────────────────────────────────
+
+class TestUtilityFileInDiffS849:
+    """S849: Changed utils/helpers/common file emits utility-file-in-diff signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "utils.py").write_text("def helper(x): return x\n")
+        (tmp_path / "worker.py").write_text(
+            "from utils import helper\ndef work(): helper(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["utils.py"])
+        assert "utility file in diff" in out, (
+            f"'utility file in diff' expected for utils.py change; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "payment_service.py").write_text(
+            "def process_payment(amount): pass\n"
+        )
+        (tmp_path / "worker.py").write_text(
+            "from payment_service import process_payment\n"
+            "def run(): process_payment(100)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["payment_service.py"])
+        assert "utility file in diff" not in out, (
+            f"'utility file in diff' must not appear for domain-specific file; got:\n{out}"
+        )
+
+
+# ── S850: Async hotspot ───────────────────────────────────────────────────────
+
+class TestAsyncHotspotS850:
+    """S850: Top hotspot is async function emits async-hotspot signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "fetcher.py").write_text(
+            "async def fetch_data(url): pass\n"
+        )
+        for i in range(6):
+            (tmp_path / f"consumer_{i}.py").write_text(
+                "from fetcher import fetch_data\n"
+                f"def run_{i}(): fetch_data('http://x')\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "async hotspot" in out, (
+            f"'async hotspot' expected when top hotspot is async; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "fetcher.py").write_text(
+            "def fetch_data(url): pass\n"
+        )
+        for i in range(6):
+            (tmp_path / f"consumer_{i}.py").write_text(
+                "from fetcher import fetch_data\n"
+                f"def run_{i}(): fetch_data('http://x')\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "async hotspot" not in out, (
+            f"'async hotspot' must not appear for sync top hotspot; got:\n{out}"
+        )
+
+
+# ── S851: Dead validation functions ──────────────────────────────────────────
+
+class TestDeadValidatorsS851:
+    """S851: Unused validate_/check_/verify_ functions emits dead-validators signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "guards.py").write_text(
+            "def validate_email(email): pass\n"
+            "def check_permissions(user): pass\n"
+            "def active_fn(): pass\n"
+        )
+        (tmp_path / "runner.py").write_text(
+            "from guards import active_fn\n"
+            "def run(): active_fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead validators" in out, (
+            f"'dead validators' expected for unused validate_/check_ functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "guards.py").write_text(
+            "def validate_email(email): return bool(email)\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from guards import validate_email\n"
+            "def submit(email): validate_email(email)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead validators" not in out, (
+            f"'dead validators' must not appear when validate_ function is called; got:\n{out}"
+        )

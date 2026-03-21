@@ -3169,6 +3169,18 @@ def _signals_async_oop(
             f" — all synchronous; blocking I/O may become a bottleneck in async frameworks"
         )
 
+    # S847: Many small modules — repo has 10+ files all under 20 lines.
+    # A repo with many tiny modules has over-fragmented its logic; each function
+    # is isolated in its own file, making cross-cutting concerns hard to see.
+    _src_files847 = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_src_files847) >= 10:
+        _small_files847 = [fp for fp in _src_files847 if graph.files[fp].line_count < 20]
+        if len(_small_files847) == len(_src_files847):
+            lines.append(
+                f"many small modules: all {len(_src_files847)} source files are under 20 lines"
+                f" — over-fragmented; consider consolidating related small modules"
+            )
+
     return lines
 
 

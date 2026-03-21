@@ -3844,6 +3844,22 @@ def _signals_focused_fn_advanced(
                 f" — callers must iterate or wrap in list(); cannot be called like a plain function"
             )
 
+    # S846: Many children focus — focused symbol has 10+ child symbols.
+    # A class or module with many children is likely a God object or catch-all namespace;
+    # callers depend on all its children implicitly, making it a high-impact change target.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim846 = _seed_syms[0]
+        if not _is_test_file(_prim846.file_path):
+            _children846 = [
+                s for s in graph.symbols.values()
+                if s.parent_id == _prim846.id
+            ]
+            if len(_children846) >= 10:
+                lines.append(
+                    f"\nmany children: {_prim846.name} has {len(_children846)} child symbols"
+                    f" — large namespace; callers depend on many internal symbols, increasing coupling"
+                )
+
     return lines
 
 
