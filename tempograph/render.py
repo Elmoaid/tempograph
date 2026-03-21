@@ -2580,6 +2580,22 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
         except Exception:
             pass
 
+    # S72: Symbols touched summary — total symbols + exported count across all changed files.
+    # Gives agents immediate scope: "23 symbols touched (8 exported)" vs. just file count.
+    _all_changed_syms = [
+        graph.symbols[sid]
+        for fp in normalized
+        for sid in graph.files[fp].symbols
+        if sid in graph.symbols and not _is_test_file(fp)
+    ]
+    if _all_changed_syms:
+        _exp_count = sum(1 for s in _all_changed_syms if s.exported)
+        _sym_summary = f"{len(_all_changed_syms)} symbols touched"
+        if _exp_count:
+            _sym_summary += f" ({_exp_count} exported)"
+        lines.append(_sym_summary)
+        lines.append("")
+
     # Risk summary: top changed files by blast radius, so agents can prioritize review.
     # Only shown when 2+ changed files with blast >= 2; single-file diffs skip this.
     _risk_blast = sorted(

@@ -7625,3 +7625,36 @@ class TestFocusParamCountAnnotation:
         assert "[params:" not in out, (
             f"'[params:' must not appear for function with only 3 params; got:\n{out}"
         )
+
+
+class TestDiffSymbolsTouched:
+    """S72: Diff mode shows 'N symbols touched (M exported)' summary after header."""
+
+    def test_symbols_touched_shown_with_exported_count(self, tmp_path):
+        """Changed file with exported + internal symbols → symbols touched summary."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_diff_context
+
+        (tmp_path / "api.py").write_text(
+            "def public_fn():\n    pass\ndef _internal():\n    pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["api.py"])
+        assert "symbols touched" in out, (
+            f"Expected 'symbols touched' in diff context; got:\n{out}"
+        )
+
+    def test_symbols_touched_absent_for_test_files_only(self, tmp_path):
+        """Only test file in diff → no symbols touched summary (test files excluded)."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_diff_context
+
+        (tmp_path / "test_api.py").write_text(
+            "def test_something():\n    assert True\n"
+        )
+        (tmp_path / "api.py").write_text("def real(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["test_api.py"])
+        assert "symbols touched" not in out, (
+            f"'symbols touched' must not appear for test-only diffs; got:\n{out}"
+        )
