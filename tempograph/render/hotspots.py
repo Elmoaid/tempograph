@@ -2935,5 +2935,16 @@ def _collect_hotspots_signals(
                     f"; blast radius limited to this file"
                 )
 
+    # S1000: Massive hotspot — top hotspot spans 150 or more lines.
+    # Extreme function length multiplies the number of possible paths through the code;
+    # even a small change may interact with many branches and edge cases simultaneously.
+    if scores:
+        _top1000 = scores[0][1]
+        if _top1000 is not None and not _is_test_file(_top1000.file_path) and _top1000.line_count >= 150:
+            out.append(
+                f"\nmassive hotspot: {_top1000.name} spans {_top1000.line_count} lines"
+                f" — extreme complexity; refactoring into smaller units would significantly reduce maintenance risk"
+            )
+
     return out
 

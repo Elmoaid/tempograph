@@ -812,6 +812,15 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f"; adding or removing names here silently changes the API of the whole package"
             )
 
+    # S999: Large diff — five or more files changed in one commit.
+    # Wide diffs are harder to review atomically; unrelated changes increase the chance
+    # of reviewer fatigue, missed issues, and hard-to-bisect regressions.
+    if changed_files and len(changed_files) >= 5:
+        lines.append(
+            f"large diff: {len(changed_files)} files changed"
+            f" — wide diff increases review difficulty; consider splitting into focused commits per concern"
+        )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 
