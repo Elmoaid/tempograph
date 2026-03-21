@@ -403,6 +403,9 @@ def _walk_files(
             yield Path(dirpath, filename), rel
 
 
+_RESOLVE_KINDS = frozenset([EdgeKind.CALLS, EdgeKind.RENDERS, EdgeKind.INHERITS, EdgeKind.IMPLEMENTS])
+
+
 def _resolve_edges(graph: Tempo) -> None:
     """Resolve symbolic call targets to actual symbol IDs where possible.
     Uses scope-aware resolution: same file > imported file > exported symbol > any."""
@@ -412,6 +415,16 @@ def _resolve_edges(graph: Tempo) -> None:
         name_to_ids.setdefault(sym.name, []).append(sym.id)
         if sym.qualified_name != sym.name:
             name_to_ids.setdefault(sym.qualified_name, []).append(sym.id)
+
+    # Fast path: skip all remaining work if no edge has a resolvable target.
+    # Common when all symbolic call targets are stdlib/external (no candidates in name_to_ids).
+    if not any(
+        e.kind in _RESOLVE_KINDS
+        and "::" not in e.target_id
+        and (name_to_ids.get(e.target_id) or ("." in e.target_id and name_to_ids.get(e.target_id.rsplit(".", 1)[-1])))
+        for e in graph.edges
+    ):
+        return
 
     # Build file → imported files lookup for scope-aware resolution
     file_imports: dict[str, set[str]] = {}
@@ -481,7 +494,7 @@ def _resolve_edges(graph: Tempo) -> None:
 
     resolved: list[Edge] = []
     for edge in graph.edges:
-        if edge.kind in (EdgeKind.CALLS, EdgeKind.RENDERS, EdgeKind.INHERITS, EdgeKind.IMPLEMENTS) and "::" not in edge.target_id:
+        if edge.kind in _RESOLVE_KINDS and "::" not in edge.target_id:
             candidates = name_to_ids.get(edge.target_id, [])
             # If qualified name (Type.method) didn't match, try bare name
             if not candidates and "." in edge.target_id:
