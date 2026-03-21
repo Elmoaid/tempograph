@@ -3962,6 +3962,47 @@ def _signals_fn_focus_props_b(
                     f" — pure public API; changes always affect other modules, never just this file"
                 )
 
+    # S996: Recursive symbol — focused top-level function calls itself.
+    # Recursive functions require careful base-case and depth management;
+    # changes to the termination condition may cause infinite recursion or stack overflow.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim996 = _seed_syms[0]
+        if (
+            _prim996.kind.value == "function"
+            and _prim996.parent_id is None
+            and not _is_test_file(_prim996.file_path)
+        ):
+            _callees996 = graph.callees_of(_prim996.id)
+            if any(c.id == _prim996.id for c in _callees996):
+                lines.append(
+                    f"\nrecursive: {_prim996.name} calls itself"
+                    f" — top-level recursive function; verify base case and max depth before modifying"
+                )
+
+    # S1002: Interface method — focused method is defined in 3+ classes.
+    # When 3 or more classes implement the same method name, it forms an implicit interface;
+    # changes must maintain the contract across all implementations simultaneously.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim1002 = _seed_syms[0]
+        if (
+            _prim1002.kind.value == "method"
+            and _prim1002.parent_id is not None
+            and not _is_test_file(_prim1002.file_path)
+        ):
+            _same_name1002 = [
+                s for s in graph.symbols.values()
+                if s.kind.value == "method"
+                and s.name == _prim1002.name
+                and s.parent_id is not None
+                and not _is_test_file(s.file_path)
+            ]
+            _classes1002 = len({s.parent_id for s in _same_name1002})
+            if _classes1002 >= 3:
+                lines.append(
+                    f"\ninterface method: {_prim1002.name} is defined in {_classes1002} classes"
+                    f" — implicit interface pattern; changes must maintain contract across all implementations"
+                )
+
     return lines
 
 
