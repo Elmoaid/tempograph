@@ -45895,3 +45895,364 @@ class TestDeadSqlFunctionsS977:
             f"'dead sql' must not appear when query_ function is called; got:\n{out}"
         )
 
+
+
+class TestSingleCallerS978:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "def helper(x): return x * 2\n"
+            "def run(): return helper(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper")
+        assert "single caller" in out, (
+            f"'single caller' expected when function has exactly one caller; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "def helper(x): return x * 2\n"
+            "def run(): return helper(1)\n"
+            "def process(): return helper(2)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper")
+        assert "single caller" not in out, (
+            f"'single caller' must not appear when function has multiple callers; got:\n{out}"
+        )
+
+
+class TestNoClassesS979:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "utils.py").write_text("def helper(): pass\ndef tool(): pass\n")
+        (tmp_path / "app.py").write_text("def run(): pass\ndef start(): pass\n")
+        (tmp_path / "core.py").write_text("def process(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no classes" in out, (
+            f"'no classes' expected for codebase with only functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "models.py").write_text(
+            "class User:\n"
+            "    def save(self): pass\n"
+            "    def delete(self): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no classes" not in out, (
+            f"'no classes' must not appear when class definitions exist; got:\n{out}"
+        )
+
+
+class TestCacheBlastS980:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "cache.py").write_text("def get(key): return None\ndef set(key, val): pass\n")
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "cache.py")
+        assert "cache blast" in out, (
+            f"'cache blast' expected for file named cache.py; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "views.py").write_text("def index(): pass\n")
+        (tmp_path / "app.py").write_text("from views import index\ndef run(): index()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "views.py")
+        assert "cache blast" not in out, (
+            f"'cache blast' must not appear for non-cache file; got:\n{out}"
+        )
+
+
+class TestSecurityFileInDiffS981:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "auth.py").write_text("def login(user, pw): return True\n")
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["auth.py"])
+        assert "security file in diff" in out, (
+            f"'security file in diff' expected when auth.py is changed; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "models.py").write_text("def create(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["models.py"])
+        assert "security file in diff" not in out, (
+            f"'security file in diff' must not appear for non-security file; got:\n{out}"
+        )
+
+
+class TestHeavyweightHotspotS982:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        fn_lines = "def engine(x):\n"
+        for i in range(55):
+            fn_lines += f"    if x > {i}: x += {i}\n"
+        fn_lines += "    return x\n"
+        (tmp_path / "core.py").write_text(fn_lines)
+        (tmp_path / "a.py").write_text("from core import engine\ndef run_a(): return engine(1)\n")
+        (tmp_path / "b.py").write_text("from core import engine\ndef run_b(): return engine(2)\n")
+        (tmp_path / "c.py").write_text("from core import engine\ndef run_c(): return engine(3)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "heavyweight hotspot" in out, (
+            f"'heavyweight hotspot' expected for large function with 3+ callers; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        fn_lines = "def engine(x):\n"
+        for i in range(55):
+            fn_lines += f"    if x > {i}: x += {i}\n"
+        fn_lines += "    return x\n"
+        (tmp_path / "core.py").write_text(fn_lines + "def helper(): return engine(0)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "heavyweight hotspot" not in out, (
+            f"'heavyweight hotspot' must not appear when function has only 1 non-test caller; got:\n{out}"
+        )
+
+
+class TestDeadEventsS983:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "events.py").write_text(
+            "def send_notification(user, msg): pass\n"
+            "def emit_change(entity): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead events" in out, (
+            f"'dead events' expected for unused send_/emit_ functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "events.py").write_text(
+            "def send_notification(user, msg): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from events import send_notification\n"
+            "def run(): send_notification('alice', 'hello')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead events" not in out, (
+            f"'dead events' must not appear when event dispatcher is called; got:\n{out}"
+        )
+
+class TestSingleCallerS978:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "def helper(): pass\n"
+            "def caller(): helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper")
+        assert "single caller" in out, (
+            f"'single caller' expected for function with exactly 1 caller; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "def helper(): pass\n"
+            "def caller_a(): helper()\n"
+            "def caller_b(): helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper")
+        assert "single caller" not in out, (
+            f"'single caller' must not appear for function with 2+ callers; got:\n{out}"
+        )
+
+
+class TestNoClassesS979:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        for i in range(5):
+            (tmp_path / f"mod_{i}.py").write_text(f"def fn_{i}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no classes:" in out, (
+            f"'no classes:' expected for codebase with 0 class definitions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "service.py").write_text(
+            "def process(): pass\n"
+            "class Engine: pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no classes:" not in out, (
+            f"'no classes:' must not appear when a class exists; got:\n{out}"
+        )
+
+
+class TestCacheBlastS980:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "cache.py").write_text("def get(key): pass\n")
+        (tmp_path / "service.py").write_text("from cache import get\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "cache.py")
+        assert "cache blast" in out, (
+            f"'cache blast' expected for cache.py; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "service.py").write_text("def process(): pass\n")
+        (tmp_path / "main.py").write_text("from service import process\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "service.py")
+        assert "cache blast" not in out, (
+            f"'cache blast' must not appear for non-cache file; got:\n{out}"
+        )
+
+
+class TestSecurityFileInDiffS981:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "auth.py").write_text("def login(u, p): pass\n")
+        (tmp_path / "app.py").write_text("from auth import login\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["auth.py", "app.py"])
+        assert "security file in diff" in out, (
+            f"'security file in diff' expected when auth.py in diff; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "service.py").write_text("def process(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["service.py", "utils.py"])
+        assert "security file in diff" not in out, (
+            f"'security file in diff' must not appear for non-security diff; got:\n{out}"
+        )
+
+
+class TestHeavyweightHotspotS982:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        # Large function (50+ lines) called from 3+ other functions
+        body = "    x = 0\n" * 55 + "    return x\n"
+        (tmp_path / "core.py").write_text(
+            f"def heavy():\n{body}"
+            "def a(): heavy()\n"
+            "def b(): heavy()\n"
+            "def c(): heavy()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "heavyweight hotspot" in out, (
+            f"'heavyweight hotspot' expected for large+widely-called function; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        # Small function called from a few places
+        (tmp_path / "utils.py").write_text(
+            "def tiny(): return 1\n"
+            "def a(): tiny()\n"
+            "def b(): tiny()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "heavyweight hotspot" not in out, (
+            f"'heavyweight hotspot' must not appear for small function; got:\n{out}"
+        )
+
+
+class TestDeadEventsS983:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "events.py").write_text(
+            "def emit_user_created(): pass\n"
+            "def notify_order_placed(): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead events" in out, (
+            f"'dead events' expected for unused emit_/notify_ functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "events.py").write_text("def emit_user_created(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from events import emit_user_created\n"
+            "def run(): emit_user_created()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead events" not in out, (
+            f"'dead events' must not appear when emit_ function is called; got:\n{out}"
+        )
+

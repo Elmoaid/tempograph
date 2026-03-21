@@ -2422,6 +2422,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — query shape or return type changes silently break all business logic callers"
         )
 
+    # S980: Cache blast — blast target is a caching layer file.
+    # Cache abstractions are shared across many call paths; changes to eviction policy,
+    # key format, or TTL silently affect correctness and performance for all cached paths.
+    _cache_kws980 = ("cache", "cached", "caching", "memoize", "memoization", "redis", "memcache", "memcached")
+    _fname980 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if any(_fname980 == kw or _fname980.startswith(kw + "_") or _fname980.endswith("_" + kw) for kw in _cache_kws980):
+        lines.append(
+            f"cache blast: {_fp589.rsplit('/', 1)[-1]} is a caching layer"
+            f" — eviction, key format, or TTL changes silently affect correctness for all cached call paths"
+        )
+
     return "\n".join(lines)
 
 

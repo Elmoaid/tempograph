@@ -3524,6 +3524,24 @@ def _signals_async_oop(
             f" — may be a namespace class; verify it adds value over module-level functions"
         )
 
+    # S979: No classes — codebase has only top-level functions, no classes defined.
+    # A purely functional codebase means OOP patterns (polymorphism, encapsulation)
+    # are handled via closures or modules; agents should avoid class-based refactors.
+    _src_classes979 = [
+        s for s in graph.symbols.values()
+        if s.kind.value == "class" and not _is_test_file(s.file_path)
+    ]
+    _src_fns979 = [
+        s for s in graph.symbols.values()
+        if s.kind.value == "function" and s.parent_id is None and not _is_test_file(s.file_path)
+    ]
+    if not _src_classes979 and len(_src_fns979) >= 5:
+        _nfiles979 = len({s.file_path for s in _src_fns979})
+        lines.append(
+            f"no classes: {len(_src_fns979)} source functions across {_nfiles979} file(s) with 0 class definitions"
+            f" — purely functional codebase; OOP abstractions replaced by modules and closures"
+        )
+
     return lines
 
 
