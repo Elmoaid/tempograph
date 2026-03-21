@@ -371,6 +371,25 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             if _s122_pct < 80:
                 lines.append(f"downstream coverage: {_s122_tested}/{_s122_total} importers have tests ({_s122_pct}%)")
 
+    # S145: Subclass count — when the blast target defines a class with INHERITS subclasses.
+    # Changing a parent class ripples to all subclasses: method overrides, super() calls,
+    # type annotations. Flag when 2+ subclasses extend a class defined in this file.
+    _s145_classes = [s for s in symbols if s.kind.value in ("class", "interface")]
+    if _s145_classes:
+        _total_subclasses145: int = 0
+        _s145_class_names: list[str] = []
+        for _cls145 in _s145_classes:
+            _sub_count = sum(
+                1 for e in graph.edges
+                if e.kind == EdgeKind.INHERITS and e.target_id == _cls145.id
+            )
+            if _sub_count >= 1:
+                _total_subclasses145 += _sub_count
+                _s145_class_names.append(f"{_cls145.name} ({_sub_count})")
+        if _total_subclasses145 >= 2:
+            _s145_str = ", ".join(_s145_class_names[:3])
+            lines.append(f"subclass count: {_total_subclasses145} subclasses extend {_s145_str}")
+
     # S138: Aggregator file — blast target imports from many other modules.
     # Files that pull from 5+ distinct source modules are barrel/aggregator files:
     # changes to any upstream propagate here, AND any change here propagates to all importers.
