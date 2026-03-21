@@ -2999,6 +2999,19 @@ def _signals_focused_fn_advanced(
                 f" — every call site must handle the None case; missing checks cause AttributeError at runtime"
             )
 
+    # S552: Async function — focused symbol is defined with async def.
+    # async functions suspend on every await; callers must themselves be async or use
+    # asyncio.run() — forgetting await returns a coroutine object instead of the result.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim552 = _seed_syms[0]
+        _sig552 = _prim552.signature or ""
+        _pre_paren552 = _sig552.split("(", 1)[0] if "(" in _sig552 else _sig552
+        if "async" in _pre_paren552.split():
+            lines.append(
+                f"\nasync function: {_prim552.name} is async — every caller must await it"
+                f" or run via asyncio.run(); forgetting await silently returns a coroutine object"
+            )
+
     return lines
 
 

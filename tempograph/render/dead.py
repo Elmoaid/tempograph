@@ -1926,6 +1926,27 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — abandoned command surface; audit intent and remove or wire up before next release"
         )
 
+    # S557: Dead factory — unused factory/builder functions (create_*/make_*/build_*) in non-imported files.
+    # Factory functions are creation contracts; if they have no callers and their file has no importers,
+    # the construction pattern was abandoned mid-implementation.
+    _factory_prefixes557 = ("create_", "make_", "build_", "new_", "from_")
+    _dead_factories557 = [
+        sym for sym in graph.symbols.values()
+        if not _is_test_file(sym.file_path)
+        and sym.kind.value == "function"
+        and any(sym.name.startswith(p) for p in _factory_prefixes557)
+        and not graph.callers_of(sym.id)
+        and not graph.importers_of(sym.file_path)
+    ]
+    if len(_dead_factories557) >= 2:
+        _fac_names557 = ", ".join(s.name for s in _dead_factories557[:3])
+        if len(_dead_factories557) > 3:
+            _fac_names557 += f" +{len(_dead_factories557) - 3} more"
+        lines.append(
+            f"dead factories: {len(_dead_factories557)} unused factory/builder function(s) ({_fac_names557})"
+            f" — abandoned construction patterns; verify intent and remove or wire up"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

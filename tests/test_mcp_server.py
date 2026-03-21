@@ -26556,3 +26556,213 @@ class TestDeadCliHandlerS551:
         assert "dead handlers" not in out, (
             f"'dead handlers' must not appear when handlers are called; got:\n{out}"
         )
+
+
+# ── S552: Async function focused ──────────────────────────────────────────────
+
+class TestAsyncFunctionFocusedS552:
+    """S552: async def function emits async function signal."""
+
+    def test_async_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "fetcher.py").write_text(
+            "async def fetch_data(url: str) -> str:\n"
+            "    return url\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="fetch_data")
+        assert "async function" in out, (
+            f"Expected 'async function' for async def; got:\n{out}"
+        )
+
+    def test_async_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "fetcher.py").write_text(
+            "def fetch_data(url: str) -> str:\n"
+            "    return url\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="fetch_data")
+        assert "async function" not in out, (
+            f"'async function' must not appear for sync function; got:\n{out}"
+        )
+
+
+# ── S553: Mixed languages overview ────────────────────────────────────────────
+
+class TestMixedLanguagesOverviewS553:
+    """S553: 3+ source languages emits mixed languages signal."""
+
+    def test_mixed_languages_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        (tmp_path / "main.py").write_text("def run(): return 1\n")
+        (tmp_path / "helper.js").write_text("function helper() { return 1; }\n")
+        (tmp_path / "util.go").write_text("package main\nfunc Util() int { return 1 }\n")
+        (tmp_path / "lib.rs").write_text("pub fn lib() -> i32 { 1 }\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "mixed languages" in out, (
+            f"Expected 'mixed languages' for Python+JS+Go+Rust; got:\n{out}"
+        )
+
+    def test_mixed_languages_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        for i in range(5):
+            (tmp_path / f"module_{i}.py").write_text(f"def fn_{i}(): return {i}\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "mixed languages" not in out, (
+            f"'mixed languages' must not appear for single-language repo; got:\n{out}"
+        )
+
+
+# ── S554: Entry point blast ────────────────────────────────────────────────────
+
+class TestEntryPointBlastS554:
+    """S554: Blast on main.py/app.py/server.py emits entry point signal."""
+
+    def test_entry_point_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "main.py").write_text(
+            "from utils import setup\ndef main(): setup()\n"
+        )
+        (tmp_path / "utils.py").write_text("def setup(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="main.py")
+        assert "entry point" in out, (
+            f"Expected 'entry point' for main.py blast; got:\n{out}"
+        )
+
+    def test_entry_point_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def setup(): pass\n")
+        (tmp_path / "core.py").write_text(
+            "from utils import setup\ndef init(): setup()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="utils.py")
+        assert "entry point" not in out, (
+            f"'entry point' must not appear for non-entry-point file; got:\n{out}"
+        )
+
+
+# ── S555: Lock file in diff ────────────────────────────────────────────────────
+
+class TestLockFileDiffS555:
+    """S555: Lock file in diff emits lock file changed signal."""
+
+    def test_lock_file_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): return 1\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "poetry.lock"])
+        assert "lock file changed" in out, (
+            f"Expected 'lock file changed' for poetry.lock in diff; got:\n{out}"
+        )
+
+    def test_lock_file_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): return 1\n")
+        (tmp_path / "utils.py").write_text("def helper(): return 0\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "utils.py"])
+        assert "lock file changed" not in out, (
+            f"'lock file changed' must not appear when no lock files in diff; got:\n{out}"
+        )
+
+
+# ── S556: Hotspot untested ────────────────────────────────────────────────────
+
+class TestHotspotUntestedS556:
+    """S556: Top hotspot file has no test file emits hotspot untested signal."""
+
+    def test_hotspot_untested_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "engine.py").write_text("def process(x): return x\n")
+        callers = "".join(
+            f"from engine import process\ndef run_{i}(x): return process(x)\n"
+            for i in range(5)
+        )
+        (tmp_path / "workers.py").write_text(callers)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "hotspot untested" in out, (
+            f"Expected 'hotspot untested' when top hotspot file has no test; got:\n{out}"
+        )
+
+    def test_hotspot_untested_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "engine.py").write_text("def process(x): return x\n")
+        callers = "".join(
+            f"from engine import process\ndef run_{i}(x): return process(x)\n"
+            for i in range(5)
+        )
+        (tmp_path / "workers.py").write_text(callers)
+        (tmp_path / "test_engine.py").write_text(
+            "from engine import process\ndef test_process(): assert process(1) == 1\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "hotspot untested" not in out, (
+            f"'hotspot untested' must not appear when test_engine.py exists; got:\n{out}"
+        )
+
+
+# ── S557: Dead factory dead ────────────────────────────────────────────────────
+
+class TestDeadFactoryS557:
+    """S557: 2+ unused factory functions emits dead factories signal."""
+
+    def test_dead_factories_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "builders.py").write_text(
+            "def create_session(): return {}\n"
+            "def make_client(): return {}\n"
+            "def build_request(): return {}\n"
+        )
+        (tmp_path / "main.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead factories" in out, (
+            f"Expected 'dead factories' for unused create_/make_/build_ functions; got:\n{out}"
+        )
+
+    def test_dead_factories_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "builders.py").write_text(
+            "def create_session(): return {}\n"
+            "def make_client(): return {}\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from builders import create_session, make_client\n"
+            "def run(): return create_session(), make_client()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead factories" not in out, (
+            f"'dead factories' must not appear when factories are imported; got:\n{out}"
+        )

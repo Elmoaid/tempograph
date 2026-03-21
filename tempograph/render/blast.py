@@ -1548,6 +1548,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f"; re-exports in __init__ silently affect downstream importers"
         )
 
+    # S554: Entry point blast — blast target is a recognized application entry point.
+    # Entry point files (main.py, app.py, server.py, cli.py) are called first at startup;
+    # bugs introduced here abort the entire process before any other code runs.
+    _basename554 = file_path.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    _entry_names554 = frozenset(("main.py", "app.py", "server.py", "cli.py", "run.py", "wsgi.py", "asgi.py"))
+    if _basename554 in _entry_names554:
+        lines.append(
+            f"entry point: {file_path} is an application entry point"
+            f" — bugs here abort startup; validate initialization order carefully"
+        )
+
     return "\n".join(lines)
 
 
