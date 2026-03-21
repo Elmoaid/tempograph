@@ -26,6 +26,16 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                 "   Re-run without --exclude to index it, or run "
                 "`tempograph . --mode overview` to see what is currently indexed."
             )
+        # S419: Type stub blast — blast target is a .pyi stub file (not indexed by graph).
+        # Type stub files define the public API contract; changing a stub silently breaks
+        # type checks in all importers even when the runtime code hasn't changed.
+        if file_path.lower().endswith(".pyi"):
+            return (
+                f"type stub blast: {file_path.rsplit('/', 1)[-1]} is a type stub"
+                f" — stub changes break type checks without runtime errors;"
+                f" update callers together\n"
+                f"(stub files are not graph-indexed; run mypy/pyright to check downstream impact)"
+            )
         return f"File '{file_path}' not found."
 
     lines = [f"Blast radius for {file_path}:", ""]
@@ -436,6 +446,60 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                 f" — package entry point, changes affect all importers"
             )
 
+    # S201: Isolated file — blast target has 0 external importers and 0 external callers.
+    # A file with no incoming dependencies is safe to modify or delete without coordination.
+    # Only shown when file has neither external importers nor symbols with external callers.
+    _s201_importers = [
+        i for i in graph.importers_of(file_path)
+        if i in graph.files and i != file_path
+    ]
+    _s201_has_ext_callers = any(
+        any(c.file_path != file_path for c in graph.callers_of(s.id))
+        for s in symbols
+    )
+    if not _s201_importers and not _s201_has_ext_callers:
+        lines.append(
+            f"isolated file: no external importers or callers"
+            f" — safe to modify or delete without coordination"
+        )
+
+    # S195: Blast fan-out — blast target's symbols call into 5+ distinct external files.
+    # High outgoing call fan-out = the file reaches widely; changes ripple in multiple directions.
+    # Only shown when symbols in blast target call into 5+ distinct non-target files.
+    _s195_callee_files: set[str] = set()
+    for _sym195 in symbols:
+        for _callee195 in graph.callees_of(_sym195.id):
+            if _callee195.file_path != file_path and not _is_test_file(_callee195.file_path):
+                _s195_callee_files.add(_callee195.file_path)
+    if len(_s195_callee_files) >= 5:
+        _fan_names = [fp.rsplit("/", 1)[-1] for fp in sorted(_s195_callee_files)[:3]]
+        _fan_str = ", ".join(_fan_names)
+        if len(_s195_callee_files) > 3:
+            _fan_str += f" +{len(_s195_callee_files) - 3} more"
+        lines.append(
+            f"blast fan-out: calls into {len(_s195_callee_files)} external files"
+            f" ({_fan_str}) — wide outgoing dependency, changes may cascade"
+        )
+
+    # S189: Sibling files — other source files sharing the same directory as the blast target.
+    # Co-located files are often tightly coupled and may need coordinated updates.
+    # Only shown when 2+ sibling source files exist in the same directory.
+    _s189_target_dir = file_path.rsplit("/", 1)[0] if "/" in file_path else "."
+    _s189_siblings = [
+        fp for fp in graph.files
+        if fp != file_path and not _is_test_file(fp)
+        and (fp.rsplit("/", 1)[0] if "/" in fp else ".") == _s189_target_dir
+    ]
+    if len(_s189_siblings) >= 2:
+        _sib_names = [fp.rsplit("/", 1)[-1] for fp in _s189_siblings[:3]]
+        _sib_str = ", ".join(_sib_names)
+        if len(_s189_siblings) > 3:
+            _sib_str += f" +{len(_s189_siblings) - 3} more"
+        lines.append(
+            f"sibling files: {len(_s189_siblings)} co-located files ({_sib_str})"
+            f" — may require coordinated updates"
+        )
+
     # S183: Large export count — blast target exports >= 10 symbols.
     # High export count = large public API surface; any change is a potential breaking change.
     # Only shown when the blast file exports >= 10 fn/method/class/interface symbols.
@@ -507,6 +571,701 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
         lines.append(
             f"call depth: {_s165_max_depth} hops from {_s165_deepest_name}"
             f" — deep call chain increases change blast"
+        )
+
+    # S207: Single importer — exactly 1 file imports the blast target.
+    # Narrow dependency means blast is contained; useful to know before refactoring.
+    # Positive signal: suppressed when importers != 1 (too many = already shown in blast header).
+    _s207_importers = [
+        i for i in graph.importers_of(file_path)
+        if i in graph.files and i != file_path
+    ]
+    if len(_s207_importers) == 1:
+        _s207_name = _s207_importers[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"single importer: only {_s207_name} imports this file"
+            f" — narrow dependency, check that consumer before modifying"
+        )
+
+    # S217: Entry point blast — the blast target is an application entry point.
+    # Entry points (main.py, app.py, index.js, cli.py) are widely invoked; changing them
+    # affects startup, CLI behavior, or the entire request path.
+    # Only shown when blast file stem matches known entry point names.
+    _s217_entry_stems = {
+        "main", "app", "index", "server", "cli", "run", "manage", "wsgi", "asgi", "__main__"
+    }
+    _s217_stem = file_path.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if _s217_stem in _s217_entry_stems:
+        lines.append(
+            f"entry point blast: {file_path.rsplit('/', 1)[-1]} is an application entry point"
+            f" — changes affect startup / CLI / full request path"
+        )
+
+    # S219: Call concentration — ≥75% of external CALLS callers reference the same exported symbol.
+    # When callers overwhelmingly use one specific symbol, the real blast bottleneck is narrower
+    # than the file-level view suggests. Helps agents focus review on that one symbol.
+    # Only shown when 4+ distinct non-test external caller files exist and concentration >= 75%.
+    _s219_exp_ids = {s.id for s in symbols if s.exported and s.kind.value in ("function", "method")}
+    _s219_unique_callers = {
+        loc.split(":")[0]
+        for locs in external_callers.values()
+        for loc in locs
+        if not _is_test_file(loc.split(":")[0])
+    }
+    if len(_s219_unique_callers) >= 4 and _s219_exp_ids:
+        _s219_counts: dict[str, int] = {}
+        for _e219 in graph.edges:
+            if _e219.kind is EdgeKind.CALLS and _e219.target_id in _s219_exp_ids:
+                _fp219 = _e219.source_id.split("::")[0]
+                if _fp219 != file_path and not _is_test_file(_fp219):
+                    _s219_counts[_e219.target_id] = _s219_counts.get(_e219.target_id, 0) + 1
+        if _s219_counts:
+            _s219_total = sum(_s219_counts.values())
+            _s219_top_id, _s219_top_n = max(_s219_counts.items(), key=lambda kv: kv[1])
+            if _s219_total > 0 and _s219_top_n / _s219_total >= 0.75:
+                _s219_name = next(
+                    (s.name for s in symbols if s.id == _s219_top_id), _s219_top_id.split("::")[-1]
+                )
+                _s219_pct = int(_s219_top_n / _s219_total * 100)
+                lines.append(
+                    f"call concentration: {_s219_pct}% of callers use {_s219_name}"
+                    f" — that symbol is the real blast bottleneck"
+                )
+
+    # S224: Test file blast — the blast target is a test file.
+    # Test files typically have few or no production importers; changes are lower risk.
+    # Positive signal: flagged as safe to refactor/delete without coordinating production code.
+    if _is_test_file(file_path):
+        lines.append(
+            f"test file blast: {file_path.rsplit('/', 1)[-1]} is a test file"
+            f" — no production code depends on this; safe to modify independently"
+        )
+
+    # S231: Package init blast — blast target is an __init__.py file.
+    # __init__.py re-exports symbols for the entire package; all package importers are affected.
+    # Only shown when blast file is an __init__.py.
+    if file_path.rsplit("/", 1)[-1] in ("__init__.py", "__init__.ts", "__init__.js"):
+        lines.append(
+            f"package init blast: {file_path} is a package init"
+            f" — all importers of the package are affected by changes here"
+        )
+
+    # S237: Internal-only file — blast target exports no symbols.
+    # Files with no exports are internal implementation details; changes stay within the module.
+    # Positive signal: safe to refactor without breaking callers' public interface expectations.
+    if symbols and not any(s.exported for s in symbols):
+        lines.append(
+            f"internal-only file: {file_path.rsplit('/', 1)[-1]} has no exported symbols"
+            f" — changes don't affect public interface"
+        )
+
+    # S246: Mixin/base class blast — blast target defines a class that other classes inherit from.
+    # Mixin or base class changes cascade silently through ALL inheriting classes.
+    # Only shown when 1+ class in the file is a base/mixin (other classes inherit from it).
+    _s246_mixin_indicators = ("mixin", "base", "abstract", "interface")
+    _s246_class_syms = [s for s in symbols if s.kind.value == "class"]
+    _s246_mixin_classes = [
+        s for s in _s246_class_syms
+        if any(ind in s.name.lower() for ind in _s246_mixin_indicators)
+    ]
+    if not _s246_mixin_classes:
+        # Also detect via INHERITS edges: if any other class inherits from classes in this file
+        _s246_this_class_ids = {s.id for s in _s246_class_syms}
+        _s246_subclasses: list[str] = []
+        for _e246 in graph.edges:
+            if (
+                _e246.kind.value == "inherits"
+                and _e246.target_id in _s246_this_class_ids
+                and _e246.source_id.split("::")[0] != file_path
+            ):
+                _s246_subclasses.append(_e246.source_id.split("::")[-1])
+        if len(_s246_subclasses) >= 2:
+            _s246_mixin_classes = _s246_class_syms  # trigger signal
+    if _s246_mixin_classes:
+        _s246_names = [s.name for s in _s246_mixin_classes[:2]]
+        _s246_str = ", ".join(_s246_names)
+        # Count subclasses across the graph
+        _s246_all_ids = {s.id for s in _s246_mixin_classes}
+        _s246_n_subs = sum(
+            1 for _e in graph.edges
+            if _e.kind.value == "inherits" and _e.target_id in _s246_all_ids
+            and _e.source_id.split("::")[0] != file_path
+        )
+        if _s246_n_subs >= 1:
+            lines.append(
+                f"mixin/base blast: {_s246_str} has {_s246_n_subs} subclass(es)"
+                f" — changes cascade silently through all inheritors"
+            )
+
+    # S239: Async function blast — blast target contains async functions.
+    # Callers must properly await async functions; any refactoring to sync breaks all call sites.
+    # Only shown when 1+ async function exists in the blast target (Python/JS/TS).
+    _s239_async_syms = [
+        s for s in symbols
+        if s.kind.value in ("function", "method")
+        and s.signature
+        and (s.signature.startswith("async def ") or s.signature.startswith("async "))
+    ]
+    if _s239_async_syms:
+        _s239_names = [s.name for s in _s239_async_syms[:3]]
+        _s239_str = ", ".join(_s239_names)
+        if len(_s239_async_syms) > 3:
+            _s239_str += f" +{len(_s239_async_syms) - 3} more"
+        lines.append(
+            f"async blast: {len(_s239_async_syms)} async fn(s) ({_s239_str})"
+            f" — callers must await; sync conversion breaks all call sites"
+        )
+
+    # S261: Platform-specific blast — blast target file name indicates it's platform-specific.
+    # Platform-specific code needs testing on that exact platform (CI may not cover it).
+    # Only shown when file name contains a platform indicator.
+    _s254_platform_markers = (
+        "_windows", "_win32", "_win64", "_linux", "_darwin", "_macos", "_osx",
+        "_posix", "_unix", "_freebsd", "_android", "_ios", "_arm", "_x86",
+    )
+    _s254_base254 = file_path.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    _s254_platform = next(
+        (m.lstrip("_") for m in _s254_platform_markers if _s254_base254.endswith(m)),
+        None
+    )
+    if _s254_platform:
+        lines.append(
+            f"platform-specific: {file_path.rsplit('/', 1)[-1]} targets {_s254_platform}"
+            f" — test on that platform; CI may not cover it"
+        )
+
+    # S251: Well-tested blast — blast target's exported symbols have many test callers.
+    # Positive signal: high test coverage means refactoring here has a safety net.
+    # Only shown when 5+ distinct test files call into this blast target.
+    _s251_test_caller_files: set[str] = set()
+    for _sym251 in symbols:
+        for _c251 in graph.callers_of(_sym251.id):
+            if _is_test_file(_c251.file_path):
+                _s251_test_caller_files.add(_c251.file_path)
+    if len(_s251_test_caller_files) >= 5:
+        lines.append(
+            f"well-tested: {len(_s251_test_caller_files)} test file(s) cover this module"
+            f" — high safety net; refactoring here is lower risk"
+        )
+
+
+    # S256: High fan-out blast — blast target imports from many other modules.
+    # A file with wide dependencies is harder to refactor in isolation; changes
+    # often require updates across all its upstream dependencies.
+    _s256_imports = [
+        e for e in graph.edges
+        if e.kind.value == "imports" and e.source_id == file_path
+    ]
+    _s256_import_count = len({e.target_id for e in _s256_imports})
+    if _s256_import_count >= 6:
+        lines.append(
+            f"high fan-out: imports from {_s256_import_count} modules"
+            f" — wide dependency surface; refactoring this file requires many upstream checks"
+        )
+
+
+    # S263: Leaf module — blast target has no outgoing imports (fully self-contained).
+    # Leaf modules are the easiest to extract, test, or replace in isolation.
+    # Positive signal: shown when blast target has 3+ symbols but zero import edges out.
+    if symbols:
+        _s263_outgoing = [
+            e for e in graph.edges
+            if e.kind.value == "imports" and e.source_id == file_path
+        ]
+        if not _s263_outgoing and len(symbols) >= 3:
+            lines.append(
+                f"leaf module: no outgoing imports"
+                f" — self-contained; safe to extract, mock, or replace in isolation"
+            )
+
+
+    # S269: Deep importer chain — a direct importer of this file is itself imported by many files.
+    # This means changes here amplify: they affect the direct importer AND everything that
+    # depends on that importer, creating a second-order blast radius.
+    _s269_deep_importers = []
+    for _imp269 in graph.importers_of(file_path):
+        if _imp269 not in graph.files or _imp269 == file_path:
+            continue
+        _s269_second_order = len([
+            f for f in graph.importers_of(_imp269)
+            if f in graph.files and f != file_path and f != _imp269
+        ])
+        if _s269_second_order >= 5:
+            _s269_deep_importers.append((_s269_second_order, _imp269.rsplit("/", 1)[-1]))
+    if _s269_deep_importers:
+        _s269_deep_importers.sort(reverse=True)
+        _n269, _name269 = _s269_deep_importers[0]
+        lines.append(
+            f"deep importer chain: {_name269} imports this and is itself imported by {_n269} files"
+            f" — second-order blast; changes propagate further than direct importers suggest"
+        )
+
+
+    # S278: Test infrastructure blast — blast target is a conftest or shared test fixture.
+    # Changes to test infrastructure (conftest.py, fixtures.py, test_utils.py) affect
+    # ALL tests that rely on those fixtures; blast is test-suite-wide.
+    _s278_infra_names = {"conftest", "fixtures", "test_utils", "test_helpers", "test_base",
+                         "testutils", "testhelpers", "factory", "factories", "fakes", "mocks"}
+    _s278_stem = file_path.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if _s278_stem in _s278_infra_names or _is_test_file(file_path):
+        _s278_test_importers = [
+            f for f in graph.importers_of(file_path)
+            if f in graph.files and _is_test_file(f)
+        ]
+        if _s278_test_importers:
+            lines.append(
+                f"test infra blast: {len(_s278_test_importers)} test file(s) depend on this fixture"
+                f" — changes here affect the entire test suite"
+            )
+
+
+    # S284: Cross-package blast — blast target is imported by files in 3+ top-level directories.
+    # When a file's importers span many packages, a change creates a coordinated multi-team
+    # blast; each package team must review and validate the impact.
+    _s284_importer_dirs: set[str] = set()
+    for _imp284 in graph.importers_of(file_path):
+        if _imp284 in graph.files and _imp284 != file_path:
+            _dir284 = _imp284.split("/")[0] if "/" in _imp284 else "."
+            if not _dir284.startswith("."):
+                _s284_importer_dirs.add(_dir284)
+    if len(_s284_importer_dirs) >= 3:
+        _dirs284 = sorted(_s284_importer_dirs)[:3]
+        _dir_str284 = ", ".join(_dirs284)
+        if len(_s284_importer_dirs) > 3:
+            _dir_str284 += f" +{len(_s284_importer_dirs) - 3} more"
+        lines.append(
+            f"cross-package blast: imported by {len(_s284_importer_dirs)} packages ({_dir_str284})"
+            f" — multi-team impact; coordinate changes across all consuming packages"
+        )
+
+
+    # S290: No importers — blast target has exported symbols but nothing imports it.
+    # A non-test file with exported symbols and zero importers may be dead code,
+    # a new module not yet wired in, or an external entry point (tested separately).
+    if symbols:
+        _s290_importers = [
+            f for f in graph.importers_of(file_path)
+            if f in graph.files and f != file_path
+        ]
+        _s290_exported = [s for s in symbols if s.exported]
+        if not _s290_importers and _s290_exported and not _is_test_file(file_path):
+            lines.append(
+                f"no importers: {len(_s290_exported)} exported symbol(s) but nothing imports this file"
+                f" — may be dead code, an unwired module, or a standalone entry point"
+            )
+
+
+    # S296: Generated code blast — blast target's path suggests it is auto-generated.
+    # Generated files should not be edited directly; changes must be made in the
+    # generator or template, then re-generated.
+    _s296_gen_indicators = (
+        "_generated", ".generated.", "_pb2", "_pb2_grpc", ".pb.", "_gen.",
+        "/generated/", "/gen/", "/__generated__/", "/_generated/",
+    )
+    _s296_gen_stems = {"generated", "gen", "auto_generated", "autogenerated"}
+    _fp296_lower = file_path.lower().replace("\\", "/")
+    _stem296 = file_path.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    _is_generated296 = (
+        any(ind in _fp296_lower for ind in _s296_gen_indicators)
+        or _stem296 in _s296_gen_stems
+    )
+    if _is_generated296:
+        lines.append(
+            f"generated file: {file_path.rsplit('/', 1)[-1]} appears to be auto-generated"
+            f" — edit the generator/template, not this file directly"
+        )
+
+    # S301: Large API surface — target file exports 15+ distinct symbols.
+    # Files with large symbol counts have wide blast radii even without explicit importers;
+    # any rename, signature change, or removal can break many unknown consumers.
+    _s301_exported = [
+        s for s in graph.symbols.values()
+        if s.file_path == file_path and s.exported
+        and s.kind.value in ("function", "method", "class", "variable", "constant")
+    ]
+    if len(_s301_exported) >= 15:
+        lines.append(
+            f"large API surface: {len(_s301_exported)} exported symbols"
+            f" — wide blast radius; renaming or removing any symbol breaks unknown callers"
+        )
+
+    # S307: Routing-layer blast — target is imported by files in routes/controllers/views dirs.
+    # Route files are the entry-surface of the application; changes to imported utilities
+    # may affect request handling, authentication, or serialization globally.
+    _s307_route_dirs = ("routes", "controllers", "views", "handlers", "endpoints", "api")
+    _s307_route_importers: list[str] = []
+    for _imp307 in importers:
+        _parts307 = _imp307.lower().replace("\\", "/").split("/")
+        if any(p in _s307_route_dirs for p in _parts307):
+            _s307_route_importers.append(_imp307)
+    if len(_s307_route_importers) >= 2:
+        _ri_names307 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s307_route_importers[:2])
+        lines.append(
+            f"routing-layer blast: imported by {len(_s307_route_importers)} route/controller file(s)"
+            f" ({_ri_names307}) — changes here affect request handling directly"
+        )
+
+    # S311: Deprecated API blast — target file name or path contains deprecated/legacy/compat.
+    # Deprecated code is often kept alive by undocumented callers; changes break them silently
+    # because consumers assume the API is stable despite the "deprecated" label.
+    _s311_dep_words = ("deprecated", "legacy", "compat", "obsolete", "old_", "_old", "v1_", "_v1")
+    _fp311_lower = file_path.lower().replace("\\", "/")
+    _is_deprecated311 = any(w in _fp311_lower for w in _s311_dep_words)
+    if _is_deprecated311 and importers:
+        lines.append(
+            f"deprecated API: {file_path.rsplit('/', 1)[-1]} is marked deprecated"
+            f" but still imported by {len(importers)} file(s)"
+            f" — callers may not know it's deprecated; add migration notes"
+        )
+
+    # S317: Core utility blast — target is in utils/helpers/common AND imported by 5+ files.
+    # Utility modules accumulate dependencies over time; changes often have wider impact
+    # than expected because every caller silently depends on subtle behavior.
+    _s317_util_dirs = ("utils", "helpers", "common", "shared", "lib", "core", "base")
+    _s317_is_util = any(
+        part in _s317_util_dirs
+        for part in file_path.lower().replace("\\", "/").split("/")[:-1]
+    ) or file_path.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower() in _s317_util_dirs
+    if _s317_is_util and len(importers) >= 5:
+        lines.append(
+            f"core utility blast: {file_path.rsplit('/', 1)[-1]} is a shared utility"
+            f" imported by {len(importers)} files — utility changes ripple everywhere; test thoroughly"
+        )
+
+    # S323: Shared config blast — target is a settings/config file imported by 5+ files.
+    # Config files hold global state (feature flags, limits, keys); changing a default
+    # value silently affects all paths that use that config.
+    _s323_cfg_names = {"settings", "config", "configuration", "constants", "env",
+                       "defaults", "params", "options", "app_config"}
+    _s323_stem = file_path.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    _is_config323 = (
+        _s323_stem in _s323_cfg_names
+        or _s323_stem.startswith("settings_")
+        or _s323_stem.endswith("_config")
+        or _s323_stem.endswith("_settings")
+    )
+    if _is_config323 and len(importers) >= 5:
+        lines.append(
+            f"config blast: {file_path.rsplit('/', 1)[-1]} is a config/settings file"
+            f" imported by {len(importers)} files — default value changes affect all consumers silently"
+        )
+
+    # S325: Dual-purpose module — blast target contains both library symbols AND an entry point.
+    # Files that mix library code with `if __name__ == '__main__'` patterns have implicit
+    # coupling between the script and the library; changes to either half affect both uses.
+    _s325_all_syms = list(graph.symbols.values())
+    _s325_file_syms = [s for s in _s325_all_syms if s.file_path == file_path]
+    _s325_has_lib = any(
+        s.kind.value in ("function", "class") and s.exported for s in _s325_file_syms
+    )
+    _s325_has_main = any(
+        s.name in ("main", "__main__") or "if __name__" in (s.signature or "")
+        for s in _s325_file_syms
+    )
+    if _s325_has_lib and _s325_has_main and importers:
+        lines.append(
+            f"dual-purpose module: {file_path.rsplit('/', 1)[-1]} mixes library and script code"
+            f" — changes to either side affect both library callers and script behavior"
+        )
+
+    # S331: Schema blast — target defines ORM/schema models imported widely.
+    # Schema changes affect all serialization, validation, migration, and API layers
+    # simultaneously; a single field rename can break dozens of consumers.
+    _s331_schema_words = ("schema", "model", "entity", "orm", "record", "table", "migration")
+    _fp331 = file_path.lower().replace("\\", "/")
+    _is_schema331 = any(w in _fp331 for w in _s331_schema_words)
+    if not _is_schema331:
+        _stem331 = file_path.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+        _is_schema331 = any(w in _stem331 for w in _s331_schema_words)
+    if _is_schema331 and len(importers) >= 4:
+        lines.append(
+            f"schema blast: {file_path.rsplit('/', 1)[-1]} appears to be a schema/model file"
+            f" imported by {len(importers)} files"
+            f" — field/type changes propagate to serializers, validators, and API layers"
+        )
+
+    # S337: Version file blast — target defines __version__ and is imported by multiple files.
+    # Version strings are often used for runtime compatibility checks; changing the value
+    # may silently break callers that compare versions programmatically.
+    _s337_file_syms = [s for s in graph.symbols.values() if s.file_path == file_path]
+    _s337_has_version = any(
+        s.name in ("__version__", "VERSION", "version", "APP_VERSION", "__version_info__")
+        for s in _s337_file_syms
+    )
+    if _s337_has_version and len(importers) >= 3:
+        lines.append(
+            f"version file blast: {file_path.rsplit('/', 1)[-1]} exports version info"
+            f" imported by {len(importers)} files"
+            f" — version string change may break runtime compatibility checks"
+        )
+
+    # S343: Conftest blast — target is a conftest.py or shared test fixture file.
+    # conftest.py defines fixtures shared by all tests in the directory subtree;
+    # changes to it can break test isolation and cause cascading test failures.
+    _fp343 = file_path.rsplit("/", 1)[-1].lower()
+    _is_conftest343 = _fp343 in ("conftest.py", "fixtures.py", "test_helpers.py", "test_utils.py")
+    if _is_conftest343 and importers:
+        lines.append(
+            f"conftest blast: {file_path.rsplit('/', 1)[-1]} is a shared test fixture"
+            f" — changes here cascade through all dependent tests; run full test suite"
+        )
+
+    # S377: Protocol/interface blast — blast target defines abstract interfaces or Protocol classes.
+    # Protocol/ABC files define contracts that many concrete classes implement;
+    # changes to the interface propagate to every implementor, not just direct importers.
+    _s377_syms = [s for s in graph.symbols.values() if s.file_path == file_path]
+    _s377_abstract_names = (
+        "protocol", "interface", "abstract", "abc", "base_class", "base_model",
+        "iservice", "irepository", "ihandler",
+    )
+    _s377_fp_lower = file_path.lower()
+    _s377_is_protocol = (
+        any(p in _s377_fp_lower for p in _s377_abstract_names)
+        or any(
+            s.name.lower().startswith(p)
+            for s in _s377_syms
+            for p in ("Base", "Abstract", "Protocol", "Interface", "I")
+            if len(s.name) > 2
+        )
+    )
+    if _s377_is_protocol and importers:
+        lines.append(
+            f"protocol blast: {file_path.rsplit('/', 1)[-1]} defines abstract interface(s)"
+            f" — every implementor is affected; check all concrete subclasses for breaking changes"
+        )
+
+    # S371: Utility belt blast — blast target has 15+ exported symbols each imported by different files.
+    # A utility belt file is essentially an undifferentiated bag of helpers; it's hard to know
+    # which helpers are truly safe to modify without understanding all consumer patterns.
+    _s371_file_syms = [s for s in graph.symbols.values() if s.file_path == file_path]
+    if len(_s371_file_syms) >= 15 and len(importers) >= 5:
+        # Check that multiple importers each use different symbols (breadth of usage)
+        _s371_sym_ids = {s.id for s in _s371_file_syms}
+        _s371_importer_syms: dict[str, set[str]] = {}
+        for _e371 in graph.edges:
+            if (_e371.kind.value == "calls"
+                    and _e371.source_id in {
+                        s.id for s in graph.symbols.values()
+                        if not _is_test_file(s.file_path)
+                    }
+                    and _e371.target_id in _s371_sym_ids):
+                _src_file371 = next(
+                    (s.file_path for s in graph.symbols.values() if s.id == _e371.source_id),
+                    None
+                )
+                if _src_file371 and _src_file371 != file_path:
+                    _s371_importer_syms.setdefault(_src_file371, set()).add(_e371.target_id)
+        if len(_s371_importer_syms) >= 4:
+            lines.append(
+                f"utility belt: {len(_s371_file_syms)} symbols in {file_path.rsplit('/', 1)[-1]}"
+                f" used across {len(_s371_importer_syms)} files"
+                f" — undifferentiated helper bag; extract domain-specific modules to reduce blast radius"
+            )
+
+    # S365: Middleware blast — blast target is a middleware/interceptor/decorator file.
+    # Middleware wraps every request or operation in the stack; changes to it affect all
+    # code paths simultaneously, including ones that have no tests exercising that path.
+    _fp365 = file_path.lower()
+    _mw_patterns365 = (
+        "middleware", "interceptor", "decorator", "wrapper", "filter",
+        "hook", "plugin", "mixin",
+    )
+    _is_middleware365 = any(p in _fp365 for p in _mw_patterns365) and not _is_test_file(file_path)
+    if _is_middleware365 and importers:
+        lines.append(
+            f"middleware blast: {file_path.rsplit('/', 1)[-1]} is a middleware/interceptor"
+            f" used by {len(importers)} files"
+            f" — wraps all code paths; changes affect every caller simultaneously"
+        )
+
+    # S359: Entrypoint blast — blast target is the application's main entry point.
+    # Entrypoints wire together all subsystems; changes to them affect startup behavior,
+    # argument parsing, and initialization order — subtle bugs that are hard to catch in unit tests.
+    _fp359 = file_path.rsplit("/", 1)[-1].lower()
+    _is_entry359 = _fp359 in (
+        "__main__.py", "main.py", "index.js", "index.ts", "app.py", "server.py",
+        "manage.py", "wsgi.py", "asgi.py", "entrypoint.py",
+    )
+    if _is_entry359 and importers:
+        lines.append(
+            f"entrypoint blast: {file_path.rsplit('/', 1)[-1]} is the application entrypoint"
+            f" — startup/init order changes are not unit-testable; test in integration or staging"
+        )
+
+    # S353: Constants blast — blast target is a purely constants/enums file.
+    # Pure constants files are deceptively "safe" to edit; downstream consumers may depend
+    # on specific values via hardcoded literals, making renames or reorders silently breaking.
+    _s353_file_syms = [s for s in graph.symbols.values() if s.file_path == file_path]
+    _s353_const_kinds = {"variable", "constant"}
+    _s353_fn_kinds = {"function", "method", "class"}
+    _s353_all_const = _s353_file_syms and all(
+        s.kind.value in _s353_const_kinds or s.name.isupper()
+        for s in _s353_file_syms
+    )
+    _s353_no_fns = not any(s.kind.value in _s353_fn_kinds for s in _s353_file_syms)
+    if _s353_all_const and _s353_no_fns and len(importers) >= 3:
+        lines.append(
+            f"constants blast: {file_path.rsplit('/', 1)[-1]} is a constants/enums file"
+            f" imported by {len(importers)} files"
+            f" — value/rename changes may silently break consumers that hardcode expected values"
+        )
+
+    # S395: Type definition blast — blast target defines TS interfaces/types/enums.
+    # TypeScript type files are imported by many consumers; changes to types cascade
+    # through compilation and may cause type errors across many downstream files.
+    _fp395 = file_path.lower()
+    _is_type_file395 = (
+        (_fp395.endswith(".d.ts") or "types" in _fp395 or "interfaces" in _fp395
+         or "enums" in _fp395 or "typings" in _fp395)
+        and not _is_test_file(file_path)
+    )
+    if _is_type_file395 and len(importers) >= 3:
+        lines.append(
+            f"type definition blast: {file_path.rsplit('/', 1)[-1]} defines shared TypeScript types"
+            f" imported by {len(importers)} files"
+            f" — type changes cascade through compilation; check all consumers for type errors"
+        )
+
+    # S389: Database model blast — blast target is a DB model/schema file.
+    # Database model files define the data contract between application and database;
+    # schema changes require migrations and may break queries throughout the codebase.
+    _fp389 = file_path.rsplit("/", 1)[-1].lower()
+    _dir389 = file_path.lower()
+    _db_patterns389 = (
+        "model", "schema", "entity", "table", "migration", "orm",
+        "dao", "repository", "activerecord",
+    )
+    _is_db389 = (
+        any(p in _fp389 for p in _db_patterns389)
+        and not _is_test_file(file_path)
+        and not any(
+            skip in _fp389 for skip in ("view", "controller", "route", "api")
+        )
+    )
+    if _is_db389 and importers:
+        lines.append(
+            f"DB model blast: {file_path.rsplit('/', 1)[-1]} defines a data model"
+            f" imported by {len(importers)} files"
+            f" — schema changes require database migrations; review all ORM queries in consumers"
+        )
+
+    # S383: Test fixture blast — blast target is a shared test fixture/factory file.
+    # Test fixture files are imported by many tests; changes break test isolation and
+    # can cause cascading failures unrelated to the code being tested.
+    _fp383 = file_path.rsplit("/", 1)[-1].lower()
+    _is_fixture383 = _fp383 in ("conftest.py", "fixtures.py", "factories.py", "test_helpers.py", "test_utils.py")
+    _test_importers383 = [fp for fp in graph.importers_of(file_path) if _is_test_file(fp)]
+    if _is_fixture383 and len(_test_importers383) >= 3:
+        lines.append(
+            f"test fixture blast: {file_path.rsplit('/', 1)[-1]} is a shared test fixture"
+            f" imported by {len(_test_importers383)} test files"
+            f" — fixture changes break test isolation; run full test suite after any modification"
+        )
+
+    # S401: Shared secrets blast — blast target file name or symbols suggest it holds credentials.
+    # Files containing API keys, secrets, or tokens that are imported widely are high-risk;
+    # a single accidental log statement or serialization call can leak credentials.
+    _secret_words401 = (
+        "secret", "credential", "api_key", "apikey", "token", "password",
+        "passwd", "auth_key", "private_key", "access_key",
+    )
+    _fp401_lower = file_path.lower().replace("-", "_")
+    _file_is_secret401 = any(w in _fp401_lower for w in _secret_words401)
+    _sym_has_secret401 = any(
+        any(w in s.name.lower() for w in _secret_words401)
+        for s in graph.symbols.values()
+        if s.file_path == file_path
+    )
+    _total_importers401 = len(importers)
+    if (_file_is_secret401 or _sym_has_secret401) and _total_importers401 >= 3:
+        lines.append(
+            f"secrets blast: {file_path.rsplit('/', 1)[-1]} contains credentials/tokens"
+            f" and is imported by {_total_importers401} file(s)"
+            f" — wide credential sharing increases leak surface; scope access via DI or env-only"
+        )
+
+    # S407: Init-file blast — blast target is an __init__.py that re-exports many symbols.
+    # Changing an __init__.py affects every importer of the package; even renaming a re-export
+    # can silently break downstream importers that rely on the package-level name.
+    _fp407 = file_path.rsplit("/", 1)[-1].lower()
+    _is_init407 = _fp407 in ("__init__.py", "index.js", "index.ts", "index.tsx")
+    _init_import_edges407 = [
+        e for e in graph.edges
+        if e.kind.value == "imports" and e.source_id == file_path
+    ]
+    _init_dir407 = file_path.rsplit("/", 1)[0] if "/" in file_path else ""
+    _init_package_size407 = sum(
+        1 for fp in graph.files
+        if (fp.rsplit("/", 1)[0] if "/" in fp else "") == _init_dir407
+        and fp != file_path
+    )
+    if _is_init407 and len(_init_import_edges407) >= 5 and _init_package_size407 >= 3:
+        lines.append(
+            f"init-file blast: {_fp407} re-exports from {len(_init_import_edges407)} module(s)"
+            f" in a package of {_init_package_size407} file(s)"
+            f" — renaming any re-export silently breaks all downstream importers"
+        )
+
+    # S413: Symbol-dense blast — blast target file has 30+ symbols (classes, functions, constants).
+    # A file with many symbols is a de facto utility hub; each symbol is a potential blast
+    # propagation point, and the full impact of any change is proportional to total symbol count.
+    _s413_all_syms = [s for s in graph.symbols.values() if s.file_path == file_path]
+    if len(_s413_all_syms) >= 30:
+        _kinds413 = {}
+        for s in _s413_all_syms:
+            _kinds413[s.kind.value] = _kinds413.get(s.kind.value, 0) + 1
+        _top_kind413 = max(_kinds413, key=lambda k: _kinds413[k])
+        lines.append(
+            f"symbol-dense: {file_path.rsplit('/', 1)[-1]} defines {len(_s413_all_syms)} symbols"
+            f" ({_kinds413[_top_kind413]} {_top_kind413}s)"
+            f" — each symbol is a blast propagation point; refactor to split by concern"
+        )
+
+    # S419: Type stub blast — blast target is a type stub file (.pyi).
+    # Type stub files define the public API contract; changing a stub silently breaks
+    # type checks in all importers even when the runtime code hasn't changed.
+    if file_path.lower().endswith(".pyi"):
+        _stub_importers419 = len(importers)
+        lines.append(
+            f"type stub blast: {file_path.rsplit('/', 1)[-1]} is a type stub"
+            f" imported/used by {_stub_importers419} file(s)"
+            f" — stub changes break type checks without runtime errors; update callers together"
+        )
+
+    # S425: Constants-file blast — blast target is a file containing only constants.
+    # Constants files are deceptively high-impact; they're imported everywhere but rarely
+    # changed, so developers underestimate how many files will recompile or reload.
+    _s425_syms = [s for s in graph.symbols.values() if s.file_path == file_path]
+    _s425_is_const_file = (
+        len(_s425_syms) >= 3
+        and all(s.kind.value in ("variable", "constant") for s in _s425_syms)
+    )
+    if _s425_is_const_file and len(importers) >= 3:
+        lines.append(
+            f"constants-file blast: {file_path.rsplit('/', 1)[-1]} defines"
+            f" {len(_s425_syms)} constant(s) imported by {len(importers)} file(s)"
+            f" — constants files are silently high-impact; all importers pick up changes immediately"
+        )
+
+    # S431: Event emitter blast — blast target file contains event emit/dispatch functions.
+    # Event emitters have hidden blast radius — subscribers don't show up as direct importers,
+    # so all the subscribers are affected but invisible in a normal dependency trace.
+    _s431_event_patterns = (
+        "emit_", "dispatch_", "publish_", "fire_event_",
+        "trigger_", "broadcast_", "send_event_",
+    )
+    _s431_event_syms = [
+        s for s in graph.symbols.values()
+        if s.file_path == file_path
+        and s.kind.value in ("function", "method")
+        and any(s.name.lower().startswith(p) for p in _s431_event_patterns)
+    ]
+    if len(_s431_event_syms) >= 2:
+        _ev_names431 = ", ".join(s.name for s in _s431_event_syms[:3])
+        lines.append(
+            f"event emitter blast: {file_path.rsplit('/', 1)[-1]} has {len(_s431_event_syms)}"
+            f" event dispatch fn(s) ({_ev_names431})"
+            f" — subscribers are invisible in dependency trace; grep for event names to find all consumers"
         )
 
     if not importers and not external_callers and not render_targets:

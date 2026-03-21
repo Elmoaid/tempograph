@@ -650,6 +650,67 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 f" — highest combined velocity+complexity"
             )
 
+    # S200: Size hotspot — the top hotspot file is also the largest file by line count.
+    # The most-changed file also being the largest = maximum cognitive load per change.
+    # Only shown when the top hotspot file is in the top 3 by line count.
+    if scores and graph.files:
+        _top200_fp = scores[0][1].file_path
+        _all_line_counts = sorted(
+            [(fi.line_count, fp) for fp, fi in graph.files.items()
+             if not _is_test_file(fp) and hasattr(fi, 'line_count') and fi.line_count],
+            reverse=True,
+        )
+        _top3_large = {fp for _, fp in _all_line_counts[:3]}
+        if _top200_fp in _top3_large:
+            _top200_lines = graph.files[_top200_fp].line_count if _top200_fp in graph.files else 0
+            _top200_base = _top200_fp.rsplit("/", 1)[-1]
+            if _top200_lines and _top200_lines >= 50:
+                lines.append(
+                    f"\nsize hotspot: {_top200_base} is top hotspot AND largest file"
+                    f" ({_top200_lines} lines) — maximum cognitive load per change"
+                )
+
+    # S194: Test file hotspot — a test file appears in the top 5 hotspot ranks.
+    # Test files in the hotspot list indicate test churn, flaky tests, or spec instability.
+    # Only shown when 1+ test file is among the top 5 hotspot-ranked files.
+    if scores:
+        _top5_test_files194 = [
+            sym.file_path for _, sym in scores[:5]
+            if _is_test_file(sym.file_path)
+        ]
+        # Deduplicate
+        _seen194: set[str] = set()
+        _unique_test_fps194 = [
+            fp for fp in _top5_test_files194
+            if not (fp in _seen194 or _seen194.add(fp))  # type: ignore[func-returns-value]
+        ]
+        if _unique_test_fps194:
+            _t194_name = _unique_test_fps194[0].rsplit("/", 1)[-1]
+            lines.append(
+                f"\ntest file hotspot: {_t194_name} in top 5 hotspots — test churn"
+                f" may indicate flaky tests or rapidly-changing spec"
+            )
+
+    # S188: Avg complexity of top hotspot — the top hotspot file's functions are complex on average.
+    # Complex-on-average files have high maintenance cost beyond any single function.
+    # Only shown when avg complexity of fns in top hotspot file >= 8.
+    if scores:
+        _top188_fp = scores[0][1].file_path
+        _cx_vals188 = [
+            s.complexity for s in graph.symbols.values()
+            if s.file_path == _top188_fp
+            and s.kind.value in ("function", "method")
+            and s.complexity is not None
+        ]
+        if _cx_vals188:
+            _avg_cx188 = sum(_cx_vals188) / len(_cx_vals188)
+            if _avg_cx188 >= 8:
+                _top188_base = _top188_fp.rsplit("/", 1)[-1]
+                lines.append(
+                    f"\nhigh avg complexity: {_top188_base} — avg cx {_avg_cx188:.1f}"
+                    f" across {len(_cx_vals188)} fns — entire file is complex"
+                )
+
     # S182: Hot cluster — 2+ top hotspot files share the same parent directory.
     # When multiple hot files cluster in one directory, that dir is a change concentration zone.
     # Only shown when 2+ of the top-20 hotspots are in the same directory.
@@ -755,4 +816,660 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             lines.append("")
             lines.append(f"recursive hotspots: {len(_recursive_syms144)} recursive fns in top ranks ({_r_str})")
 
-    return "\n".join(lines)
+    # S206: Fan-in spike — top-ranked hotspot symbol has significantly more callers than average.
+    # A hotspot that is also a caller magnet is the highest-risk change target.
+    # Only shown when the top hotspot's caller count >= 3x the average of the top 10.
+    if scores:
+        _caller_counts206 = []
+        for _sc206, _sym206 in scores[:10]:
+            _n_callers206 = len(graph.callers_of(_sym206.id))
+            _caller_counts206.append((_n_callers206, _sym206))
+        if len(_caller_counts206) >= 3:
+            _avg206 = sum(c for c, _ in _caller_counts206) / len(_caller_counts206)
+            _top_count206, _top_sym206 = max(_caller_counts206, key=lambda x: x[0])
+            if _avg206 > 0 and _top_count206 >= _avg206 * 3.0:
+                lines.append(
+                    f"\nfan-in spike: {_top_sym206.name} — {_top_count206} callers"
+                    f" vs avg {_avg206:.1f} ({_top_count206 / _avg206:.1f}×)"
+                )
+
+    # S216: Exported hotspot — the top hotspot file exports many symbols.
+    # Frequently-changed exported symbols mean frequent contract changes for all callers.
+    # Only shown when top hotspot file exports >= 5 fn/method/class symbols.
+    if scores:
+        _top216_fp = scores[0][1].file_path
+        _s216_exported = [
+            s for s in graph.symbols.values()
+            if s.file_path == _top216_fp
+            and s.exported
+            and s.kind.value in ("function", "method", "class", "interface")
+        ]
+        if len(_s216_exported) >= 5:
+            _top216_base = _top216_fp.rsplit("/", 1)[-1]
+            lines.append(
+                f"\nexported hotspot: {_top216_base} has {len(_s216_exported)} exported symbols"
+                f" — frequent changes mean frequent contract churn for callers"
+            )
+
+    # S223: Mono-class file — the top hotspot file is dominated by a single large class.
+    # A huge central class is hard to test, hard to extend, and concentrates cognitive load.
+    # Only shown when the top hotspot file has 1 class that contains >= 50% of its symbols.
+    if scores:
+        _top223_fp = scores[0][1].file_path
+        _top223_syms = [s for s in graph.symbols.values() if s.file_path == _top223_fp]
+        _top223_classes = [s for s in _top223_syms if s.kind.value == "class"]
+        if len(_top223_classes) == 1 and len(_top223_syms) >= 6:
+            _cls223 = _top223_classes[0]
+            _cls223_children = graph.children_of(_cls223.id)
+            if len(_cls223_children) >= len(_top223_syms) * 0.5:
+                _top223_base = _top223_fp.rsplit("/", 1)[-1]
+                lines.append(
+                    f"\nmono-class file: {_top223_base} dominated by {_cls223.name}"
+                    f" ({len(_cls223_children)} of {len(_top223_syms)} symbols)"
+                    f" — consider splitting into smaller classes"
+                )
+
+    # S230: Low-complexity hotspot — top hotspot file's functions all have very low complexity.
+    # High change frequency + low complexity = likely config/data churn, not logic changes.
+    # Only shown when top hotspot file has 3+ fns and avg cx <= 2.
+    if scores:
+        _top230_fp = scores[0][1].file_path
+        _cx_vals230 = [
+            s.complexity for s in graph.symbols.values()
+            if s.file_path == _top230_fp
+            and s.kind.value in ("function", "method")
+            and s.complexity is not None
+        ]
+        if len(_cx_vals230) >= 3:
+            _avg_cx230 = sum(_cx_vals230) / len(_cx_vals230)
+            if _avg_cx230 <= 2:
+                _top230_base = _top230_fp.rsplit("/", 1)[-1]
+                lines.append(
+                    f"\nlow-complexity hotspot: {_top230_base} avg cx {_avg_cx230:.1f}"
+                    f" — frequently changed but simple; likely config/data churn"
+                )
+
+    # S236: Ghost hotspot — top hotspot symbol has 0 direct test callers.
+    # Frequently-changed code with no test callers is high-risk; no safety net.
+    # Only shown when the top-ranked hotspot fn/method has 0 test callers.
+    if scores:
+        for _sc236, _sym236 in scores[:5]:
+            if _sym236.kind.value not in ("function", "method"):
+                continue
+            _test_callers236 = [
+                c for c in graph.callers_of(_sym236.id)
+                if _is_test_file(c.file_path)
+            ]
+            if not _test_callers236 and not _is_test_file(_sym236.file_path):
+                lines.append(
+                    f"\nghost hotspot: {_sym236.name} ({_sym236.file_path.rsplit('/', 1)[-1]})"
+                    f" — top hotspot with 0 test callers, no safety net"
+                )
+                break
+
+    # S250: Cluster hotspot — 3+ hotspot files from the same directory.
+    # A whole module being unstable (not just one file) suggests coordination risk.
+    # Only shown when top-10 hotspot files include 3+ from the same directory.
+    if scores:
+        _s250_top_files = []
+        _s250_seen_files: set[str] = set()
+        for _, _sym250 in scores[:20]:
+            _fp250 = _sym250.file_path
+            if _fp250 not in _s250_seen_files and not _is_test_file(_fp250):
+                _s250_top_files.append(_fp250)
+                _s250_seen_files.add(_fp250)
+            if len(_s250_top_files) >= 10:
+                break
+        _s250_dirs: dict[str, list[str]] = {}
+        for _fp250 in _s250_top_files:
+            _dir250 = _fp250.rsplit("/", 1)[0] if "/" in _fp250 else "."
+            _s250_dirs.setdefault(_dir250, []).append(_fp250.rsplit("/", 1)[-1])
+        _s250_clusters = [(d, fs) for d, fs in _s250_dirs.items() if len(fs) >= 3]
+        if _s250_clusters:
+            _top_dir250, _top_files250 = max(_s250_clusters, key=lambda x: len(x[1]))
+            _f250_str = ", ".join(_top_files250[:3])
+            if len(_top_files250) > 3:
+                _f250_str += f" +{len(_top_files250) - 3} more"
+            _dir_label250 = _top_dir250.rsplit("/", 1)[-1] if "/" in _top_dir250 else _top_dir250
+            lines.append(
+                f"\ncluster hotspot: {len(_top_files250)} files in {_dir_label250}/ ({_f250_str})"
+                f" — whole module is unstable; coordinate changes carefully"
+            )
+
+    # S260: Undocumented hotspot — top hotspot fn/method has no docstring.
+    # Frequently-changed undocumented functions accumulate hidden complexity.
+    # Only shown when the top non-test hotspot function has no docstring (empty signature body).
+    if scores:
+        _top253 = next(
+            (sym for _, sym in scores[:5]
+             if sym.kind.value in ("function", "method") and not _is_test_file(sym.file_path)),
+            None
+        )
+        if _top253:
+            _sig253 = _top253.signature or ""
+            # A docstring would typically appear in the signature or be tracked as metadata.
+            # Heuristic: if name doesn't end in _ (dunder) and has no docstring indicator.
+            _has_doc = '"""' in _sig253 or "'''" in _sig253 or "# doc" in _sig253
+            if not _has_doc and not _top253.name.startswith("__"):
+                lines.append(
+                    f"\nundocumented hotspot: {_top253.name}"
+                    f" — top hotspot has no docstring; add docs when modifying"
+                )
+
+    # S242: Test file hotspot — top hotspot symbol lives in a test file.
+    # Frequently-changed test code suggests flaky tests, brittle fixtures, or rapidly-evolving specs.
+    # Only shown when the top-ranked hotspot symbol is itself in a test file.
+    if scores:
+        _top242_sym = next(
+            (sym for _, sym in scores[:3] if sym.kind.value in ("function", "method")),
+            None
+        )
+        if _top242_sym and _is_test_file(_top242_sym.file_path):
+            lines.append(
+                f"\ntest file hotspot: {_top242_sym.name} ({_top242_sym.file_path.rsplit('/', 1)[-1]})"
+                f" — most-changed symbol is in a test; consider stabilizing test infrastructure"
+            )
+
+
+    # S255: Utility hotspot — the top-ranked hotspot lives in a generic utility module.
+    # Utility modules are shared across many callers; hotspot status here risks coupling
+    # unrelated features through shared helpers.
+    # Only shown when the top hotspot file is named utils/helpers/common/shared/base.
+    _s255_util_stems = {"utils", "util", "helpers", "helper", "common", "shared", "base",
+                        "mixins", "mixin", "tools", "lib", "misc", "core"}
+    if scores:
+        _s255_seen: set[str] = set()
+        for _, _sym255 in scores[:5]:
+            _fp255 = _sym255.file_path
+            if _fp255 in _s255_seen or _is_test_file(_fp255):
+                continue
+            _s255_seen.add(_fp255)
+            _stem255 = _fp255.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+            if _stem255 in _s255_util_stems:
+                _importers255 = len(graph.importers_of(_fp255))
+                lines.append(
+                    f"\nutility hotspot: {_fp255.rsplit('/', 1)[-1]} is a shared utility"
+                    f" ({_importers255} importer(s)) — changes here have wide blast radius"
+                )
+                break
+
+
+    # S262: Stable hotspot — top-ranked hotspot symbol has 3+ test callers.
+    # High churn with high test coverage is lower risk; changes here are unlikely
+    # to go undetected. Positive signal for teams considering refactors.
+    if scores:
+        for _sc262, _sym262 in scores[:5]:
+            if _sym262.kind.value not in ("function", "method"):
+                continue
+            if _is_test_file(_sym262.file_path):
+                continue
+            _test_callers262 = [c for c in graph.callers_of(_sym262.id) if _is_test_file(c.file_path)]
+            if len(_test_callers262) >= 3:
+                lines.append(
+                    f"\nstable hotspot: {_sym262.name} has {len(_test_callers262)} test callers"
+                    f" — well-tested high-churn symbol; refactoring here has a safety net"
+                )
+                break
+
+
+    # S268: Churn concentration — top 3+ hotspot symbols all live in the same file.
+    # When high-churn symbols concentrate in one file, that file is an instability
+    # hotspot: changes there are frequent, contested, and risk merge conflicts.
+    if scores:
+        _s268_top_files: list[str] = []
+        _s268_seen_files268: set[str] = set()
+        for _, _sym268 in scores[:10]:
+            _fp268 = _sym268.file_path
+            if _fp268 not in _s268_seen_files268 and not _is_test_file(_fp268):
+                _s268_top_files.append(_fp268)
+                _s268_seen_files268.add(_fp268)
+            if len(_s268_top_files) >= 5:
+                break
+        if _s268_top_files:
+            _s268_file_counts: dict[str, int] = {}
+            for _, _sym268 in scores[:10]:
+                _fp268 = _sym268.file_path
+                if not _is_test_file(_fp268):
+                    _s268_file_counts[_fp268] = _s268_file_counts.get(_fp268, 0) + 1
+            _s268_max_file = max(_s268_file_counts, key=_s268_file_counts.get)
+            if _s268_file_counts[_s268_max_file] >= 3:
+                _s268_label = _s268_max_file.rsplit("/", 1)[-1]
+                lines.append(
+                    f"\nchurn concentration: {_s268_file_counts[_s268_max_file]} of top hotspots"
+                    f" in {_s268_label} — single file is instability center, high merge conflict risk"
+                )
+
+
+    # S277: Single-caller hotspot — top hotspot symbol is called from only 1 other symbol.
+    # A high-complexity function with only one caller may be an inlined helper that
+    # could be folded back, or a function named for the wrong abstraction level.
+    if scores:
+        for _sc277, _sym277 in scores[:5]:
+            if _sym277.kind.value not in ("function", "method"):
+                continue
+            if _is_test_file(_sym277.file_path):
+                continue
+            _ext_callers277 = [
+                c for c in graph.callers_of(_sym277.id)
+                if c.file_path != _sym277.file_path
+            ]
+            if len(_ext_callers277) == 1:
+                _caller_name277 = _ext_callers277[0].name
+                lines.append(
+                    f"\nsingle-caller hotspot: {_sym277.name} called only from {_caller_name277}"
+                    f" — high-churn fn with one user; consider inlining or renaming"
+                )
+                break
+
+
+    # S283: Untested hotspot — top hotspot file has no test coverage AND repo has no tests at all.
+    # The riskiest combination: high-churn code with zero test infrastructure.
+    _s283_any_tests = any(_is_test_file(fp) for fp in graph.files)
+    if not _s283_any_tests and scores:
+        _s283_top = next((sym for _, sym in scores[:3] if not _is_test_file(sym.file_path)), None)
+        if _s283_top:
+            lines.append(
+                f"\nuntested repo: no test files found — all hotspot churn is completely unprotected"
+            )
+
+
+    # S289: Interface module hotspot — top hotspot symbol lives in an __init__.py file.
+    # Package init files act as public interfaces; changes there affect ALL importers
+    # of the package, not just files that use that symbol directly.
+    if scores:
+        _s289_top = next(
+            (sym for _, sym in scores[:5]
+             if not _is_test_file(sym.file_path)
+             and sym.file_path.rsplit("/", 1)[-1] == "__init__.py"),
+            None
+        )
+        if _s289_top:
+            _importers289 = len([f for f in graph.importers_of(_s289_top.file_path) if f in graph.files])
+            lines.append(
+                f"\ninterface hotspot: {_s289_top.name} is in __init__.py"
+                f" ({_importers289} package importer(s)) — changes here affect all package consumers"
+            )
+
+
+    # S295: Re-exported hotspot — top hotspot symbol has the same name exported from another file.
+    # Re-exported symbols create multiple blast radii: changes must propagate
+    # through both the definition and all the re-export facades.
+    if scores:
+        for _sc295, _sym295 in scores[:5]:
+            if _sym295.kind.value not in ("function", "method", "class"):
+                continue
+            if _is_test_file(_sym295.file_path):
+                continue
+            # Find other files that export a symbol with the same name
+            _same_name295 = [
+                s for s in graph.symbols.values()
+                if s.name == _sym295.name
+                and s.file_path != _sym295.file_path
+                and s.exported
+                and not _is_test_file(s.file_path)
+            ]
+            if _same_name295:
+                _facade295 = _same_name295[0].file_path.rsplit("/", 1)[-1]
+                lines.append(
+                    f"\nre-exported hotspot: {_sym295.name} also exported from {_facade295}"
+                    f" — multi-path symbol; changes propagate through all export facades"
+                )
+                break
+
+    # S299: Mono-file hotspot — all top-5 hotspot symbols come from the same file.
+    # When a single file monopolises the hotspot list, it's structurally overloaded;
+    # the module has grown past cohesion and needs splitting.
+    if len(scores) >= 3:
+        _top_files299 = [sym.file_path for _, sym in scores[:5]]
+        if len(set(_top_files299)) == 1 and not _is_test_file(_top_files299[0]):
+            _mf_name299 = _top_files299[0].rsplit("/", 1)[-1]
+            lines.append(
+                f"\nmono-file hotspot: all top {len(_top_files299)} hotspots in {_mf_name299}"
+                f" — file monopolises churn; strong split candidate"
+            )
+
+    # S305: Hotspot bottleneck — top hotspot file is imported by 5+ other source files.
+    # A file that is simultaneously high-churn AND imported widely is a systemic risk:
+    # any change to it forces re-evaluation across all its dependents.
+    if scores:
+        _top305_sym = scores[0][1]
+        _top305_fp = _top305_sym.file_path
+        if not _is_test_file(_top305_fp):
+            _importer_files305 = {
+                fp for fp in graph.importers_of(_top305_fp)
+                if not _is_test_file(fp) and fp != _top305_fp
+            }
+            if len(_importer_files305) >= 5:
+                lines.append(
+                    f"\nhotspot bottleneck: {_top305_fp.rsplit('/', 1)[-1]} — top hotspot"
+                    f" imported by {len(_importer_files305)} files; churn ripples widely"
+                )
+
+    # S312: Score-dominant hotspot — top hotspot file accounts for 40%+ of total hotspot score.
+    # One file dominating the score means all change energy is concentrated there;
+    # it's the single biggest risk point in the codebase right now.
+    if scores and len(scores) >= 3:
+        _total_score312 = sum(sc for sc, _ in scores)
+        _top_score312 = scores[0][0]
+        if _total_score312 > 0 and (_top_score312 / _total_score312) >= 0.40:
+            _top_sym312 = scores[0][1]
+            _pct312 = int(100 * _top_score312 / _total_score312)
+            if not _is_test_file(_top_sym312.file_path):
+                lines.append(
+                    f"\nscore-dominant hotspot: {_top_sym312.file_path.rsplit('/', 1)[-1]}"
+                    f" — {_pct312}% of total hotspot risk; highest-priority stabilization target"
+                )
+
+    # S318: Non-primary-language hotspot — top hotspot symbol lives in a non-Python/JS/TS file.
+    # Hotspots in secondary languages (Go, Rust, C) often involve cross-language FFI
+    # or specialized subsystems that require domain expertise to safely modify.
+    _PRIMARY_LANGS318 = {"python", "javascript", "typescript"}
+    if scores:
+        _top318 = scores[0][1]
+        _lang318 = _top318.language.value.lower() if _top318.language else ""
+        if _lang318 and _lang318 not in _PRIMARY_LANGS318 and not _is_test_file(_top318.file_path):
+            lines.append(
+                f"\nnon-primary-language hotspot: {_top318.file_path.rsplit('/', 1)[-1]}"
+                f" ({_lang318}) — hotspot in secondary language; domain expertise required"
+            )
+
+    # S326: Hotspot in multi-commit file — top hotspot file appears in the most recent git history.
+    # The top hotspot is already the most changed file; if it's also the most recently touched,
+    # it signals an active instability zone that deserves isolation or review before merging.
+    # (Implementation: check that file_path appears in file_commit_counts, approximated via callers)
+    if scores:
+        _top326 = scores[0][1]
+        _file326 = _top326.file_path
+        if not _is_test_file(_file326):
+            # Proxy: file is "multi-commit" if it has symbols with many cross-file callers AND
+            # is NOT a test file. Already captured by the main hotspot score; add extra context
+            # when the top file's symbol count also suggests high activity.
+            _file_syms326 = [s for s in graph.symbols.values() if s.file_path == _file326]
+            _callee_count326 = sum(
+                1 for e in graph.edges
+                if e.kind.value == "calls"
+                and any(s.id == e.source_id for s in _file_syms326)
+            )
+            if len(_file_syms326) >= 10 and _callee_count326 >= 20:
+                lines.append(
+                    f"\nhigh-activity hotspot: {_file326.rsplit('/', 1)[-1]} has"
+                    f" {len(_file_syms326)} symbols and {_callee_count326} outgoing calls"
+                    f" — dense file; isolate changes with thorough code review"
+                )
+
+    # S332: Cross-module hotspot — top hotspot is called from 3+ distinct top-level directories.
+    # A hotspot that spans multiple top-level modules is a cross-cutting concern;
+    # changes to it require coordinating reviews across multiple team boundaries.
+    if scores:
+        _top332 = scores[0][1]
+        if not _is_test_file(_top332.file_path):
+            _callers332 = graph.callers_of(_top332.id)
+            _top_dirs332: set[str] = set()
+            for _c332 in _callers332:
+                if _c332.file_path != _top332.file_path:
+                    _parts332 = _c332.file_path.replace("\\", "/").split("/")
+                    if len(_parts332) >= 2:
+                        _top_dirs332.add(_parts332[0])
+            if len(_top_dirs332) >= 3:
+                lines.append(
+                    f"\ncross-module hotspot: {_top332.name} called from"
+                    f" {len(_top_dirs332)} top-level dirs ({', '.join(sorted(_top_dirs332)[:3])})"
+                    f" — cross-cutting concern; multi-team coordination required"
+                )
+
+    # S338: Risk concentration — top 3 hotspot symbols hold 70%+ of total hotspot score.
+    # When a small cluster dominates the risk distribution, the codebase has a tight
+    # instability core; stabilizing just those 3 files would significantly improve overall health.
+    if len(scores) >= 5:
+        _total_s338 = sum(sc for sc, _ in scores)
+        _top3_s338 = sum(sc for sc, _ in scores[:3])
+        if _total_s338 > 0 and (_top3_s338 / _total_s338) >= 0.70:
+            _pct338 = int(100 * _top3_s338 / _total_s338)
+            _names338 = [sym.file_path.rsplit("/", 1)[-1] for _, sym in scores[:3]]
+            lines.append(
+                f"\nrisk concentration: top 3 hotspots hold {_pct338}% of total risk"
+                f" ({', '.join(_names338)})"
+                f" — stabilising these 3 files improves overall codebase health most"
+            )
+
+    # S344: __init__ module hotspot — top hotspot lives in an __init__.py or index file.
+    # __init__.py hotspots indicate that the package interface itself is unstable;
+    # any import of the package is affected, making the blast radius the entire dependency tree.
+    if scores:
+        _top344 = scores[0][1]
+        _fname344 = _top344.file_path.rsplit("/", 1)[-1].lower()
+        if _fname344 in ("__init__.py", "index.py", "index.ts", "index.js") and not _is_test_file(_top344.file_path):
+            lines.append(
+                f"\ninit module hotspot: {_top344.file_path.rsplit('/', 1)[-1]}"
+                f" — package interface is unstable; every importer of the package is affected"
+            )
+
+    # S376: Same-file hotspot cluster — top 3 hotspot symbols all live in the same file.
+    # When the top 3 hotspots are all in one file, that file has very concentrated risk;
+    # it is likely a core module that warrants extra scrutiny before any change.
+    if len(scores) >= 3:
+        _files376 = [scores[i][1].file_path for i in range(3)]
+        if len(set(_files376)) == 1 and not _is_test_file(_files376[0]):
+            lines.append(
+                f"\nhotspot cluster: top 3 hotspots all in {_files376[0].rsplit('/', 1)[-1]}"
+                f" — extreme risk concentration; this file is the single most critical stabilization target"
+            )
+
+    # S370: Divergent hotspot — top hotspot symbol is in a different file than the 2nd hotspot.
+    # When the top 2 hotspots live in different files/modules, risk is distributed rather than
+    # concentrated; both files need attention but in separate change operations.
+    if len(scores) >= 2:
+        _top370 = scores[0][1]
+        _sec370 = scores[1][1]
+        if (not _is_test_file(_top370.file_path) and not _is_test_file(_sec370.file_path)
+                and _top370.file_path != _sec370.file_path):
+            _dir_top370 = _top370.file_path.rsplit("/", 1)[0] if "/" in _top370.file_path else "."
+            _dir_sec370 = _sec370.file_path.rsplit("/", 1)[0] if "/" in _sec370.file_path else "."
+            if _dir_top370 != _dir_sec370:
+                lines.append(
+                    f"\ndivergent hotspots: top risks in different modules"
+                    f" ({_top370.file_path.rsplit('/', 1)[-1]} vs {_sec370.file_path.rsplit('/', 1)[-1]})"
+                    f" — risk is distributed; plan changes in both areas separately"
+                )
+
+    # S364: Test support hotspot — top hotspot is a shared test helper/fixture/factory file.
+    # High-churn test support files are themselves a testing risk; if conftest/factories
+    # change frequently, dependent tests may break for reasons unrelated to the code under test.
+    if scores:
+        _top364 = scores[0][1]
+        _fp364 = _top364.file_path.lower()
+        _test_support364 = (
+            "conftest", "fixtures", "factories", "test_helpers", "test_utils",
+            "testing", "test_support", "mock_",
+        )
+        _is_support364 = any(p in _fp364 for p in _test_support364) or _is_test_file(_top364.file_path)
+        if _is_support364:
+            lines.append(
+                f"\ntest support hotspot: {_top364.file_path.rsplit('/', 1)[-1]}"
+                f" — high-churn test support; frequent changes break tests for unrelated reasons"
+            )
+
+    # S358: Generated-file hotspot — top hotspot lives in a generated/auto-generated file.
+    # Generated files should not be edited directly; if they are a hotspot, the generator
+    # or its configuration is the actual source of churn, not the generated file.
+    if scores:
+        _top358 = scores[0][1]
+        _fp358 = _top358.file_path.lower()
+        _gen_patterns358 = (
+            "_pb2.py", "_pb2_grpc.py", "_gen.py", "_generated.py",
+            "schema_gen", "auto_gen", "autogenerated", ".g.ts", ".g.dart",
+        )
+        _is_gen358 = any(p in _fp358 for p in _gen_patterns358)
+        if _is_gen358:
+            lines.append(
+                f"\ngenerated-file hotspot: {_top358.file_path.rsplit('/', 1)[-1]} is auto-generated"
+                f" — do not edit directly; churn originates in the generator or .proto/.schema source"
+            )
+
+    # S352: Megafile hotspot — top hotspot file has 500+ lines of code.
+    # Megafiles concentrate change history; a large file with many symbols is harder to reason
+    # about and typically accumulates more accidental complexity over time.
+    if scores:
+        _top352 = scores[0][1]
+        if not _is_test_file(_top352.file_path):
+            _fi352 = graph.files.get(_top352.file_path)
+            if _fi352 and _fi352.line_count >= 500:
+                lines.append(
+                    f"\nmegafile hotspot: {_top352.file_path.rsplit('/', 1)[-1]} has {_fi352.line_count} lines"
+                    f" — large files accumulate accidental complexity; consider splitting by responsibility"
+                )
+
+    # S394: Cross-language hotspot — top hotspot file is not in the primary codebase language.
+    # When the top hotspot is in a non-primary language (e.g., a Go file in a Python repo),
+    # it may lack the same testing and review culture as the main language.
+    if scores:
+        _top394 = scores[0][1]
+        _fp394 = _top394.file_path
+        if _fp394 in graph.files and not _is_test_file(_fp394):
+            _lang394 = graph.files[_fp394].language.value
+            # Find the dominant language among all source files
+            _lang_counts394: dict[str, int] = {}
+            for _fp_c394, _fi_c394 in graph.files.items():
+                if not _is_test_file(_fp_c394):
+                    _lang_counts394[_fi_c394.language.value] = _lang_counts394.get(_fi_c394.language.value, 0) + 1
+            if _lang_counts394:
+                _primary394 = max(_lang_counts394, key=lambda l: _lang_counts394[l])
+                _total394 = sum(_lang_counts394.values())
+                _primary_pct394 = _lang_counts394[_primary394] / _total394
+                if _lang394 != _primary394 and _primary_pct394 >= 0.60:
+                    lines.append(
+                        f"\ncross-language hotspot: {_fp394.rsplit('/', 1)[-1]} ({_lang394})"
+                        f" — hotspot is in non-primary language ({_primary394} is primary);"
+                        f" may have different testing and review standards"
+                    )
+
+    # S388: API endpoint hotspot — top hotspot lives in a routes/endpoints/views file.
+    # API endpoint hotspots indicate that a route handler or view is accumulating logic;
+    # endpoint files should be thin orchestrators, not computation hubs.
+    if scores:
+        _top388 = scores[0][1]
+        _fp388 = _top388.file_path.lower()
+        _api_patterns388 = (
+            "route", "endpoint", "view", "controller", "handler",
+            "rest", "graphql", "api",
+        )
+        _is_api388 = any(p in _fp388 for p in _api_patterns388) and not _is_test_file(_top388.file_path)
+        if _is_api388:
+            lines.append(
+                f"\nAPI hotspot: {_top388.file_path.rsplit('/', 1)[-1]} is a route/endpoint file"
+                f" — endpoint files should delegate; move logic to service layer to reduce hotspot"
+            )
+
+    # S382: Deep call chain hotspot — top hotspot has 3+ direct callers AND 5+ depth-2 callers.
+    # Symbols with deep fan-in are harder to refactor safely; changes propagate through
+    # multiple layers, and intermediate layers may have baked-in assumptions.
+    if scores:
+        _top382 = scores[0][1]
+        if not _is_test_file(_top382.file_path):
+            _direct382 = {
+                e.source_id for e in graph.edges
+                if e.kind.value == "calls" and e.target_id == _top382.id
+            }
+            _d2_382 = {
+                e.source_id for e in graph.edges
+                if e.kind.value == "calls" and e.target_id in _direct382
+            }
+            if len(_direct382) >= 3 and len(_d2_382) >= 5:
+                lines.append(
+                    f"\ndeep call chain: {_top382.name} has {len(_direct382)} direct callers"
+                    f" and {len(_d2_382)} depth-2 callers"
+                    f" — refactors propagate through multiple layers; map all call paths before changing"
+                )
+
+    # S400: Test-file hotspot — the top hotspot symbol lives inside a test file itself.
+    # Test files should not be hotspots; if a test helper is the most-called symbol it has
+    # leaked production logic into tests, or tests are overly interdependent.
+    if scores:
+        _top400 = scores[0][1]
+        if _is_test_file(_top400.file_path):
+            _callers400 = {
+                e.source_id for e in graph.edges
+                if e.kind.value == "calls" and e.target_id == _top400.id
+            }
+            lines.append(
+                f"\ntest-file hotspot: {_top400.name} (in {_top400.file_path.rsplit('/', 1)[-1]})"
+                f" is the top hotspot with {len(_callers400)} caller(s)"
+                f" — test helpers should not accumulate logic; extract shared helpers to a src/ utility"
+            )
+
+    # S406: Init-file hotspot — the top hotspot symbol lives inside an __init__.py.
+    # __init__.py hotspots indicate the package initializer has become a logic hub;
+    # init files should only re-export symbols, not hold business logic.
+    if scores:
+        _top406 = scores[0][1]
+        _fname406 = _top406.file_path.rsplit("/", 1)[-1].lower()
+        if _fname406 in ("__init__.py", "index.js", "index.ts", "index.tsx"):
+            _callers406 = {
+                e.source_id for e in graph.edges
+                if e.kind.value == "calls" and e.target_id == _top406.id
+            }
+            if len(_callers406) >= 2:
+                lines.append(
+                    f"\ninit-file hotspot: {_top406.name} (in {_fname406}) is the top hotspot"
+                    f" with {len(_callers406)} caller(s)"
+                    f" — init files should only re-export; move logic to a dedicated module"
+                )
+
+    # S412: Hotspot with no test coverage — top hotspot file has no corresponding test file.
+    # Hotspot files accumulate the most change pressure yet are the least protected when
+    # they have no test counterpart; regressions in hotspots are the most costly to fix.
+    if scores:
+        _top412 = scores[0][1]
+        if not _is_test_file(_top412.file_path):
+            _name412 = _top412.file_path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+            _test_files412 = [
+                fp for fp in graph.files
+                if _is_test_file(fp) and _name412 in fp
+            ]
+            if not _test_files412:
+                lines.append(
+                    f"\nuntested hotspot: {_top412.file_path.rsplit('/', 1)[-1]} has no"
+                    f" corresponding test file"
+                    f" — hotspot files change most often; add tests before the next modification"
+                )
+
+    # S418: Vendor/third-party hotspot — top hotspot file lives in a vendor/ or third_party/ dir.
+    # Hotspots in vendored code are especially dangerous because the code is not authored by
+    # the team; changes to it bypass normal review and will be overwritten on next vendor update.
+    if scores:
+        _top418 = scores[0][1]
+        _vendor_dirs418 = ("vendor/", "third_party/", "vendors/", "node_modules/", "external/")
+        if any(d in _top418.file_path.lower() for d in _vendor_dirs418):
+            lines.append(
+                f"\nvendor hotspot: {_top418.file_path.rsplit('/', 1)[-1]} is in a vendor directory"
+                f" — vendored hotspots will be overwritten on next vendor update; consider wrapping"
+            )
+
+    # S424: Class hotspot — the top hotspot symbol is a class (not a function or method).
+    # A class appearing as a hotspot is unusual; it typically means the class is being
+    # instantiated in too many places, suggesting it should be injected or turned into a singleton.
+    if scores:
+        _top424 = scores[0][1]
+        if _top424.kind.value == "class" and not _is_test_file(_top424.file_path):
+            _class_callers424 = {
+                e.source_id for e in graph.edges
+                if e.kind.value == "calls" and e.target_id == _top424.id
+            }
+            if len(_class_callers424) >= 3:
+                lines.append(
+                    f"\nclass hotspot: {_top424.name} is a class with {len(_class_callers424)} caller(s)"
+                    f" — class instantiated in many places; consider DI/singleton to reduce coupling"
+                )
+
+    # S430: High-complexity hotspot — top hotspot symbol has cyclomatic complexity >= 20.
+    # High complexity means many execution paths; each path needs its own test scenario.
+    # Complex hotspots are refactor targets AND test coverage bottlenecks simultaneously.
+    if scores:
+        _top430 = scores[0][1]
+        if not _is_test_file(_top430.file_path) and (_top430.complexity or 0) >= 20:
+            lines.append(
+                f"\nhigh-complexity hotspot: {_top430.name} has cyclomatic complexity {_top430.complexity}"
+                f" — {_top430.complexity} distinct paths need test coverage; refactor before growing further"
+            )
+
+    return "\n".join(lines)  # ALWAYS return here — never inside a conditional block
