@@ -4077,3 +4077,117 @@ class TestHotspotsConcentration:
             # Each file listed must have 3+ occurrences in the hotspot list
             for line in conc_lines:
                 assert "(" in line  # format: "filename.py (N/M)"
+
+
+class TestFocusBlastAnnotation:
+    """S29: Focus mode — blast annotation on seed symbol header.
+
+    When the depth-0 seed symbol has 3+ cross-file callers, add
+    '[blast: N files]' to the symbol header. Gives agents immediate
+    risk context before reading the full BFS neighborhood.
+    """
+
+    def test_blast_annotation_shown_for_widely_called_symbol(self, tmp_path):
+        """Seed symbol with 3+ cross-file callers shows [blast: N files]."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "core.py").write_text("def target(): pass\n")
+        for i in range(4):
+            (tmp_path / f"user_{i}.py").write_text(
+                f"from core import target\ndef fn_{i}(): return target()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "target")
+
+        assert "[blast:" in out, f"[blast: N files] must appear for widely-called symbol; got:\n{out}"
+        assert "files]" in out
+
+    def test_blast_annotation_omitted_for_few_callers(self, tmp_path):
+        """Seed symbol with <3 cross-file callers omits [blast:] annotation."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "core.py").write_text("def target(): pass\n")
+        (tmp_path / "user.py").write_text("from core import target\ndef fn(): return target()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "target")
+
+        first_line = out.split("\n")[2] if len(out.split("\n")) >= 3 else out
+        assert "[blast:" not in first_line, (
+            f"[blast:] must NOT appear for <3-file callers; got first line:\n{first_line}"
+        )
+
+    def test_blast_annotation_only_on_depth_zero(self, tmp_path):
+        """[blast:] annotation only appears on the depth-0 seed, not BFS neighbors."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "core.py").write_text("def target(): pass\ndef helper(): return target()\n")
+        for i in range(4):
+            (tmp_path / f"u{i}.py").write_text(
+                f"from core import helper\ndef f{i}(): return helper()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "target")
+
+        lines = out.split("\n")
+        blast_lines = [l for l in lines if "[blast:" in l]
+        # All blast annotations should be on "●" lines (depth 0), not "  →" lines (depth 1)
+        for line in blast_lines:
+            assert line.startswith("●"), (
+                f"[blast:] must only appear on depth-0 lines; got:\n{line}"
+            )
+
+
+class TestOverviewHighRisk:
+    """S28: Overview shows 'high risk (no tests):' — high-churn files without test coverage.
+
+    A file is high-risk when: high commit count (≥5) AND no matching test file by name.
+    Only shown when test files exist in the project (otherwise whole project lacks tests).
+    """
+
+    def test_shows_high_risk_when_churn_file_has_no_test(self, tmp_path):
+        """high risk (no tests): appears for high-churn source files missing test coverage."""
+        import subprocess
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        # Set up a git repo with commit history
+        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True)
+
+        (tmp_path / "core.py").write_text("def service(): pass\n")
+        (tmp_path / "test_utils.py").write_text("def test_dummy(): pass\n")
+        subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True)
+
+        # Make 5 more commits to core.py to trigger high-churn threshold
+        for i in range(5):
+            (tmp_path / "core.py").write_text(f"def service(): return {i}\n")
+            subprocess.run(["git", "add", "core.py"], cwd=tmp_path, capture_output=True)
+            subprocess.run(["git", "commit", "-m", f"update {i}"], cwd=tmp_path, capture_output=True)
+
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+
+        assert "high risk (no tests):" in out, (
+            f"high risk (no tests): must appear for high-churn untested file; got:\n{out}"
+        )
+        assert "core.py" in out.split("high risk")[1].split("\n")[0], (
+            f"core.py must be in high risk line; got:\n{out}"
+        )
+
+    def test_high_risk_omitted_when_no_test_files(self, tmp_path):
+        """high risk (no tests): is omitted when the project has no test files at all."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+
+        assert "high risk" not in out, (
+            f"high risk must not appear when no test files exist; got:\n{out}"
+        )
