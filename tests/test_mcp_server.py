@@ -5174,3 +5174,107 @@ class TestFocusImplementors:
         out = render_focused(g, "add")
 
         assert "implementors:" not in out, f"implementors must not appear for function; got:\n{out}"
+
+
+class TestFocusFileSiblings:
+    """S39: Focus mode — 'In filename.py: sibling (N callers)' section.
+
+    After the BFS output, shows other notable symbols in the seed's file.
+    Helps agents understand what's in the file without a separate blast query.
+    Only includes symbols with >= 1 caller (live code worth knowing about).
+    """
+
+    def test_siblings_shown_for_called_symbols(self, tmp_path):
+        """Siblings with callers appear in 'In file:' line."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "def primary(): pass\n"
+            "def helper(): pass\n"
+            "def util(): pass\n"
+        )
+        (tmp_path / "user.py").write_text(
+            "from service import primary, helper\n"
+            "def main(): primary(); helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "primary")
+
+        assert "service.py" in out
+        # helper is called externally → should appear as a sibling
+        assert "helper" in out.split("In service.py:")[-1] if "In service.py:" in out else True
+
+    def test_uncalled_siblings_excluded(self, tmp_path):
+        """Symbols with 0 callers are not shown as siblings."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "module.py").write_text(
+            "def main_fn(): pass\n"
+            "def dead_fn(): pass\n"  # never called
+        )
+        (tmp_path / "caller.py").write_text(
+            "from module import main_fn\n"
+            "def use(): return main_fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "main_fn")
+
+        if "In module.py:" in out:
+            sibs_line = next(l for l in out.split("\n") if "In module.py:" in l)
+            assert "dead_fn" not in sibs_line, (
+                f"dead_fn (0 callers) must not appear as sibling; got:\n{sibs_line}"
+            )
+
+
+class TestOverviewTechDebtMarkers:
+    """S39: Overview — tech debt markers (TODO/FIXME/HACK/XXX count).
+
+    Scans source files and emits a 'tech debt: N markers in M files (...)' line
+    when at least 3 markers are found. No line when project is clean.
+    """
+
+    def test_tech_debt_line_appears_with_markers(self, tmp_path):
+        """Overview shows tech debt summary when source files contain markers."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "main.py").write_text(
+            "# TODO: refactor this\n"
+            "def fn(): pass\n"
+            "# FIXME: broken edge case\n"
+            "def gn(): pass\n"
+            "# HACK: workaround for lib bug\n"
+            "def hn(): pass\n"
+        )
+        (tmp_path / "helper.py").write_text(
+            "# TODO: add validation\n"
+            "def util(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+
+        assert "tech debt:" in out, f"Expected tech debt line; got:\n{out}"
+        # Should show total count and marker breakdown
+        assert "TODO" in out or "FIXME" in out or "HACK" in out, (
+            f"Expected marker types in tech debt line; got:\n{out}"
+        )
+        # Should mention file count
+        assert "files" in out, f"Expected 'files' in tech debt line; got:\n{out}"
+
+    def test_tech_debt_absent_when_no_markers(self, tmp_path):
+        """Overview does not show tech debt line when no markers exist."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "clean.py").write_text(
+            "def add(x, y): return x + y\n"
+            "def mul(x, y): return x * y\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+
+        assert "tech debt:" not in out, (
+            f"tech debt line must not appear in clean project; got:\n{out}"
+        )

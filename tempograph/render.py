@@ -258,6 +258,35 @@ def render_overview(graph: Tempo) -> str:
                 _um_str += f" +{len(_unused_modules) - 4} more"
             lines.append(f"potentially unused ({len(_unused_modules)}): {_um_str}")
 
+    # Tech debt markers: TODO/FIXME/HACK/XXX comment counts in source files.
+    # Quick signal for known issues, shortcuts, and incomplete work.
+    # Only source-code files with symbols; capped to avoid I/O cost on huge repos.
+    import re as _re  # noqa: PLC0415
+    _TD_PAT = _re.compile(r'\b(TODO|FIXME|HACK|XXX)\b')
+    _td_counts: dict[str, int] = {}
+    _td_file_count = 0
+    for _fp in _src_fps[:200]:  # cap at 200 to keep I/O bounded
+        if Path(_fp).suffix not in _SRC_EXTS:
+            continue
+        try:
+            _content = (Path(graph.root) / _fp).read_text(errors="replace")
+            _matches = _TD_PAT.findall(_content)
+            if _matches:
+                _td_file_count += 1
+                for _m in _matches:
+                    _td_counts[_m] = _td_counts.get(_m, 0) + 1
+        except Exception:
+            pass
+    if _td_counts:
+        _td_total = sum(_td_counts.values())
+        if _td_total >= 3:
+            _td_parts = [
+                f"{_td_counts[k]} {k}s"
+                for k in ("TODO", "FIXME", "HACK", "XXX")
+                if _td_counts.get(k, 0) > 0
+            ]
+            lines.append(f"tech debt: {_td_total} markers in {_td_file_count} files ({', '.join(_td_parts)})")
+
     # Module structure -- just the shape, no noisy import counts
     modules: dict[str, list[str]] = {}
     for fp in graph.files:
@@ -1184,6 +1213,18 @@ def _build_symbol_block_lines(
         except Exception:
             pass
     block_lines = [f"{prefix} {sym.kind.value} {sym.qualified_name}{_blast_ann}{_age_ann} — {loc}{orbit_note}"]
+    # Container annotation for methods: show parent class with caller count.
+    # Helps agents understand the class context of the focused method.
+    if depth == 0 and sym.kind.value == "method" and "::" in sym.id:
+        _name_part = sym.id.split("::", 1)[1]
+        if "." in _name_part:
+            _class_id = sym.id.rsplit(".", 1)[0]  # "file.py::ClassName"
+            _class_sym = graph.symbols.get(_class_id)
+            if _class_sym:
+                _c_callers = len(graph.callers_of(_class_id))
+                _c_methods = len([c for c in graph.children_of(_class_id) if c.kind.value == "method"])
+                _c_ann = f"{_c_callers} callers" if _c_callers else "no callers"
+                block_lines.append(f"{indent}  container: {_class_sym.kind.value} {_class_sym.name} ({_c_ann}, {_c_methods} methods)")
     if sym.signature and depth < 2:
         block_lines.append(f"{indent}  sig: {sym.signature[:150]}")
     if sym.doc and depth == 0:
@@ -1476,6 +1517,27 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     hot_section = _render_hot_callers_section(graph, _seed_syms, token_count, max_tokens)
     if hot_section:
         lines.append(hot_section)
+
+    # File siblings: other notable symbols in the primary seed's file.
+    # Shows agents what else is in the file without requiring a blast query.
+    # Only shown when token budget allows and siblings have callers (i.e. are live code).
+    if _seed_syms and token_count < max_tokens - 80:
+        _prim = _seed_syms[0]
+        _fi = graph.files.get(_prim.file_path)
+        if _fi and len(_fi.symbols) > 2:
+            _prim_children = {c.id for c in graph.children_of(_prim.id)}
+            _sibs: list[tuple[int, "Symbol"]] = []
+            for _sid in _fi.symbols:
+                if _sid == _prim.id or _sid in _prim_children or _sid not in graph.symbols:
+                    continue
+                _s = graph.symbols[_sid]
+                _nc = len(graph.callers_of(_sid))
+                if _nc >= 1:
+                    _sibs.append((_nc, _s))
+            _sibs.sort(key=lambda x: -x[0])
+            if _sibs[:4]:
+                _sb_parts = [f"{s.name} ({n})" for n, s in _sibs[:4]]
+                lines.append(f"\nIn {_prim.file_path.rsplit('/', 1)[-1]}: {', '.join(_sb_parts)}")
 
     return "\n".join(lines)
 
