@@ -9582,3 +9582,85 @@ class TestDiffScopeModules:
         assert "scope:" not in out or "modules" not in out, (
             f"'scope: N modules' must not appear for single-directory diff; got:\n{out}"
         )
+
+
+class TestOverviewMonoCallers:
+    """S105: Overview 'mono-callers: N' — exported fns with exactly 1 caller file."""
+
+    def test_mono_callers_shown_when_many_single_consumer_exports(self, tmp_path):
+        """3+ exported fns each called only from 1 file → 'mono-callers:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        # 4 exported helpers, each called only by service.py
+        for i in range(4):
+            (tmp_path / f"helper_{i}.py").write_text(f"def util_{i}(): return {i}\n")
+        body = "".join(f"from helper_{i} import util_{i}\n" for i in range(4))
+        body += "def run(): return " + " + ".join(f"util_{i}()" for i in range(4)) + "\n"
+        (tmp_path / "service.py").write_text(body)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "mono-callers:" in out, (
+            f"Expected 'mono-callers:' for 4 single-consumer exports; got:\n{out}"
+        )
+
+    def test_mono_callers_absent_when_exports_widely_called(self, tmp_path):
+        """Exported fn called from 3 different files → not a mono-caller."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "shared.py").write_text("def get_config(): return {}\n")
+        for i in range(3):
+            (tmp_path / f"mod_{i}.py").write_text(
+                f"from shared import get_config\ndef work_{i}(): return get_config()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "mono-callers:" not in out, (
+            f"'mono-callers:' must not appear when exports are widely used; got:\n{out}"
+        )
+
+
+class TestDeadCodeStaleDead:
+    """S106: Dead code 'Stale dead: N' — dead symbols in files untouched 90+ days."""
+
+    def test_stale_dead_shown_for_old_dead_symbols(self, tmp_path):
+        """Dead symbols in a git-tracked file not modified in 90+ days → 'Stale dead:'."""
+        import subprocess
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        # Init git repo and create old dead functions
+        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=tmp_path, capture_output=True)
+        (tmp_path / "old_code.py").write_text(
+            "def legacy_a(): return 1\n"
+            "def legacy_b(): return 2\n"
+            "def legacy_c(): return 3\n"
+        )
+        subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+        # Commit with old date (100 days ago)
+        env = {**__import__("os").environ, "GIT_AUTHOR_DATE": "2000-01-01T00:00:00", "GIT_COMMITTER_DATE": "2000-01-01T00:00:00"}
+        subprocess.run(["git", "commit", "-m", "old"], cwd=tmp_path, capture_output=True, env=env)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "Stale dead" in out, (
+            f"Expected 'Stale dead' for dead code in 25y-old file; got:\n{out}"
+        )
+
+    def test_stale_dead_absent_when_no_git(self, tmp_path):
+        """Without git history, 'Stale dead:' cannot be determined → not shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        # No git repo — file_last_modified_days returns None
+        (tmp_path / "misc.py").write_text(
+            "def orphan_x(): return 1\n"
+            "def orphan_y(): return 2\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "Stale dead" not in out, (
+            f"'Stale dead' must not appear when git history is unavailable; got:\n{out}"
+        )

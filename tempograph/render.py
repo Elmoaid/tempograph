@@ -814,6 +814,23 @@ def render_overview(graph: Tempo) -> str:
         _mean_cx = sum(_all_cx_vals) / len(_all_cx_vals)
         lines.append(f"median complexity: {_median_cx} (mean: {_mean_cx:.1f}, n={len(_all_cx_vals)} fns)")
 
+    # S105: Mono-callers — exported symbols used by exactly 1 external file.
+    # These look like "public API" but are secretly coupled to a single consumer.
+    # High count = hidden tight coupling disguised as an open interface.
+    # Only shown when 3+ mono-caller exports exist (fewer = not a pattern worth flagging).
+    _mono_callers = [
+        sym for sym in graph.symbols.values()
+        if sym.exported and sym.kind.value in ("function", "method")
+        and not _is_test_file(sym.file_path)
+        and len({c.file_path for c in graph.callers_of(sym.id) if c.file_path != sym.file_path and not _is_test_file(c.file_path)}) == 1
+    ]
+    if len(_mono_callers) >= 3:
+        _mc_names = [s.name for s in _mono_callers[:4]]
+        _mc_str = ", ".join(_mc_names)
+        if len(_mono_callers) > 4:
+            _mc_str += f" +{len(_mono_callers) - 4} more"
+        lines.append(f"mono-callers: {len(_mono_callers)} exported fns with only 1 caller file ({_mc_str})")
+
     # Circular imports: flag immediately in overview so agents don't miss them.
     # Details are in `--mode deps` but overview gives a quick count + first cycle.
     try:
@@ -4279,6 +4296,25 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         if len(_recently_dead) > 4:
             _rd_str += f" +{len(_recently_dead) - 4} more"
         lines.append(f"Recently dead ({len(_recently_dead)}): {_rd_str}")
+
+    # S106: Stale dead — dead symbols in files untouched for 90+ days.
+    # These are the safest to delete: nobody's been near them in months.
+    # Different from "Recently dead" which flags accidentally-wired new code.
+    # Only shown when git history is available and 2+ stale symbols qualify.
+    _stale_dead = [
+        (sym, conf, _file_age(sym.file_path))
+        for sym, conf in scored
+        if conf >= 40
+        and (_file_age(sym.file_path) or 0) >= 90
+    ]
+    if len(_stale_dead) >= 2:
+        _ages = [age for _, _, age in _stale_dead if age]
+        _avg_age = int(sum(_ages) / len(_ages)) if _ages else 0
+        _sd_names = [f"{sym.name} ({age}d)" for sym, _, age in _stale_dead[:4] if age]
+        _sd_str = ", ".join(_sd_names)
+        if len(_stale_dead) > 4:
+            _sd_str += f" +{len(_stale_dead) - 4} more"
+        lines.append(f"Stale dead ({len(_stale_dead)}, avg {_avg_age}d): {_sd_str} — safe to delete")
 
     # Transitively dead: non-dead symbols whose ALL callers are already dead.
     # find_dead_code() only marks symbols with 0 external callers or unimported files.
