@@ -836,6 +836,19 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — no production code changed; verify doc content reflects the current implementation"
             )
 
+    # S1011: Single file diff — only one source file changed in this diff.
+    # A perfectly isolated change is easy to review and bisect; however verify
+    # the change does not have implicit dependencies requiring updates in other files.
+    _src_changed1011 = [
+        f for f in (changed_files or [])
+        if not any(f.lower().endswith(ext) for ext in (".md", ".rst", ".txt", ".adoc"))
+    ]
+    if len(_src_changed1011) == 1:
+        lines.append(
+            f"single file diff: only {_src_changed1011[0].rsplit('/', 1)[-1]} changed"
+            f" — isolated change; verify no implicit dependencies require updates in other files"
+        )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 

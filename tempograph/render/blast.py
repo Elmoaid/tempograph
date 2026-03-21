@@ -2466,6 +2466,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — high-stakes; changes may silently bypass checks, escalate privileges, or expose credentials"
         )
 
+    # S1010: Serializer blast — blast target is a serialization/marshaling file.
+    # Serializer changes alter how data is encoded at rest or in transit; downstream
+    # consumers may fail to parse responses they previously handled without any code change.
+    _ser_kws1010 = ("serializer", "serializers", "marshal", "marshaller", "codec", "codecs", "encoder", "encoders", "decoder", "decoders")
+    _fname1010 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if any(_fname1010 == kw or _fname1010.startswith(kw + "_") or _fname1010.endswith("_" + kw) for kw in _ser_kws1010):
+        lines.append(
+            f"serializer blast: {_fp589.rsplit('/', 1)[-1]} is a serialization/marshaling file"
+            f" — format changes break downstream consumers without any code change on their side"
+        )
+
     return "\n".join(lines)
 
 
