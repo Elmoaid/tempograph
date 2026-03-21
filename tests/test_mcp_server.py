@@ -15021,3 +15021,107 @@ class TestFocusPropertyAccessor:
         assert "property accessor" not in out, (
             f"'property accessor' must not appear for regular method; got:\n{out}"
         )
+
+
+# S245 — infra/env file in diff (diff)
+# ---------------------------------------------------------------------------
+
+class TestDiffInfraChange:
+    def test_infra_signal_shown_for_dockerfile(self, tmp_path):
+        """S245: 'infra change' shown when Dockerfile is in the diff."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "Dockerfile").write_text("FROM python:3.11\nCOPY . .\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "Dockerfile"])
+        assert "infra change" in out, f"Expected 'infra change'; got:\n{out}"
+        assert "ops coordination" in out
+
+    def test_infra_signal_absent_for_source_only(self, tmp_path):
+        """S245: 'infra change' absent when diff has only source files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "utils.py"])
+        assert "infra change" not in out, (
+            f"'infra change' must not appear; got:\n{out}"
+        )
+
+
+# S245 — already tested above
+
+# S246 — mixin/base class blast (blast)
+# ---------------------------------------------------------------------------
+
+class TestBlastMixinBase:
+    def test_mixin_blast_shown_for_base_class(self, tmp_path):
+        """S246: 'mixin/base blast' shown when blast target has base/mixin classes with subclasses."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "mixins.py").write_text(
+            "class AuthMixin:\n    def get_user(self): return None\n"
+        )
+        (tmp_path / "views.py").write_text(
+            "from mixins import AuthMixin\n"
+            "class UserView(AuthMixin):\n    def get(self): return self.get_user()\n"
+        )
+        (tmp_path / "api.py").write_text(
+            "from mixins import AuthMixin\n"
+            "class ApiView(AuthMixin):\n    def post(self): return self.get_user()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "mixins.py")
+        assert "mixin/base blast" in out, f"Expected 'mixin/base blast'; got:\n{out}"
+        assert "cascade silently" in out
+
+    def test_mixin_blast_absent_for_plain_module(self, tmp_path):
+        """S246: 'mixin/base blast' absent when target has no base/mixin classes."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "utils.py").write_text(
+            "def helper(): return 42\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from utils import helper\ndef run(): return helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "utils.py")
+        assert "mixin/base blast" not in out, (
+            f"'mixin/base blast' must not appear; got:\n{out}"
+        )
+
+
+# S247 — api-heavy codebase (overview)
+# ---------------------------------------------------------------------------
+
+class TestOverviewApiHeavy:
+    def test_api_heavy_shown(self, tmp_path):
+        """S247: 'api-heavy' shown when 3+ API/route files exist."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        for name in ("routes.py", "views.py", "serializers.py", "handlers.py"):
+            (tmp_path / name).write_text("def placeholder(): pass\n")
+        (tmp_path / "main.py").write_text(
+            "from routes import placeholder\ndef run(): placeholder()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "api-heavy" in out, f"Expected 'api-heavy'; got:\n{out}"
+        assert "routes, schemas, and handlers" in out
+
+    def test_api_heavy_absent_for_plain_codebase(self, tmp_path):
+        """S247: 'api-heavy' absent when no API/route files exist."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        (tmp_path / "utils.py").write_text("def compute(x): return x\n")
+        (tmp_path / "core.py").write_text(
+            "from utils import compute\ndef run(): compute(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "api-heavy" not in out, (
+            f"'api-heavy' must not appear; got:\n{out}"
+        )
