@@ -1672,7 +1672,13 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     if _seed_syms and token_count < max_tokens - 60:
         _prim_s = _seed_syms[0]
         if _prim_s.kind.value in ("function", "method") and not _is_test_file(_prim_s.file_path):
-            _seed_callees = {c.id for c in graph.callees_of(_prim_s.id)}
+            # Exclude class/type constructors — they're shared ubiquitously and
+            # create false positives (every handler that creates Symbol/Edge looks
+            # "similar" to every other handler, which is meaningless noise).
+            _seed_callees = {
+                c.id for c in graph.callees_of(_prim_s.id)
+                if c.kind.value not in ("class", "type_alias", "enum")
+            }
             if len(_seed_callees) >= 2:
                 _shared_counts: dict[str, int] = {}  # sym_id → shared callee count
                 for _callee_id in _seed_callees:
@@ -2042,6 +2048,27 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             _cc_parts.append(f"{_cc_fp.rsplit('/', 1)[-1]} ({_cc_score:.0%} {_cc_age})")
         lines.append(f"Co-change partners: {', '.join(_cc_parts)}")
         lines.append("")
+
+    # Recent callers: importer files modified within the last 14 days.
+    # Proxy for "blast radius may be growing" — recently touched importers signal
+    # active coupling growth. Needs git repo; silently skipped otherwise.
+    if importers and graph.root:
+        try:
+            from .git import file_last_modified_days as _fld  # noqa: PLC0415
+            _recent_callers = [
+                imp for imp in importers
+                if not _is_test_file(imp)
+                and (_fld(graph.root, imp) or 9999) <= 14
+            ]
+            if len(_recent_callers) >= 2:
+                _rc_names = [fp.rsplit("/", 1)[-1] for fp in _recent_callers[:4]]
+                _rc_str = ", ".join(_rc_names)
+                if len(_recent_callers) > 4:
+                    _rc_str += f" +{len(_recent_callers) - 4} more"
+                lines.append(f"Recent callers (14d): {_rc_str} — blast radius growing")
+                lines.append("")
+        except Exception:
+            pass
 
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
@@ -2573,6 +2600,38 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         if _conc_parts:
             lines.append("")
             lines.append(f"Hotspot concentration: {', '.join(_conc_parts)}")
+
+    # Coupled pairs: hotspot files that always change together (high co-change count).
+    # Hidden coupling not visible in the call graph — agents must update both when touching one.
+    # Only shown when git history is available and at least 1 pair qualifies.
+    if graph.root and scores:
+        try:
+            from .git import cochange_pairs as _hspot_cpairs
+            # Get the top-5 hotspot file paths (source only)
+            _hs_fps = list(dict.fromkeys(
+                sym.file_path for _, sym in scores[:top_n]
+                if not _is_test_file(sym.file_path)
+            ))[:5]
+            _seen_pairs: set[frozenset] = set()
+            _coupled: list[tuple[int, str, str]] = []  # (count, fp_a, fp_b)
+            for _fp in _hs_fps:
+                for _p in _hspot_cpairs(graph.root, _fp, n=3, min_count=5):
+                    _partner = _p["path"]
+                    if _partner in graph.files and not _is_test_file(_partner):
+                        _pair_key = frozenset((_fp, _partner))
+                        if _pair_key not in _seen_pairs:
+                            _seen_pairs.add(_pair_key)
+                            _coupled.append((_p["count"], _fp, _partner))
+            if _coupled:
+                _coupled.sort(key=lambda x: -x[0])
+                _cp_parts = [
+                    f"{a.rsplit('/', 1)[-1]} ↔ {b.rsplit('/', 1)[-1]} ({n}x)"
+                    for n, a, b in _coupled[:2]
+                ]
+                lines.append("")
+                lines.append(f"Coupled pairs: {', '.join(_cp_parts)}")
+        except Exception:
+            pass
 
     return "\n".join(lines)
 

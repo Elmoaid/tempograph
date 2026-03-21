@@ -5953,3 +5953,121 @@ class TestFocusOwnedByAnnotation:
         assert "owned by:" not in out, (
             f"'owned by:' must not appear for symbol with 0 callers; got:\n{out}"
         )
+
+
+class TestHotspotsCoupledPairs:
+    """S51: Hotspots mode — 'Coupled pairs:' section for co-changing hotspot files.
+
+    When hotspot files have high co-change frequency with other hotspot files,
+    shows 'Coupled pairs: file_a.py ↔ file_b.py (Nx)' to warn agents of hidden coupling.
+    Absent when no qualifying co-change pairs exist or no git history available.
+    """
+
+    def test_coupled_pairs_absent_without_git(self, tmp_path):
+        """No 'Coupled pairs:' when there's no git repo (no git history)."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        # Build in a temp dir that is NOT a git repo
+        (tmp_path / "engine.py").write_text(
+            "def process(x):\n"
+            "    if x > 0:\n"
+            "        return x * 2\n"
+            "    return -x\n"
+        )
+        (tmp_path / "caller.py").write_text(
+            "from engine import process\n"
+            "def run(): return process(5)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+
+        assert "Coupled pairs:" not in out, (
+            f"Coupled pairs: must not appear without git; got:\n{out}"
+        )
+
+    def test_coupled_pairs_absent_for_single_file(self, tmp_path):
+        """No 'Coupled pairs:' when only one source file exists."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        (tmp_path / "solo.py").write_text(
+            "def compute(x):\n"
+            "    if x:\n"
+            "        return x * 2\n"
+            "    return 0\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+
+        assert "Coupled pairs:" not in out, (
+            f"Coupled pairs: must not appear for single-file project; got:\n{out}"
+        )
+
+
+class TestBlastRecentCallers:
+    """S52: Blast mode — 'Recent callers (14d):' section for importers touched recently.
+
+    When 2+ non-test importers were modified within 14 days, shows them to signal
+    that blast radius may be growing. Requires git repo; absent for non-git tmp dirs.
+    """
+
+    def _build(self, tmp_path, files: dict):
+        from tempograph.builder import build_graph
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_recent_callers_absent_without_git(self, tmp_path):
+        """'Recent callers' section absent when not in a git repo (no git history)."""
+        from tempograph.render import render_blast_radius
+
+        g = self._build(tmp_path, {
+            "core.py": "def process(x): return x * 2\n",
+            "caller_a.py": "from core import process\ndef a(): return process(1)\n",
+            "caller_b.py": "from core import process\ndef b(): return process(2)\n",
+            "caller_c.py": "from core import process\ndef c(): return process(3)\n",
+        })
+        out = render_blast_radius(g, "core.py")
+        assert "Recent callers" not in out, (
+            f"'Recent callers' must not appear without git repo; got:\n{out}"
+        )
+
+    def test_recent_callers_shown_when_importers_recently_modified(self, tmp_path):
+        """'Recent callers (14d):' shown when 2+ importers have recent file_last_modified_days."""
+        from unittest.mock import patch
+        from tempograph.render import render_blast_radius
+
+        g = self._build(tmp_path, {
+            "core.py": "def process(x): return x * 2\n",
+            "caller_a.py": "from core import process\ndef a(): return process(1)\n",
+            "caller_b.py": "from core import process\ndef b(): return process(2)\n",
+            "caller_c.py": "from core import process\ndef c(): return process(3)\n",
+        })
+        # Patch git to return recently-modified days (≤14) for all callers
+        with patch("tempograph.render.render_blast_radius.__module__"):
+            pass
+        import tempograph.render as _render_mod
+        original_fld = None
+        try:
+            from tempograph.git import file_last_modified_days as _orig
+            original_fld = _orig
+        except ImportError:
+            pass
+
+        with patch("tempograph.git.file_last_modified_days", return_value=5):
+            g2 = self._build(tmp_path, {
+                "core.py": "def process(x): return x * 2\n",
+                "caller_a.py": "from core import process\ndef a(): return process(1)\n",
+                "caller_b.py": "from core import process\ndef b(): return process(2)\n",
+                "caller_c.py": "from core import process\ndef c(): return process(3)\n",
+            })
+            # Set graph.root so the git path is taken
+            g2.root = str(tmp_path)
+            out = render_blast_radius(g2, "core.py")
+        assert "Recent callers" in out, (
+            f"Expected 'Recent callers' when importers recently modified; got:\n{out}"
+        )
+        assert "blast radius growing" in out, (
+            f"Expected 'blast radius growing' in output; got:\n{out}"
+        )
