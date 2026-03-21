@@ -1856,6 +1856,24 @@ def _signals_structure(
             f" — consider centralizing config; scattered magic values impede testability"
         )
 
+    # S415: Multiple entry points — 3+ files each define a main() or cli() function.
+    # A codebase with many independent entry points may have duplicate startup logic;
+    # shared init code (logging, config) can diverge across entry points silently.
+    _s415_entry_syms = [
+        s for s in graph.symbols.values()
+        if s.kind.value in ("function", "method")
+        and s.name in ("main", "cli", "entrypoint", "entry_point", "run_app", "start")
+        and not _is_test_file(s.file_path)
+    ]
+    _s415_entry_files = {s.file_path for s in _s415_entry_syms}
+    if len(_s415_entry_files) >= 3:
+        _entry_names415 = ", ".join(s.rsplit("/", 1)[-1] for s in list(_s415_entry_files)[:3])
+        lines.append(
+            f"multiple entry points: {len(_s415_entry_files)} files each define an entry function"
+            f" ({_entry_names415})"
+            f" — shared init logic (config, logging) may diverge; centralize startup orchestration"
+        )
+
     return lines
 
 

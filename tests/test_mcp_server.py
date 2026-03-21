@@ -21159,3 +21159,227 @@ class TestDeadConvertersS414:
         assert "dead converters" not in out, (
             f"'dead converters' must not appear when convert fn is called; got:\n{out}"
         )
+
+
+# ── S415: Multiple entry points ───────────────────────────────────────────────
+
+class TestMultipleEntryPointsS415:
+    """S415: 3+ files each with a main() function emit the signal."""
+
+    def test_multiple_entry_points_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        for i in range(4):
+            (tmp_path / f"service_{i}.py").write_text(
+                f"def main():\n    print(\"service {i}\")\n\n"
+                f"def helper_{i}():\n    pass\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "multiple entry points" in out, (
+            f"Expected 'multiple entry points' signal; got:\n{out}"
+        )
+
+    def test_multiple_entry_points_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # Only one main()
+        (tmp_path / "app.py").write_text("def main():\n    pass\n")
+        (tmp_path / "utils.py").write_text("def helper():\n    pass\n")
+        (tmp_path / "models.py").write_text("class User:\n    pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "multiple entry points" not in out, (
+            f"'multiple entry points' must not appear with single main; got:\n{out}"
+        )
+
+
+# ── S416: Large function body ─────────────────────────────────────────────────
+
+class TestLargeFunctionBodyS416:
+    """S416: Focused function spanning 50+ lines emits the signal."""
+
+    def test_large_function_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        # 55-line function
+        body_lines = ["def big_processor(data):"]
+        for i in range(54):
+            body_lines.append(f"    x_{i} = data + {i}")
+        body_lines.append("    return x_0")
+        (tmp_path / "proc.py").write_text("\n".join(body_lines) + "\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="big_processor")
+        assert "large function" in out, (
+            f"Expected 'large function' signal; got:\n{out}"
+        )
+
+    def test_large_function_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def add(a, b):\n    return a + b\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="add")
+        assert "large function" not in out, (
+            f"'large function' must not appear for 2-line function; got:\n{out}"
+        )
+
+
+# ── S417: Feature flag file in diff ──────────────────────────────────────────
+
+class TestFeatureFlagDiffS417:
+    """S417: Diff containing a feature_flag file emits the signal."""
+
+    def test_feature_flag_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "feature_flags.py").write_text(
+            "ENABLE_NEW_UI = True\n"
+            "ENABLE_DARK_MODE = False\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["feature_flags.py"])
+        assert "feature flag change" in out, (
+            f"Expected 'feature flag change' signal; got:\n{out}"
+        )
+
+    def test_feature_flag_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "models.py").write_text(
+            "class Product:\n    def __init__(self):\n        pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["models.py"])
+        assert "feature flag change" not in out, (
+            f"'feature flag change' must not appear for models.py; got:\n{out}"
+        )
+
+
+# ── S418: Vendor hotspot ──────────────────────────────────────────────────────
+
+class TestVendorHotspotS418:
+    """S418: Top hotspot symbol in a vendor/ dir emits the signal."""
+
+    def test_vendor_hotspot_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        # Use external/ (not excluded by build_graph) to simulate vendored code
+        ext_dir = tmp_path / "external"
+        ext_dir.mkdir()
+        (ext_dir / "lib.py").write_text(
+            "def ext_helper(x):\n    return x\n"
+        )
+        for i in range(4):
+            (tmp_path / f"app_{i}.py").write_text(
+                f"from external.lib import ext_helper\n"
+                f"def use_{i}():\n    return ext_helper({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "vendor hotspot" in out, (
+            f"Expected 'vendor hotspot' signal; got:\n{out}"
+        )
+
+    def test_vendor_hotspot_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def helper(x):\n    return x + 1\n"
+        )
+        for i in range(4):
+            (tmp_path / f"a_{i}.py").write_text(
+                f"from utils import helper\ndef f_{i}(): return helper({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "vendor hotspot" not in out, (
+            f"'vendor hotspot' must not appear for non-vendor hotspot; got:\n{out}"
+        )
+
+
+# ── S419: Type stub blast ─────────────────────────────────────────────────────
+
+class TestTypeStubBlastS419:
+    """S419: Blast radius of a .pyi stub file emits the signal."""
+
+    def test_type_stub_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "api.pyi").write_text(
+            "def get_user(id: int) -> dict: ...\n"
+            "def create_user(name: str) -> dict: ...\n"
+        )
+        (tmp_path / "service.py").write_text(
+            "def process(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="api.pyi")
+        assert "type stub blast" in out, (
+            f"Expected 'type stub blast' signal; got:\n{out}"
+        )
+
+    def test_type_stub_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "api.py").write_text(
+            "def get_user(id): return {}\n"
+        )
+        (tmp_path / "service.py").write_text(
+            "from api import get_user\ndef run(): return get_user(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="api.py")
+        assert "type stub blast" not in out, (
+            f"'type stub blast' must not appear for regular .py file; got:\n{out}"
+        )
+
+
+# ── S420: Dead schedulers ─────────────────────────────────────────────────────
+
+class TestDeadSchedulersS420:
+    """S420: Unused schedule_*/cron_* functions emit the signal."""
+
+    def test_dead_schedulers_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "jobs.py").write_text(
+            "def schedule_cleanup():\n    pass\n\n"
+            "def cron_report():\n    pass\n\n"
+            "def schedule_sync():\n    pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead schedulers" in out, (
+            f"Expected 'dead schedulers' signal; got:\n{out}"
+        )
+
+    def test_dead_schedulers_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "jobs.py").write_text(
+            "def schedule_cleanup():\n    pass\n"
+        )
+        (tmp_path / "runner.py").write_text(
+            "from jobs import schedule_cleanup\n\n"
+            "def run():\n    schedule_cleanup()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead schedulers" not in out, (
+            f"'dead schedulers' must not appear when schedule_cleanup is called; got:\n{out}"
+        )
