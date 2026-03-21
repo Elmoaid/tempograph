@@ -4010,6 +4010,21 @@ def _signals_focused_fn_advanced(
                 f" — transparent to callers but may hide side effects; verify getter has no mutations"
             )
 
+    # S906: Constructor focus — focused symbol is a constructor (__init__, __new__).
+    # Constructors establish object invariants; changes may silently break all
+    # instantiation sites, especially when default argument values are modified.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim906 = _seed_syms[0]
+        if (
+            _prim906.kind.value in ("function", "method")
+            and _prim906.name in ("__init__", "__new__", "constructor")
+            and not _is_test_file(_prim906.file_path)
+        ):
+            lines.append(
+                f"\nconstructor: {_prim906.name} is a constructor"
+                f" — changes may break all instantiation sites; review default arguments carefully"
+            )
+
     return lines
 
 

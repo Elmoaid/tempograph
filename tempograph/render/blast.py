@@ -2272,6 +2272,21 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — changes affect API surface; review backward compatibility and client contracts"
         )
 
+    # S908: Dense file blast — blast target has 30+ symbols defined in it.
+    # Files with high symbol density concentrate many concerns; changes here have a
+    # higher chance of introducing unintended side effects between co-located symbols.
+    _syms_in_file908 = [
+        s for s in graph.symbols.values()
+        if s.file_path == _fp589 or (
+            not _fp589.startswith("/") and _fp589 in s.file_path
+        )
+    ]
+    if len(_syms_in_file908) >= 30:
+        lines.append(
+            f"dense file blast: {_fp589.rsplit('/', 1)[-1]} has {len(_syms_in_file908)} symbols"
+            f" — dense file; changes have higher chance of unintended side effects"
+        )
+
     return "\n".join(lines)
 
 

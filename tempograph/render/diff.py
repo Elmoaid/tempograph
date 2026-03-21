@@ -2508,4 +2508,18 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — mixed doc+code diff; verify docs accurately reflect the code changes"
             )
 
+    # S909: Cross-module diff — changed files span 3+ different directories.
+    # A diff touching many directories suggests a cross-cutting concern; this often
+    # indicates a missing abstraction or scattered responsibility that should be encapsulated.
+    if len(changed_files) >= 3:
+        _diff_dirs909 = {
+            f.replace("\\", "/").rsplit("/", 1)[0] if "/" in f.replace("\\", "/") else "."
+            for f in changed_files
+        }
+        if len(_diff_dirs909) >= 3:
+            lines.append(
+                f"cross-module diff: {len(_diff_dirs909)} different directories changed"
+                f" — wide-scope change; check for missing abstraction or scattered responsibility"
+            )
+
     return "\n".join(lines)

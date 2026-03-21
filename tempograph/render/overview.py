@@ -3338,6 +3338,23 @@ def _signals_async_oop(
                 f" — no subdirectory organization; consider grouping by module as codebase grows"
             )
 
+    # S907: High constant ratio — repo has more constants than functions (config-heavy codebase).
+    # A constant-heavy repo often has scattered configuration values mixed with business logic;
+    # centralizing into dedicated config files improves discoverability and reduces change risk.
+    _all_fns907 = [
+        s for s in graph.symbols.values()
+        if s.kind.value in ("function", "method") and not _is_test_file(s.file_path)
+    ]
+    _all_consts907 = [
+        s for s in graph.symbols.values()
+        if s.kind.value == "constant" and not _is_test_file(s.file_path)
+    ]
+    if len(_all_fns907) >= 5 and len(_all_consts907) > len(_all_fns907):
+        lines.append(
+            f"high constant ratio: {len(_all_consts907)} constants vs {len(_all_fns907)} functions"
+            f" — constant-heavy codebase; consider centralizing configuration into dedicated files"
+        )
+
     return lines
 
 

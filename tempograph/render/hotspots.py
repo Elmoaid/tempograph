@@ -2720,5 +2720,18 @@ def _collect_hotspots_signals(
                 f" — top hotspot is a test function; extract fixtures and helpers to reduce test maintenance"
             )
 
+    # S910: Concentration hotspot — all top 5 hotspots are in the same file.
+    # When every high-complexity symbol lives in a single file, changes there have
+    # zero isolation from other hot code paths; this file is the highest-risk target.
+    if len(scores) >= 5:
+        _top5_files910 = {sym910.file_path for _, sym910 in scores[:5] if sym910 is not None}
+        if len(_top5_files910) == 1:
+            _sole_file910 = next(iter(_top5_files910))
+            if not _is_test_file(_sole_file910):
+                out.append(
+                    f"\nconcentration hotspot: all top 5 hotspots are in {_sole_file910.rsplit('/', 1)[-1]}"
+                    f" — extreme complexity concentration; highest-risk file in the codebase"
+                )
+
     return out
 

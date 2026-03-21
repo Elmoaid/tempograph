@@ -42803,3 +42803,236 @@ class TestDeadSingleMethodClassesS905:
         assert "dead thin classes" not in out, (
             f"'dead thin classes' must not appear when class is used; got:\n{out}"
         )
+
+
+# ── S906–S911 ──────────────────────────────────────────────────────────────────
+
+# ── S906: Constructor focus ───────────────────────────────────────────────────
+
+class TestConstructorFocusS906:
+    """S906: Focused symbol is __init__ or __new__ emits constructor signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "user.py").write_text(
+            "class User:\n"
+            "    def __init__(self, name, role='user'):\n"
+            "        self.name = name\n"
+            "        self.role = role\n"
+        )
+        (tmp_path / "app.py").write_text("from user import User\ndef run(): User('alice')\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "__init__")
+        assert "constructor" in out, (
+            f"'constructor' expected for __init__ method; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "utils.py").write_text("def process(x): return x\n")
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process")
+        assert "constructor" not in out, (
+            f"'constructor' must not appear for regular function; got:\n{out}"
+        )
+
+
+# ── S907: High constant ratio ─────────────────────────────────────────────────
+
+class TestHighConstantRatioS907:
+    """S907: More constants than functions emits high-constant-ratio signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        # 10 constants + 3 functions
+        consts = "\n".join(f"CONST_{i} = {i}" for i in range(10))
+        fns = "\n".join(f"def fn_{i}(): pass" for i in range(3))
+        (tmp_path / "config.py").write_text(f"{consts}\n")
+        (tmp_path / "app.py").write_text(f"{fns}\n")
+        (tmp_path / "b.py").write_text("def work(): pass\n")
+        (tmp_path / "c.py").write_text("def calc(): pass\n")
+        (tmp_path / "d.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "high constant ratio" in out, (
+            f"'high constant ratio' expected when constants > functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        # More functions than constants
+        fns = "\n".join(f"def fn_{i}(): pass" for i in range(10))
+        (tmp_path / "app.py").write_text(f"{fns}\n")
+        (tmp_path / "CONST_X = 1\n".join(["b.py"])).write_text("def work(): pass\n")
+        for i in range(4):
+            (tmp_path / f"svc_{i}.py").write_text(f"def service_{i}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "high constant ratio" not in out, (
+            f"'high constant ratio' must not appear when functions >= constants; got:\n{out}"
+        )
+
+
+# ── S908: Dense file blast ────────────────────────────────────────────────────
+
+class TestDenseFileBlastS908:
+    """S908: Blast target has 30+ symbols emits dense-file-blast signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        # 30+ functions in one file
+        fns = "\n".join(f"def fn_{i}(x): return x + {i}" for i in range(32))
+        (tmp_path / "big_module.py").write_text(f"{fns}\n")
+        (tmp_path / "app.py").write_text(
+            "from big_module import fn_0\ndef run(): fn_0(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "big_module.py")
+        assert "dense file blast" in out, (
+            f"'dense file blast' expected for file with 30+ symbols; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "small_module.py").write_text(
+            "def fn_a(x): return x\n"
+            "def fn_b(x): return x + 1\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from small_module import fn_a\ndef run(): fn_a(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "small_module.py")
+        assert "dense file blast" not in out, (
+            f"'dense file blast' must not appear for small file; got:\n{out}"
+        )
+
+
+# ── S909: Cross-module diff ────────────────────────────────────────────────────
+
+class TestCrossModuleDiffS909:
+    """S909: Changed files span 3+ directories emits cross-module-diff signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        for d in ("auth", "users", "payments"):
+            subdir = tmp_path / d
+            subdir.mkdir()
+            (subdir / "service.py").write_text(f"def {d}_fn(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["auth/service.py", "users/service.py", "payments/service.py"])
+        assert "cross-module diff" in out, (
+            f"'cross-module diff' expected when files span 3+ directories; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        subdir = tmp_path / "auth"
+        subdir.mkdir()
+        for i in range(3):
+            (subdir / f"module_{i}.py").write_text(f"def fn_{i}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["auth/module_0.py", "auth/module_1.py", "auth/module_2.py"])
+        assert "cross-module diff" not in out, (
+            f"'cross-module diff' must not appear when files are all in same directory; got:\n{out}"
+        )
+
+
+# ── S910: Concentration hotspot ───────────────────────────────────────────────
+
+class TestConcentrationHotspotS910:
+    """S910: All top 5 hotspots in same file emits concentration-hotspot signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        # 5 complex functions in the same file
+        fns = "\n".join(
+            f"def fn_{i}(a, b, c):\n    for x in range(3):\n        if a: b = c * {i}\n        elif b: c = a + {i}\n    return a\n"
+            for i in range(5)
+        )
+        (tmp_path / "dense_core.py").write_text(fns)
+        (tmp_path / "app.py").write_text(
+            "from dense_core import " + ", ".join(f"fn_{i}" for i in range(5)) + "\n"
+            "def run(): " + "; ".join(f"fn_{i}(1,2,3)" for i in range(5)) + "\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "concentration hotspot" in out, (
+            f"'concentration hotspot' expected when top 5 hotspots in same file; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        # One function per file
+        for i in range(5):
+            (tmp_path / f"module_{i}.py").write_text(
+                f"def fn_{i}(a, b, c):\n    for x in range(3):\n        if a: b = c * {i}\n    return a\n"
+            )
+        (tmp_path / "app.py").write_text(
+            "from module_0 import fn_0\nfrom module_1 import fn_1\nfrom module_2 import fn_2\n"
+            "from module_3 import fn_3\nfrom module_4 import fn_4\n"
+            "def run(): fn_0(1,2,3); fn_1(1,2,3); fn_2(1,2,3); fn_3(1,2,3); fn_4(1,2,3)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "concentration hotspot" not in out, (
+            f"'concentration hotspot' must not appear when hotspots spread across files; got:\n{out}"
+        )
+
+
+# ── S911: Dead async functions ────────────────────────────────────────────────
+
+class TestDeadAsyncFunctionsS911:
+    """S911: Unused async functions emits dead-async signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "tasks.py").write_text(
+            "async def background_task(): pass\n"
+            "async def cleanup_job(): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead async" in out, (
+            f"'dead async' expected for unused async functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "tasks.py").write_text(
+            "async def background_task(): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from tasks import background_task\ndef _run(): background_task()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead async" not in out, (
+            f"'dead async' must not appear when async function is called; got:\n{out}"
+        )

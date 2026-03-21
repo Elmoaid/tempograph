@@ -3136,6 +3136,25 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — consider converting to plain functions to reduce over-engineering"
         )
 
+    # S911: Dead async functions — unused async/coroutine functions.
+    # Dead async functions may be part of event loops or background task registries;
+    # removing them may silently drop background processing if dynamically registered.
+    _dead_async911 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and s.signature.startswith("async def")
+    ]
+    if _dead_async911:
+        _async_names911 = ", ".join(s.name for s in _dead_async911[:3])
+        if len(_dead_async911) > 3:
+            _async_names911 += f" +{len(_dead_async911) - 3} more"
+        lines.append(
+            f"dead async: {len(_dead_async911)} unused async function(s) ({_async_names911})"
+            f" — may be registered background tasks; verify no dynamic registration before removing"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
