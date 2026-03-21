@@ -8063,3 +8063,52 @@ class TestFocusSiblingHot:
         assert "also hot:" not in out, (
             f"'also hot:' must not appear when no hot siblings; got:\n{out}"
         )
+
+
+class TestDiffChangeRiskVerdict:
+    """S80: Diff context — 'change risk: low/MEDIUM/HIGH' global verdict.
+
+    Combines blast radius (files importing changed files) and exported-with-callers count.
+    Shown for any diff with at least one non-test changed file with symbols.
+    """
+
+    def _build(self, tmp_path, files: dict):
+        from tempograph.builder import build_graph
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_medium_risk_verdict_for_widely_used_export(self, tmp_path):
+        """Exported function with 5 importer files → MEDIUM risk verdict."""
+        from tempograph.render import render_diff_context
+
+        g = self._build(tmp_path, {
+            "core.py": "def process(x): return x\n",
+            "a.py": "from core import process\ndef a(): return process(1)\n",
+            "b.py": "from core import process\ndef b(): return process(2)\n",
+            "c.py": "from core import process\ndef c(): return process(3)\n",
+            "d.py": "from core import process\ndef d(): return process(4)\n",
+            "e.py": "from core import process\ndef e(): return process(5)\n",
+        })
+        out = render_diff_context(g, ["core.py"])
+        assert "change risk:" in out, (
+            f"Expected 'change risk:' verdict in diff output; got:\n{out}"
+        )
+        assert "MEDIUM" in out, (
+            f"Expected MEDIUM risk for export with 5 importers; got:\n{out}"
+        )
+
+    def test_low_risk_verdict_for_isolated_change(self, tmp_path):
+        """File with unexported symbols and no importers → low risk verdict."""
+        from tempograph.render import render_diff_context
+
+        g = self._build(tmp_path, {
+            "standalone.py": "def _internal(): return 1\ndef _helper(): return 2\n",
+        })
+        out = render_diff_context(g, ["standalone.py"])
+        assert "change risk:" in out, (
+            f"Expected 'change risk:' verdict in diff output; got:\n{out}"
+        )
+        assert "low" in out, (
+            f"Expected low risk for isolated unexported symbols; got:\n{out}"
+        )
