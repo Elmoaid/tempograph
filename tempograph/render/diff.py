@@ -571,4 +571,34 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             _s135_str += f" +{len(_s135_names) - 3} more"
         lines.append(f"changed file size: {_s135_total_lines} lines ({_s135_str})")
 
+    # S200: Missing co-editors — files that historically change WITH the diff files
+    # but are absent from the current diff. A common source of incomplete PRs.
+    # Only shown when 2+ absent co-editors exist with >= 3 co-changes each.
+    if graph.root:
+        try:
+            from ..git import cochange_pairs as _cp200, is_git_repo as _igr200
+            if _igr200(graph.root):
+                _diff_src200 = [fp for fp in normalized if not _is_test_file(fp)]
+                _diff_set200 = set(normalized)
+                _missing200: dict[str, int] = {}
+                for _fp200 in _diff_src200[:3]:  # check top-3 source files to stay fast
+                    for _p200 in _cp200(graph.root, _fp200, n=8):
+                        if (_p200["path"] not in _diff_set200
+                                and not _is_test_file(_p200["path"])
+                                and _p200["count"] >= 3):
+                            _missing200[_p200["path"]] = max(
+                                _missing200.get(_p200["path"], 0), _p200["count"]
+                            )
+                if len(_missing200) >= 2:
+                    _top200 = sorted(_missing200.items(), key=lambda x: -x[1])[:3]
+                    _m200_str = ", ".join(fp.rsplit("/", 1)[-1] for fp, _ in _top200)
+                    if len(_missing200) > 3:
+                        _m200_str += f" +{len(_missing200) - 3} more"
+                    lines.append(
+                        f"missing co-editors: {_m200_str}"
+                        f" — usually change alongside diff files but absent here"
+                    )
+        except Exception:
+            pass
+
     return "\n".join(lines)
