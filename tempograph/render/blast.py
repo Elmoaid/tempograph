@@ -2039,6 +2039,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — structural hub; breaking changes cascade to {len(_importers776)} dependents"
         )
 
+    # S788: Shared utility blast — the blast target has a utility/shared/common file name.
+    # Utility files aggregate helpers used broadly; changing them affects every consumer
+    # and the blast radius is often larger than the file name suggests.
+    _stem788 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].replace(".py", "").lower()
+    _util_kws788 = ("utils", "util", "helpers", "helper", "shared", "common", "base", "core", "lib", "tools")
+    if any(kw == _stem788 or _stem788 == f"_{kw}" for kw in _util_kws788):
+        lines.append(
+            f"shared utility blast: {_fp589.rsplit('/', 1)[-1]} is a utility/shared file"
+            f" — changes here often affect more callers than are immediately visible; check all importers"
+        )
+
     # S782: Test file blast — the blast target is itself a test file.
     # Running blast radius on a test file shows which other tests import it;
     # changes to shared test utilities propagate to all dependent tests unexpectedly.

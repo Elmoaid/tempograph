@@ -3688,6 +3688,22 @@ def _signals_focused_fn_advanced(
                 f" — name collision risk; callers may import the wrong implementation"
             )
 
+    # S786: Dunder method focus — focused symbol is a dunder (special) method.
+    # Dunder methods define Python protocol behavior (__init__, __call__, __iter__, etc.);
+    # changing them affects how the object participates in Python's built-in operations.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim786 = _seed_syms[0]
+        if (
+            _prim786.kind.value in ("function", "method")
+            and _prim786.parent_id is not None
+            and _prim786.name.startswith("__") and _prim786.name.endswith("__")
+            and not _is_test_file(_prim786.file_path)
+        ):
+            lines.append(
+                f"\ndunder method: {_prim786.name} is a Python protocol method"
+                f" — changes affect built-in operations (iteration, comparison, context managers, etc.)"
+            )
+
     return lines
 
 

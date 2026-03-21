@@ -2675,6 +2675,28 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — abandoned control-flow logic; endpoint or feature was removed"
         )
 
+    # S791: Dead subclass — dead class that inherits from a named base (not just object).
+    # Subclasses carry the burden of the parent's interface; dead subclasses indicate
+    # a plugin, strategy, or hook that was never activated or was removed.
+    _dead_subclasses791 = []
+    for _s791 in dead:
+        if _s791.kind.value == "class" and not _is_test_file(_s791.file_path):
+            if (
+                _s791.signature is not None
+                and "(" in _s791.signature
+                and not _s791.signature.rstrip().endswith("()")
+                and not _s791.signature.rstrip().endswith("(object)")
+            ):
+                _dead_subclasses791.append(_s791)
+    if _dead_subclasses791:
+        _sc_names791 = ", ".join(s.name for s in _dead_subclasses791[:3])
+        if len(_dead_subclasses791) > 3:
+            _sc_names791 += f" +{len(_dead_subclasses791) - 3} more"
+        lines.append(
+            f"dead subclass: {len(_dead_subclasses791)} dead class(es) with inheritance ({_sc_names791})"
+            f" — unused plugin/strategy/hook; the parent contract is also dead weight"
+        )
+
     # S785: Dead constants cluster — 3+ dead module-level constants in the same file.
     # When multiple constants from the same file are all unused, the file may represent
     # a removed feature's configuration; the entire constants file may be safe to delete.

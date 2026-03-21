@@ -3016,6 +3016,26 @@ def _signals_async_oop(
                 f" — files are large; consider splitting into smaller, focused modules"
             )
 
+    # S787: High import coupling — the most-imported file is imported by > 50% of source files.
+    # When a single file is imported by more than half the codebase, it becomes a structural
+    # singleton; any breaking change requires touching every importer simultaneously.
+    _src_fps787 = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_src_fps787) >= 4:
+        _max_importers787 = 0
+        _max_fp787 = None
+        for _fp787 in _src_fps787:
+            _cnt787 = len([f for f in graph.importers_of(_fp787) if not _is_test_file(f)])
+            if _cnt787 > _max_importers787:
+                _max_importers787 = _cnt787
+                _max_fp787 = _fp787
+        _threshold787 = len(_src_fps787) * 0.5
+        if _max_fp787 and _max_importers787 >= _threshold787:
+            lines.append(
+                f"high import coupling: {_max_fp787.rsplit('/', 1)[-1]} imported by"
+                f" {_max_importers787}/{len(_src_fps787)} source files (>{_threshold787:.0f})"
+                f" — structural singleton; breaking changes require touching all importers"
+            )
+
     # S781: Many small files — average source file is under 10 lines with 5+ source files.
     # Over-fragmented codebases split logic into many tiny files, increasing navigation
     # cost and import overhead; consider consolidating into fewer coherent modules.
