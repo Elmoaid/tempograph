@@ -888,6 +888,573 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — data access paths removed; safe to clean up API surface"
         )
 
+
+    # S297: Dead validators — validate_*/check_*/verify_*/ensure_* functions with 0 callers.
+    # Validation/guard functions are often added alongside a feature and forgotten when
+    # the feature is removed; leftover validators are misleading — they imply invariants
+    # that nothing actually enforces anymore.
+    # Only shown when 3+ such functions found (conf >= 30).
+    _s297_val_prefixes = ("validate_", "check_", "verify_", "ensure_", "assert_", "is_valid_")
+    _s297_dead_vals = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s297_val_prefixes)
+    ]
+    if len(_s297_dead_vals) >= 3:
+        _val_names = [s.name for s in _s297_dead_vals[:3]]
+        _val_str = ", ".join(_val_names)
+        if len(_s297_dead_vals) > 3:
+            _val_str += f" +{len(_s297_dead_vals) - 3} more"
+        lines.append(
+            f"dead validators: {len(_s297_dead_vals)} unused validation fn(s) ({_val_str})"
+            f" — removed features leave orphaned guards; misleading if left in codebase"
+        )
+
+    # S298: Dead middleware — middleware_*/interceptor_*/before_*/after_* functions with 0 callers.
+    # Leftover middleware fragments break the mental model of request/response lifecycle;
+    # readers may assume they're active when they're actually bypassed.
+    # Only shown when 2+ such functions found (conf >= 30).
+    _s298_mw_prefixes = (
+        "middleware_", "interceptor_", "before_request", "after_request",
+        "pre_", "post_process", "apply_filter", "handle_request",
+    )
+    _s298_dead_mw = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s298_mw_prefixes)
+    ]
+    if len(_s298_dead_mw) >= 2:
+        _mw_names298 = ", ".join(s.name for s in _s298_dead_mw[:3])
+        if len(_s298_dead_mw) > 3:
+            _mw_names298 += f" +{len(_s298_dead_mw) - 3} more"
+        lines.append(
+            f"dead middleware: {len(_s298_dead_mw)} unused middleware fn(s) ({_mw_names298})"
+            f" — orphaned filters; request lifecycle looks different than it is"
+        )
+
+    # S304: Dead serializers — to_dict/to_json/serialize/marshal methods with 0 callers.
+    # Serializers are usually called by API layers; when APIs change, the old serializer
+    # remains and creates confusion about the canonical representation of data.
+    # Only shown when 2+ such functions found (conf >= 30).
+    _s304_ser_patterns = (
+        "to_dict", "to_json", "to_yaml", "serialize", "marshal",
+        "encode", "to_proto", "to_pb", "as_dict", "dump",
+    )
+    _s304_dead_ser = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower() == p or sym.name.lower().startswith(p + "_") for p in _s304_ser_patterns)
+    ]
+    if len(_s304_dead_ser) >= 2:
+        _ser_names304 = ", ".join(s.name for s in _s304_dead_ser[:3])
+        if len(_s304_dead_ser) > 3:
+            _ser_names304 += f" +{len(_s304_dead_ser) - 3} more"
+        lines.append(
+            f"dead serializers: {len(_s304_dead_ser)} unused serialization fn(s) ({_ser_names304})"
+            f" — stale data representations; may reflect a removed API endpoint"
+        )
+
+    # S310: Dead adapters — adapter_*/converter_*/transformer_*/formatter_* functions with 0 callers.
+    # Adapters are typically tied to specific integration points; when integrations are removed,
+    # adapters become dead weight that implies functionality that no longer exists.
+    # Only shown when 2+ such functions found (conf >= 30).
+    _s310_adapt_prefixes = (
+        "adapt_", "adapter_", "convert_", "converter_", "transform_",
+        "transformer_", "format_", "formatter_", "translate_",
+    )
+    _s310_dead_adapt = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s310_adapt_prefixes)
+    ]
+    if len(_s310_dead_adapt) >= 2:
+        _adapt_names310 = ", ".join(s.name for s in _s310_dead_adapt[:3])
+        if len(_s310_dead_adapt) > 3:
+            _adapt_names310 += f" +{len(_s310_dead_adapt) - 3} more"
+        lines.append(
+            f"dead adapters: {len(_s310_dead_adapt)} unused adapter fn(s) ({_adapt_names310})"
+            f" — removed integrations; implies features that no longer exist"
+        )
+
+    # S315: Dead rate-limiters — rate_limit_*/throttle_*/debounce_* functions with 0 callers.
+    # Rate-limiting functions are security/stability controls; unused ones suggest
+    # an unprotected endpoint or a removed protection path.
+    # Only shown when 2+ such functions found (conf >= 30).
+    _s315_rl_prefixes = (
+        "rate_limit_", "throttle_", "debounce_", "limit_", "rate_check_", "quota_",
+    )
+    _s315_dead_rl = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s315_rl_prefixes)
+    ]
+    if len(_s315_dead_rl) >= 2:
+        _rl_names315 = ", ".join(s.name for s in _s315_dead_rl[:3])
+        if len(_s315_dead_rl) > 3:
+            _rl_names315 += f" +{len(_s315_dead_rl) - 3} more"
+        lines.append(
+            f"dead rate-limiters: {len(_s315_dead_rl)} unused throttle/limit fn(s) ({_rl_names315})"
+            f" — removed rate controls; verify endpoint is still protected"
+        )
+
+    # S321: Dead auth functions — auth_*/authenticate_*/authorize_* functions with 0 callers.
+    # Authentication/authorization functions are critical security controls;
+    # unused auth functions may indicate a bypass, a removed check, or an orphaned auth path.
+    # Only shown when 1+ such functions found (conf >= 40, high threshold for security signals).
+    _s321_auth_prefixes = (
+        "auth_", "authenticate_", "authorize_", "check_auth", "verify_auth",
+        "require_auth", "require_permission", "has_permission", "is_authorized",
+    )
+    _s321_dead_auth = [
+        sym for sym, conf in scored
+        if conf >= 40
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s321_auth_prefixes)
+    ]
+    if _s321_dead_auth:
+        _auth_names321 = ", ".join(s.name for s in _s321_dead_auth[:3])
+        if len(_s321_dead_auth) > 3:
+            _auth_names321 += f" +{len(_s321_dead_auth) - 3} more"
+        lines.append(
+            f"dead auth: {len(_s321_dead_auth)} unused auth fn(s) ({_auth_names321})"
+            f" — removed security check; verify endpoint is still protected before removing"
+        )
+
+    # S329: Dead notification functions — notify_*/send_notification_*/alert_* with 0 callers.
+    # Notification functions are often wired to user-facing events; unused ones suggest
+    # a removed event path that users may still expect to trigger notifications.
+    _s329_notif_prefixes = (
+        "notify_", "send_notification", "send_alert_", "alert_", "dispatch_event_",
+        "emit_event_", "publish_", "broadcast_",
+    )
+    _s329_dead_notif = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s329_notif_prefixes)
+    ]
+    if len(_s329_dead_notif) >= 2:
+        _notif_names329 = ", ".join(s.name for s in _s329_dead_notif[:3])
+        if len(_s329_dead_notif) > 3:
+            _notif_names329 += f" +{len(_s329_dead_notif) - 3} more"
+        lines.append(
+            f"dead notifications: {len(_s329_dead_notif)} unused notification fn(s)"
+            f" ({_notif_names329})"
+            f" — removed event path; users may still expect these notifications"
+        )
+
+    # S335: Dead state handlers — on_enter_*/on_exit_*/transition_* functions with 0 callers.
+    # State machine handlers that are never called indicate a removed state or transition;
+    # their presence implies a state machine model that is no longer accurate.
+    _s335_state_prefixes = (
+        "on_enter_", "on_exit_", "on_leave_", "transition_", "on_transition_",
+        "handle_state_", "state_", "enter_state_",
+    )
+    _s335_dead_state = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s335_state_prefixes)
+    ]
+    if len(_s335_dead_state) >= 2:
+        _state_names335 = ", ".join(s.name for s in _s335_dead_state[:3])
+        if len(_s335_dead_state) > 3:
+            _state_names335 += f" +{len(_s335_dead_state) - 3} more"
+        lines.append(
+            f"dead state handlers: {len(_s335_dead_state)} unused state transition fn(s)"
+            f" ({_state_names335})"
+            f" — removed state or transition; state machine model may be inaccurate"
+        )
+
+    # S341: Dead scheduled tasks — task_*/cron_*/scheduled_*/periodic_* functions with 0 callers.
+    # Scheduled tasks run on a timer rather than being called directly; unused task functions
+    # may still be registered in the scheduler, running silently and consuming resources.
+    _s341_task_prefixes = (
+        "task_", "cron_", "scheduled_", "periodic_", "job_", "background_task_",
+    )
+    _s341_dead_tasks = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s341_task_prefixes)
+    ]
+    if len(_s341_dead_tasks) >= 2:
+        _task_names341 = ", ".join(s.name for s in _s341_dead_tasks[:3])
+        if len(_s341_dead_tasks) > 3:
+            _task_names341 += f" +{len(_s341_dead_tasks) - 3} more"
+        lines.append(
+            f"dead scheduled tasks: {len(_s341_dead_tasks)} unused task fn(s) ({_task_names341})"
+            f" — may still be registered in scheduler; deregister before removing"
+        )
+
+    # S347: Dead migration helpers — migrate_*/upgrade_*/downgrade_* functions with 0 callers.
+    # Migration helpers are typically invoked by schema migration frameworks, not directly;
+    # unused ones may represent aborted migrations that should be cleaned up from the migration history.
+    _s347_mig_prefixes = (
+        "migrate_", "upgrade_", "downgrade_", "rollback_", "apply_migration_",
+        "revert_migration_", "run_migration_",
+    )
+    _s347_dead_mig = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s347_mig_prefixes)
+    ]
+    if len(_s347_dead_mig) >= 1:
+        _mig_names347 = ", ".join(s.name for s in _s347_dead_mig[:3])
+        if len(_s347_dead_mig) > 3:
+            _mig_names347 += f" +{len(_s347_dead_mig) - 3} more"
+        lines.append(
+            f"dead migration helpers: {len(_s347_dead_mig)} unused migration fn(s) ({_mig_names347})"
+            f" — check if registered in migration history; remove from both code and migration registry"
+        )
+
+    # S378: Dead parsers — parse_*/decode_*/deserialize_* functions with 0 callers.
+    # Dead parser functions often represent formats that were planned but never integrated;
+    # leaving them creates false confidence that the format is supported.
+    _s378_parser_prefixes = (
+        "parse_", "decode_", "deserialize_", "from_json_", "from_dict_",
+        "from_string_", "load_from_", "read_from_",
+    )
+    _s378_dead_parsers = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s378_parser_prefixes)
+    ]
+    if len(_s378_dead_parsers) >= 2:
+        _parser_names378 = ", ".join(s.name for s in _s378_dead_parsers[:3])
+        if len(_s378_dead_parsers) > 3:
+            _parser_names378 += f" +{len(_s378_dead_parsers) - 3} more"
+        lines.append(
+            f"dead parsers: {len(_s378_dead_parsers)} unused parser fn(s) ({_parser_names378})"
+            f" — unintegrated format parsers; creates false impression that format is supported"
+        )
+
+    # S372: Dead serializers — to_dict/to_json/serialize/as_dict functions with 0 callers.
+    # Serializers that are never called may represent removed API endpoints or deprecated
+    # response formats; they can mislead developers about what the system exposes.
+    _s372_ser_names = (
+        "to_dict", "to_json", "serialize", "as_dict", "as_json",
+        "to_payload", "to_response", "marshal", "dump",
+    )
+    _s372_dead_sers = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower() == n or sym.name.lower().startswith(n + "_") for n in _s372_ser_names)
+    ]
+    if len(_s372_dead_sers) >= 2:
+        _ser_names372 = ", ".join(s.name for s in _s372_dead_sers[:3])
+        if len(_s372_dead_sers) > 3:
+            _ser_names372 += f" +{len(_s372_dead_sers) - 3} more"
+        lines.append(
+            f"dead serializers: {len(_s372_dead_sers)} unused serializer(s) ({_ser_names372})"
+            f" — may represent removed endpoints or deprecated formats; remove from public API surface"
+        )
+
+    # S366: Dead property accessors — get_*/set_* pairs where both are unused.
+    # Accessor pairs for removed properties are noisy dead code: two unused fns sharing a name root.
+    # They often survive after the underlying attribute was removed or renamed.
+    _s366_get_names = {
+        sym.name[4:]: sym
+        for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and sym.name.lower().startswith("get_")
+    }
+    _s366_set_names = {
+        sym.name[4:]: sym
+        for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and sym.name.lower().startswith("set_")
+    }
+    _s366_dead_pairs = [
+        (_s366_get_names[k], _s366_set_names[k])
+        for k in _s366_get_names
+        if k in _s366_set_names
+    ]
+    if _s366_dead_pairs:
+        _pair_str366 = ", ".join(
+            f"get_{k}/{_s366_set_names[k].name}" for k in list(_s366_get_names)[:2] if k in _s366_set_names
+        )
+        lines.append(
+            f"dead accessors: {len(_s366_dead_pairs)} unused get/set pair(s) ({_pair_str366})"
+            f" — accessor pairs suggest a removed property; delete both or restore the underlying attribute"
+        )
+
+    # S360: Dead event handlers — on_*/handle_*/listen_* functions with 0 callers.
+    # Event handlers that are never called may have been unregistered but not deleted;
+    # they can mislead future developers into thinking certain events are handled.
+    _s360_ev_prefixes = (
+        "on_", "handle_", "listen_", "when_", "after_", "before_",
+        "on_event_", "event_handler_", "process_event_",
+    )
+    _s360_dead_ev = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s360_ev_prefixes)
+    ]
+    if len(_s360_dead_ev) >= 2:
+        _ev_names360 = ", ".join(s.name for s in _s360_dead_ev[:3])
+        if len(_s360_dead_ev) > 3:
+            _ev_names360 += f" +{len(_s360_dead_ev) - 3} more"
+        lines.append(
+            f"dead event handlers: {len(_s360_dead_ev)} unregistered handler(s) ({_ev_names360})"
+            f" — may mislead developers into thinking events are handled; deregister or remove"
+        )
+
+    # S354: Dead factory functions — create_*/make_*/build_* functions with 0 callers.
+    # Factory functions that are never called may represent abandoned creation patterns
+    # or forgotten constructor alternatives; they can be removed safely once verified unused.
+    _s354_factory_prefixes = (
+        "create_", "make_", "build_", "construct_", "new_", "factory_", "spawn_",
+    )
+    _s354_dead_factories = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s354_factory_prefixes)
+    ]
+    if len(_s354_dead_factories) >= 2:
+        _fac_names354 = ", ".join(s.name for s in _s354_dead_factories[:3])
+        if len(_s354_dead_factories) > 3:
+            _fac_names354 += f" +{len(_s354_dead_factories) - 3} more"
+        lines.append(
+            f"dead factories: {len(_s354_dead_factories)} unused factory fn(s) ({_fac_names354})"
+            f" — abandoned constructor alternatives; safe to remove after confirming no dynamic use"
+        )
+
+    # S396: Dead logging functions — log_*/debug_*/trace_* functions with 0 callers.
+    # Custom logging wrappers that are never called may represent observability features
+    # that were added but never integrated; they can be removed to simplify the logging path.
+    _s396_log_prefixes = (
+        "log_", "debug_", "trace_", "emit_log_", "write_log_",
+        "log_event_", "record_event_",
+    )
+    _s396_dead_logs = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s396_log_prefixes)
+    ]
+    if len(_s396_dead_logs) >= 2:
+        _log_names396 = ", ".join(s.name for s in _s396_dead_logs[:3])
+        if len(_s396_dead_logs) > 3:
+            _log_names396 += f" +{len(_s396_dead_logs) - 3} more"
+        lines.append(
+            f"dead logging: {len(_s396_dead_logs)} unused log fn(s) ({_log_names396})"
+            f" — unintegrated observability wrappers; simplify by removing or wiring in"
+        )
+
+    # S390: Dead report generators — report_*/generate_*_report/export_* with 0 callers.
+    # Dead report generators often represent features that were built but never shipped;
+    # they consume test/maintenance attention and mislead about what the system can produce.
+    _s390_report_prefixes = (
+        "report_", "generate_report", "generate_", "export_", "build_report_",
+        "create_report_", "render_report_",
+    )
+    _s390_dead_reports = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s390_report_prefixes)
+    ]
+    if len(_s390_dead_reports) >= 2:
+        _rpt_names390 = ", ".join(s.name for s in _s390_dead_reports[:3])
+        if len(_s390_dead_reports) > 3:
+            _rpt_names390 += f" +{len(_s390_dead_reports) - 3} more"
+        lines.append(
+            f"dead report generators: {len(_s390_dead_reports)} unused report fn(s) ({_rpt_names390})"
+            f" — unshipped reporting features; misleads about what the system can produce"
+        )
+
+    # S384: Dead cleanup functions — cleanup_*/teardown_*/destroy_* functions with 0 callers.
+    # Cleanup functions that are never called may have been unregistered from lifecycle hooks
+    # without being deleted; they consume memory and create false confidence in cleanup behavior.
+    _s384_cleanup_prefixes = (
+        "cleanup_", "teardown_", "destroy_", "shutdown_", "close_",
+        "dispose_", "finalize_", "free_", "release_",
+    )
+    _s384_dead_cleanup = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s384_cleanup_prefixes)
+    ]
+    if len(_s384_dead_cleanup) >= 2:
+        _cl_names384 = ", ".join(s.name for s in _s384_dead_cleanup[:3])
+        if len(_s384_dead_cleanup) > 3:
+            _cl_names384 += f" +{len(_s384_dead_cleanup) - 3} more"
+        lines.append(
+            f"dead cleanup: {len(_s384_dead_cleanup)} unused lifecycle fn(s) ({_cl_names384})"
+            f" — may be unregistered from lifecycle hooks; false confidence in cleanup behavior"
+        )
+
+    # S402: Dead background tasks — background_task_*/worker_*/celery_* functions with 0 callers.
+    # Background task functions that are never called may have been deregistered from a task
+    # queue without being deleted; they create dead worker slots and confuse task routing.
+    _s402_bg_prefixes = (
+        "background_task_", "worker_", "celery_", "task_",
+        "async_job_", "queue_", "job_",
+    )
+    _s402_dead_bg = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s402_bg_prefixes)
+    ]
+    if len(_s402_dead_bg) >= 2:
+        _bg_names402 = ", ".join(s.name for s in _s402_dead_bg[:3])
+        if len(_s402_dead_bg) > 3:
+            _bg_names402 += f" +{len(_s402_dead_bg) - 3} more"
+        lines.append(
+            f"dead background tasks: {len(_s402_dead_bg)} unused task fn(s) ({_bg_names402})"
+            f" — may be deregistered from task queue; dead worker slots confuse task routing"
+        )
+
+    # S408: Dead validators — validate_*/check_*/verify_* functions with 0 callers.
+    # Unused validation functions may have been bypassed rather than deleted; silent bypass
+    # of validation weakens data integrity guarantees without making it obvious in code review.
+    _s408_val_prefixes = (
+        "validate_", "check_", "verify_", "assert_", "ensure_",
+        "is_valid_", "sanitize_",
+    )
+    _s408_dead_validators = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s408_val_prefixes)
+    ]
+    if len(_s408_dead_validators) >= 2:
+        _val_names408 = ", ".join(s.name for s in _s408_dead_validators[:3])
+        if len(_s408_dead_validators) > 3:
+            _val_names408 += f" +{len(_s408_dead_validators) - 3} more"
+        lines.append(
+            f"dead validators: {len(_s408_dead_validators)} unused validation fn(s) ({_val_names408})"
+            f" — may be bypassed rather than deleted; silent bypass weakens data integrity"
+        )
+
+    # S414: Dead converters — convert_*/transform_*/map_* functions with 0 callers.
+    # Dead converter functions indicate data pipeline stages that were abandoned; they may hold
+    # stale business logic that diverges from active converters, causing confusion in future work.
+    _s414_conv_prefixes = (
+        "convert_", "transform_", "map_", "translate_",
+        "serialize_", "format_", "encode_", "decode_",
+    )
+    _s414_dead_converters = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s414_conv_prefixes)
+    ]
+    if len(_s414_dead_converters) >= 2:
+        _conv_names414 = ", ".join(s.name for s in _s414_dead_converters[:3])
+        if len(_s414_dead_converters) > 3:
+            _conv_names414 += f" +{len(_s414_dead_converters) - 3} more"
+        lines.append(
+            f"dead converters: {len(_s414_dead_converters)} unused converter fn(s) ({_conv_names414})"
+            f" — abandoned pipeline stages; stale logic diverges from active converters"
+        )
+
+    # S420: Dead schedulers — schedule_*/cron_*/periodic_* functions with 0 callers.
+    # Scheduler functions with no callers may have been removed from the job registry
+    # without deleting the implementation; they accumulate as phantom scheduled logic.
+    _s420_sched_prefixes = (
+        "schedule_", "cron_", "periodic_", "run_every_",
+        "hourly_", "daily_", "weekly_", "nightly_",
+    )
+    _s420_dead_schedulers = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s420_sched_prefixes)
+    ]
+    if len(_s420_dead_schedulers) >= 2:
+        _sched_names420 = ", ".join(s.name for s in _s420_dead_schedulers[:3])
+        if len(_s420_dead_schedulers) > 3:
+            _sched_names420 += f" +{len(_s420_dead_schedulers) - 3} more"
+        lines.append(
+            f"dead schedulers: {len(_s420_dead_schedulers)} unused scheduler fn(s) ({_sched_names420})"
+            f" — may be removed from job registry; phantom scheduled logic confuses ops"
+        )
+
+    # S426: Dead decorators — register_*/decorator_* functions with 0 callers.
+    # Unused decorator registration functions indicate decorator patterns that were removed
+    # without cleaning up the factory; they may still modify classes if applied dynamically.
+    _s426_dec_prefixes = (
+        "register_", "decorator_", "with_", "apply_decorator_",
+        "patch_", "monkey_patch_", "decorate_",
+    )
+    _s426_dead_decorators = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s426_dec_prefixes)
+    ]
+    if len(_s426_dead_decorators) >= 2:
+        _dec_names426 = ", ".join(s.name for s in _s426_dead_decorators[:3])
+        if len(_s426_dead_decorators) > 3:
+            _dec_names426 += f" +{len(_s426_dead_decorators) - 3} more"
+        lines.append(
+            f"dead decorators: {len(_s426_dead_decorators)} unused decorator fn(s) ({_dec_names426})"
+            f" — removed decorator pattern may still apply dynamically; verify before deleting"
+        )
+
+    # S432: Dead event handlers (subscription style) — subscribe_*/listen_*/watch_* with 0 callers.
+    # Subscription functions that are never called may be intended handlers that were
+    # never wired up; events fire without a handler, silently dropping signal.
+    _s432_sub_prefixes = (
+        "subscribe_", "listen_", "watch_", "observe_",
+        "on_event_", "attach_", "bind_",
+    )
+    _s432_dead_subs = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s432_sub_prefixes)
+    ]
+    if len(_s432_dead_subs) >= 2:
+        _sub_names432 = ", ".join(s.name for s in _s432_dead_subs[:3])
+        if len(_s432_dead_subs) > 3:
+            _sub_names432 += f" +{len(_s432_dead_subs) - 3} more"
+        lines.append(
+            f"dead subscriptions: {len(_s432_dead_subs)} unwired subscription fn(s) ({_sub_names432})"
+            f" — events fire without listener; silently drops signals"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

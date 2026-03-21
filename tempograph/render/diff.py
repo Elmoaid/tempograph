@@ -891,4 +891,416 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — version manifest changed; verify changelog and tag are updated"
         )
 
+
+    # S294: CI/CD config in diff — diff includes CI/CD pipeline configuration files.
+    # CI changes affect build, test, and deploy pipelines for everyone;
+    # broken CI blocks all future merges until fixed.
+    _s294_ci_names = {
+        ".travis.yml", ".travis.yaml", "appveyor.yml", "azure-pipelines.yml",
+        "bitbucket-pipelines.yml", "circle.yml", "tox.ini", "Jenkinsfile",
+        ".circleci", ".drone.yml", "codeship-services.yml",
+    }
+    _s294_ci_dirs = (".github/workflows/", ".circleci/", ".buildkite/", ".gitlab/")
+    _s294_ci_files = []
+    for _fp294 in list(normalized) + [f for f in changed_files if f not in normalized]:
+        _name294 = _fp294.rsplit("/", 1)[-1].lower()
+        _fp294_lower = _fp294.lower()
+        if (
+            _name294 in _s294_ci_names
+            or any(_fp294_lower.startswith(d) or f"/{d}" in _fp294_lower for d in _s294_ci_dirs)
+        ):
+            _s294_ci_files.append(_fp294)
+    if _s294_ci_files:
+        _ci_names294 = [fp.rsplit("/", 1)[-1] for fp in _s294_ci_files[:2]]
+        lines.append(
+            f"CI/CD config: {', '.join(_ci_names294)} in diff"
+            f" — pipeline change; broken CI blocks all future merges"
+        )
+
+    # S302: Large diff — 20+ files changed in this diff.
+    # Large diffs are hard to review and test; blast radius is proportionally wider
+    # and the probability of unintended side effects increases.
+    _s302_total = len(changed_files)
+    if _s302_total >= 20:
+        lines.append(
+            f"large diff: {_s302_total} files changed"
+            f" — hard to review; split into smaller atomic commits if possible"
+        )
+
+    # S308: Docs-only diff — all changed files are documentation (no code impact).
+    # Documentation-only changes are safe to merge without re-running the full test suite
+    # but may still need proofreading and link validation.
+    _s308_doc_exts = {".md", ".rst", ".txt", ".ipynb", ".adoc", ".wiki"}
+    _s308_doc_names = {"README", "CHANGELOG", "CONTRIBUTING", "LICENSE", "HISTORY", "AUTHORS"}
+    _s308_all_docs = all(
+        any(f.lower().endswith(ext) for ext in _s308_doc_exts)
+        or f.rsplit("/", 1)[-1].rsplit(".", 1)[0].upper() in _s308_doc_names
+        for f in changed_files
+    )
+    if changed_files and _s308_all_docs:
+        lines.append(
+            "docs-only diff: all changed files are documentation"
+            " — no code impact; skip full test suite, focus on link/prose review"
+        )
+
+    # S313: Healthy test ratio — diff has more test lines added than production lines.
+    # Diffs that improve test coverage more than they add production code signal
+    # healthy TDD discipline and reduce future regression risk.
+    _s313_test_files = [f for f in changed_files if _is_test_file(f)]
+    _s313_prod_files = [f for f in changed_files if not _is_test_file(f)
+                        and not any(f.lower().endswith(ext) for ext in {".md", ".rst", ".txt"})]
+    if len(_s313_test_files) >= 2 and len(_s313_prod_files) >= 1:
+        _ratio313 = len(_s313_test_files) / max(len(_s313_prod_files), 1)
+        if _ratio313 >= 1.5:
+            lines.append(
+                f"healthy test ratio: {len(_s313_test_files)} test file(s) vs"
+                f" {len(_s313_prod_files)} prod file(s)"
+                f" — strong test coverage for this diff; good TDD signal"
+            )
+
+    # S319: Dependency update — diff includes package manifest or lock file changes.
+    # Dependency updates introduce transitive changes that are invisible in the diff;
+    # a passing test suite doesn't guarantee all transitive behavior is unchanged.
+    _s319_dep_names = {
+        "requirements.txt", "requirements-dev.txt", "pyproject.toml", "setup.cfg",
+        "package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+        "go.sum", "go.mod", "Cargo.lock", "Gemfile.lock", "poetry.lock",
+    }
+    _s319_dep_files = [
+        f for f in changed_files
+        if f.rsplit("/", 1)[-1] in _s319_dep_names
+    ]
+    if _s319_dep_files:
+        _dep_names319 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s319_dep_files[:2])
+        lines.append(
+            f"dependency update: {_dep_names319} in diff"
+            f" — transitive changes invisible; re-run full test suite including integration tests"
+        )
+
+    # S327: Security-sensitive diff — diff touches auth/password/token/crypto-related files.
+    # Security-critical code requires extra scrutiny: review for timing attacks, secrets
+    # in logs, and injection surface changes even if unit tests pass.
+    _s327_sec_words = (
+        "auth", "password", "passwd", "token", "secret", "crypto", "cipher",
+        "jwt", "oauth", "session", "credential", "permission", "rbac", "acl",
+    )
+    _s327_sec_files = [
+        f for f in changed_files
+        if any(w in f.lower() for w in _s327_sec_words)
+        and not _is_test_file(f)
+    ]
+    if _s327_sec_files:
+        _sec_names327 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s327_sec_files[:2])
+        lines.append(
+            f"security-sensitive: {_sec_names327} in diff"
+            f" — review for timing attacks, log leaks, and injection surface"
+        )
+
+    # S333: DB migration in diff — diff includes SQL or ORM migration files.
+    # Database migrations are often irreversible and affect all running instances;
+    # rollback requires explicit down-migration, which is frequently not tested.
+    _s333_mig_exts = {".sql", ".migration"}
+    _s333_mig_dirs = ("migrations", "migration", "alembic", "flyway", "liquibase", "db")
+    _s333_mig_files: list[str] = []
+    for _f333 in changed_files:
+        _name333 = _f333.rsplit("/", 1)[-1].lower()
+        _fp333_lower = _f333.lower().replace("\\", "/")
+        if (
+            any(_f333.endswith(ext) for ext in _s333_mig_exts)
+            or any(d + "/" in _fp333_lower or _fp333_lower.startswith(d + "/") for d in _s333_mig_dirs)
+        ):
+            _s333_mig_files.append(_f333)
+    if _s333_mig_files:
+        _mig_names333 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s333_mig_files[:2])
+        lines.append(
+            f"DB migration: {_mig_names333} in diff"
+            f" — schema change; test rollback path and coordinate with DBA before deploy"
+        )
+
+    # S339: Feature-flag diff — diff touches feature-flag/experiment/rollout configuration files.
+    # Feature flag changes affect runtime behavior without code changes;
+    # ensure flag semantics (kill switch vs gradual rollout) are reviewed.
+    _s339_ff_words = ("feature_flag", "featureflag", "feature_toggle", "experiment",
+                      "rollout", "flag_config", "flags", "toggles")
+    _s339_ff_files = [
+        f for f in changed_files
+        if any(w in f.lower().replace("-", "_") for w in _s339_ff_words)
+    ]
+    if _s339_ff_files:
+        _ff_names339 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s339_ff_files[:2])
+        lines.append(
+            f"feature-flag change: {_ff_names339} in diff"
+            f" — flag semantics affect runtime behavior; review kill-switch vs gradual rollout"
+        )
+
+    # S345: Performance-sensitive diff — diff touches cache/query/index performance-critical files.
+    # Performance-sensitive code paths are often non-obviously coupled;
+    # even tiny behavioral changes (key format, cache TTL) can cause latency spikes.
+    _s345_perf_words = (
+        "cache", "query", "index", "performance", "optimize", "benchmark",
+        "profil", "latency", "throughput",
+    )
+    _s345_perf_files = [
+        f for f in changed_files
+        if any(w in f.lower() for w in _s345_perf_words)
+        and not _is_test_file(f)
+    ]
+    if _s345_perf_files:
+        _perf_names345 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s345_perf_files[:2])
+        lines.append(
+            f"performance-sensitive: {_perf_names345} in diff"
+            f" — profile before and after; cache TTL/key changes can cause latency spikes"
+        )
+
+    # S381: Shell/CI script change — diff touches shell scripts, CI config, or Makefile.
+    # Shell scripts and CI configs control build/deploy pipelines; a single wrong variable
+    # or missing quotation can cause silent build failures or deployment outages.
+    _s381_ci_exts = (".sh", ".bash", ".zsh", ".fish", ".ps1", ".bat", ".cmd")
+    _s381_ci_names = (
+        ".github", "jenkinsfile", "makefile", "dockerfile", "docker-compose",
+        ".gitlab-ci", ".travis", "circle", "buildkite", ".drone", "azure-pipelines",
+    )
+    _s381_ci_files = [
+        f for f in changed_files
+        if any(f.lower().endswith(e) for e in _s381_ci_exts)
+        or any(p in f.lower() for p in _s381_ci_names)
+    ]
+    if _s381_ci_files:
+        _ci_names381 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s381_ci_files[:2])
+        lines.append(
+            f"CI/shell change: {_ci_names381} in diff"
+            f" — pipeline changes affect build/deploy; test with a dry run before merging"
+        )
+
+    # S375: Docs-heavy diff — diff exclusively touches documentation/README/docstring files.
+    # A docs-only change is the inverse of S308; docs-heavy diffs rarely affect runtime
+    # behavior but may indicate documentation debt being addressed after code changes.
+    _s375_doc_exts = (".md", ".rst", ".txt", ".adoc")
+    _s375_doc_words = ("readme", "changelog", "docs/", "documentation", "howto", "guide")
+    _s375_doc_changed = [
+        f for f in changed_files
+        if any(f.lower().endswith(e) for e in _s375_doc_exts)
+        or any(w in f.lower() for w in _s375_doc_words)
+    ]
+    _s375_code_changed = [
+        f for f in changed_files
+        if not any(f.lower().endswith(e) for e in _s375_doc_exts)
+        and not any(w in f.lower() for w in _s375_doc_words)
+        and not _is_test_file(f)
+    ]
+    if _s375_doc_changed and not _s375_code_changed:
+        lines.append(
+            f"docs-heavy diff: {len(_s375_doc_changed)} doc file(s) changed, no source"
+            f" — documentation update; verify doc content matches current code behavior"
+        )
+
+    # S369: Large file in diff — diff includes a file with 300+ symbols (dense file added/changed).
+    # A very dense changed file likely contains a large new module or refactored logic;
+    # reviewers should allocate extra time for careful review of this diff.
+    if changed_files:
+        _s369_dense: list[tuple[str, int]] = []
+        for _cf369 in changed_files:
+            _file_syms369 = [s for s in graph.symbols.values() if s.file_path == _cf369]
+            if len(_file_syms369) >= 20:  # 20+ symbols = dense file
+                _s369_dense.append((_cf369, len(_file_syms369)))
+        if _s369_dense:
+            _largest369 = max(_s369_dense, key=lambda x: x[1])
+            lines.append(
+                f"large file in diff: {_largest369[0].rsplit('/', 1)[-1]} has {_largest369[1]} symbols"
+                f" — dense file; allocate extra review time for thorough analysis"
+            )
+
+    # S363: Test-only diff — all changed files are test files (no source touched).
+    # A diff that only touches tests but no source may indicate:
+    # - Snapshots/fixtures were updated without verifying the underlying behavior
+    # - Tests were written for code that doesn't exist yet (TDD) — flag for reviewers.
+    if changed_files:
+        _s363_test_changed = [f for f in changed_files if _is_test_file(f)]
+        _s363_src_changed = [f for f in changed_files if not _is_test_file(f)]
+        if _s363_test_changed and not _s363_src_changed:
+            lines.append(
+                f"test-only diff: {len(_s363_test_changed)} test file(s) changed, 0 source files"
+                f" — no source modified; verify tests reflect actual behavior, not just updated snapshots"
+            )
+
+    # S357: I18n/locale diff — diff touches internationalization or locale files.
+    # Locale file changes affect user-visible strings across all language builds;
+    # missing translations in one locale can cause blank labels or broken UI in that region.
+    _s357_i18n_patterns = (
+        "locale", "i18n", "l10n", "translation", "messages", "strings",
+        "lang_", "_lang", ".po", ".pot", ".ftl",
+    )
+    _s357_i18n_files = [
+        f for f in changed_files
+        if any(p in f.lower() for p in _s357_i18n_patterns)
+    ]
+    if _s357_i18n_files:
+        _i18n_names357 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s357_i18n_files[:2])
+        lines.append(
+            f"i18n change: {_i18n_names357} in diff"
+            f" — locale changes affect all language builds; verify completeness across all supported locales"
+        )
+
+    # S351: Config-change diff — diff modifies YAML/TOML/INI/JSON configuration files.
+    # Configuration changes often have no test coverage; a typo or wrong key silently changes
+    # runtime behavior in ways that only surface in staging/production environments.
+    _s351_cfg_exts = (".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".json")
+    _s351_cfg_files = [
+        f for f in changed_files
+        if any(f.lower().endswith(ext) for ext in _s351_cfg_exts)
+        and not _is_test_file(f)
+    ]
+    if _s351_cfg_files:
+        _cfg_names351 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s351_cfg_files[:2])
+        lines.append(
+            f"config change: {_cfg_names351} in diff"
+            f" — config changes often untested; verify expected keys and value types in all environments"
+        )
+
+    # S393: Dependency downgrade diff — diff touches requirements/package files and removes version pins.
+    # Downgrading or unpinning a dependency can introduce breaking changes or security vulnerabilities;
+    # dependency file diffs require extra attention to understand what changed and why.
+    _s393_dep_files = (
+        "requirements.txt", "requirements-dev.txt", "requirements-prod.txt",
+        "package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+        "Gemfile", "Gemfile.lock", "Cargo.toml", "Cargo.lock",
+        "go.mod", "go.sum", "pyproject.toml", "setup.py", "setup.cfg",
+    )
+    _s393_changed_deps = [
+        f for f in changed_files
+        if f.rsplit("/", 1)[-1].lower() in (d.lower() for d in _s393_dep_files)
+    ]
+    if _s393_changed_deps:
+        _dep_names393 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s393_changed_deps[:2])
+        lines.append(
+            f"dependency change: {_dep_names393} in diff"
+            f" — check for version downgrades, unpinned deps, or transitive vulnerability changes"
+        )
+
+    # S387: Breaking change risk — diff touches public API definition files.
+    # Public API files (routes, endpoints, openapi specs) define contracts with callers;
+    # changes here may break existing clients silently if not versioned properly.
+    _s387_api_patterns = (
+        "routes", "endpoints", "api", "openapi", "swagger", "v1", "v2", "v3",
+        "public_api", "rest_api", "graphql",
+    )
+    _s387_api_files = [
+        f for f in changed_files
+        if any(p in f.lower().replace("-", "_").replace("/", "_") for p in _s387_api_patterns)
+        and not _is_test_file(f)
+        and (f.endswith(".py") or f.endswith(".ts") or f.endswith(".js")
+             or f.endswith(".yaml") or f.endswith(".json"))
+    ]
+    if _s387_api_files:
+        _api_names387 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s387_api_files[:2])
+        lines.append(
+            f"API change: {_api_names387} in diff"
+            f" — public API contract may change; ensure clients are notified or version the endpoint"
+        )
+
+    # S399: Error handling diff — diff touches files with "error", "exception", "retry" in names.
+    # Changes to error handling code are high-risk; removing a try/except, changing retry limits,
+    # or narrowing exception types can turn handled failures into unhandled crashes.
+    _s399_err_words = (
+        "error_handler", "exception_handler", "retry", "fallback",
+        "circuit_breaker", "error_boundary",
+    )
+    _s399_err_files = [
+        f for f in changed_files
+        if any(w in f.lower().replace("-", "_") for w in _s399_err_words)
+        and not _is_test_file(f)
+    ]
+    if _s399_err_files:
+        _err_names399 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s399_err_files[:2])
+        lines.append(
+            f"error handling change: {_err_names399} in diff"
+            f" — changes to error/retry handlers can turn handled failures into crashes"
+        )
+
+    # S405: Auth/security file in diff — diff touches login/auth/permission/security files.
+    # Authentication and authorization code has high blast radius for mistakes;
+    # even small logic inversions (>= vs >, missing NOT) can open privilege escalation paths.
+    _s405_auth_words = (
+        "auth", "login", "logout", "permission", "security", "token",
+        "oauth", "jwt", "session", "acl", "rbac", "privilege",
+    )
+    _s405_auth_files = [
+        f for f in changed_files
+        if any(w in f.lower().replace("-", "_") for w in _s405_auth_words)
+        and not _is_test_file(f)
+    ]
+    if _s405_auth_files:
+        _auth_names405 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s405_auth_files[:2])
+        lines.append(
+            f"auth/security change: {_auth_names405} in diff"
+            f" — auth logic errors can escalate privileges; get a second reviewer"
+        )
+
+    # S411: Database migration in diff — diff touches a migration file.
+    # Migration files change the database schema; running them is irreversible in production
+    # and must be tested with a database rollback plan.
+    _s411_mig_patterns = (
+        "migration", "migrate", "alembic", "flyway",
+        "liquibase", "schema_change", "db_change",
+    )
+    _s411_mig_files = [
+        f for f in changed_files
+        if any(w in f.lower().replace("-", "_") for w in _s411_mig_patterns)
+    ]
+    if _s411_mig_files:
+        _mig_names411 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s411_mig_files[:2])
+        lines.append(
+            f"db migration: {_mig_names411} in diff"
+            f" — schema changes are irreversible in production; verify rollback plan before deploying"
+        )
+
+    # S417: Feature flag file in diff — diff touches feature flag or toggle configuration.
+    # Feature flag changes affect runtime behavior without code deployment; a single toggle
+    # can change user-visible behavior instantly across all instances.
+    _s417_ff_patterns = (
+        "feature_flag", "feature_toggle", "flags", "toggles",
+        "feature_config", "rollout", "launch_darkly", "flipper",
+    )
+    _s417_ff_files = [
+        f for f in changed_files
+        if any(w in f.lower().replace("-", "_") for w in _s417_ff_patterns)
+    ]
+    if _s417_ff_files:
+        _ff_names417 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s417_ff_files[:2])
+        lines.append(
+            f"feature flag change: {_ff_names417} in diff"
+            f" — flag changes affect runtime behavior instantly; test with both flag states"
+        )
+
+    # S423: Test-only diff — all changed files are test files.
+    # A diff that modifies only tests (no production code) is unusual; it may indicate
+    # test-only fixes after a regression or orphaned test cleanup work.
+    if changed_files:
+        _s423_all_test = all(_is_test_file(f) for f in changed_files)
+        if _s423_all_test and len(changed_files) >= 1:
+            _test_names423 = ", ".join(f.rsplit("/", 1)[-1] for f in changed_files[:2])
+            lines.append(
+                f"test-only diff: {_test_names423} — all {len(changed_files)} changed file(s) are tests"
+                f" — verify matching production changes aren't missing from this diff"
+            )
+
+    # S429: Infrastructure file in diff — diff touches Dockerfile, CI/CD, or infra config.
+    # Infrastructure file changes affect the deployment environment, not just the code;
+    # a wrong config can break all deployments or expose the service to the internet.
+    _s429_infra_names = (
+        "dockerfile", "docker-compose", "docker_compose", ".github",
+        "kubernetes", "k8s", "terraform", "ansible", "ci.yml",
+        "pipeline.yml", ".circleci", "jenkinsfile",
+    )
+    _s429_infra_files = [
+        f for f in changed_files
+        if any(w in f.lower().replace("-", "_") for w in _s429_infra_names)
+    ]
+    if _s429_infra_files:
+        _infra_names429 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s429_infra_files[:2])
+        lines.append(
+            f"infra change: {_infra_names429} in diff"
+            f" — deployment environment changes; test in staging before deploying to production"
+        )
+
     return "\n".join(lines)
