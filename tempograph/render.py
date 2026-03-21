@@ -899,6 +899,21 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
         except Exception:
             pass
 
+    # Recent changes: show last 3 commits for the primary seed file.
+    # Gives agents the change narrative — "was this file touched 3 days ago or 6 months ago?"
+    if graph.root and seed_file_paths:
+        try:
+            from .git import recent_file_commits
+            primary_file = seed_file_paths[0]
+            commits = recent_file_commits(graph.root, primary_file)
+            if commits:
+                basename = Path(primary_file).name
+                lines.append(f"\nRecent changes ({basename}):")
+                for c in commits:
+                    lines.append(f"  • {c['days_ago']}d ago: {c['message']}")
+        except Exception:
+            pass
+
     return "\n".join(lines)
 
 
