@@ -18912,7 +18912,7 @@ class TestFocusOrphanedSymbol:
 # S351 — config-change diff (diff)
 # ---------------------------------------------------------------------------
 
-class TestDiffConfigChange:
+class TestDiffConfigChangeS351:
     def test_config_change_shown(self, tmp_path):
         """S351: 'config change' shown when diff includes YAML/TOML/INI files."""
         from tempograph.builder import build_graph
@@ -19016,7 +19016,7 @@ class TestBlastConstants:
 # S354 — dead factory functions (dead)
 # ---------------------------------------------------------------------------
 
-class TestDeadFactoryFunctions:
+class TestDeadFactoryFunctionsS354:
     def test_dead_factories_shown(self, tmp_path):
         """S354: 'dead factories' shown when 2+ unused create_*/make_*/build_* fns."""
         from tempograph.builder import build_graph
@@ -19215,7 +19215,7 @@ class TestBlastEntrypoint:
 # S360 — dead event handlers (dead)
 # ---------------------------------------------------------------------------
 
-class TestDeadEventHandlers:
+class TestDeadEventHandlersS360:
     def test_dead_event_handlers_shown(self, tmp_path):
         """S360: 'dead event handlers' shown when 2+ on_*/handle_* fns with 0 callers."""
         from tempograph.builder import build_graph
