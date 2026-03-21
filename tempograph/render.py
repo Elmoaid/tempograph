@@ -1680,7 +1680,12 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                     _importer_users.setdefault(caller.file_path, []).append(caller.name)
         _all_test_fps = {fp for fp in graph.files if _is_test_file(fp)}
         _src_importers = [imp for imp in importers if not _is_test_file(imp)]
-        for imp in sorted(importers):
+        # Sort by call count descending: most-dependent callers appear first.
+        # Ties broken by file path for stable output.
+        _sorted_importers = sorted(
+            importers, key=lambda imp: (-len(_importer_users.get(imp, [])), imp)
+        )
+        for imp in _sorted_importers:
             users = _importer_users.get(imp, [])
             unique_users = list(dict.fromkeys(users))[:3]  # deduplicate, cap at 3
             if unique_users:
