@@ -3828,6 +3828,60 @@ def _signals_focused_fn_advanced(
                 f" — deeply nested symbol; difficult to discover and increases import path verbosity"
             )
 
+    # S840: Generator function focus — focused function is named as a generator (iter_/generate_/yield_).
+    # Generator-prefixed functions have iterator protocol semantics; callers must handle
+    # exhaustion and cannot call them like ordinary functions returning a value.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim840 = _seed_syms[0]
+        _gen_prefixes840 = ("generate_", "iter_", "yield_", "gen_", "stream_")
+        if (
+            _prim840.kind.value in ("function", "method")
+            and not _is_test_file(_prim840.file_path)
+            and any(_prim840.name.lower().startswith(p) for p in _gen_prefixes840)
+        ):
+            lines.append(
+                f"\ngenerator function: {_prim840.name} appears to be a generator (iterator-style name)"
+                f" — callers must iterate or wrap in list(); cannot be called like a plain function"
+            )
+
+    # S846: Many children focus — focused symbol has 10+ child symbols.
+    # A class or module with many children is likely a God object or catch-all namespace;
+    # callers depend on all its children implicitly, making it a high-impact change target.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim846 = _seed_syms[0]
+        if not _is_test_file(_prim846.file_path):
+            _children846 = [
+                s for s in graph.symbols.values()
+                if s.parent_id == _prim846.id
+            ]
+            if len(_children846) >= 10:
+                lines.append(
+                    f"\nmany children: {_prim846.name} has {len(_children846)} child symbols"
+                    f" — large namespace; callers depend on many internal symbols, increasing coupling"
+                )
+
+    # S852: Operator overload focus — focused method overloads a Python operator.
+    # Operator-overloaded methods change the semantics of standard operators for instances;
+    # callers using + / == / < etc. are implicitly coupled to this method's behavior.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim852 = _seed_syms[0]
+        _op_dunders852 = frozenset({
+            "__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__",
+            "__add__", "__sub__", "__mul__", "__truediv__", "__floordiv__",
+            "__mod__", "__pow__", "__and__", "__or__", "__xor__", "__lshift__",
+            "__rshift__", "__iadd__", "__isub__", "__imul__", "__itruediv__",
+            "__radd__", "__rsub__", "__rmul__",
+        })
+        if (
+            _prim852.kind.value == "method"
+            and not _is_test_file(_prim852.file_path)
+            and _prim852.name in _op_dunders852
+        ):
+            lines.append(
+                f"\noperator overload: {_prim852.name} overloads a Python operator"
+                f" — callers using operators (+, ==, < etc.) implicitly invoke this method"
+            )
+
     return lines
 
 

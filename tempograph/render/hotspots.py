@@ -2567,5 +2567,46 @@ def _collect_hotspots_signals(
                     f" — top hotspot is untested; behavioral changes will not be caught by tests"
                 )
 
+    # S844: Deprecated hotspot — top hotspot has "deprecated" in its docstring.
+    # Hotspots marked deprecated are widely called but scheduled for removal;
+    # each caller is a migration debt item that must be addressed before deletion.
+    if scores:
+        _top844 = scores[0][1]
+        if _top844 is not None and not _is_test_file(_top844.file_path):
+            _doc844 = (_top844.doc or "").lower()
+            if "deprecated" in _doc844 or "deprecat" in _doc844:
+                _callers844 = graph.callers_of(_top844.id)
+                out.append(
+                    f"\ndeprecated hotspot: {_top844.name} is marked deprecated but has {len(_callers844)} caller(s)"
+                    f" — deprecated symbol still heavily used; each caller is a migration debt item"
+                )
+
+    # S850: Async hotspot — top hotspot is an async function.
+    # Async hotspots introduce concurrency semantics; sync callers must use event loops
+    # or adapters, and every caller participates in the async execution context.
+    if scores:
+        _top850 = scores[0][1]
+        if _top850 is not None and not _is_test_file(_top850.file_path):
+            _sig850 = (_top850.signature or "").lstrip()
+            if _sig850.startswith("async ") and _top850.kind.value in ("function", "method"):
+                out.append(
+                    f"\nasync hotspot: {_top850.name} is an async function"
+                    f" — top hotspot with async semantics; sync callers need event loop adapters"
+                )
+
+    # S856: Hotspot in legacy file — top hotspot lives in a file named with _old/_legacy/_v1.
+    # Code in legacy-named files is expected to be superseded; a hotspot here means
+    # callers are still routed to the deprecated path rather than the new implementation.
+    if scores:
+        _top856 = scores[0][1]
+        if _top856 is not None:
+            _fname856 = _top856.file_path.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+            _legacy_sfxs856 = ("_old", "_legacy", "_deprecated", "_v1", "_bak")
+            if any(_fname856.endswith(sfx) for sfx in _legacy_sfxs856):
+                out.append(
+                    f"\nlegacy file hotspot: {_top856.name} is in a legacy-named file ({_top856.file_path})"
+                    f" — top hotspot in deprecated module; callers should be migrated to the new path"
+                )
+
     return out
 

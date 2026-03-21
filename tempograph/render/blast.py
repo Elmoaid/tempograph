@@ -2145,6 +2145,41 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                 f" — large source file; blast analysis may undercount indirect symbol effects"
             )
 
+    # S842: Constants file blast — blast target is a constants/config/settings file.
+    # Constants files are referenced implicitly throughout the codebase; changing a
+    # constant value affects every caller, many of which may not appear in the graph.
+    _fname842 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    _const_kws842 = ("constants", "config", "settings", "conf", "defaults", "env", "params")
+    if any(_fname842 == kw or _fname842.startswith(kw + "_") or _fname842.endswith("_" + kw) for kw in _const_kws842):
+        lines.append(
+            f"constants file blast: {_fp589.rsplit('/', 1)[-1]} is a constants/config file"
+            f" — value changes propagate to all consumers; blast radius is wider than direct callers"
+        )
+
+    # S848: No direct symbol callers blast — blast target has importers but no graph callers.
+    # A file imported everywhere but with no tracked callers likely exports constants,
+    # type aliases, or re-exports; changes affect consumers in ways not visible in the graph.
+    if _fp589 in graph.files:
+        _importers848 = graph.importers_of(_fp589)
+        _syms848 = [graph.symbols[sid] for sid in graph.files[_fp589].symbols if sid in graph.symbols]
+        _callers848 = [c for s in _syms848 for c in graph.callers_of(s.id)]
+        if len(_importers848) >= 3 and not _callers848:
+            lines.append(
+                f"no symbol callers: {_fp589.rsplit('/', 1)[-1]} has {len(_importers848)} importers but no tracked callers"
+                f" — likely exports constants or type aliases; changes affect importers invisibly"
+            )
+
+    # S854: Test helper blast — blast target is a shared test utility file.
+    # Test helper files are imported by many test modules; changing them can
+    # invalidate test assumptions across the suite in non-obvious ways.
+    _fname854 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    _test_helper_kws854 = ("test_utils", "test_helpers", "test_fixtures", "conftest", "fixtures", "factories")
+    if any(_fname854 == kw or _fname854.startswith(kw) for kw in _test_helper_kws854):
+        lines.append(
+            f"test helper blast: {_fp589.rsplit('/', 1)[-1]} is a shared test utility"
+            f" — changing test helpers invalidates assumptions across the test suite"
+        )
+
     return "\n".join(lines)
 
 
