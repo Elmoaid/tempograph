@@ -21383,3 +21383,229 @@ class TestDeadSchedulersS420:
         assert "dead schedulers" not in out, (
             f"'dead schedulers' must not appear when schedule_cleanup is called; got:\n{out}"
         )
+
+
+# ── S421: Flat codebase ───────────────────────────────────────────────────────
+
+class TestFlatCodebaseS421:
+    """S421: 8+ source files all at root with no subdirectory emits the signal."""
+
+    def test_flat_codebase_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        for i in range(10):
+            (tmp_path / f"module_{i}.py").write_text(f"def fn_{i}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "flat codebase" in out, (
+            f"Expected 'flat codebase' signal; got:\n{out}"
+        )
+
+    def test_flat_codebase_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        subdir = tmp_path / "core"
+        subdir.mkdir()
+        (subdir / "main.py").write_text("def run(): pass\n")
+        for i in range(9):
+            (tmp_path / f"module_{i}.py").write_text(f"def fn_{i}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "flat codebase" not in out, (
+            f"'flat codebase' must not appear when subdirectory exists; got:\n{out}"
+        )
+
+
+# ── S422: Union return type ───────────────────────────────────────────────────
+
+class TestUnionReturnTypeS422:
+    """S422: Focused function with Optional return type emits the signal."""
+
+    def test_union_return_type_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "lookup.py").write_text(
+            "from typing import Optional\n\n"
+            "def find_user(uid: int) -> Optional[str]:\n"
+            "    if uid == 0:\n        return None\n"
+            "    return \"alice\"\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="find_user")
+        assert "union return type" in out, (
+            f"Expected 'union return type' signal; got:\n{out}"
+        )
+
+    def test_union_return_type_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def add(a: int, b: int) -> int:\n    return a + b\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="add")
+        assert "union return type" not in out, (
+            f"'union return type' must not appear for plain int return; got:\n{out}"
+        )
+
+
+# ── S423: Test-only diff ──────────────────────────────────────────────────────
+
+class TestTestOnlyDiffS423:
+    """S423: Diff with only test files emits the signal."""
+
+    def test_test_only_diff_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "test_api.py").write_text(
+            "def test_ok():\n    assert True\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["test_api.py"])
+        assert "test-only diff" in out, (
+            f"Expected 'test-only diff' signal; got:\n{out}"
+        )
+
+    def test_test_only_diff_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "api.py").write_text(
+            "def handler():\n    pass\n"
+        )
+        (tmp_path / "test_api.py").write_text(
+            "def test_ok():\n    assert True\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["api.py", "test_api.py"])
+        assert "test-only diff" not in out, (
+            f"'test-only diff' must not appear when production file is also changed; got:\n{out}"
+        )
+
+
+# ── S424: Class hotspot ───────────────────────────────────────────────────────
+
+class TestClassHotspotS424:
+    """S424: Top hotspot being a class emits the signal."""
+
+    def test_class_hotspot_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "models.py").write_text(
+            "class User:\n    def __init__(self, name):\n        self.name = name\n"
+        )
+        for i in range(4):
+            (tmp_path / f"service_{i}.py").write_text(
+                f"from models import User\n\n"
+                f"def create_{i}(name):\n    return User(name)\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "class hotspot" in out, (
+            f"Expected 'class hotspot' signal; got:\n{out}"
+        )
+
+    def test_class_hotspot_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def helper(x):\n    return x + 1\n"
+        )
+        for i in range(4):
+            (tmp_path / f"app_{i}.py").write_text(
+                f"from utils import helper\ndef f_{i}(): return helper({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "class hotspot" not in out, (
+            f"'class hotspot' must not appear for function hotspot; got:\n{out}"
+        )
+
+
+# ── S425: Constants-file blast ────────────────────────────────────────────────
+
+class TestConstantsFileBlastS425:
+    """S425: A file with only constants imported by 3+ files emits the signal."""
+
+    def test_constants_file_blast_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "constants.py").write_text(
+            "MAX_RETRIES = 3\n"
+            "DEFAULT_TIMEOUT = 30\n"
+            "API_BASE_URL = \"https://api.example.com\"\n"
+            "PAGE_SIZE = 100\n"
+        )
+        for i in range(4):
+            (tmp_path / f"service_{i}.py").write_text(
+                f"from constants import MAX_RETRIES\n\n"
+                f"def call_{i}():\n    return MAX_RETRIES\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="constants.py")
+        assert "constants-file blast" in out, (
+            f"Expected 'constants-file blast' signal; got:\n{out}"
+        )
+
+    def test_constants_file_blast_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def alpha(): pass\ndef beta(): pass\ndef gamma(): pass\n"
+        )
+        for i in range(4):
+            (tmp_path / f"view_{i}.py").write_text(
+                f"from utils import alpha\ndef use_{i}(): return alpha()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="utils.py")
+        assert "constants-file blast" not in out, (
+            f"'constants-file blast' must not appear for function-only file; got:\n{out}"
+        )
+
+
+# ── S426: Dead decorators ─────────────────────────────────────────────────────
+
+class TestDeadDecoratorsS426:
+    """S426: Unused register_*/decorator_* functions emit the signal."""
+
+    def test_dead_decorators_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "registry.py").write_text(
+            "def register_handler(name):\n    pass\n\n"
+            "def register_middleware(fn):\n    pass\n\n"
+            "def with_logging(fn):\n    pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead decorators" in out, (
+            f"Expected 'dead decorators' signal; got:\n{out}"
+        )
+
+    def test_dead_decorators_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "registry.py").write_text(
+            "def register_handler(name):\n    pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from registry import register_handler\n\n"
+            "def setup():\n    register_handler(\"click\")\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead decorators" not in out, (
+            f"'dead decorators' must not appear when register_handler is called; got:\n{out}"
+        )

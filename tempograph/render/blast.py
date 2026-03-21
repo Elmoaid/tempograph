@@ -1232,6 +1232,21 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — stub changes break type checks without runtime errors; update callers together"
         )
 
+    # S425: Constants-file blast — blast target is a file containing only constants.
+    # Constants files are deceptively high-impact; they're imported everywhere but rarely
+    # changed, so developers underestimate how many files will recompile or reload.
+    _s425_syms = [s for s in graph.symbols.values() if s.file_path == file_path]
+    _s425_is_const_file = (
+        len(_s425_syms) >= 3
+        and all(s.kind.value in ("variable", "constant") for s in _s425_syms)
+    )
+    if _s425_is_const_file and len(importers) >= 3:
+        lines.append(
+            f"constants-file blast: {file_path.rsplit('/', 1)[-1]} defines"
+            f" {len(_s425_syms)} constant(s) imported by {len(importers)} file(s)"
+            f" — constants files are silently high-impact; all importers pick up changes immediately"
+        )
+
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
 

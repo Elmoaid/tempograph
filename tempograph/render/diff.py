@@ -1272,4 +1272,16 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — flag changes affect runtime behavior instantly; test with both flag states"
         )
 
+    # S423: Test-only diff — all changed files are test files.
+    # A diff that modifies only tests (no production code) is unusual; it may indicate
+    # test-only fixes after a regression or orphaned test cleanup work.
+    if changed_files:
+        _s423_all_test = all(_is_test_file(f) for f in changed_files)
+        if _s423_all_test and len(changed_files) >= 1:
+            _test_names423 = ", ".join(f.rsplit("/", 1)[-1] for f in changed_files[:2])
+            lines.append(
+                f"test-only diff: {_test_names423} — all {len(changed_files)} changed file(s) are tests"
+                f" — verify matching production changes aren't missing from this diff"
+            )
+
     return "\n".join(lines)

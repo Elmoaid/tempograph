@@ -2589,6 +2589,21 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                     f" — long functions often have multiple responsibilities; extract sub-functions"
                 )
 
+    # S422: Multiple return type hints — focused function signature has Union/Optional/| returns.
+    # Functions that return different types force callers to handle multiple branches;
+    # Optional returns (can be None) are especially prone to missing None-checks at call sites.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim422 = next((s for s in _seed_syms if s.kind.value in ("function", "method")), None)
+        if _prim422 and _prim422.signature:
+            _sig422 = _prim422.signature
+            _union_patterns422 = ("Union[", "Optional[", " | None", "None | ")
+            _has_union422 = any(p in _sig422 for p in _union_patterns422)
+            if _has_union422:
+                lines.append(
+                    f"\nunion return type: {_prim422.name} returns Optional/Union type"
+                    f" — callers must handle None/variant; document when None is returned and why"
+                )
+
     return "\n".join(lines)
 
 

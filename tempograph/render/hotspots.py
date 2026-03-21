@@ -1445,4 +1445,20 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 f" — vendored hotspots will be overwritten on next vendor update; consider wrapping"
             )
 
+    # S424: Class hotspot — the top hotspot symbol is a class (not a function or method).
+    # A class appearing as a hotspot is unusual; it typically means the class is being
+    # instantiated in too many places, suggesting it should be injected or turned into a singleton.
+    if scores:
+        _top424 = scores[0][1]
+        if _top424.kind.value == "class" and not _is_test_file(_top424.file_path):
+            _class_callers424 = {
+                e.source_id for e in graph.edges
+                if e.kind.value == "calls" and e.target_id == _top424.id
+            }
+            if len(_class_callers424) >= 3:
+                lines.append(
+                    f"\nclass hotspot: {_top424.name} is a class with {len(_class_callers424)} caller(s)"
+                    f" — class instantiated in many places; consider DI/singleton to reduce coupling"
+                )
+
     return "\n".join(lines)  # ALWAYS return here — never inside a conditional block

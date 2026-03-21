@@ -1874,6 +1874,24 @@ def _signals_structure(
             f" — shared init logic (config, logging) may diverge; centralize startup orchestration"
         )
 
+    # S421: Flat codebase — all source files are at the root level with no subdirectory structure.
+    # A flat layout becomes unnavigable past ~10 files; adding subdirectory organization
+    # forces explicit module boundaries and prevents circular import tangles.
+    _s421_src_files = [
+        fp for fp in graph.files
+        if graph.files[fp].language.value in _CODE_LANGS
+        and not _is_test_file(fp)
+    ]
+    _s421_subdirs = {
+        fp.rsplit("/", 1)[0] for fp in _s421_src_files
+        if "/" in fp
+    }
+    if len(_s421_src_files) >= 8 and len(_s421_subdirs) == 0:
+        lines.append(
+            f"flat codebase: {len(_s421_src_files)} source files all at root with no subdirectory structure"
+            f" — consider grouping by domain; flat layouts become unnavigable past ~10 files"
+        )
+
     return lines
 
 

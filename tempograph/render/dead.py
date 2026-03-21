@@ -1409,6 +1409,29 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — may be removed from job registry; phantom scheduled logic confuses ops"
         )
 
+    # S426: Dead decorators — register_*/decorator_* functions with 0 callers.
+    # Unused decorator registration functions indicate decorator patterns that were removed
+    # without cleaning up the factory; they may still modify classes if applied dynamically.
+    _s426_dec_prefixes = (
+        "register_", "decorator_", "with_", "apply_decorator_",
+        "patch_", "monkey_patch_", "decorate_",
+    )
+    _s426_dead_decorators = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s426_dec_prefixes)
+    ]
+    if len(_s426_dead_decorators) >= 2:
+        _dec_names426 = ", ".join(s.name for s in _s426_dead_decorators[:3])
+        if len(_s426_dead_decorators) > 3:
+            _dec_names426 += f" +{len(_s426_dead_decorators) - 3} more"
+        lines.append(
+            f"dead decorators: {len(_s426_dead_decorators)} unused decorator fn(s) ({_dec_names426})"
+            f" — removed decorator pattern may still apply dynamically; verify before deleting"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
