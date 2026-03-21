@@ -649,6 +649,44 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — changes don't affect public interface"
         )
 
+    # S246: Mixin/base class blast — blast target defines a class that other classes inherit from.
+    # Mixin or base class changes cascade silently through ALL inheriting classes.
+    # Only shown when 1+ class in the file is a base/mixin (other classes inherit from it).
+    _s246_mixin_indicators = ("mixin", "base", "abstract", "interface")
+    _s246_class_syms = [s for s in symbols if s.kind.value == "class"]
+    _s246_mixin_classes = [
+        s for s in _s246_class_syms
+        if any(ind in s.name.lower() for ind in _s246_mixin_indicators)
+    ]
+    if not _s246_mixin_classes:
+        # Also detect via INHERITS edges: if any other class inherits from classes in this file
+        _s246_this_class_ids = {s.id for s in _s246_class_syms}
+        _s246_subclasses: list[str] = []
+        for _e246 in graph.edges:
+            if (
+                _e246.kind.value == "inherits"
+                and _e246.target_id in _s246_this_class_ids
+                and _e246.source_id.split("::")[0] != file_path
+            ):
+                _s246_subclasses.append(_e246.source_id.split("::")[-1])
+        if len(_s246_subclasses) >= 2:
+            _s246_mixin_classes = _s246_class_syms  # trigger signal
+    if _s246_mixin_classes:
+        _s246_names = [s.name for s in _s246_mixin_classes[:2]]
+        _s246_str = ", ".join(_s246_names)
+        # Count subclasses across the graph
+        _s246_all_ids = {s.id for s in _s246_mixin_classes}
+        _s246_n_subs = sum(
+            1 for _e in graph.edges
+            if _e.kind.value == "inherits" and _e.target_id in _s246_all_ids
+            and _e.source_id.split("::")[0] != file_path
+        )
+        if _s246_n_subs >= 1:
+            lines.append(
+                f"mixin/base blast: {_s246_str} has {_s246_n_subs} subclass(es)"
+                f" — changes cascade silently through all inheritors"
+            )
+
     # S239: Async function blast — blast target contains async functions.
     # Callers must properly await async functions; any refactoring to sync breaks all call sites.
     # Only shown when 1+ async function exists in the blast target (Python/JS/TS).

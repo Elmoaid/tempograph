@@ -1423,6 +1423,28 @@ def render_overview(graph: Tempo) -> str:
             _s243_str += f" +{len(_s243_detected) - 3} more"
         lines.append(f"frameworks: {_s243_str}")
 
+    # S247: API-heavy codebase — 3+ source files with "api", "route", "endpoint", or
+    # "view" in their names. Changes often need to update route handlers, serializers, and tests.
+    # Only shown when 3+ such files detected (1-2 is typical for small apps).
+    _s247_api_stems = {"api", "route", "routes", "router", "routers", "endpoint", "endpoints",
+                       "view", "views", "handler", "handlers", "controller", "controllers",
+                       "resource", "resources", "schema", "schemas", "serializer", "serializers"}
+    _s247_api_files = [
+        fp for fp in graph.files
+        if not _is_test_file(fp)
+        and graph.files[fp].language.value in _CODE_LANGS
+        and fp.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower() in _s247_api_stems
+    ]
+    if len(_s247_api_files) >= 3:
+        _s247_names = sorted({fp.rsplit("/", 1)[-1] for fp in _s247_api_files})[:3]
+        _s247_str = ", ".join(_s247_names)
+        if len(_s247_api_files) > 3:
+            _s247_str += f" +{len(_s247_api_files) - 3} more"
+        lines.append(
+            f"api-heavy: {len(_s247_api_files)} API/route files ({_s247_str})"
+            f" — changes often need aligned updates in routes, schemas, and handlers"
+        )
+
         # Suggest directories to exclude — detect likely noise
     noisy = _detect_noisy_dirs(graph, modules)
     if noisy:

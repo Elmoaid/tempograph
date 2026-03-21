@@ -735,4 +735,34 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — treat as public release; changes must be backward-compatible"
         )
 
+    # S245: Infrastructure/environment file in diff — .env.example, docker-compose.yml,
+    # Dockerfile, k8s manifests, etc. These require out-of-band coordination with ops.
+    # Only shown when 1+ infra/env file appears in the diff.
+    _s245_infra_exts = (".yml", ".yaml", ".toml", ".tf", ".hcl")
+    _s245_infra_names = {
+        "dockerfile", ".env.example", ".env.template", "docker-compose.yml",
+        "docker-compose.yaml", "docker-compose.override.yml",
+        ".travis.yml", ".github", "makefile", "justfile",
+    }
+    _s245_infra_paths = ("k8s/", "kubernetes/", "helm/", "terraform/", ".github/workflows/",
+                         "deploy/", "infra/", "infrastructure/")
+    _s245_files = []
+    for _fp245 in list(normalized) + [f for f in changed_files if f not in normalized]:
+        _name245 = _fp245.rsplit("/", 1)[-1].lower()
+        _fp245_lower = _fp245.lower()
+        if (
+            _name245 in _s245_infra_names
+            or any(_fp245_lower.startswith(p) or f"/{p}" in _fp245_lower for p in _s245_infra_paths)
+        ):
+            _s245_files.append(_fp245)
+    if _s245_files:
+        _inf_names = [fp.rsplit("/", 1)[-1] for fp in _s245_files[:3]]
+        _inf_str = ", ".join(_inf_names)
+        if len(_s245_files) > 3:
+            _inf_str += f" +{len(_s245_files) - 3} more"
+        lines.append(
+            f"infra change: {_inf_str} in diff"
+            f" — environment/deployment files require ops coordination"
+        )
+
     return "\n".join(lines)
