@@ -1655,15 +1655,4 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — dependency upgrade; audit changelogs and test transitive behavior before merging"
         )
 
-    # S561: Config-only diff — all changed files are configuration/settings files.
-    # A diff touching only config/settings files can have outsized behavioral impact:
-    # a single wrong value can disable features, change timeouts, or override security policies.
-    _config_exts561 = (".yaml", ".yml", ".json", ".toml", ".ini", ".env", ".cfg", ".conf")
-    _cfg_files561 = [f for f in changed_files if any(f.lower().endswith(e) for e in _config_exts561)]
-    if changed_files and len(_cfg_files561) == len(changed_files):
-        lines.append(
-            f"config-only diff: all {len(changed_files)} changed file(s) are configuration files"
-            f" — no code changes, but config errors can change behavior, timeouts, or security policies"
-        )
-
     return "\n".join(lines)
