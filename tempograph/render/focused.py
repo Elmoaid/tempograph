@@ -3327,6 +3327,19 @@ def _signals_focused_fn_advanced(
                     f" — monolith file; split by concern before adding more symbols"
                 )
 
+    # S666: High fan-out — focused symbol calls 5+ other symbols (high outgoing coupling).
+    # A function that calls many others is tightly coupled to implementation details;
+    # changing any callee forces a revisit of this function, and testing requires many stubs.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim666 = _seed_syms[0]
+        if not _is_test_file(_prim666.file_path):
+            _callees666 = graph.callees_of(_prim666.id)
+            if len(_callees666) >= 5:
+                lines.append(
+                    f"\nhigh fan-out: {_prim666.name} calls {len(_callees666)} symbols"
+                    f" — high outgoing coupling; changes to callees will cascade here"
+                )
+
     return lines
 
 

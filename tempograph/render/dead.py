@@ -2287,6 +2287,32 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — annotated APIs that were never called; intentional design that was abandoned"
         )
 
+    # S671: Dead module — all exported symbols in a non-test file are dead (entire file unused).
+    # When every exported symbol in a file is unused, the whole module is a candidate for removal;
+    # this is stronger evidence than individual dead symbols scattered across files.
+    _dead_files671: dict[str, list[Symbol]] = {}
+    for _s671 in dead:
+        if not _is_test_file(_s671.file_path) and _s671.parent_id is None:
+            _dead_files671.setdefault(_s671.file_path, []).append(_s671)
+    _full_dead671 = []
+    for _fp671, _dsyms671 in _dead_files671.items():
+        _fi671 = graph.files.get(_fp671)
+        if _fi671:
+            _all_top671 = [
+                s for s in graph.symbols.values()
+                if s.file_path == _fp671 and s.parent_id is None
+            ]
+            if _all_top671 and len(_dsyms671) == len(_all_top671):
+                _full_dead671.append(_fp671)
+    if _full_dead671:
+        _mod_names671 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _full_dead671[:3])
+        if len(_full_dead671) > 3:
+            _mod_names671 += f" +{len(_full_dead671) - 3} more"
+        lines.append(
+            f"dead module(s): {len(_full_dead671)} file(s) fully unused ({_mod_names671})"
+            f" — entire file has no live consumers; candidate for deletion"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
