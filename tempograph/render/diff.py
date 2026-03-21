@@ -1017,4 +1017,39 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — schema change; test rollback path and coordinate with DBA before deploy"
         )
 
+    # S339: Feature-flag diff — diff touches feature-flag/experiment/rollout configuration files.
+    # Feature flag changes affect runtime behavior without code changes;
+    # ensure flag semantics (kill switch vs gradual rollout) are reviewed.
+    _s339_ff_words = ("feature_flag", "featureflag", "feature_toggle", "experiment",
+                      "rollout", "flag_config", "flags", "toggles")
+    _s339_ff_files = [
+        f for f in changed_files
+        if any(w in f.lower().replace("-", "_") for w in _s339_ff_words)
+    ]
+    if _s339_ff_files:
+        _ff_names339 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s339_ff_files[:2])
+        lines.append(
+            f"feature-flag change: {_ff_names339} in diff"
+            f" — flag semantics affect runtime behavior; review kill-switch vs gradual rollout"
+        )
+
+    # S345: Performance-sensitive diff — diff touches cache/query/index performance-critical files.
+    # Performance-sensitive code paths are often non-obviously coupled;
+    # even tiny behavioral changes (key format, cache TTL) can cause latency spikes.
+    _s345_perf_words = (
+        "cache", "query", "index", "performance", "optimize", "benchmark",
+        "profil", "latency", "throughput",
+    )
+    _s345_perf_files = [
+        f for f in changed_files
+        if any(w in f.lower() for w in _s345_perf_words)
+        and not _is_test_file(f)
+    ]
+    if _s345_perf_files:
+        _perf_names345 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s345_perf_files[:2])
+        lines.append(
+            f"performance-sensitive: {_perf_names345} in diff"
+            f" — profile before and after; cache TTL/key changes can cause latency spikes"
+        )
+
     return "\n".join(lines)

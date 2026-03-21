@@ -974,6 +974,32 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — field/type changes propagate to serializers, validators, and API layers"
         )
 
+    # S337: Version file blast — target defines __version__ and is imported by multiple files.
+    # Version strings are often used for runtime compatibility checks; changing the value
+    # may silently break callers that compare versions programmatically.
+    _s337_file_syms = [s for s in graph.symbols.values() if s.file_path == file_path]
+    _s337_has_version = any(
+        s.name in ("__version__", "VERSION", "version", "APP_VERSION", "__version_info__")
+        for s in _s337_file_syms
+    )
+    if _s337_has_version and len(importers) >= 3:
+        lines.append(
+            f"version file blast: {file_path.rsplit('/', 1)[-1]} exports version info"
+            f" imported by {len(importers)} files"
+            f" — version string change may break runtime compatibility checks"
+        )
+
+    # S343: Conftest blast — target is a conftest.py or shared test fixture file.
+    # conftest.py defines fixtures shared by all tests in the directory subtree;
+    # changes to it can break test isolation and cause cascading test failures.
+    _fp343 = file_path.rsplit("/", 1)[-1].lower()
+    _is_conftest343 = _fp343 in ("conftest.py", "fixtures.py", "test_helpers.py", "test_utils.py")
+    if _is_conftest343 and importers:
+        lines.append(
+            f"conftest blast: {file_path.rsplit('/', 1)[-1]} is a shared test fixture"
+            f" — changes here cascade through all dependent tests; run full test suite"
+        )
+
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
 

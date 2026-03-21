@@ -1217,4 +1217,31 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                     f" — cross-cutting concern; multi-team coordination required"
                 )
 
+    # S338: Risk concentration — top 3 hotspot symbols hold 70%+ of total hotspot score.
+    # When a small cluster dominates the risk distribution, the codebase has a tight
+    # instability core; stabilizing just those 3 files would significantly improve overall health.
+    if len(scores) >= 5:
+        _total_s338 = sum(sc for sc, _ in scores)
+        _top3_s338 = sum(sc for sc, _ in scores[:3])
+        if _total_s338 > 0 and (_top3_s338 / _total_s338) >= 0.70:
+            _pct338 = int(100 * _top3_s338 / _total_s338)
+            _names338 = [sym.file_path.rsplit("/", 1)[-1] for _, sym in scores[:3]]
+            lines.append(
+                f"\nrisk concentration: top 3 hotspots hold {_pct338}% of total risk"
+                f" ({', '.join(_names338)})"
+                f" — stabilising these 3 files improves overall codebase health most"
+            )
+
+    # S344: __init__ module hotspot — top hotspot lives in an __init__.py or index file.
+    # __init__.py hotspots indicate that the package interface itself is unstable;
+    # any import of the package is affected, making the blast radius the entire dependency tree.
+    if scores:
+        _top344 = scores[0][1]
+        _fname344 = _top344.file_path.rsplit("/", 1)[-1].lower()
+        if _fname344 in ("__init__.py", "index.py", "index.ts", "index.js") and not _is_test_file(_top344.file_path):
+            lines.append(
+                f"\ninit module hotspot: {_top344.file_path.rsplit('/', 1)[-1]}"
+                f" — package interface is unstable; every importer of the package is affected"
+            )
+
     return "\n".join(lines)  # ALWAYS return here — never inside a conditional block

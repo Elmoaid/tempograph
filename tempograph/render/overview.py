@@ -1750,6 +1750,51 @@ def render_overview(graph: Tempo) -> str:
             f" — OOP-heavy; watch for implicit coupling via base classes and shared attributes"
         )
 
+    # S342: Circular imports detected — 2+ files form a circular import chain.
+    # Circular imports cause unpredictable initialization order and are hard to refactor;
+    # Python lazy-imports them partially, causing AttributeError at runtime for some access patterns.
+    _s342_import_edges: dict[str, set[str]] = {}
+    for _e342 in graph.edges:
+        if _e342.kind.value == "imports":
+            _src342 = graph.symbols.get(_e342.source_id)
+            _tgt342 = graph.symbols.get(_e342.target_id)
+            if _src342 and _tgt342 and _src342.file_path != _tgt342.file_path:
+                _s342_import_edges.setdefault(_src342.file_path, set()).add(_tgt342.file_path)
+    _s342_cycles: list[tuple[str, str]] = []
+    for _a342, _deps342 in _s342_import_edges.items():
+        for _b342 in _deps342:
+            if _a342 in _s342_import_edges.get(_b342, set()):
+                _pair342 = tuple(sorted([_a342, _b342]))
+                if _pair342 not in [tuple(sorted(c)) for c in _s342_cycles]:
+                    _s342_cycles.append((_a342, _b342))
+    if _s342_cycles:
+        _cycle_pair342 = _s342_cycles[0]
+        _a_name342 = _cycle_pair342[0].rsplit("/", 1)[-1]
+        _b_name342 = _cycle_pair342[1].rsplit("/", 1)[-1]
+        lines.append(
+            f"circular imports: {len(_s342_cycles)} import cycle(s) detected"
+            f" (e.g. {_a_name342} ↔ {_b_name342})"
+            f" — unpredictable init order; refactor to break cycle before adding new imports"
+        )
+
+    # S348: Large directory — single directory has 20+ source files.
+    # Directories with 20+ files have grown past cohesion; navigation is difficult and
+    # changes are hard to locate without grep. Consider splitting by responsibility.
+    _s348_dir_counts: dict[str, int] = {}
+    for _fp348 in graph.files:
+        if _is_test_file(_fp348):
+            continue
+        _dir348 = _fp348.rsplit("/", 1)[0] if "/" in _fp348 else "."
+        _s348_dir_counts[_dir348] = _s348_dir_counts.get(_dir348, 0) + 1
+    _s348_large_dirs = [(d, n) for d, n in _s348_dir_counts.items() if n >= 20]
+    if _s348_large_dirs:
+        _biggest348 = max(_s348_large_dirs, key=lambda x: x[1])
+        _dir_name348 = _biggest348[0].rsplit("/", 1)[-1] if "/" in _biggest348[0] else _biggest348[0]
+        lines.append(
+            f"large directory: {_dir_name348}/ has {_biggest348[1]} source files"
+            f" — past cohesion limit; consider splitting by responsibility"
+        )
+
         # Suggest directories to exclude — detect likely noise
     noisy = _detect_noisy_dirs(graph, modules)
     if noisy:

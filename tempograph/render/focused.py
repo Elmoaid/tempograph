@@ -2335,6 +2335,45 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                         f" — contract change; all implementations must be updated"
                     )
 
+    # S340: Self-recursive function — focused function calls itself.
+    # Recursive functions have implicit termination contracts;
+    # any change to parameters or the recursion base case can cause infinite loops.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim340 = next(
+            (s for s in _seed_syms if s.kind.value in ("function", "method")), None
+        )
+        if _prim340:
+            _self_call340 = any(
+                e for e in graph.edges
+                if e.kind.value == "calls"
+                and e.source_id == _prim340.id
+                and e.target_id == _prim340.id
+            )
+            if _self_call340:
+                lines.append(
+                    f"\nrecursive: {_prim340.name} calls itself"
+                    f" — verify base case before changing params; incorrect changes cause infinite loops"
+                )
+
+    # S346: Side-effect function — name implies global state mutation.
+    # Functions that modify global state are hard to test and prone to order-dependent bugs;
+    # callers may assume they're pure (no side effects) based on the return type.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim346 = next(
+            (s for s in _seed_syms if s.kind.value in ("function", "method")), None
+        )
+        if _prim346:
+            _se_patterns346 = (
+                "set_global_", "update_state_", "reset_", "clear_cache_",
+                "flush_", "invalidate_", "global_", "modify_config_",
+            )
+            _is_se346 = any(_prim346.name.lower().startswith(p) for p in _se_patterns346)
+            if _is_se346:
+                lines.append(
+                    f"\nside-effect: {_prim346.name} mutates global/shared state"
+                    f" — callers may assume pure function; order-dependent bugs possible"
+                )
+
     return "\n".join(lines)
 
 

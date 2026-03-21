@@ -1079,6 +1079,51 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — removed state or transition; state machine model may be inaccurate"
         )
 
+    # S341: Dead scheduled tasks — task_*/cron_*/scheduled_*/periodic_* functions with 0 callers.
+    # Scheduled tasks run on a timer rather than being called directly; unused task functions
+    # may still be registered in the scheduler, running silently and consuming resources.
+    _s341_task_prefixes = (
+        "task_", "cron_", "scheduled_", "periodic_", "job_", "background_task_",
+    )
+    _s341_dead_tasks = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s341_task_prefixes)
+    ]
+    if len(_s341_dead_tasks) >= 2:
+        _task_names341 = ", ".join(s.name for s in _s341_dead_tasks[:3])
+        if len(_s341_dead_tasks) > 3:
+            _task_names341 += f" +{len(_s341_dead_tasks) - 3} more"
+        lines.append(
+            f"dead scheduled tasks: {len(_s341_dead_tasks)} unused task fn(s) ({_task_names341})"
+            f" — may still be registered in scheduler; deregister before removing"
+        )
+
+    # S347: Dead migration helpers — migrate_*/upgrade_*/downgrade_* functions with 0 callers.
+    # Migration helpers are typically invoked by schema migration frameworks, not directly;
+    # unused ones may represent aborted migrations that should be cleaned up from the migration history.
+    _s347_mig_prefixes = (
+        "migrate_", "upgrade_", "downgrade_", "rollback_", "apply_migration_",
+        "revert_migration_", "run_migration_",
+    )
+    _s347_dead_mig = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s347_mig_prefixes)
+    ]
+    if len(_s347_dead_mig) >= 1:
+        _mig_names347 = ", ".join(s.name for s in _s347_dead_mig[:3])
+        if len(_s347_dead_mig) > 3:
+            _mig_names347 += f" +{len(_s347_dead_mig) - 3} more"
+        lines.append(
+            f"dead migration helpers: {len(_s347_dead_mig)} unused migration fn(s) ({_mig_names347})"
+            f" — check if registered in migration history; remove from both code and migration registry"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
