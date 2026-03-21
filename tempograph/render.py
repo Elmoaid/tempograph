@@ -3112,6 +3112,19 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         except Exception:
             pass
 
+    # S73: File complexity rank — top 3 source files by total cyclomatic complexity.
+    # Per-symbol scores already shown above; this aggregates per file for refactor targeting.
+    _file_cx: dict[str, int] = {}
+    for _, sym in scores:
+        if not _is_test_file(sym.file_path) and sym.complexity >= 1:
+            _file_cx[sym.file_path] = _file_cx.get(sym.file_path, 0) + sym.complexity
+    _top_cx_files = sorted(_file_cx.items(), key=lambda x: -x[1])
+    _top_cx_files = [(fp, cx) for fp, cx in _top_cx_files if cx >= 10][:3]
+    if len(_top_cx_files) >= 2:
+        _fcx_parts = [f"{fp.rsplit('/', 1)[-1]} (cx:{cx})" for fp, cx in _top_cx_files]
+        lines.append("")
+        lines.append(f"File complexity: {', '.join(_fcx_parts)}")
+
     return "\n".join(lines)
 
 
