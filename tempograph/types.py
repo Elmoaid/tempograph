@@ -252,8 +252,23 @@ class Tempo:
         return [self.symbols[s] for s in self._renderers.get(symbol_id, []) if s in self.symbols]
 
     def subtypes_of(self, name: str) -> list[Symbol]:
-        """Find classes that inherit from or implement the given type name."""
-        return [self.symbols[s] for s in self._subtypes.get(name, []) if s in self.symbols]
+        """Find classes that inherit from or implement the given type name.
+
+        Handles both unresolved bare-name targets and fully-resolved sym_id targets
+        (after _resolve_edges, INHERITS edge target_id becomes the full sym_id).
+        """
+        result_ids: list[str] = list(self._subtypes.get(name, []))
+        # If bare name: also look up via the symbol's resolved ID
+        if "::" not in name:
+            for sym in self.find_symbol(name):
+                result_ids.extend(self._subtypes.get(sym.id, []))
+        seen: set[str] = set()
+        out: list[Symbol] = []
+        for sid in result_ids:
+            if sid not in seen and sid in self.symbols:
+                seen.add(sid)
+                out.append(self.symbols[sid])
+        return out
 
     def symbols_in_file(self, file_path: str) -> list[Symbol]:
         fi = self.files.get(file_path)
