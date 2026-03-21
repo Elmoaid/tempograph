@@ -92,7 +92,7 @@ class TestDiffChangeRiskScore:
 
 
 class TestDiffUntestedChanges:
-    """S212: render_diff_context should list changed callables with zero test coverage."""
+    """S197: render_diff_context should list changed callables with zero test coverage."""
 
     def _build(self, tmp_path, files: dict):
         for name, content in files.items():
