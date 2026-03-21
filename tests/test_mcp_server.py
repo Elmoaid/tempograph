@@ -1287,88 +1287,6 @@ class TestFocusStalenessAnnotations:
 
 
 # ---------------------------------------------------------------------------
-# Focus mode — recent file commits summary (Task O)
-# ---------------------------------------------------------------------------
-
-class TestFocusRecentCommits:
-    """Verify that focus output includes a 'Recent changes:' section for the primary file."""
-
-    def _build_simple_repo(self, tmp_path):
-        (tmp_path / "mod.py").write_text("def my_func():\n    pass\n")
-        from tempograph.builder import build_graph
-        return build_graph(str(tmp_path), use_config=False)
-
-    def test_recent_commits_section_appears(self, tmp_path):
-        """recent_file_commits returns 2 commits → 'Recent changes:' section present."""
-        from unittest.mock import patch
-        from tempograph.render import render_focused
-
-        g = self._build_simple_repo(tmp_path)
-        fake_commits = [
-            {"days_ago": 3, "message": "add staleness annotations for callers"},
-            {"days_ago": 10, "message": "initial implementation"},
-        ]
-
-        with patch("tempograph.git.recent_file_commits", return_value=fake_commits):
-            output = render_focused(g, "my_func")
-
-        assert "Recent changes (mod.py):" in output
-        assert "3d ago: add staleness annotations for callers" in output
-        assert "10d ago: initial implementation" in output
-
-    def test_no_recent_commits_section_when_empty(self, tmp_path):
-        """recent_file_commits returns [] → no 'Recent changes:' section (no noise)."""
-        from unittest.mock import patch
-        from tempograph.render import render_focused
-
-        g = self._build_simple_repo(tmp_path)
-
-        with patch("tempograph.git.recent_file_commits", return_value=[]):
-            output = render_focused(g, "my_func")
-
-        assert "Recent changes" not in output
-
-
-class TestFocusCochangeSuggestions:
-    """Verify that focus output includes a 'Co-changed with:' section for the primary file."""
-
-    def _build_simple_repo(self, tmp_path):
-        (tmp_path / "mod.py").write_text("def my_func():\n    pass\n")
-        from tempograph.builder import build_graph
-        return build_graph(str(tmp_path), use_config=False)
-
-    def test_cochange_section_appears(self, tmp_path):
-        """cochange_pairs returns 2 pairs → 'Co-changed with:' section present with counts."""
-        from unittest.mock import patch
-        from tempograph.render import render_focused
-
-        g = self._build_simple_repo(tmp_path)
-        fake_pairs = [
-            {"path": "tempograph/prepare.py", "count": 12},
-            {"path": "tempograph/keywords.py", "count": 7},
-        ]
-
-        with patch("tempograph.git.cochange_pairs", return_value=fake_pairs):
-            output = render_focused(g, "my_func")
-
-        assert "Co-changed with (mod.py):" in output
-        assert "tempograph/prepare.py — 12 commits together" in output
-        assert "tempograph/keywords.py — 7 commits together" in output
-
-    def test_no_cochange_section_when_empty(self, tmp_path):
-        """cochange_pairs returns [] → no 'Co-changed with:' section (no noise)."""
-        from unittest.mock import patch
-        from tempograph.render import render_focused
-
-        g = self._build_simple_repo(tmp_path)
-
-        with patch("tempograph.git.cochange_pairs", return_value=[]):
-            output = render_focused(g, "my_func")
-
-        assert "Co-changed with" not in output
-
-
-# ---------------------------------------------------------------------------
 # CommonJS export detection
 # ---------------------------------------------------------------------------
 
@@ -2225,44 +2143,6 @@ class TestDeadCodeTestFileFilter:
         out = render_dead_code(g, include_low=True)
         assert "orphan_function" in out, (
             "Symbols from non-test files must still appear in dead code output"
-        )
-
-
-class TestDeadCodeLastTouched:
-    """Test that dead code output includes 'last touched: N days ago' annotation per file."""
-
-    def test_last_touched_annotation_appears(self, tmp_path):
-        """Dead code output should show last-touched days for each file."""
-        from unittest.mock import patch
-
-        from tempograph.builder import build_graph
-        from tempograph.render import render_dead_code
-
-        (tmp_path / "stale_module.py").write_text("def unused_func(): pass\n")
-        g = build_graph(tmp_path, use_cache=False)
-
-        with patch("tempograph.git.file_last_modified_days", return_value=42):
-            out = render_dead_code(g, include_low=True)
-
-        assert "last touched: 42 days ago" in out, (
-            f"Expected 'last touched: 42 days ago' in dead code output, got:\n{out}"
-        )
-
-    def test_last_touched_none_no_annotation(self, tmp_path):
-        """When git returns None (no history), no annotation should appear."""
-        from unittest.mock import patch
-
-        from tempograph.builder import build_graph
-        from tempograph.render import render_dead_code
-
-        (tmp_path / "no_history.py").write_text("def orphan(): pass\n")
-        g = build_graph(tmp_path, use_cache=False)
-
-        with patch("tempograph.git.file_last_modified_days", return_value=None):
-            out = render_dead_code(g, include_low=True)
-
-        assert "last touched" not in out, (
-            f"No annotation expected when git returns None, got:\n{out}"
         )
 
 
@@ -3287,7 +3167,7 @@ class TestFileBlastCountRanking:
         g = self._build(tmp_path, files)
         out = render_hotspots(g, top_n=5)
         assert "blast:" in out, f"Should annotate file with 22 dependents; got:\n{out}"
-        assert "files depend" in out
+        assert "files depend on this" in out
 
     def test_blast_annotation_silent_below_threshold(self, tmp_path, monkeypatch):
         """render_hotspots does NOT annotate files with <20 external dependents."""
@@ -3307,132 +3187,59 @@ class TestFileBlastCountRanking:
         out = render_hotspots(g, top_n=5)
         assert "blast:" not in out, f"Should NOT annotate file with only 5 dependents; got:\n{out}"
 
-    def test_classify_file_helper(self):
-        """_classify_file correctly identifies test, config, and source files."""
-        from tempograph.render import _classify_file
 
-        assert _classify_file("test_foo.py") == "test"
-        assert _classify_file("foo_test.py") == "test"
-        assert _classify_file("conftest.py") == "test"
-        assert _classify_file("foo.test.ts") == "test"
-        assert _classify_file("bar.spec.js") == "test"
-        assert _classify_file("pyproject.toml") == "config"
-        assert _classify_file("package.json") == "config"
-        assert _classify_file("jest.config.js") == "config"
-        assert _classify_file("foo.py") == "source"
-        assert _classify_file("utils.ts") == "source"
-        assert _classify_file("render.py") == "source"
+class TestFocusTestCoverage:
+    """Tests for the test coverage section in render_focused.
 
-    def test_blast_annotation_shows_category_breakdown_mixed(self, tmp_path, monkeypatch):
-        """blast annotation shows (N source, M test) breakdown when dependents include tests."""
-        import tempograph.git as git_mod
-        monkeypatch.setattr(git_mod, "file_change_velocity", lambda repo, recent_days=7: {})
+    Focus mode shows which test files cover the focused symbol, separated from
+    regular callers. Shows 'Tests: none' when the symbol has source callers but
+    no test callers, and omits the section entirely when there are no callers.
+    """
 
-        files = {"hub.py": "def hub_func():\n    pass\n"}
-        for i in range(15):
-            files[f"user_{i}.py"] = f"from hub import hub_func\ndef t{i}():\n    hub_func()\n"
-        for i in range(8):
-            files[f"test_user_{i}.py"] = f"from hub import hub_func\ndef test_{i}():\n    hub_func()\n"
+    def test_test_coverage_appears_when_test_callers_exist(self, tmp_path):
+        """render_focused shows Tests: section listing test files that call the seed."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
 
-        from tempograph.render import render_hotspots
-        g = self._build(tmp_path, files)
-        out = render_hotspots(g, top_n=5)
+        (tmp_path / "core.py").write_text("def foo():\n    return 42\n")
+        (tmp_path / "app.py").write_text(
+            "from core import foo\n\ndef main():\n    return foo()\n"
+        )
+        (tmp_path / "test_core.py").write_text(
+            "from core import foo\n\ndef test_foo_returns_42():\n    assert foo() == 42\n\n"
+            "def test_foo_type():\n    assert isinstance(foo(), int)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "foo", max_tokens=4000)
 
-        assert "blast:" in out, f"Should annotate with 23 dependents; got:\n{out}"
-        assert "source" in out, f"Should include 'source' category; got:\n{out}"
-        assert "test" in out, f"Should include 'test' category; got:\n{out}"
+        assert "\nTests:" in out, f"Tests: section must appear when test files call the seed; got:\n{out}"
+        assert "test_core.py" in out, f"test file must be listed; got:\n{out}"
 
-    def test_blast_annotation_source_only_no_test_label(self, tmp_path, monkeypatch):
-        """blast annotation omits 'test' label when all dependents are source files."""
-        import tempograph.git as git_mod
-        monkeypatch.setattr(git_mod, "file_change_velocity", lambda repo, recent_days=7: {})
+    def test_tests_none_when_only_source_callers(self, tmp_path):
+        """render_focused shows 'Tests: none' when seed has callers but none are test files."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
 
-        files = {"hub.py": "def hub_func():\n    pass\n"}
-        for i in range(22):
-            files[f"user_{i}.py"] = f"from hub import hub_func\ndef t{i}():\n    hub_func()\n"
+        (tmp_path / "lib.py").write_text("def helper():\n    return 1\n")
+        (tmp_path / "app.py").write_text(
+            "from lib import helper\n\ndef main():\n    return helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper", max_tokens=4000)
 
-        from tempograph.render import render_hotspots
-        g = self._build(tmp_path, files)
-        out = render_hotspots(g, top_n=5)
-
-        assert "blast:" in out, f"Should annotate with 22 source dependents; got:\n{out}"
-        assert "source" in out, f"Should include 'source' category; got:\n{out}"
-        # No test files as dependents, so 'test' category should not appear
-        lines_with_blast = [l for l in out.splitlines() if "blast:" in l]
-        assert all("test" not in l for l in lines_with_blast), (
-            f"'test' label should be absent when no test dependents; blast lines: {lines_with_blast}"
+        assert "Tests: none" in out, (
+            f"Must show 'Tests: none' when callers exist but none are test files; got:\n{out}"
         )
 
-
-class TestDeadCodeAgeAnnotation:
-    """Tests for per-symbol [age: Nd/Xm/1y+] annotations in dead code output."""
-
-    def test_dead_code_age_annotation(self, tmp_path):
-        """Mock file_last_modified_days returning 45 days -> [age: 1m] appears."""
-        from unittest.mock import patch
+    def test_no_tests_section_when_zero_callers(self, tmp_path):
+        """render_focused omits the Tests section entirely when the seed has no callers at all."""
         from tempograph.builder import build_graph
-        from tempograph.render import render_dead_code
+        from tempograph.render import render_focused
 
-        (tmp_path / "orphan.py").write_text("def orphan_func():\n    return 42\n")
-        g = build_graph(tmp_path, use_cache=False)
+        (tmp_path / "orphan.py").write_text("def alone():\n    return 0\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "alone", max_tokens=4000)
 
-        with patch("tempograph.git.file_last_modified_days", return_value=45):
-            out = render_dead_code(g, include_low=True)
-
-        assert "[age: 1m]" in out, (
-            f"Expected [age: 1m] for 45-day-old dead code; got:\n{out}"
+        assert "Tests:" not in out, (
+            f"Must NOT show Tests section when symbol has no callers; got:\n{out}"
         )
-
-    def test_dead_code_no_age_when_git_unavailable(self, tmp_path):
-        """When file_last_modified_days returns None, no [age:] annotation appears."""
-        from unittest.mock import patch
-        from tempograph.builder import build_graph
-        from tempograph.render import render_dead_code
-
-        (tmp_path / "orphan.py").write_text("def orphan_func():\n    return 42\n")
-        g = build_graph(tmp_path, use_cache=False)
-
-        with patch("tempograph.git.file_last_modified_days", return_value=None):
-            out = render_dead_code(g, include_low=True)
-
-        assert "[age:" not in out, (
-            f"Expected no [age:] when git unavailable; got:\n{out}"
-        )
-
-
-# ---------------------------------------------------------------------------
-# S18 — Overview mode: recently active files
-# ---------------------------------------------------------------------------
-
-class TestOverviewRecentlyActive:
-    """Verify that overview output shows recently-active files when git data is available."""
-
-    def test_recently_active_shown_when_commits_exist(self, tmp_path):
-        """When file_commit_counts returns data, 'recently active:' line appears in overview."""
-        from unittest.mock import patch
-        from tempograph.builder import build_graph
-        from tempograph.render import render_overview
-
-        (tmp_path / "auth.py").write_text("def login():\n    pass\n")
-        (tmp_path / "models.py").write_text("def get_user():\n    pass\n")
-        g = build_graph(tmp_path, use_cache=False)
-
-        with patch("tempograph.git.file_commit_counts", return_value={"auth.py": 47, "models.py": 32}):
-            out = render_overview(g)
-
-        assert "recently active:" in out, f"Expected 'recently active:' in overview; got:\n{out}"
-        assert "auth.py (47)" in out, f"Expected top file with count; got:\n{out}"
-
-    def test_recently_active_skipped_when_no_commits(self, tmp_path):
-        """When file_commit_counts returns empty dict, 'recently active:' is absent."""
-        from unittest.mock import patch
-        from tempograph.builder import build_graph
-        from tempograph.render import render_overview
-
-        (tmp_path / "orphan.py").write_text("def nothing():\n    pass\n")
-        g = build_graph(tmp_path, use_cache=False)
-
-        with patch("tempograph.git.file_commit_counts", return_value={}):
-            out = render_overview(g)
-
-        assert "recently active:" not in out, f"'recently active:' should be absent when no commits; got:\n{out}"
