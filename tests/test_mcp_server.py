@@ -8235,18 +8235,16 @@ class TestDiffChangeRiskVerdict:
         )
 
     def test_low_risk_verdict_for_isolated_change(self, tmp_path):
-        """File with unexported symbols and no importers → low risk verdict."""
+        """File with unexported symbols and no importers → no 'change risk:' (absence = low risk)."""
         from tempograph.render import render_diff_context
 
         g = self._build(tmp_path, {
             "standalone.py": "def _internal(): return 1\ndef _helper(): return 2\n",
         })
         out = render_diff_context(g, ["standalone.py"])
-        assert "change risk:" in out, (
-            f"Expected 'change risk:' verdict in diff output; got:\n{out}"
-        )
-        assert "low" in out, (
-            f"Expected low risk for isolated unexported symbols; got:\n{out}"
+        # Low risk: no HIGH/MEDIUM verdict emitted — absence of the line is the signal.
+        assert "change risk: HIGH" not in out and "change risk: MEDIUM" not in out, (
+            f"Isolated unexported change must not be HIGH or MEDIUM risk; got:\n{out}"
         )
 
 
@@ -8321,4 +8319,46 @@ class TestOverviewAvgComplexity:
         out = render_overview(g)
         assert "avg cx:" not in out, (
             f"'avg cx:' must not appear for tiny repos with < 5 functions; got:\n{out}"
+        )
+
+
+class TestFocusSideEffects:
+    """S82: Focus depth-0 — 'effects: db/file/network/subprocess/mutates state' annotation.
+
+    Scans the function body for I/O patterns. Pure functions have no effects line.
+    Helps agents assess refactoring risk: file/db/network functions need more care.
+    """
+
+    def test_file_effect_shown_for_file_writing_function(self, tmp_path):
+        """Function that calls open() -> effects line includes 'file'."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "writer.py").write_text(
+            "def save_data(path, data):\n"
+            "    with open(path, 'w') as f:\n"
+            "        f.write(data)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "save_data")
+        assert "effects:" in out, (
+            f"Expected 'effects:' for function calling open(); got:\n{out}"
+        )
+        assert "file" in out, (
+            f"Expected 'file' in effects for open() call; got:\n{out}"
+        )
+
+    def test_no_effects_for_pure_function(self, tmp_path):
+        """Pure function with no I/O -> no effects line."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "math.py").write_text(
+            "def add(a, b):\n"
+            "    return a + b\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "add")
+        assert "effects:" not in out, (
+            f"'effects:' must not appear for pure math function; got:\n{out}"
         )

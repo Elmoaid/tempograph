@@ -1927,24 +1927,25 @@ def _build_symbol_block_lines(
                     _body = "".join(_fh2.readlines()[sym.line_start - 1:sym.line_end])
                 _effects: list[str] = []
                 # DB: SQL queries, ORM calls, cursor operations
-                if _re2.search(r'(execute|cursor|session\.query|db\.|\.save\(|\.commit\(|SELECT|INSERT|UPDATE|DELETE)', _body, _re2.IGNORECASE):
+                if _re2.search(r'(execute|cursor|session[.]query|db[.]|[.]save[(]|[.]commit[(]|SELECT|INSERT|UPDATE|DELETE)', _body, _re2.IGNORECASE):
                     _effects.append("db")
                 # File I/O
-                if _re2.search(r'(open\(|write\(|read\(|os\.path|shutil\.|pathlib|json\.dump|json\.load|yaml\.)', _body):
+                if _re2.search(r'(open[(]|write[(]|read[(]|os[.]path|shutil[.]|pathlib|json[.]dump|json[.]load|yaml[.])', _body):
                     _effects.append("file")
                 # Network / HTTP
-                if _re2.search(r'(requests\.|httpx\.|aiohttp\.|urllib\.|fetch\(|http\.|socket\.|grpc\.)', _body):
+                if _re2.search(r'(requests[.]|httpx[.]|aiohttp[.]|urllib[.]|fetch[(]|http[.]|socket[.]|grpc[.])', _body):
                     _effects.append("network")
                 # Subprocess / shell
-                if _re2.search(r'(subprocess\.|os\.system\(|os\.popen\(|Popen\()', _body):
+                if _re2.search(r'(subprocess[.]|os[.]system[(]|os[.]popen[(]|Popen[(])', _body):
                     _effects.append("subprocess")
                 # Mutation of shared state (class attributes, globals)
-                if _re2.search(r'self\.\w+\s*=(?!=)', _body) or _re2.search(r'global', _body):
+                if _re2.search(r'self[.]\w+\s*=(?!=)', _body) or _re2.search(r'\bglobal\b', _body):
                     _effects.append("mutates state")
                 if _effects:
                     block_lines.append(f"{indent}  effects: {', '.join(_effects)}")
         except Exception:
             pass
+
     if sym.signature and depth < 2:
         block_lines.append(f"{indent}  sig: {sym.signature[:150]}")
     if sym.doc and depth == 0:
@@ -2860,19 +2861,20 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
         )
         _risk_score = _total_blast_files + _exported_with_callers * 3
         if _risk_score >= 16:
-            _risk_label = "HIGH"
+            _risk_label: str | None = "HIGH"
         elif _risk_score >= 6:
             _risk_label = "MEDIUM"
         else:
-            _risk_label = "low"
-        _risk_detail_parts = []
-        if _exported_with_callers:
-            _risk_detail_parts.append(f"{_exported_with_callers} exported with callers")
-        if _total_blast_files:
-            _risk_detail_parts.append(f"blast: {_total_blast_files} files")
-        _risk_detail = f" — {', '.join(_risk_detail_parts)}" if _risk_detail_parts else ""
-        lines.append(f"change risk: {_risk_label}{_risk_detail}")
-        lines.append("")
+            _risk_label = None  # low risk: don't emit — absence of warning is the signal
+        if _risk_label is not None:
+            _risk_detail_parts = []
+            if _exported_with_callers:
+                _risk_detail_parts.append(f"{_exported_with_callers} exported with callers")
+            if _total_blast_files:
+                _risk_detail_parts.append(f"blast: {_total_blast_files} files")
+            _risk_detail = f" — {', '.join(_risk_detail_parts)}" if _risk_detail_parts else ""
+            lines.append(f"change risk: {_risk_label}{_risk_detail}")
+            lines.append("")
 
     # Risk summary: top changed files by blast radius, so agents can prioritize review.
     # Only shown when 2+ changed files with blast >= 2; single-file diffs skip this.
