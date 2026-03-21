@@ -3366,6 +3366,22 @@ def _signals_async_oop(
             f" — unusually high test/source ratio; check for orphaned or over-duplicated tests"
         )
 
+    # S919: No entry points — repo has no recognizable main/run/start/execute function.
+    # A codebase without entry points is hard to understand at a glance; agents should
+    # check for hidden entry points in __main__ blocks or framework-driven invocations.
+    _entry_names919 = {"main", "run", "start", "execute", "launch", "serve", "app"}
+    _src_syms919 = [
+        s for s in graph.symbols.values()
+        if s.kind.value in ("function", "method")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+    ]
+    if len(_src_syms919) >= 5 and not any(s.name in _entry_names919 for s in _src_syms919):
+        lines.append(
+            f"no entry point: no main/run/start/execute function found in {len(_src_syms919)} source functions"
+            f" — unclear invocation path; check for __main__ blocks or framework-driven entry points"
+        )
+
     return lines
 
 

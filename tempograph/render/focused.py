@@ -4041,6 +4041,22 @@ def _signals_focused_fn_advanced(
                 f" — implements a built-in protocol; changes can break operators and third-party integrations"
             )
 
+    # S918: Private method focus — focused symbol is a private method (single underscore prefix).
+    # Private methods are implementation details not intended for external use; refactoring them
+    # is lower risk than public methods but may affect subclasses that access them directly.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim918 = _seed_syms[0]
+        if (
+            _prim918.kind.value in ("function", "method")
+            and _prim918.name.startswith("_")
+            and not (_prim918.name.startswith("__") and _prim918.name.endswith("__"))
+            and not _is_test_file(_prim918.file_path)
+        ):
+            lines.append(
+                f"\nprivate method: {_prim918.name} is a private implementation method"
+                f" — intended for internal use only; refactoring is lower risk but may affect subclass overrides"
+            )
+
     return lines
 
 

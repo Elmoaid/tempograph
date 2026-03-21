@@ -2538,4 +2538,24 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — multiple module boundaries changed; verify public API exports are consistent"
             )
 
+    # S921: Schema or migration file in diff — changed files include database schema or migration files.
+    # Schema changes affect the database structure for all deployed instances;
+    # backward-incompatible migrations can cause runtime errors during rolling deployments.
+    if changed_files:
+        _schema_kws921 = ("migration", "migrate", "schema", "alembic", "flyway", "liquibase")
+        _schema_exts921 = (".sql", ".ddl")
+        _schema_files921 = [
+            f for f in changed_files
+            if (
+                any(kw in f.replace("\\", "/").lower() for kw in _schema_kws921)
+                or any(f.lower().endswith(e) for e in _schema_exts921)
+            )
+        ]
+        if _schema_files921:
+            _sf_name921 = _schema_files921[0].replace("\\", "/").rsplit("/", 1)[-1]
+            lines.append(
+                f"schema in diff: {len(_schema_files921)} schema/migration file(s) changed (e.g. {_sf_name921})"
+                f" — database schema changes; ensure backward-compatible migration for rolling deployments"
+            )
+
     return "\n".join(lines)
