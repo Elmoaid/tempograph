@@ -2900,6 +2900,24 @@ def _signals_focused_fn_advanced(
                         f" but has no return type annotation — callers rely on implicit return type"
                     )
 
+    # S519: Callback/handler function — focused symbol name follows event-handler conventions.
+    # Functions named on_*, *_handler, *_callback, or *_cb are typically called indirectly;
+    # static call graphs undercount their blast radius because dispatch goes through event systems.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim519 = next((s for s in _seed_syms if s.kind.value in ("function", "method")), None)
+        if _prim519 and not _is_test_file(_prim519.file_path):
+            _name519 = _prim519.name.lower()
+            _cb_markers519 = ("on_", "handle_", "_handler", "_callback", "_cb", "_listener")
+            _is_cb519 = (
+                any(_name519.startswith(p) for p in ("on_", "handle_"))
+                or any(_name519.endswith(s) for s in ("_handler", "_callback", "_cb", "_listener"))
+            )
+            if _is_cb519:
+                lines.append(
+                    f"\ncallback/handler: {_prim519.name} is named as an event handler"
+                    f" — called indirectly via event dispatch; static call graph may miss callers"
+                )
+
     # S513: Generator function — focused symbol declares a lazy iterator return type.
     # Generator functions yield values one at a time; callers must exhaust or explicitly close them.
     # Converting a generator to return a list (or vice versa) changes memory profile and breaks lazy consumers.

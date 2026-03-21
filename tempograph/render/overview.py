@@ -2304,6 +2304,16 @@ def _signals_async_oop(
             f" — blocking calls in async context stall the event loop; audit sync→async call boundaries"
         )
 
+    # S520: No standard entry points — 8+ source files but zero recognized entry points detected.
+    # Projects using frameworks (pytest plugins, Django apps, library packages) have implicit entry;
+    # agents must infer the execution context from framework docs rather than assuming a main() flow.
+    _s520_src_files = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_s520_src_files) >= 8 and not _s220_entry_files:
+        lines.append(
+            f"no entry points: {len(_s520_src_files)} source files but no main/server/cli/app detected"
+            f" — likely uses framework conventions; infer entry context from framework docs"
+        )
+
     return lines
 
 

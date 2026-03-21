@@ -25278,3 +25278,236 @@ class TestDeadMagicMethodsS518:
         assert "dead magic methods" not in out, (
             f"'dead magic methods' must not appear when model.py is imported; got:\n{out}"
         )
+
+# ── S519: Callback/handler function focused ───────────────────────────────────
+
+class TestCallbackHandlerFocusedS519:
+    """S519: Focused symbol with event-handler naming convention emits callback/handler signal."""
+
+    def test_callback_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "events.py").write_text(
+            "def on_user_login(user_id: str) -> None:\n"
+            "    print(f'login: {user_id}')\n"
+        )
+        (tmp_path / "dispatcher.py").write_text(
+            "from events import on_user_login\n"
+            "def dispatch(uid): on_user_login(uid)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "on_user_login")
+        assert "callback/handler" in out, (
+            f"Expected 'callback/handler' for on_ function; got:\n{out}"
+        )
+
+    def test_callback_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "service.py").write_text(
+            "def process_request(req): return req\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from service import process_request\n"
+            "def run(): return process_request({})\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process_request")
+        assert "callback/handler" not in out, (
+            f"'callback/handler' must not appear for a regular function; got:\n{out}"
+        )
+
+
+# ── S520: No standard entry points overview ───────────────────────────────────
+
+class TestNoEntryPointsOverviewS520:
+    """S520: 8+ source files with no recognized entry point emits no-entry-points signal."""
+
+    def test_no_entry_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # 10 Python files, none named main/server/cli/app and no def main()
+        for i in range(10):
+            (tmp_path / f"module_{i}.py").write_text(
+                f"def process_{i}(x): return x + {i}\n"
+                f"def helper_{i}(): return {i}\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no entry points" in out, (
+            f"Expected 'no entry points' for 10 files with no main/cli/server; got:\n{out}"
+        )
+
+    def test_no_entry_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        (tmp_path / "main.py").write_text("def main(): print('hello')\n")
+        for i in range(5):
+            (tmp_path / f"module_{i}.py").write_text(f"def func_{i}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no entry points" not in out, (
+            f"'no entry points' must not appear when main.py exists; got:\n{out}"
+        )
+
+
+# ── S521: Cross-package blast ──────────────────────────────────────────────────
+
+class TestCrossPackageBlastS521:
+    """S521: Importers spanning 3+ distinct top-level packages emit cross-package blast signal."""
+
+    def test_cross_package_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "shared.py").write_text("def common_util(): return 1\n")
+        import os
+        for pkg in ("alpha", "beta", "gamma"):
+            os.makedirs(tmp_path / pkg, exist_ok=True)
+            (tmp_path / pkg / "__init__.py").write_text("")
+            (tmp_path / pkg / "service.py").write_text(
+                f"from shared import common_util\ndef {pkg}_run(): return common_util()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="shared.py")
+        assert "cross-package blast" in out, (
+            f"Expected 'cross-package blast' for shared.py imported from 3 packages; got:\n{out}"
+        )
+
+    def test_cross_package_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "shared.py").write_text("def common_util(): return 1\n")
+        (tmp_path / "service_a.py").write_text(
+            "from shared import common_util\ndef run_a(): return common_util()\n"
+        )
+        (tmp_path / "service_b.py").write_text(
+            "from shared import common_util\ndef run_b(): return common_util()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="shared.py")
+        assert "cross-package blast" not in out, (
+            f"'cross-package blast' must not appear when importers are in the same top-level dir; got:\n{out}"
+        )
+
+
+# ── S522: Init file in diff ────────────────────────────────────────────────────
+
+class TestInitFileInDiffS522:
+    """S522: Diff containing __init__.py emits init file signal."""
+
+    def test_init_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        import os
+        os.makedirs(tmp_path / "mypkg", exist_ok=True)
+        (tmp_path / "mypkg" / "__init__.py").write_text("from .core import main\n")
+        (tmp_path / "mypkg" / "core.py").write_text("def main(): return 1\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["mypkg/__init__.py", "mypkg/core.py"])
+        assert "init file in diff" in out, (
+            f"Expected 'init file in diff' for __init__.py in changed files; got:\n{out}"
+        )
+
+    def test_init_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def helper(): return 1\n")
+        (tmp_path / "app.py").write_text(
+            "from utils import helper\ndef run(): return helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["utils.py", "app.py"])
+        assert "init file in diff" not in out, (
+            f"'init file in diff' must not appear when no __init__.py changed; got:\n{out}"
+        )
+
+
+# ── S523: Utility module hotspot ──────────────────────────────────────────────
+
+class TestUtilityModuleHotspotS523:
+    """S523: Top hotspot in utils/helpers file emits utility module hotspot signal."""
+
+    def test_utility_hotspot_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def format_response(data): return {'data': data}\n"
+        )
+        callers = "".join(
+            f"from utils import format_response\ndef caller_{i}(): return format_response({i})\n"
+            for i in range(5)
+        )
+        (tmp_path / "callers.py").write_text(callers)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "utility module hotspot" in out, (
+            f"Expected 'utility module hotspot' for hotspot in utils.py; got:\n{out}"
+        )
+
+    def test_utility_hotspot_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text(
+            "def format_response(data): return {'data': data}\n"
+        )
+        callers = "".join(
+            f"from core import format_response\ndef caller_{i}(): return format_response({i})\n"
+            for i in range(5)
+        )
+        (tmp_path / "callers.py").write_text(callers)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "utility module hotspot" not in out, (
+            f"'utility module hotspot' must not appear for hotspot in core.py; got:\n{out}"
+        )
+
+
+# ── S524: Dead exception classes dead ─────────────────────────────────────────
+
+class TestDeadExceptionClassesS524:
+    """S524: Unused custom exception classes emit dead exception classes signal."""
+
+    def test_dead_exc_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "errors.py").write_text(
+            "class DatabaseError(Exception): pass\n"
+            "class NetworkError(Exception): pass\n"
+            "class ParseFailure(Exception): pass\n"
+        )
+        (tmp_path / "main.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead exception classes" in out, (
+            f"Expected 'dead exception classes' for unused error classes; got:\n{out}"
+        )
+
+    def test_dead_exc_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "errors.py").write_text(
+            "class DatabaseError(Exception): pass\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from errors import DatabaseError\n"
+            "def run():\n"
+            "    try: pass\n"
+            "    except DatabaseError: pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead exception classes" not in out, (
+            f"'dead exception classes' must not appear when error class is used; got:\n{out}"
+        )

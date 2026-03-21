@@ -1702,6 +1702,20 @@ def _collect_hotspots_signals(
                     f" — adding blocking calls or changing its event-loop behavior affects all awaiters"
                 )
 
+    # S523: Utility module hotspot — top hotspot lives in a utils/helpers/common file.
+    # When a utility module becomes the most-called code, it signals responsibility creep;
+    # the function has outgrown "utility" status and should be promoted to its own domain module.
+    if scores:
+        _top523 = scores[0][1]
+        if not _is_test_file(_top523.file_path) and _top523.kind.value in ("function", "method"):
+            _fp523 = _top523.file_path.lower().replace("\\", "/")
+            _util_markers523 = ("utils", "helpers", "common", "shared", "tools", "misc", "util")
+            if any(m in _fp523 for m in _util_markers523):
+                out.append(
+                    f"\nutility module hotspot: {_top523.name} is the most-called function in a utility file"
+                    f" — utility hotspots signal responsibility creep; consider promoting to a domain module"
+                )
+
     # S517: Deprecated hotspot — top hotspot symbol name suggests it is marked for removal.
     # A deprecated function that remains the most-called symbol blocks cleanup;
     # callers prevent deprecation follow-through and the warning loses urgency over time.

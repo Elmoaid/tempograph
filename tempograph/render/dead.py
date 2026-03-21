@@ -1765,6 +1765,27 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — stale helpers mislead about test coverage; remove to clarify actual test scope"
         )
 
+    # S524: Dead exception classes — custom exception classes with 0 callers in non-imported files.
+    # Unused exception classes bloat the error hierarchy and mislead about what errors a module raises;
+    # they often result from copy-pasted exception hierarchies that were never wired up.
+    _s524_exc_suffixes = ("error", "exception", "fault", "failure", "warning")
+    _s524_dead_exc = [
+        sym for sym in graph.symbols.values()
+        if not _is_test_file(sym.file_path)
+        and sym.kind.value == "class"
+        and any(sym.name.lower().endswith(s) for s in _s524_exc_suffixes)
+        and not graph.callers_of(sym.id)
+        and not graph.importers_of(sym.file_path)
+    ]
+    if _s524_dead_exc:
+        _exc_names524 = ", ".join(s.name for s in _s524_dead_exc[:3])
+        if len(_s524_dead_exc) > 3:
+            _exc_names524 += f" +{len(_s524_dead_exc) - 3} more"
+        lines.append(
+            f"dead exception classes: {len(_s524_dead_exc)} unused exception class(es) ({_exc_names524})"
+            f" — bloats error hierarchy and misleads callers; verify intent before deleting"
+        )
+
     # S518: Dead magic methods — dunder display/comparison methods with 0 callers in non-imported files.
     # __str__/__repr__/__len__ in files with no importers indicate abandoned model classes;
     # magic methods are rarely flagged as dead code but the whole class is likely removable.

@@ -1521,6 +1521,16 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — check for required migrations and audit all queries against changed fields"
         )
 
+    # S522: Init file in diff — diff includes __init__.py package init files.
+    # __init__.py changes alter a package's public re-export surface; removing or renaming
+    # an exported name here breaks all direct consumers without any symbol-level change.
+    _s522_init_files = [f for f in changed_files if f.rsplit("/", 1)[-1] == "__init__.py"]
+    if _s522_init_files:
+        lines.append(
+            f"init file in diff: {len(_s522_init_files)} __init__.py file(s) changed"
+            f" — package re-export surface may have changed; audit all import-from consumers"
+        )
+
     # S516: Generated file in diff — diff includes auto-generated source files.
     # Generated files should not be manually edited; changes are overwritten on next codegen run.
     # If a generated file appears in a diff, the generator input (proto, schema, spec) should change too.

@@ -1464,6 +1464,19 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — tightly coupled to one consumer; safe to change in sync, but consider if the coupling is intentional"
         )
 
+    # S521: Cross-package blast — blast target's importers span 3+ distinct top-level packages.
+    # When a shared file is imported from many packages, a breaking change forces coordinated
+    # updates across team/ownership boundaries — the coordination cost scales with package count.
+    if importers:
+        _s521_src_importers = [imp for imp in importers if not _is_test_file(imp)]
+        _s521_top_dirs = {imp.replace("\\", "/").split("/")[0] for imp in _s521_src_importers}
+        if len(_s521_top_dirs) >= 3:
+            lines.append(
+                f"cross-package blast: {file_path.rsplit('/', 1)[-1]} is imported from"
+                f" {len(_s521_top_dirs)} distinct packages ({', '.join(sorted(_s521_top_dirs)[:3])})"
+                f" — changes require coordinated updates across ownership boundaries"
+            )
+
     # S515: Config file blast — blast target is a configuration or settings file.
     # Config files propagate to all consumers at runtime even when not statically imported;
     # constants, feature flags, and env-driven values silently affect all code paths on reload.
