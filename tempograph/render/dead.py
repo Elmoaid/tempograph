@@ -865,6 +865,29 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — object creation paths removed or replaced; safe to clean up"
         )
 
+
+    # S291: Dead property getters — get_*/fetch_*/retrieve_* methods with 0 callers.
+    # Unused getters suggest removed data access paths; they bloat the API surface
+    # and mislead developers about what data is actually consumed.
+    # Only shown when 3+ such methods found (conf >= 40).
+    _s291_getter_prefixes = ("get_", "fetch_", "retrieve_", "load_", "read_", "query_")
+    _s291_dead_getters = [
+        sym for sym, conf in scored
+        if conf >= 40
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.startswith(p) for p in _s291_getter_prefixes)
+    ]
+    if len(_s291_dead_getters) >= 3:
+        _getter_names = [s.name for s in _s291_dead_getters[:3]]
+        _getter_str = ", ".join(_getter_names)
+        if len(_s291_dead_getters) > 3:
+            _getter_str += f" +{len(_s291_dead_getters) - 3} more"
+        lines.append(
+            f"dead getters: {len(_s291_dead_getters)} unused getter fn(s) ({_getter_str})"
+            f" — data access paths removed; safe to clean up API surface"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
