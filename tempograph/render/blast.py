@@ -1464,6 +1464,20 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — tightly coupled to one consumer; safe to change in sync, but consider if the coupling is intentional"
         )
 
+    # S527: Wide export surface — blast target exports 20+ symbols (large public API).
+    # Files with many exports have a proportionally large blast radius for signature changes;
+    # any one of the exports may be breaking, so each change needs a broader callers audit.
+    if fi:
+        _s527_exported = [
+            sid for sid in fi.symbols
+            if sid in graph.symbols and graph.symbols[sid].exported
+        ]
+        if len(_s527_exported) >= 20:
+            lines.append(
+                f"wide export surface: {file_path.rsplit('/', 1)[-1]} exports {len(_s527_exported)} symbols"
+                f" — large public API; use blast --query <symbol> to target specific symbol blast radius"
+            )
+
     # S521: Cross-package blast — blast target's importers span 3+ distinct top-level packages.
     # When a shared file is imported from many packages, a breaking change forces coordinated
     # updates across team/ownership boundaries — the coordination cost scales with package count.

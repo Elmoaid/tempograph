@@ -1702,6 +1702,19 @@ def _collect_hotspots_signals(
                     f" — adding blocking calls or changing its event-loop behavior affects all awaiters"
                 )
 
+    # S529: Long hotspot function — top hotspot has 50+ lines of code.
+    # A large, heavily-called function accumulates complexity over time; it is the most-used
+    # yet least-testable function in the system — every caller depends on all of its behaviors.
+    if scores:
+        _top529 = scores[0][1]
+        if not _is_test_file(_top529.file_path) and _top529.kind.value in ("function", "method"):
+            _len529 = (_top529.line_end or 0) - (_top529.line_start or 0)
+            if _len529 >= 50:
+                out.append(
+                    f"\nlong hotspot: {_top529.name} is {_len529} lines and the most-called function"
+                    f" — large + hot = refactor pressure; extract sub-functions before it grows further"
+                )
+
     # S523: Utility module hotspot — top hotspot lives in a utils/helpers/common file.
     # When a utility module becomes the most-called code, it signals responsibility creep;
     # the function has outgrown "utility" status and should be promoted to its own domain module.

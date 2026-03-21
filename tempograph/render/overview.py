@@ -2304,6 +2304,19 @@ def _signals_async_oop(
             f" — blocking calls in async context stall the event loop; audit sync→async call boundaries"
         )
 
+    # S526: Dense codebase — average source file has 200+ lines.
+    # Large average file size signals monolith tendencies; files become harder to navigate,
+    # review, and test when they grow above ~200 lines. Consider splitting by responsibility.
+    _s526_src_files = [(fp, fi) for fp, fi in graph.files.items() if not _is_test_file(fp)]
+    if len(_s526_src_files) >= 5:
+        _s526_total_lines = sum(fi.line_count for _, fi in _s526_src_files)
+        _s526_avg = _s526_total_lines // len(_s526_src_files)
+        if _s526_avg >= 200:
+            lines.append(
+                f"dense codebase: avg {_s526_avg} lines/source file ({len(_s526_src_files)} files)"
+                f" — large files on average; files are hard to review and test; consider splitting by responsibility"
+            )
+
     # S520: No standard entry points — 8+ source files but zero recognized entry points detected.
     # Projects using frameworks (pytest plugins, Django apps, library packages) have implicit entry;
     # agents must infer the execution context from framework docs rather than assuming a main() flow.

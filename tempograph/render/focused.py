@@ -2932,6 +2932,24 @@ def _signals_focused_fn_advanced(
                     f" — callers must iterate or explicitly close it; converting to list changes memory + latency profile"
                 )
 
+    # S525: Name collision — focused symbol's name appears in 3+ non-test files.
+    # When the same function/class name exists in multiple modules, wildcard imports and
+    # auto-complete can silently import the wrong symbol; rename risk scales with file count.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim525 = _seed_syms[0]
+        if not _is_test_file(_prim525.file_path):
+            _all525 = [
+                s for s in graph.find_symbol(_prim525.name)
+                if not _is_test_file(s.file_path)
+            ]
+            if len(_all525) >= 3:
+                _coll_files525 = [s.file_path.rsplit("/", 1)[-1] for s in _all525[:3]]
+                lines.append(
+                    f"\nname collision: {_prim525.name} is defined in {len(_all525)} source files"
+                    f" ({', '.join(_coll_files525)})"
+                    f" — wildcard imports or same-name references may resolve to the wrong definition"
+                )
+
     return lines
 
 
