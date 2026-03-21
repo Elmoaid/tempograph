@@ -1395,4 +1395,19 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — database schema changes are irreversible in production; test rollback path"
         )
 
+    # S465: Large file touched — diff includes a file with 500+ lines.
+    # Large files concentrate risk; any change is adjacent to unrelated logic,
+    # increasing the chance of accidental breakage or merge conflicts.
+    _s465_large_touched = [
+        fp for fp in normalized
+        if fp in graph.files and graph.files[fp].line_count and graph.files[fp].line_count >= 500
+    ]
+    if _s465_large_touched:
+        _lg_name465 = _s465_large_touched[0].rsplit("/", 1)[-1]
+        _lg_lines465 = graph.files[_s465_large_touched[0]].line_count
+        lines.append(
+            f"large file touched: {_lg_name465} ({_lg_lines465:,} lines)"
+            f" — changes are adjacent to unrelated logic; review surrounding context carefully"
+        )
+
     return "\n".join(lines)

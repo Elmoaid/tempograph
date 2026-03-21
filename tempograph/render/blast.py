@@ -1349,6 +1349,19 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — treat as a shared library; any breaking change needs broad coordination"
         )
 
+    # S467: Test-only importer — blast target is only imported from test files.
+    # If a file is only imported from tests, it may be a test helper or dead production code;
+    # deleting it only breaks tests, but its presence suggests it was intended for production use.
+    _s467_all_importers = graph.importers_of(file_path)
+    _s467_non_test = [fp for fp in _s467_all_importers if not _is_test_file(fp)]
+    _s467_test = [fp for fp in _s467_all_importers if _is_test_file(fp)]
+    if _s467_test and not _s467_non_test and not _is_test_file(file_path):
+        lines.append(
+            f"test-only importer: {file_path.rsplit('/', 1)[-1]} is only imported from test files"
+            f" ({len(_s467_test)} test file(s))"
+            f" — may be an unused helper; verify before keeping or deleting"
+        )
+
     return "\n".join(lines)
 
 

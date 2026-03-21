@@ -1567,6 +1567,29 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — validation may be bypassed; verify constraints still enforced before deleting"
         )
 
+    # S468: Dead serializers — serialize_*/marshal_*/encode_* functions with 0 callers.
+    # Unused serializers suggest a data-export path was written but never wired up;
+    # the data may be exported without proper formatting, or consumers never existed.
+    _s468_serial_prefixes = (
+        "serialize_", "marshal_", "encode_", "to_json_", "to_dict_",
+        "export_", "dump_", "as_json_",
+    )
+    _s468_dead_serials = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s468_serial_prefixes)
+    ]
+    if len(_s468_dead_serials) >= 1:
+        _serial_names468 = ", ".join(s.name for s in _s468_dead_serials[:3])
+        if len(_s468_dead_serials) > 3:
+            _serial_names468 += f" +{len(_s468_dead_serials) - 3} more"
+        lines.append(
+            f"dead serializers: {len(_s468_dead_serials)} unused serializer fn(s) ({_serial_names468})"
+            f" — data export path may be missing; verify before deleting"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

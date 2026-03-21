@@ -1574,5 +1574,23 @@ def _collect_hotspots_signals(
                 f" — chokepoint function; changes here cascade broadly"
             )
 
+    # S466: Cross-module hotspot — top hotspot is imported by files in 3+ directories.
+    # A hotspot that spans directory boundaries is a cross-cutting concern;
+    # refactoring it requires changes in every consuming directory simultaneously.
+    if scores:
+        _top466 = scores[0][1]
+        if not _is_test_file(_top466.file_path):
+            _importer466_dirs: set[str] = set()
+            for _imp466 in graph.importers_of(_top466.file_path):
+                _dir466 = _imp466.rsplit("/", 1)[0] if "/" in _imp466 else ""
+                if _dir466 != (_top466.file_path.rsplit("/", 1)[0] if "/" in _top466.file_path else ""):
+                    _importer466_dirs.add(_dir466)
+            if len(_importer466_dirs) >= 3:
+                out.append(
+                    f"\ncross-module hotspot: {_top466.file_path.rsplit('/', 1)[-1]} is imported"
+                    f" from {len(_importer466_dirs)} different directories"
+                    f" — cross-cutting concern; refactoring requires coordinated changes in every consumer directory"
+                )
+
     return out
 
