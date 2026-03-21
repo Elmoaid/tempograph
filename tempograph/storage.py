@@ -40,7 +40,17 @@ class GraphDB:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.row_factory = sqlite3.Row
+        self._batching = False
         self._init_schema()
+
+    def begin_batch(self) -> None:
+        """Start a batch — suppresses per-call commits until end_batch()."""
+        self._batching = True
+
+    def end_batch(self) -> None:
+        """End a batch — commits all pending writes in one transaction."""
+        self._batching = False
+        self._conn.commit()
 
     def _init_schema(self) -> None:
         cur = self._conn.cursor()
