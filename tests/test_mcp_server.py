@@ -9664,3 +9664,76 @@ class TestDeadCodeStaleDead:
         assert "Stale dead" not in out, (
             f"'Stale dead' must not appear when git history is unavailable; got:\n{out}"
         )
+
+
+class TestHotspotsImportBottleneck:
+    """S107: Hotspots 'Import bottleneck:' — file with most dependents (5+)."""
+
+    def test_import_bottleneck_shown_for_widely_imported_file(self, tmp_path):
+        """File imported by 6+ source files → 'Import bottleneck:' shown in hotspots."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        (tmp_path / "base.py").write_text("def shared(): return 1\n")
+        for i in range(7):
+            (tmp_path / f"user_{i}.py").write_text(
+                f"from base import shared\ndef run_{i}(): return shared()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "Import bottleneck:" in out, (
+            f"Expected 'Import bottleneck:' for file imported by 7 others; got:\n{out}"
+        )
+        assert "base.py" in out, f"Expected 'base.py' as bottleneck; got:\n{out}"
+
+    def test_import_bottleneck_absent_for_lightly_imported_file(self, tmp_path):
+        """File imported by only 3 others → no 'Import bottleneck:' (threshold is 5)."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        (tmp_path / "utils.py").write_text("def helper(): return 1\n")
+        for i in range(3):
+            (tmp_path / f"mod_{i}.py").write_text(
+                f"from utils import helper\ndef work_{i}(): return helper()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "Import bottleneck:" not in out, (
+            f"'Import bottleneck:' must not appear for only 3 dependents; got:\n{out}"
+        )
+
+
+class TestBlastFileAge:
+    """S108: Blast 'last touched: Nd ago' — file age at top of blast output."""
+
+    def test_file_age_shown_in_git_repo(self, tmp_path):
+        """In a git repo with committed files, 'last touched:' appears in blast output."""
+        import subprocess
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True)
+        (tmp_path / "api.py").write_text("def get(): return 1\n")
+        (tmp_path / "caller.py").write_text("from api import get\ndef run(): return get()\n")
+        subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="api.py")
+        assert "last touched:" in out, (
+            f"Expected 'last touched:' for git-tracked file; got:\n{out}"
+        )
+
+    def test_file_age_absent_without_git(self, tmp_path):
+        """Without git, 'last touched:' is not shown (no history available)."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        (tmp_path / "lib.py").write_text("def func(): return 1\n")
+        (tmp_path / "app.py").write_text("from lib import func\ndef main(): return func()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="lib.py")
+        assert "last touched:" not in out, (
+            f"'last touched:' must not appear without git history; got:\n{out}"
+        )
