@@ -2514,8 +2514,16 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         s for s in dead
         if s.kind.value == "class"
         and not _is_test_file(s.file_path)
-        and s.signature is not None
-        and any(kw in s.signature for kw in ("ABC", "Protocol", "Abstract", "Interface"))
+        and (
+            any(kw in s.name for kw in ("ABC", "Protocol", "Abstract", "Interface"))
+            or (
+                s.signature is not None
+                and any(
+                    f"({kw})" in s.signature or f"({kw}," in s.signature
+                    for kw in ("ABC", "Protocol")
+                )
+            )
+        )
     ]
     if _dead_protos737:
         _proto_names737 = ", ".join(s.name for s in _dead_protos737[:3])
@@ -2543,6 +2551,25 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         lines.append(
             f"dead cache functions: {len(_dead_cache743)} unused caching function(s) ({_cache_names743})"
             f" — abandoned performance optimization or superseded caching strategy"
+        )
+
+    # S749: Dead validation functions — unused functions with validation-related names.
+    # Validation functions (validate, check, verify, ensure) that are never called indicate
+    # abandoned validation strategies or validation removed without cleanup.
+    _val_kws749 = ("validate", "check", "verify", "ensure")
+    _dead_vals749 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and any(kw in s.name.lower() for kw in _val_kws749)
+    ]
+    if _dead_vals749:
+        _val_names749 = ", ".join(s.name for s in _dead_vals749[:3])
+        if len(_dead_vals749) > 3:
+            _val_names749 += f" +{len(_dead_vals749) - 3} more"
+        lines.append(
+            f"dead validation functions: {len(_dead_vals749)} unused validation function(s) ({_val_names749})"
+            f" — abandoned validation strategy or removed without cleanup"
         )
 
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
