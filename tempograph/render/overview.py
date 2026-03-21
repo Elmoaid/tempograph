@@ -3074,8 +3074,9 @@ def _signals_async_oop(
     _total_src799 = sum(1 for fp in graph.files if not _is_test_file(fp))
     if len(_entry799) == 1 and _total_src799 >= 5:
         lines.append(
-            f"single entry point: only {_entry799[0].name} in {_entry799[0].file_path.rsplit('/', 1)[-1]}"
-            f" — one startup path; consider adding CLI or worker entry points for resilience"
+            f"no entry diversity: only one entry function ({_entry799[0].name} in"
+            f" {_entry799[0].file_path.rsplit('/', 1)[-1]}) — one startup path;"
+            f" consider adding CLI or worker entry points for resilience"
         )
 
     return lines
