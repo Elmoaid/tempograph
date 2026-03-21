@@ -831,6 +831,23 @@ def render_overview(graph: Tempo) -> str:
             _mc_str += f" +{len(_mono_callers) - 4} more"
         lines.append(f"mono-callers: {len(_mono_callers)} exported fns with only 1 caller file ({_mc_str})")
 
+    # S110: File size distribution — avg + median source file line counts.
+    # High avg = large files = harder to navigate; agents should use focus mode more.
+    # Only shown when 5+ source files exist with known line counts.
+    _src_line_counts = sorted(
+        fi.line_count for fp, fi in graph.files.items()
+        if not _is_test_file(fp) and fi.line_count and fi.line_count > 0
+    )
+    if len(_src_line_counts) >= 5:
+        _lc_avg = int(sum(_src_line_counts) / len(_src_line_counts))
+        _lc_mid = len(_src_line_counts) // 2
+        _lc_median = (
+            _src_line_counts[_lc_mid] if len(_src_line_counts) % 2 == 1
+            else (_src_line_counts[_lc_mid - 1] + _src_line_counts[_lc_mid]) // 2
+        )
+        if _lc_avg >= 50:  # skip trivial repos with tiny stubs
+            lines.append(f"avg file size: {_lc_avg} lines (median: {_lc_median}, n={len(_src_line_counts)} files)")
+
     # Circular imports: flag immediately in overview so agents don't miss them.
     # Details are in `--mode deps` but overview gives a quick count + first cycle.
     try:
@@ -4214,7 +4231,20 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
     if _removable_lines >= 50:
         _removable_header = f" (~{_removable_lines} lines removable)"
 
-    lines = [f"Potential dead code ({len(dead)} symbols){_removable_header}:"]
+    # S109: Dead ratio — fraction of total (non-test) symbols that are dead.
+    # Quick health signal: "10% dead = manageable, 40% dead = major cleanup needed."
+    # Only shown when there are 10+ total non-test symbols to avoid tiny-project noise.
+    _total_non_test_syms = sum(
+        1 for sym in graph.symbols.values() if not _is_test_file(sym.file_path)
+    )
+    _dead_ratio_str = ""
+    if _total_non_test_syms >= 10 and dead:
+        _high_conf_dead = sum(1 for sym, conf in scored if conf >= 40)
+        _ratio_pct = int(_high_conf_dead / _total_non_test_syms * 100)
+        if _ratio_pct >= 5:
+            _dead_ratio_str = f" [{_ratio_pct}% of {_total_non_test_syms} source symbols]"
+
+    lines = [f"Potential dead code ({len(dead)} symbols){_removable_header}{_dead_ratio_str}:"]
 
     # Quick wins: top files with the most HIGH confidence dead symbols.
     # Shows agents where to start cleanup without reading the full list.

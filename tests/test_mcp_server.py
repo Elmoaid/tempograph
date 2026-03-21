@@ -9737,3 +9737,78 @@ class TestBlastFileAge:
         assert "last touched:" not in out, (
             f"'last touched:' must not appear without git history; got:\n{out}"
         )
+
+
+class TestDeadCodeDeadRatio:
+    """S109: Dead code header '[N% of M source symbols]' — dead ratio health signal."""
+
+    def test_dead_ratio_shown_when_many_symbols_dead(self, tmp_path):
+        """10+ non-test symbols, 5%+ dead → dead ratio shown in header."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        # 15 functions, 3 uncalled = 20% dead
+        for i in range(12):
+            (tmp_path / f"used_{i}.py").write_text(
+                f"def live_fn_{i}(): return {i}\n"
+            )
+        (tmp_path / "caller.py").write_text(
+            "".join(f"from used_{i} import live_fn_{i}\n" for i in range(12))
+            + "def main(): return " + "+".join(f"live_fn_{i}()" for i in range(12)) + "\n"
+        )
+        (tmp_path / "dead.py").write_text(
+            "def orphan_a(): return 1\n"
+            "def orphan_b(): return 2\n"
+            "def orphan_c(): return 3\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "% of" in out and "source symbols" in out, (
+            f"Expected dead ratio '[N% of M source symbols]' in header; got:\n{out}"
+        )
+
+    def test_dead_ratio_absent_for_small_project(self, tmp_path):
+        """Fewer than 10 non-test symbols → no dead ratio shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        (tmp_path / "tiny.py").write_text("def unused(): return 1\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "source symbols" not in out, (
+            f"'source symbols' ratio must not appear for tiny project; got:\n{out}"
+        )
+
+
+class TestOverviewAvgFileSize:
+    """S110: Overview 'avg file size: N lines (median: M, n=K files)'."""
+
+    def test_avg_file_size_shown_for_non_trivial_repo(self, tmp_path):
+        """5+ source files each with 50+ lines → 'avg file size:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        for i in range(6):
+            content = f"def fn_{i}():\n"
+            for j in range(60):
+                content += f"    x_{j} = {j}\n"
+            content += f"    return x_0\n"
+            (tmp_path / f"module_{i}.py").write_text(content)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "avg file size:" in out, (
+            f"Expected 'avg file size:' for repo with large files; got:\n{out}"
+        )
+
+    def test_avg_file_size_absent_for_tiny_files(self, tmp_path):
+        """5 tiny files (< 50 lines avg) → no 'avg file size:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        for i in range(5):
+            (tmp_path / f"stub_{i}.py").write_text(f"def f_{i}(): return {i}\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "avg file size:" not in out, (
+            f"'avg file size:' must not appear for tiny files; got:\n{out}"
+        )
