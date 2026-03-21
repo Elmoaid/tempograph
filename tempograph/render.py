@@ -1120,11 +1120,27 @@ def _build_symbol_block_lines(
     # Blast annotation for depth-0 seed: number of unique files that call this symbol.
     # Gives agents immediate risk context — "[blast: 7 files]" = 7 files need review.
     _blast_ann = ""
+    _age_ann = ""
     if depth == 0:
         _blast_files = {c.file_path for c in graph.callers_of(sym.id) if c.file_path != sym.file_path}
         if len(_blast_files) >= 3:
             _blast_ann = f" [blast: {len(_blast_files)} files]"
-    block_lines = [f"{prefix} {sym.kind.value} {sym.qualified_name}{_blast_ann} — {loc}{orbit_note}"]
+        # Symbol-level age: when was this specific function last changed?
+        # Uses git log -L for per-line precision; falls back to file-level.
+        # Skipped for symbols changed < 8 days ago (not actionable — treat as "fresh").
+        try:
+            from .git import symbol_last_modified_days as _sld  # noqa: PLC0415
+            _days = _sld(graph.root, sym.file_path, sym.line_start)
+            if _days is not None and _days >= 8:
+                if _days >= 365:
+                    _age_ann = " [age: 1y+]"
+                elif _days >= 30:
+                    _age_ann = f" [age: {_days // 30}m]"
+                else:
+                    _age_ann = f" [age: {_days}d]"
+        except Exception:
+            pass
+    block_lines = [f"{prefix} {sym.kind.value} {sym.qualified_name}{_blast_ann}{_age_ann} — {loc}{orbit_note}"]
     if sym.signature and depth < 2:
         block_lines.append(f"{indent}  sig: {sym.signature[:150]}")
     if sym.doc and depth == 0:
@@ -1962,9 +1978,11 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
 
     # Load change velocity: files in active churn carry coordination risk
     velocity: dict[str, float] = {}
+    velocity_14: dict[str, float] = {}
     try:
         from .git import file_change_velocity
         velocity = file_change_velocity(graph.root)
+        velocity_14 = file_change_velocity(graph.root, recent_days=14)
     except Exception:
         pass
 
@@ -2058,8 +2076,15 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         if velocity and sym.file_path:
             cpw = velocity.get(sym.file_path, 0.0)
             if cpw >= 5.0:
+                cpw14 = velocity_14.get(sym.file_path, 0.0)
+                if cpw14 > 0 and cpw >= cpw14 * 1.5:
+                    _trend = " ↑"
+                elif cpw14 > 1.0 and cpw < cpw14 * 0.5:
+                    _trend = " ↓"
+                else:
+                    _trend = ""
                 warnings.append(
-                    f"active churn: {cpw:.0f} commits/week — re-read before editing"
+                    f"active churn: {cpw:.0f} commits/week{_trend} — re-read before editing"
                 )
         # File blast count warning: many external dependents = high coordination cost
         if sym.file_path and sym.file_path in blast_cache:

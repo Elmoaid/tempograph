@@ -3172,6 +3172,75 @@ class TestChangeVelocityRanking:
         assert "active churn" not in out
 
 
+class TestHotspotsVelocityTrend:
+    """S32: render_hotspots — change velocity trend arrows (↑/↓).
+
+    When a file has active churn, compare 7-day vs 14-day velocity to
+    show trend direction: ↑ if recently accelerating, ↓ if cooling down.
+    """
+
+    def _make_hotspot_repo(self, tmp_path):
+        from tempograph.builder import build_graph
+        (tmp_path / "hub.py").write_text("def hub_fn(): pass\n")
+        for i in range(4):
+            (tmp_path / f"dep_{i}.py").write_text(
+                f"from hub import hub_fn\ndef fn_{i}(): return hub_fn()\n"
+            )
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_trending_up_shows_arrow(self, tmp_path, monkeypatch):
+        """↑ appears when 7-day velocity is 1.5x+ the 14-day velocity."""
+        from tempograph.render import render_hotspots
+        import tempograph.git as git_mod
+
+        g = self._make_hotspot_repo(tmp_path)
+
+        def mock_velocity(repo, recent_days=7):
+            if recent_days == 7:
+                return {"hub.py": 20.0}  # recent: 20 cpw
+            return {"hub.py": 8.0}       # 14-day avg: 8 cpw (recent is 2.5x)
+
+        monkeypatch.setattr(git_mod, "file_change_velocity", mock_velocity)
+        out = render_hotspots(g, top_n=10)
+
+        assert "↑" in out, f"trending up arrow must appear; got:\n{out}"
+        assert "active churn" in out
+
+    def test_cooling_down_shows_arrow(self, tmp_path, monkeypatch):
+        """↓ appears when 7-day velocity is <0.5x the 14-day velocity."""
+        from tempograph.render import render_hotspots
+        import tempograph.git as git_mod
+
+        g = self._make_hotspot_repo(tmp_path)
+
+        def mock_velocity(repo, recent_days=7):
+            if recent_days == 7:
+                return {"hub.py": 6.0}   # recent: 6 cpw
+            return {"hub.py": 20.0}      # 14-day avg: 20 cpw (recent is 0.3x)
+
+        monkeypatch.setattr(git_mod, "file_change_velocity", mock_velocity)
+        out = render_hotspots(g, top_n=10)
+
+        assert "↓" in out, f"cooling down arrow must appear; got:\n{out}"
+
+    def test_stable_velocity_no_arrow(self, tmp_path, monkeypatch):
+        """No trend arrow when velocity is stable (within 1.5x of 14-day avg)."""
+        from tempograph.render import render_hotspots
+        import tempograph.git as git_mod
+
+        g = self._make_hotspot_repo(tmp_path)
+
+        def mock_velocity(repo, recent_days=7):
+            return {"hub.py": 10.0}  # same for both windows
+
+        monkeypatch.setattr(git_mod, "file_change_velocity", mock_velocity)
+        out = render_hotspots(g, top_n=10)
+
+        assert "active churn" in out
+        assert "↑" not in out
+        assert "↓" not in out
+
+
 class TestFileBlastCountRanking:
     """Tests for file blast count ranking in render_hotspots.
 
@@ -4336,3 +4405,56 @@ class TestDiffTestsToRun:
         assert "Tests to run" not in out, (
             f"Must NOT show 'Tests to run' when no test files cover the changed file; got:\n{out}"
         )
+
+
+class TestFocusSymbolAge:
+    """S32: Focus mode — seed symbol age annotation [age: Nd/Xm/1y+].
+
+    When render_focused is called, the depth-0 seed symbol header should include
+    an [age: ...] annotation if the symbol was last changed >= 8 days ago.
+    No annotation for very fresh symbols or when git is unavailable.
+    """
+
+    def _build(self, tmp_path, files: dict) -> object:
+        from tempograph.builder import build_graph
+
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_no_age_annotation_without_git(self, tmp_path):
+        """No [age:] annotation in a non-git directory (graceful fallback)."""
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "utils.py": "def helper():\n    return 1\n",
+        })
+        out = render_focused(g, "helper")
+
+        assert "[age:" not in out, f"Must not show [age:] in a non-git repo; got:\n{out}"
+
+    def test_age_annotation_shown_when_mocked_old(self, tmp_path):
+        """[age: 2m] shown when symbol_last_modified_days returns 60 days."""
+        from unittest.mock import patch
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "utils.py": "def helper():\n    return 1\n",
+        })
+        with patch("tempograph.git.symbol_last_modified_days", return_value=60):
+            out = render_focused(g, "helper")
+
+        assert "[age: 2m]" in out, f"Must show [age: 2m] for 60-day-old symbol; got:\n{out}"
+
+    def test_age_annotation_absent_for_fresh_symbol(self, tmp_path):
+        """No [age:] annotation when symbol_last_modified_days returns < 8 days."""
+        from unittest.mock import patch
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "utils.py": "def helper():\n    return 1\n",
+        })
+        with patch("tempograph.git.symbol_last_modified_days", return_value=3):
+            out = render_focused(g, "helper")
+
+        assert "[age:" not in out, f"Must not show [age:] for fresh symbol (3d); got:\n{out}"
