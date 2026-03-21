@@ -467,6 +467,23 @@ def render_overview(graph: Tempo) -> str:
             _ap_line += f", {len(_unused_exp)} unused ({_unused_pct}%)"
         lines.append(_ap_line)
 
+    # S84: Test debt — exported functions/methods with real callers but zero test coverage.
+    # Different from "API surface unused": these ARE actively called but not tested.
+    # The highest-risk category: production code exercised by users but not by tests.
+    # Only shown when 3+ qualify (avoids noise on small/well-tested repos).
+    _active_exported_fns = [
+        sym for sym in graph.symbols.values()
+        if sym.exported
+        and sym.kind.value in ("function", "method")
+        and not _is_test_file(sym.file_path)
+        and any(c.file_path != sym.file_path for c in graph.callers_of(sym.id))
+        and not any(_is_test_file(c.file_path) for c in graph.callers_of(sym.id))
+    ]
+    if len(_active_exported_fns) >= 3:
+        lines.append(
+            f"test debt: {len(_active_exported_fns)} active exports with callers but no tests"
+        )
+
     # S80: Interface/abstract count — how many pure interface/protocol/abstract-class symbols.
     # Signals codebase abstraction health: 0 interfaces in a 100-class repo = no abstraction layer.
     # Only shown when project has 5+ classes (smaller repos rarely use abstractions).

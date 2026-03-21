@@ -8362,3 +8362,48 @@ class TestFocusSideEffects:
         assert "effects:" not in out, (
             f"'effects:' must not appear for pure math function; got:\n{out}"
         )
+
+
+class TestOverviewTestDebt:
+    """S84: Overview — 'test debt: N active exports with callers but no tests'.
+
+    Counts exported functions that are actively called but have zero test coverage.
+    Absent when fewer than 3 such functions exist.
+    """
+
+    def test_test_debt_shown_when_active_untested_exports(self, tmp_path):
+        """3+ exported functions with callers but no test coverage -> test debt shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        files = {
+            "api.py": "def process(x): return x\ndef transform(x): return x * 2\ndef validate(x): return bool(x)\n",
+            "a.py": "from api import process\ndef run_a(): return process(1)\n",
+            "b.py": "from api import transform\ndef run_b(): return transform(1)\n",
+            "c.py": "from api import validate\ndef run_c(): return validate(1)\n",
+        }
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        from tempograph.builder import build_graph as bg
+        g = bg(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "test debt:" in out, (
+            f"Expected 'test debt:' for 3 exported functions with callers but no tests; got:\n{out}"
+        )
+        assert "active exports" in out, (
+            f"Expected 'active exports' in test debt line; got:\n{out}"
+        )
+
+    def test_test_debt_absent_when_all_exports_tested(self, tmp_path):
+        """All active exports have test callers -> no test debt shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "api.py").write_text("def fn(x): return x\n")
+        (tmp_path / "main.py").write_text("from api import fn\ndef run(): return fn(1)\n")
+        (tmp_path / "test_api.py").write_text("from api import fn\ndef test_fn(): assert fn(1) == 1\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "test debt:" not in out, (
+            f"'test debt:' must not appear when all exports are tested; got:\n{out}"
+        )
