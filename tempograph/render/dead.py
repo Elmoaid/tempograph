@@ -1386,6 +1386,29 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — abandoned pipeline stages; stale logic diverges from active converters"
         )
 
+    # S420: Dead schedulers — schedule_*/cron_*/periodic_* functions with 0 callers.
+    # Scheduler functions with no callers may have been removed from the job registry
+    # without deleting the implementation; they accumulate as phantom scheduled logic.
+    _s420_sched_prefixes = (
+        "schedule_", "cron_", "periodic_", "run_every_",
+        "hourly_", "daily_", "weekly_", "nightly_",
+    )
+    _s420_dead_schedulers = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s420_sched_prefixes)
+    ]
+    if len(_s420_dead_schedulers) >= 2:
+        _sched_names420 = ", ".join(s.name for s in _s420_dead_schedulers[:3])
+        if len(_s420_dead_schedulers) > 3:
+            _sched_names420 += f" +{len(_s420_dead_schedulers) - 3} more"
+        lines.append(
+            f"dead schedulers: {len(_s420_dead_schedulers)} unused scheduler fn(s) ({_sched_names420})"
+            f" — may be removed from job registry; phantom scheduled logic confuses ops"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

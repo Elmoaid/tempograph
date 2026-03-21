@@ -26,6 +26,16 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                 "   Re-run without --exclude to index it, or run "
                 "`tempograph . --mode overview` to see what is currently indexed."
             )
+        # S419: Type stub blast — blast target is a .pyi stub file (not indexed by graph).
+        # Type stub files define the public API contract; changing a stub silently breaks
+        # type checks in all importers even when the runtime code hasn't changed.
+        if file_path.lower().endswith(".pyi"):
+            return (
+                f"type stub blast: {file_path.rsplit('/', 1)[-1]} is a type stub"
+                f" — stub changes break type checks without runtime errors;"
+                f" update callers together\n"
+                f"(stub files are not graph-indexed; run mypy/pyright to check downstream impact)"
+            )
         return f"File '{file_path}' not found."
 
     lines = [f"Blast radius for {file_path}:", ""]
@@ -1209,6 +1219,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f"symbol-dense: {file_path.rsplit('/', 1)[-1]} defines {len(_s413_all_syms)} symbols"
             f" ({_kinds413[_top_kind413]} {_top_kind413}s)"
             f" — each symbol is a blast propagation point; refactor to split by concern"
+        )
+
+    # S419: Type stub blast — blast target is a type stub file (.pyi).
+    # Type stub files define the public API contract; changing a stub silently breaks
+    # type checks in all importers even when the runtime code hasn't changed.
+    if file_path.lower().endswith(".pyi"):
+        _stub_importers419 = len(importers)
+        lines.append(
+            f"type stub blast: {file_path.rsplit('/', 1)[-1]} is a type stub"
+            f" imported/used by {_stub_importers419} file(s)"
+            f" — stub changes break type checks without runtime errors; update callers together"
         )
 
     if not importers and not external_callers and not render_targets:

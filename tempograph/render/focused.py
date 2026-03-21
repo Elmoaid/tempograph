@@ -2576,6 +2576,19 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                     f" — verify base case and maximum depth; consider iterative refactor for large inputs"
                 )
 
+    # S416: Large function body — focused function spans 50+ lines.
+    # Very long functions have multiple responsibilities and low cohesion; they are harder to
+    # test in isolation and the mental model required to understand them grows with size.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim416 = next((s for s in _seed_syms if s.kind.value in ("function", "method")), None)
+        if _prim416 and _prim416.line_start and _prim416.line_end:
+            _body_len416 = _prim416.line_end - _prim416.line_start
+            if _body_len416 >= 50:
+                lines.append(
+                    f"\nlarge function: {_prim416.name} spans {_body_len416} lines"
+                    f" — long functions often have multiple responsibilities; extract sub-functions"
+                )
+
     return "\n".join(lines)
 
 
