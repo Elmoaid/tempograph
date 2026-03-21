@@ -1432,6 +1432,7 @@ def _build_symbol_block_lines(
     # High callee count signals broad side-effects — risky to change.
     _callee_ann = ""
     _depth_ann = ""
+    _recursive_label = ""
     if depth == 0:
         _callee_ids = {
             e.target_id for e in graph.edges
@@ -1457,6 +1458,32 @@ def _build_symbol_block_lines(
                     _bfs_q.append((_e.target_id, _cur_lvl + 1))
         if _max_callee_depth >= 3:
             _depth_ann = f" [callee depth: {_max_callee_depth}]"
+        # Recursion detection: self-recursion or mutual recursion via direct callees.
+        # Recursive functions need care before memoizing, splitting, or inlining.
+        if sym.kind.value in ("function", "method"):
+            _seed_callee_ids = {
+                e.target_id for e in graph.edges
+                if e.kind == EdgeKind.CALLS and e.source_id == sym.id
+            }
+            if sym.id in _seed_callee_ids:
+                # Direct self-call — e.g. fibonacci(n-1)
+                _recursive_label = "[recursive]"
+            else:
+                # Mutual recursion: callee calls back to seed
+                _mutual_partner: str | None = None
+                for _callee_s in graph.callees_of(sym.id)[:10]:
+                    _callee_callees = {
+                        e.target_id for e in graph.edges
+                        if e.kind == EdgeKind.CALLS and e.source_id == _callee_s.id
+                    }
+                    if sym.id in _callee_callees:
+                        _mutual_partner = _callee_s.name
+                        break
+                _recursive_label = (
+                    f"[recursive: mutual with {_mutual_partner}]" if _mutual_partner else ""
+                )
+        else:
+            _recursive_label = ""
     elif depth >= 1:
         # Hub annotation: deeply-imported utilities used across 15+ files.
         # Tells agents this is a widely-shared symbol — don't expect to find
@@ -1475,6 +1502,9 @@ def _build_symbol_block_lines(
         if _dupes:
             _dupe_strs = [f"{s.file_path.rsplit('/', 1)[-1]}:{s.line_start}" for s in _dupes[:3]]
             block_lines.append(f"{indent}  also in: {', '.join(_dupe_strs)}")
+    # Recursion annotation: emit [recursive] or [recursive: mutual with X] as sub-line.
+    if depth == 0 and _recursive_label:
+        block_lines.append(f"{indent}  {_recursive_label}")
     # Test coverage hint: show which test file(s) directly call this symbol.
     # If exported and no test callers → warn agents there's no safety net.
     # Only shown for functions/methods; skipped for classes/modules/constants.
@@ -2547,6 +2577,28 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 break
             lines.append(entry)
             token_count += entry_tokens
+
+    # Unchanged tests: source files in the diff whose matching test file was NOT changed.
+    # Signals to agents that test updates may be needed alongside the code change.
+    _unchanged_tests: list[str] = []
+    for _fp in normalized:
+        if _is_test_file(_fp):
+            continue
+        _base = _fp.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+        _matching_test = next(
+            (fp for fp in graph.files if _is_test_file(fp) and _base in fp.rsplit("/", 1)[-1]),
+            None,
+        )
+        if _matching_test and _matching_test not in normalized:
+            _unchanged_tests.append(
+                f"{_matching_test.rsplit('/', 1)[-1]} (tests {_fp.rsplit('/', 1)[-1]})"
+            )
+    if _unchanged_tests:
+        lines.append("")
+        _ut_str = ", ".join(_unchanged_tests[:3])
+        if len(_unchanged_tests) > 3:
+            _ut_str += f" +{len(_unchanged_tests) - 3} more"
+        lines.append(f"Unchanged tests: {_ut_str} — consider updating")
 
     return "\n".join(lines)
 
