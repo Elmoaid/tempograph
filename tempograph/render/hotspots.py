@@ -1980,5 +1980,21 @@ def _collect_hotspots_signals(
                     f" — high-churn class with many responsibilities; consider splitting"
                 )
 
+    # S628: Hotspot cluster — top 3 hotspots are all in the same directory.
+    # When multiple hotspots concentrate in one directory, that directory is a change
+    # magnet; it may contain a poorly-separated subsystem that warrants its own module.
+    if len(scores) >= 3:
+        _top3_dirs628 = [
+            s.file_path.replace("\\", "/").rsplit("/", 1)[0]
+            for _, s in scores[:3]
+            if not _is_test_file(s.file_path) and "/" in s.file_path.replace("\\", "/")
+        ]
+        if len(_top3_dirs628) == 3 and len(set(_top3_dirs628)) == 1:
+            _cluster_dir628 = _top3_dirs628[0].rsplit("/", 1)[-1]
+            out.append(
+                f"\nhotspot cluster: top 3 hotspots are all in {_cluster_dir628}/"
+                f" — change magnet directory; may warrant extraction into its own package"
+            )
+
     return out
 
