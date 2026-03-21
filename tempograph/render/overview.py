@@ -3304,6 +3304,25 @@ def _signals_async_oop(
                 f" — critical infrastructure; changes here have wide blast radius"
             )
 
+    # S895: Circular import pair — two source files mutually import each other.
+    # Circular imports create tight coupling and make isolated testing impossible;
+    # they are a common source of import-order errors and refactoring difficulty.
+    _seen_pairs895: set[tuple[str, str]] = set()
+    for fp895 in graph.files:
+        if _is_test_file(fp895):
+            continue
+        importers895 = {i for i in graph.importers_of(fp895) if not _is_test_file(i)}
+        for imp895 in importers895:
+            if fp895 in {i for i in graph.importers_of(imp895) if not _is_test_file(i)}:
+                pair895 = tuple(sorted([fp895.rsplit("/", 1)[-1], imp895.rsplit("/", 1)[-1]]))
+                _seen_pairs895.add(pair895)  # type: ignore[arg-type]
+    if _seen_pairs895:
+        _ex895 = sorted(_seen_pairs895)[0]
+        lines.append(
+            f"circular imports: {len(_seen_pairs895)} mutual import pair(s)"
+            f" — e.g. {_ex895[0]} ↔ {_ex895[1]}; circular imports create tight coupling"
+        )
+
     return lines
 
 

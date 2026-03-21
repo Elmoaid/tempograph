@@ -2697,5 +2697,17 @@ def _collect_hotspots_signals(
                     f" — concentrated complexity; changes here affect multiple high-impact symbols"
                 )
 
+    # S898: Long method hotspot — top hotspot function spans 50+ lines.
+    # A long, high-complexity function is the highest-risk refactoring target;
+    # extracting helpers should be done incrementally to avoid introducing regressions.
+    if scores:
+        _top898 = scores[0][1]
+        if _top898 is not None and not _is_test_file(_top898.file_path):
+            if _top898.line_count >= 50:
+                out.append(
+                    f"\nlong method hotspot: {_top898.name} spans {_top898.line_count} lines"
+                    f" — large complex function; extract smaller helpers incrementally to reduce risk"
+                )
+
     return out
 

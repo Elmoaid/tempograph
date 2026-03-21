@@ -3986,6 +3986,19 @@ def _signals_focused_fn_advanced(
                     f" — cross-cutting function; changes require coordinated updates across {len(_caller_files888)} files"
                 )
 
+    # S894: Deprecated file focus — focused symbol is in a file marked as deprecated or legacy.
+    # Files named with legacy/deprecated patterns often contain unmaintained code;
+    # modifications may conflict with replacement implementations elsewhere.
+    _legacy_kws894 = ("deprecated", "legacy", "old_", "_old", "obsolete", "archive", "compat")
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim894 = _seed_syms[0]
+        _fbase894 = _prim894.file_path.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+        if any(kw in _fbase894 for kw in _legacy_kws894):
+            lines.append(
+                f"\ndeprecated file: {_prim894.name} is in {_prim894.file_path.rsplit('/', 1)[-1]}"
+                f" — file appears deprecated; check if functionality has been migrated before modifying"
+            )
+
     return lines
 
 

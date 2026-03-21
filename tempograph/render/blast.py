@@ -2250,6 +2250,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — database changes risk data corruption or silent query failures; review transactions"
         )
 
+    # S896: Event handler blast — blast target handles events, messages, or pub/sub.
+    # Event handler files process incoming messages from external producers; changes affect
+    # all producers and consumers of those messages, often across service boundaries.
+    _event_kws896 = ("handler", "listener", "subscriber", "receiver", "consumer", "event", "message", "queue")
+    _fname896 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if any(kw in _fname896 for kw in _event_kws896):
+        lines.append(
+            f"event handler blast: {_fp589.rsplit('/', 1)[-1]} handles events or messages"
+            f" — event handler changes affect all producers and consumers; verify message contracts"
+        )
+
     return "\n".join(lines)
 
 
