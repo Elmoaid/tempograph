@@ -35137,3 +35137,202 @@ class TestDeadCacheFunctionsS743:
         assert "dead cache functions" not in out, (
             f"'dead cache functions' must not appear when cache fn is called; got:\n{out}"
         )
+
+
+# ---------------------------------------------------------------------------
+# S744 – S749
+# ---------------------------------------------------------------------------
+
+class TestTestOnlyImporterS744:
+    def test_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        # helpers.py imported only by test file
+        (tmp_path / "helpers.py").write_text("def helper(): pass\n")
+        (tmp_path / "test_stuff.py").write_text(
+            "from helpers import helper\ndef test_helper(): helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper")
+        assert "test-only importer" in out, (
+            f"Expected 'test-only importer' when file imported only by tests; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "helpers.py").write_text("def helper(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from helpers import helper\ndef run(): helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper")
+        assert "test-only importer" not in out, (
+            f"'test-only importer' must not appear when non-test imports the file; got:\n{out}"
+        )
+
+
+class TestTestConcentrationS745:
+    def test_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # test_big.py has 10 test functions, test_small.py has 1
+        big_fns = "\n".join(f"def test_fn{i}(): pass" for i in range(10))
+        (tmp_path / "core.py").write_text("def process(): pass\n")
+        (tmp_path / "test_big.py").write_text(
+            "from core import process\n" + big_fns + "\n"
+        )
+        (tmp_path / "test_small.py").write_text("def test_one(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "test concentration" in out, (
+            f"Expected 'test concentration' when >80% tests in one file; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # Evenly distributed tests
+        for i in range(3):
+            fns = "\n".join(f"def test_fn{i}_{j}(): pass" for j in range(4))
+            (tmp_path / f"test_part{i}.py").write_text(fns + "\n")
+        (tmp_path / "core.py").write_text("def process(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "test concentration" not in out, (
+            f"'test concentration' must not appear when tests evenly distributed; got:\n{out}"
+        )
+
+
+class TestClientFileBlastS746:
+    def test_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "db_client.py").write_text(
+            "def query(sql): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from db_client import query\ndef get_users(): return query('SELECT * FROM users')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "db_client.py")
+        assert "client file blast" in out, (
+            f"Expected 'client file blast' for db_client.py; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "database.py").write_text("def query(sql): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from database import query\ndef get_users(): return query('SELECT 1')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "database.py")
+        assert "client file blast" not in out, (
+            f"'client file blast' must not appear for non-client named file; got:\n{out}"
+        )
+
+
+class TestMultiLanguageDiffS747:
+    def test_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "frontend.ts"])
+        assert "multi-language diff" in out, (
+            f"Expected 'multi-language diff' for Python+TS diff; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "utils.py"])
+        assert "multi-language diff" not in out, (
+            f"'multi-language diff' must not appear for Python-only diff; got:\n{out}"
+        )
+
+
+class TestPropertyHotspotS748:
+    def test_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        # expensive_value is a property called by many callers
+        callers = "\n".join(
+            f"def use{i}(obj): return obj.expensive_value" for i in range(8)
+        )
+        (tmp_path / "model.py").write_text(
+            "class Model:\n"
+            "    @property\n"
+            "    def expensive_value(self): return 42\n"
+        )
+        (tmp_path / "consumers.py").write_text(
+            "from model import Model\n" + callers + "\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "property hotspot" in out, (
+            f"Expected 'property hotspot' for property accessor hotspot; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        callers = "\n".join(f"def caller{i}(): process()" for i in range(8))
+        (tmp_path / "core.py").write_text("def process(): pass\n")
+        (tmp_path / "consumers.py").write_text(
+            "from core import process\n" + callers + "\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "property hotspot" not in out, (
+            f"'property hotspot' must not appear for regular function hotspot; got:\n{out}"
+        )
+
+
+class TestDeadValidationFunctionsS749:
+    def test_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "validators.py").write_text(
+            "def validate_email(email): pass\n"
+            "def check_age(age): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead validation functions" in out, (
+            f"Expected 'dead validation functions' for unused validate/check fns; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "validators.py").write_text(
+            "def validate_email(email): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from validators import validate_email\n"
+            "def register(email): validate_email(email)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead validation functions" not in out, (
+            f"'dead validation functions' must not appear when validate fn is called; got:\n{out}"
+        )

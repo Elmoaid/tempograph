@@ -411,6 +411,26 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — runtime behavior change without code change; verify all environments updated"
         )
 
+    # S747: Multi-language diff — diff contains files in 2+ different source languages.
+    # Cross-language changes require testing in multiple environments and may have
+    # separate deployment pipelines; coordinate carefully across language boundaries.
+    _lang_ext_map747 = {
+        ".py": "Python", ".js": "JS", ".ts": "TS", ".tsx": "TS", ".jsx": "JS",
+        ".go": "Go", ".rs": "Rust", ".java": "Java", ".rb": "Ruby",
+        ".cs": "C#", ".cpp": "C++", ".c": "C", ".php": "PHP",
+    }
+    _langs747: set[str] = set()
+    for _cf747 in changed_files:
+        for _ext747, _lang747 in _lang_ext_map747.items():
+            if _cf747.endswith(_ext747):
+                _langs747.add(_lang747)
+                break
+    if len(_langs747) >= 2:
+        lines.append(
+            f"multi-language diff: {len(_langs747)} languages in diff ({', '.join(sorted(_langs747))})"
+            f" — cross-language change; coordinate testing across all affected language environments"
+        )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 

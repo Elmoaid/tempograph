@@ -3564,6 +3564,20 @@ def _signals_focused_fn_advanced(
                     f" — shared mutable state can cause hidden coupling across all importers"
                 )
 
+    # S744: Test-only importer — focused symbol's file is imported exclusively by test files.
+    # A source file imported only by tests is unreachable from production code; the file
+    # may be dead, a test-only utility, or missing a production integration point.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim744 = _seed_syms[0]
+        if not _is_test_file(_prim744.file_path):
+            _importers744 = graph.importers_of(_prim744.file_path)
+            if _importers744 and all(_is_test_file(f) for f in _importers744):
+                lines.append(
+                    f"\ntest-only importer: {_prim744.file_path.replace('\\\\', '/').rsplit('/', 1)[-1]}"
+                    f" is imported only by test files"
+                    f" — production code doesn't use this file; verify it's not dead"
+                )
+
     return lines
 
 
