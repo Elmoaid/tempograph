@@ -3972,6 +3972,20 @@ def _signals_focused_fn_advanced(
                     f" — may be an entry point, unused, or called via reflection/dynamic dispatch"
                 )
 
+    # S888: Multi-caller focus — focused function is called from 3+ distinct files.
+    # Functions called from many files are cross-cutting concerns; any change to the
+    # signature or behavior requires coordinated updates across all call sites.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim888 = _seed_syms[0]
+        if _prim888.kind.value in ("function", "method") and not _is_test_file(_prim888.file_path):
+            _callers888 = graph.callers_of(_prim888.id)
+            _caller_files888 = {c.file_path for c in _callers888 if not _is_test_file(c.file_path)}
+            if len(_caller_files888) >= 3:
+                lines.append(
+                    f"\nmulti-caller: {_prim888.name} is called from {len(_caller_files888)} distinct files"
+                    f" — cross-cutting function; changes require coordinated updates across {len(_caller_files888)} files"
+                )
+
     return lines
 
 

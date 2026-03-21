@@ -2679,5 +2679,23 @@ def _collect_hotspots_signals(
                     f" — may be dead code or an entry point called via dynamic dispatch"
                 )
 
+    # S892: Hotspot cluster — 3+ of the top 10 hotspots are in the same file.
+    # A file containing multiple top hotspots is an implicit coupling point; changes
+    # to any one symbol can ripple through co-located hotspots in the same file.
+    if len(scores) >= 3:
+        _cluster_files892: dict[str, int] = {}
+        for _, sym892 in scores[:10]:
+            if sym892 is not None and not _is_test_file(sym892.file_path):
+                _cluster_files892[sym892.file_path] = _cluster_files892.get(sym892.file_path, 0) + 1
+        if _cluster_files892:
+            _top_cluster_count892 = max(_cluster_files892.values())
+            if _top_cluster_count892 >= 3:
+                _top_cluster_fp892 = max(_cluster_files892, key=_cluster_files892.__getitem__)
+                out.append(
+                    f"\nhotspot cluster: {_top_cluster_fp892.rsplit('/', 1)[-1]} contains"
+                    f" {_top_cluster_count892} of top hotspots"
+                    f" — concentrated complexity; changes here affect multiple high-impact symbols"
+                )
+
     return out
 

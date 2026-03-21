@@ -2235,6 +2235,21 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — config changes affect all modules that read from it; review startup and default values"
         )
 
+    # S890: Database file blast — blast target handles database access or ORM operations.
+    # Database files interact with persistent storage; bugs here can cause data corruption,
+    # inconsistency, or silent query failures across the whole application.
+    _db_kws890 = ("db", "database", "orm", "model", "migration", "repo", "repository", "dao", "query")
+    _fname890 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if (
+        any(kw in _fname890 for kw in _db_kws890)
+        and "mock" not in _fname890
+        and "test" not in _fname890
+    ):
+        lines.append(
+            f"database blast: {_fp589.rsplit('/', 1)[-1]} handles database operations"
+            f" — database changes risk data corruption or silent query failures; review transactions"
+        )
+
     return "\n".join(lines)
 
 

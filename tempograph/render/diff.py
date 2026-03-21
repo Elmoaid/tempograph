@@ -2459,4 +2459,21 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — broad change surface; review each file independently for unintended side-effects"
         )
 
+    # S891: New files in diff — changed files not found in graph (newly created).
+    # New files lack historical usage context; verify they are properly integrated
+    # into the module structure and not accidentally orphaned.
+    if changed_files:
+        _new_files891 = [
+            f for f in changed_files
+            if f not in graph.files and not any(gf.endswith(f) or f.endswith(gf) for gf in graph.files)
+        ]
+        if _new_files891:
+            _new_names891 = ", ".join(_new_files891[:2])
+            if len(_new_files891) > 2:
+                _new_names891 += f" +{len(_new_files891) - 2} more"
+            lines.append(
+                f"new files: {len(_new_files891)} changed file(s) not in graph ({_new_names891})"
+                f" — newly created files have no usage history; verify integration and imports"
+            )
+
     return "\n".join(lines)
