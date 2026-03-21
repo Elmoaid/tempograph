@@ -30725,3 +30725,218 @@ class TestDeadMixinsS647:
         assert "dead mixins" not in out, (
             f"'dead mixins' must not appear when Mixin class is subclassed; got:\n{out}"
         )
+
+
+# ── S648: Name collision ──────────────────────────────────────────────────────
+
+class TestNameCollisionS648:
+    """S648: Focused symbol's name also defined in another non-test file — name collision signal."""
+
+    def test_name_collision_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "module_a.py").write_text("def validate(x): return x > 0\n")
+        (tmp_path / "module_b.py").write_text("def validate(data): return bool(data)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "validate")
+        assert "name collision" in out, (
+            f"Expected 'name collision' for function defined in multiple files; got:\n{out}"
+        )
+
+    def test_name_collision_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "module_a.py").write_text("def unique_transform(x): return x\n")
+        (tmp_path / "module_b.py").write_text("def other_fn(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "unique_transform")
+        assert "name collision" not in out, (
+            f"'name collision' must not appear for uniquely-named function; got:\n{out}"
+        )
+
+
+# ── S649: Exception class density ────────────────────────────────────────────
+
+class TestExceptionClassDensityS649:
+    """S649: >20% of exported classes are Error/Exception types — exception-class-density signal."""
+
+    def test_exc_density_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        (tmp_path / "errors.py").write_text(
+            "class NetworkError(Exception): pass\n"
+            "class TimeoutError(Exception): pass\n"
+            "class ValidationError(Exception): pass\n"
+            "class AuthError(Exception): pass\n"
+        )
+        (tmp_path / "models.py").write_text(
+            "class User: pass\n"
+            "class Product: pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "exception class density" in out, (
+            f"Expected 'exception class density' when >20% of classes are exceptions; got:\n{out}"
+        )
+
+    def test_exc_density_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        (tmp_path / "models.py").write_text(
+            "class User: pass\n"
+            "class Product: pass\n"
+            "class Order: pass\n"
+            "class Cart: pass\n"
+            "class Session: pass\n"
+            "class Invoice: pass\n"
+            "class PaymentError(Exception): pass\n"  # 1/7 = 14% — below 20% threshold
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "exception class density" not in out, (
+            f"'exception class density' must not appear when <20% of classes are exceptions; got:\n{out}"
+        )
+
+
+# ── S650: Mutual import ───────────────────────────────────────────────────────
+
+class TestMutualImportS650:
+    """S650: Blast target and one of its importers import each other — mutual-import signal."""
+
+    def test_mutual_import_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "a.py").write_text(
+            "from b import b_fn\ndef a_fn(): return b_fn() + 1\n"
+        )
+        (tmp_path / "b.py").write_text(
+            "from a import a_fn\ndef b_fn(): return 42\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "a.py")
+        assert "mutual import" in out, (
+            f"Expected 'mutual import' when a.py and b.py import each other; got:\n{out}"
+        )
+
+    def test_mutual_import_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def process(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from core import process\ndef run(): process()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "core.py")
+        assert "mutual import" not in out, (
+            f"'mutual import' must not appear for one-way import; got:\n{out}"
+        )
+
+
+# ── S651: Schema in diff ──────────────────────────────────────────────────────
+
+class TestSchemaInDiffS651:
+    """S651: Schema/model file in diff emits schema-in-diff signal."""
+
+    def test_schema_in_diff_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["app.py", "schema.sql"])
+        assert "schema in diff" in out, (
+            f"Expected 'schema in diff' when schema.sql is in diff; got:\n{out}"
+        )
+
+    def test_schema_in_diff_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["app.py", "views.py"])
+        assert "schema in diff" not in out, (
+            f"'schema in diff' must not appear for non-schema files; got:\n{out}"
+        )
+
+
+# ── S652: Dead co-location ────────────────────────────────────────────────────
+
+class TestDeadColocationS652:
+    """S652: Hotspot file also contains dead symbols — dead-co-location signal."""
+
+    def test_dead_colocation_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "engine.py").write_text(
+            "def active_fn(x): return x * 2\n"
+            "def unused_legacy(x): return x  # nobody calls this\n"
+        )
+        for i in range(6):
+            (tmp_path / f"user_{i}.py").write_text(
+                f"from engine import active_fn\ndef task_{i}(): active_fn({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "dead co-location" in out, (
+            f"Expected 'dead co-location' when hotspot file has unused symbols; got:\n{out}"
+        )
+
+    def test_dead_colocation_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "engine.py").write_text("def active_fn(x): return x * 2\n")
+        for i in range(6):
+            (tmp_path / f"user_{i}.py").write_text(
+                f"from engine import active_fn\ndef task_{i}(): active_fn({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "dead co-location" not in out, (
+            f"'dead co-location' must not appear when hotspot file has no dead symbols; got:\n{out}"
+        )
+
+
+# ── S653: Dead protocols ──────────────────────────────────────────────────────
+
+class TestDeadProtocolsS653:
+    """S653: Unused class with Protocol/Interface/ABC in name emits dead-protocols signal."""
+
+    def test_dead_protocols_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "contracts.py").write_text(
+            "class StorageInterface:\n    def save(self, data): pass\n"
+            "class CacheProtocol:\n    def get(self, key): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead protocols" in out, (
+            f"Expected 'dead protocols' for unused Protocol/Interface classes; got:\n{out}"
+        )
+
+    def test_dead_protocols_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "contracts.py").write_text(
+            "class StorageInterface:\n    def save(self, data): pass\n"
+        )
+        (tmp_path / "impl.py").write_text(
+            "from contracts import StorageInterface\n"
+            "class FileStorage(StorageInterface):\n    def save(self, data): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead protocols" not in out, (
+            f"'dead protocols' must not appear when interface has an implementation; got:\n{out}"
+        )
