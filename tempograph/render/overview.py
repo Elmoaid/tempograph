@@ -2944,6 +2944,27 @@ def _signals_async_oop(
             f" — one test file for {len(_src_syms751)} source symbols; split by module as the project grows"
         )
 
+    # S757: Constant-heavy repo — ratio of constants/variables to functions exceeds 2:1.
+    # When a codebase has far more constants than functions, it may have config sprawl,
+    # magic numbers distributed across files, or a fragmented configuration architecture.
+    _const_syms757 = sum(
+        1 for s in graph.symbols.values()
+        if s.kind.value in ("constant", "variable")
+        and not _is_test_file(s.file_path)
+        and s.parent_id is None
+    )
+    _fn_syms757 = sum(
+        1 for s in graph.symbols.values()
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and s.parent_id is None
+    )
+    if _fn_syms757 >= 3 and _const_syms757 >= _fn_syms757 * 2:
+        lines.append(
+            f"constant-heavy repo: {_const_syms757} constants vs {_fn_syms757} functions"
+            f" — config sprawl likely; consolidate constants into dedicated config modules"
+        )
+
     return lines
 
 

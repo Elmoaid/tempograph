@@ -452,6 +452,30 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — no public API changes; external callers are unaffected"
             )
 
+    # S759: Constants-only diff — all changed source files contain only constant/variable symbols.
+    # When a diff touches only constants, no function logic changes; consumers may be
+    # affected by value changes but call-site behavior is unchanged.
+    if normalized:
+        _const_only759 = True
+        for _fp759 in normalized:
+            if _is_test_file(_fp759):
+                continue
+            _fi759 = graph.files.get(_fp759)
+            if _fi759:
+                _top759 = [
+                    graph.symbols[sid] for sid in _fi759.symbols
+                    if sid in graph.symbols and graph.symbols[sid].parent_id is None
+                ]
+                if any(s.kind.value not in ("constant", "variable", "unknown", "module") for s in _top759):
+                    _const_only759 = False
+                    break
+        _src_changed759 = [f for f in normalized if not _is_test_file(f)]
+        if _const_only759 and len(_src_changed759) >= 1:
+            lines.append(
+                f"constants-only diff: all {len(_src_changed759)} changed source file(s) contain only constants/variables"
+                f" — no logic changes; verify config values are correct for all environments"
+            )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 

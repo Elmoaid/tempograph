@@ -2596,6 +2596,25 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — namespace classes with no instances; convert methods to module-level functions"
         )
 
+    # S761: Dead event handlers — unused functions with on_/handle_ event naming patterns.
+    # Event handlers with on_/handle_ prefixes that are never called indicate abandoned
+    # event integrations or removed event sources; they add dead code without any benefit.
+    _event_kws761 = ("on_", "handle_", "listener_", "subscriber_")
+    _dead_events761 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().startswith(kw) for kw in _event_kws761)
+    ]
+    if _dead_events761:
+        _ev_names761 = ", ".join(s.name for s in _dead_events761[:3])
+        if len(_dead_events761) > 3:
+            _ev_names761 += f" +{len(_dead_events761) - 3} more"
+        lines.append(
+            f"dead event handlers: {len(_dead_events761)} unused event handler(s) ({_ev_names761})"
+            f" — abandoned event integration; the event source was likely removed"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

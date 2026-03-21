@@ -2343,5 +2343,16 @@ def _collect_hotspots_signals(
                     f" ({_cross754[0].name}) — tight coupling; consider inlining or co-locating"
                 )
 
+    # S760: Classmethod hotspot — the top hotspot is a @classmethod.
+    # Classmethods are called on the class itself; when one is a top hotspot, all
+    # subclasses and instances share the coupling — method changes affect the whole hierarchy.
+    if scores:
+        _top760 = scores[0][1]
+        if _top760 is not None and _top760.kind.value == "classmethod":
+            out.append(
+                f"\nclassmethod hotspot: {_top760.name} is a @classmethod and the top hotspot"
+                f" — changes affect every subclass and instance in the hierarchy"
+            )
+
     return out
 

@@ -35581,3 +35581,228 @@ class TestDeadStaticOnlyClassS755:
         assert "dead static-only class" not in out, (
             f"'dead static-only class' must not appear when class is used; got:\n{out}"
         )
+
+
+# ---------------------------------------------------------------------------
+# S750 – S755
+# ---------------------------------------------------------------------------
+
+class TestNoDocstringS750:
+    def test_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        # process has no docstring and is called from 5+ external files
+        (tmp_path / "core.py").write_text(
+            "def process(): pass\n"
+        )
+        for i in range(6):
+            d = tmp_path / f"mod{i}"
+            d.mkdir()
+            (d / "code.py").write_text(
+                "from core import process\n"
+                f"def run{i}(): process()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process")
+        assert "no docstring: process is called from" in out, (
+            f"Expected 'no docstring: process is called from' for widely-called undocumented fn; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        # helper has a docstring — S750 should not fire
+        (tmp_path / "core.py").write_text(
+            'def process():\n    """Process the input."""\n    pass\n'
+        )
+        for i in range(6):
+            d = tmp_path / f"mod{i}"
+            d.mkdir()
+            (d / "code.py").write_text(
+                "from core import process\n"
+                f"def run{i}(): process()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process")
+        assert "no docstring: process is called from" not in out, (
+            f"'no docstring: process is called from' must not appear for documented function; got:\n{out}"
+        )
+
+
+class TestSingleTestFileS751:
+    def test_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # 5 source symbols but only 1 test file
+        (tmp_path / "a.py").write_text("def fa(): pass\n")
+        (tmp_path / "b.py").write_text("def fb(): pass\n")
+        (tmp_path / "c.py").write_text("def fc(): pass\n")
+        (tmp_path / "d.py").write_text("def fd(): pass\n")
+        (tmp_path / "e.py").write_text("def fe(): pass\n")
+        (tmp_path / "test_all.py").write_text(
+            "def test_fa(): pass\ndef test_fb(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "single test file" in out, (
+            f"Expected 'single test file' when only one test file; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        (tmp_path / "a.py").write_text("def fa(): pass\n")
+        (tmp_path / "b.py").write_text("def fb(): pass\n")
+        (tmp_path / "c.py").write_text("def fc(): pass\n")
+        (tmp_path / "d.py").write_text("def fd(): pass\n")
+        (tmp_path / "e.py").write_text("def fe(): pass\n")
+        (tmp_path / "test_a.py").write_text("def test_fa(): pass\n")
+        (tmp_path / "test_b.py").write_text("def test_fb(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "single test file" not in out, (
+            f"'single test file' must not appear when multiple test files exist; got:\n{out}"
+        )
+
+
+class TestTestHelperBlastS752:
+    def test_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        # conftest.py imported by 2 test files
+        (tmp_path / "conftest.py").write_text("def make_fixture(): return {}\n")
+        (tmp_path / "test_a.py").write_text(
+            "from conftest import make_fixture\ndef test_one(): make_fixture()\n"
+        )
+        (tmp_path / "test_b.py").write_text(
+            "from conftest import make_fixture\ndef test_two(): make_fixture()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "conftest.py")
+        assert "test helper blast" in out, (
+            f"Expected 'test helper blast' for conftest.py with 2+ test importers; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        # utils.py imported by tests but name doesn't match helper patterns
+        (tmp_path / "processor.py").write_text("def process(): pass\n")
+        (tmp_path / "test_a.py").write_text(
+            "from processor import process\ndef test_one(): process()\n"
+        )
+        (tmp_path / "test_b.py").write_text(
+            "from processor import process\ndef test_two(): process()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "processor.py")
+        assert "test helper blast" not in out, (
+            f"'test helper blast' must not appear for non-helper named file; got:\n{out}"
+        )
+
+
+class TestPrivateOnlyDiffS753:
+    def test_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        # Both changed files have only _-prefixed top-level symbols
+        (tmp_path / "_internal.py").write_text("def _do_thing(): pass\n")
+        (tmp_path / "_helpers.py").write_text("def _helper(): pass\n")
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["_internal.py", "_helpers.py"])
+        assert "private-only diff" in out, (
+            f"Expected 'private-only diff' when all changed files have only private symbols; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        # Changed files include a public symbol
+        (tmp_path / "core.py").write_text("def process(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["core.py", "utils.py"])
+        assert "private-only diff" not in out, (
+            f"'private-only diff' must not appear when public symbols exist; got:\n{out}"
+        )
+
+
+class TestSingleCallerHotspotS754:
+    def test_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        # process called by exactly 1 cross-file caller
+        (tmp_path / "core.py").write_text("def process(): pass\n")
+        (tmp_path / "only_consumer.py").write_text(
+            "from core import process\n"
+            "def run(): process()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "single-caller hotspot" in out, (
+            f"Expected 'single-caller hotspot' for hotspot with exactly 1 cross-file caller; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        # process called by multiple callers from different files
+        (tmp_path / "core.py").write_text("def process(): pass\n")
+        for i in range(3):
+            (tmp_path / f"consumer{i}.py").write_text(
+                "from core import process\n"
+                f"def use{i}(): process()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "single-caller hotspot" not in out, (
+            f"'single-caller hotspot' must not appear when multiple callers exist; got:\n{out}"
+        )
+
+
+class TestDeadStaticOnlyClassS755:
+    def test_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        # Utils class with methods, never used
+        (tmp_path / "utils.py").write_text(
+            "class Utils:\n"
+            "    def format_str(self, s): return s.strip()\n"
+            "    def parse_int(self, s): return int(s)\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead static-only class" in out, (
+            f"Expected 'dead static-only class' for unused method-only class; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "class Utils:\n"
+            "    def format_str(self, s): return s.strip()\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from utils import Utils\n"
+            "def main(): Utils().format_str(' hello ')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead static-only class" not in out, (
+            f"'dead static-only class' must not appear when class is used; got:\n{out}"
+        )
