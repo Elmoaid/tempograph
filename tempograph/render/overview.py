@@ -1952,6 +1952,35 @@ def _signals_async_oop(
             f" — all I/O is blocking; async adoption requires rewriting call sites"
         )
 
+    # S439: Deep inheritance — codebase has 4+ levels of class inheritance.
+    # Deep hierarchies hide behavior: the effective method set of a leaf class requires
+    # tracing up 4+ classes, and each level is a potential override site.
+    _s439_classes = [s for s in graph.symbols.values() if s.kind.value == "class"]
+    _s439_max_depth = 0
+    _s439_deepest: str = ""
+    for _cls439 in _s439_classes:
+        _depth439 = 0
+        _cur439 = _cls439
+        _seen439: set[str] = {_cls439.id}
+        while _cur439.parent_id and _cur439.parent_id in graph.symbols:
+            _par439 = graph.symbols[_cur439.parent_id]
+            if _par439.kind.value == "class":
+                _depth439 += 1
+                if _par439.id in _seen439:
+                    break
+                _seen439.add(_par439.id)
+                _cur439 = _par439
+            else:
+                break
+        if _depth439 > _s439_max_depth:
+            _s439_max_depth = _depth439
+            _s439_deepest = _cls439.name
+    if _s439_max_depth >= 4:
+        lines.append(
+            f"deep inheritance: {_s439_max_depth} levels deep (e.g. {_s439_deepest})"
+            f" — override resolution requires tracing up {_s439_max_depth} classes; prefer composition"
+        )
+
     # S243: Framework/library detected — codebase imports a well-known web framework or library.
     # Shown to orient agents: know what routing, ORM, and middleware patterns to expect.
     # Only shown when 1+ framework import found across source files.

@@ -1501,5 +1501,19 @@ def _collect_hotspots_signals(
                 f" — data-layer changes cascade through every reader; check cache invalidation and migrations"
             )
 
+    # S442: Churn disparity — top hotspot file is changed much more than the rest.
+    # A single file that dominates the churn history is a magnet for bugs and drift;
+    # it is often a god object, a catch-all module, or an underabstracted core.
+    if scores and len(scores) >= 3:
+        _top442 = scores[0]
+        _second442 = scores[1]
+        _top_cx442 = _top442[0]
+        _second_cx442 = _second442[0]
+        if _second_cx442 > 0 and _top_cx442 >= _second_cx442 * 3 and not _is_test_file(_top442[1].file_path):
+            out.append(
+                f"\nchurn disparity: {_top442[1].name} has {_top_cx442}× score vs {_second_cx442}×"
+                f" for second-place — extreme outlier; likely a god object or catch-all module"
+            )
+
     return out
 

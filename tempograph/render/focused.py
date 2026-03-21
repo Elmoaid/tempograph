@@ -2568,6 +2568,25 @@ def _signals_focused_fn_advanced(
                     f" silently breaks all callsites"
                 )
 
+    # S440: Overloaded function — focused symbol has multiple signatures (TypedDict/overload).
+    # Overloaded functions have different behavior per call signature; changing one
+    # dispatch path silently breaks callers relying on a different signature variant.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim440 = next((s for s in _seed_syms if s.kind.value in ("function", "method")), None)
+        if _prim440 and _prim440.signature:
+            _overload_callees440 = [
+                e for e in graph.edges
+                if e.kind.value == "calls" and e.source_id == _prim440.id
+                and e.target_id in graph.symbols
+                and graph.symbols[e.target_id].name in ("overload", "singledispatch")
+            ]
+            _sig_has_overload440 = "overload" in (_prim440.signature or "").lower()
+            if _overload_callees440 or _sig_has_overload440:
+                lines.append(
+                    f"\noverloaded function: {_prim440.name} uses @overload or singledispatch"
+                    f" — each signature variant must be tested independently; changing dispatch breaks callers"
+                )
+
     # S350: Orphaned symbol — focused symbol has 0 callers and the file is not imported anywhere.
     # Zero-caller symbols in unimported files may be dead code that was never wired up
     # during a refactor; modifying them has no effect unless the file is imported first.

@@ -1478,6 +1478,27 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — schema changes may never have been applied; verify before deleting"
         )
 
+    # S444: Dead CLI commands — main_*/cli_*/cmd_* functions with 0 callers.
+    # Unused CLI entry points may represent features removed from the CLI contract
+    # without removing the underlying code; deleting them is safe but must be coordinated
+    # with any documentation or scripts that reference the command name.
+    _s444_cli_prefixes = ("main_", "cmd_", "cli_", "command_", "run_command_", "handle_command_")
+    _s444_dead_cli = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s444_cli_prefixes)
+    ]
+    if len(_s444_dead_cli) >= 1:
+        _cli_names444 = ", ".join(s.name for s in _s444_dead_cli[:3])
+        if len(_s444_dead_cli) > 3:
+            _cli_names444 += f" +{len(_s444_dead_cli) - 3} more"
+        lines.append(
+            f"dead CLI commands: {len(_s444_dead_cli)} unused command fn(s) ({_cli_names444})"
+            f" — may be removed features; check docs and scripts before deleting"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

@@ -1328,4 +1328,19 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — ensure changelog, dependencies, and semver scope are all in sync"
         )
 
+    # S441: Serialization file in diff — diff touches serialization/deserialization logic.
+    # Serialization changes are wire-protocol changes; any consumer (client, queue consumer,
+    # stored data) that expects the old shape will silently corrupt on the new format.
+    _s441_serial_keywords = ("serial", "deserial", "marshal", "unmarshal", "encode", "decode", "codec")
+    _s441_serial_files = [
+        f for f in changed_files
+        if any(kw in f.rsplit("/", 1)[-1].lower() for kw in _s441_serial_keywords)
+    ]
+    if _s441_serial_files:
+        _ser_name441 = _s441_serial_files[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"serialization change: {_ser_name441} in diff"
+            f" — wire-format changes break all existing consumers; bump version or add migration"
+        )
+
     return "\n".join(lines)

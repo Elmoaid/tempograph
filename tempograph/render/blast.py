@@ -1289,6 +1289,24 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
 
+    # S443: Public API file — blast target exports functions/classes used across 5+ files.
+    # Files that form the public API of a module have implicit contracts with all consumers;
+    # removing or renaming any export is a breaking change even if internal callers look fine.
+    _s443_exported = [s for s in symbols if s.exported]
+    _s443_consumer_files: set[str] = set()
+    for _sym443 in _s443_exported:
+        for _e443 in graph.edges:
+            if _e443.kind.value == "calls" and _e443.target_id == _sym443.id:
+                _caller443 = graph.symbols.get(_e443.source_id)
+                if _caller443 and _caller443.file_path != file_path:
+                    _s443_consumer_files.add(_caller443.file_path)
+    if len(_s443_consumer_files) >= 5:
+        lines.append(
+            f"public API file: {len(_s443_exported)} exported symbol(s)"
+            f" consumed by {len(_s443_consumer_files)} files"
+            f" — any signature change is a breaking change; version or deprecate before removing"
+        )
+
     return "\n".join(lines)
 
 
