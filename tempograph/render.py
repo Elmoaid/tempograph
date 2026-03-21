@@ -2672,6 +2672,13 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
         if _exp_count:
             _sym_summary += f" ({_exp_count} exported)"
         lines.append(_sym_summary)
+        # S77: List exported symbols from changed non-test files — direct API surface view.
+        # Shows agents WHICH exported symbols are in the diff (not just how many).
+        # Only shown when 2-8 exported symbols (fewer = obvious, more = too noisy).
+        _exported_syms = [s for s in _all_changed_syms if s.exported and s.kind.value in ("function", "method", "class", "interface")]
+        if 2 <= len(_exported_syms) <= 8:
+            _exp_names = [s.name for s in _exported_syms]
+            lines.append(f"Exported: {', '.join(_exp_names)}")
         lines.append("")
 
     # Risk summary: top changed files by blast radius, so agents can prioritize review.

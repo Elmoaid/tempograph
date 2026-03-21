@@ -7837,3 +7837,35 @@ class TestDeadCodePrivateDead:
         assert "Private dead:" not in out, (
             f"'Private dead:' must not appear for only 1 uncalled private fn; got:\n{out}"
         )
+
+
+class TestDiffExportedSymbolsListing:
+    """S77: Diff mode lists exported symbol names when 2-8 exported symbols in changed files."""
+
+    def test_exported_shown_for_small_export_set(self, tmp_path):
+        """Changed file with 3 exported functions → symbol names listed after 'Exported:'."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_diff_context
+
+        (tmp_path / "api.py").write_text(
+            "def create(): pass\ndef update(): pass\ndef delete(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["api.py"])
+        assert "Exported:" in out, (
+            f"Expected 'Exported:' listing for 3-symbol changed file; got:\n{out}"
+        )
+        assert "create" in out and "update" in out, f"Expected symbol names; got:\n{out}"
+
+    def test_exported_absent_when_too_many_exports(self, tmp_path):
+        """Changed file with 9 exported functions → no 'Exported:' listing (too noisy)."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_diff_context
+
+        fns = "\n".join(f"def fn_{i}(): pass" for i in range(9))
+        (tmp_path / "big_api.py").write_text(fns + "\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["big_api.py"])
+        assert "Exported:" not in out, (
+            f"'Exported:' must not appear when 9 exported symbols; got:\n{out}"
+        )
