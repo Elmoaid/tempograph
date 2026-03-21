@@ -11616,3 +11616,107 @@ class TestOverviewDeepestPath:
         assert "deepest path" not in out, (
             f"'deepest path' must not appear for shallow repo; got:\n{out}"
         )
+
+
+class TestBlastInitHeavy:
+    """S158: Blast — 'init-heavy: N exported symbols in __init__.py — package entry point'."""
+
+    def test_init_heavy_shown(self, tmp_path):
+        """__init__.py with 8+ exported symbols → 'init-heavy:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        pkg = tmp_path / "mypkg"
+        pkg.mkdir()
+        # __init__.py exports 10 functions directly
+        init_code = "\n".join(f"def api_fn_{i}():\n    pass" for i in range(10))
+        (pkg / "__init__.py").write_text(init_code + "\n")
+        (tmp_path / "app.py").write_text("from mypkg import api_fn_0\ndef main(): api_fn_0()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "mypkg/__init__.py")
+        assert "init-heavy" in out, (
+            f"Expected 'init-heavy' for __init__.py with 10 exports; got:\n{out}"
+        )
+
+    def test_init_heavy_absent_for_small_init(self, tmp_path):
+        """__init__.py with < 8 exported symbols → 'init-heavy:' NOT shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        pkg = tmp_path / "small"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("def fn_a():\n    pass\ndef fn_b():\n    pass\n")
+        (tmp_path / "main.py").write_text("from small import fn_a\ndef go(): fn_a()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "small/__init__.py")
+        assert "init-heavy" not in out, (
+            f"'init-heavy' must not appear for small __init__.py; got:\n{out}"
+        )
+
+
+class TestDeadConstants:
+    """S159: Dead code — 'dead constants: N unused constants/variables (name1, name2)'."""
+
+    def test_dead_constants_shown(self, tmp_path):
+        """3+ unused module-level constants → 'dead constants:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        (tmp_path / "config.py").write_text(
+            "MAX_RETRIES = 3\n"
+            "TIMEOUT_MS = 5000\n"
+            "DEBUG_FLAG = False\n"
+            "FEATURE_X = True\n"
+        )
+        (tmp_path / "service.py").write_text("def run():\n    pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead constants" in out, (
+            f"Expected 'dead constants' for 4 unused constants; got:\n{out}"
+        )
+
+    def test_dead_constants_absent_when_used(self, tmp_path):
+        """Used constants → 'dead constants:' NOT shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        (tmp_path / "vals.py").write_text("LIMIT = 10\n")
+        (tmp_path / "user.py").write_text("from vals import LIMIT\ndef fn(): return LIMIT\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead constants" not in out, (
+            f"'dead constants' must not appear when constants are used; got:\n{out}"
+        )
+
+
+class TestDiffNewSymbols:
+    """S160: Diff — 'new symbols: N exported fns/classes with 0 callers (name1, name2)'."""
+
+    def test_new_symbols_shown(self, tmp_path):
+        """Diff with 3+ exported fns that have no callers → 'new symbols:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_diff_context
+
+        # 5 brand-new exported functions with no callers yet
+        new_code = "\n".join(f"def new_fn_{i}(x):\n    return x + {i}" for i in range(5))
+        (tmp_path / "new_module.py").write_text(new_code + "\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["new_module.py"])
+        assert "new symbols" in out, (
+            f"Expected 'new symbols' for 5 uncalled exported fns; got:\n{out}"
+        )
+
+    def test_new_symbols_absent_when_all_called(self, tmp_path):
+        """Diff where all exported fns have callers → 'new symbols:' NOT shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_diff_context
+
+        (tmp_path / "lib.py").write_text("def fn_a():\n    pass\ndef fn_b():\n    pass\n")
+        (tmp_path / "caller.py").write_text(
+            "from lib import fn_a, fn_b\ndef main():\n    fn_a(); fn_b()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["lib.py"])
+        assert "new symbols" not in out, (
+            f"'new symbols' must not appear when all fns have callers; got:\n{out}"
+        )

@@ -421,6 +421,21 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
         _s152_langs_str = ", ".join(f".{ext}({n})" for ext, n in sorted(_s152_lang_ext.items())[:3])
         lines.append(f"cross-language blast: importers span {len(_s152_lang_ext)+1} languages ({_s152_langs_str})")
 
+    # S158: Init-heavy — blast target is __init__.py with many exported symbols.
+    # __init__ files are import entry points; high symbol count = many dependents at risk.
+    # Only shown when file is __init__.py and has >= 8 exported symbols.
+    _s158_basename = file_path.rsplit("/", 1)[-1]
+    if _s158_basename in ("__init__.py", "index.ts", "index.js", "mod.rs"):
+        _s158_exported = [
+            s for s in symbols
+            if s.exported and s.kind.value in ("function", "method", "class", "interface")
+        ]
+        if len(_s158_exported) >= 8:
+            lines.append(
+                f"init-heavy: {len(_s158_exported)} exported symbols in {_s158_basename}"
+                f" — package entry point, changes affect all importers"
+            )
+
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
 

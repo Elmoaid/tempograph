@@ -337,6 +337,22 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             _mb_parts = [f"{mod}/ ({cnt})" for mod, cnt in _module_items[:4]]
             lines.append(f"dead by module: {', '.join(_mb_parts)}")
 
+    # S159: Dead constants — unused constant/variable declarations.
+    # Dead constants are often magic numbers or config values from abandoned features.
+    # Only shown when 3+ dead constants/variables found.
+    _dead_consts = [
+        sym for sym, conf in scored
+        if conf >= 40
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("constant", "variable")
+    ]
+    if len(_dead_consts) >= 3:
+        _dc_names = [s.name for s in _dead_consts[:3]]
+        _dc_str = ", ".join(_dc_names)
+        if len(_dead_consts) > 3:
+            _dc_str += f" +{len(_dead_consts) - 3} more"
+        lines.append(f"dead constants: {len(_dead_consts)} unused constants/variables ({_dc_str})")
+
     # S148: Largest dead fn — the single biggest dead symbol by line count.
     # Large dead code (>= 20 lines) = likely an abandoned feature, not a trivial stub.
     # Provides a high-value cleanup target: one deletion removes significant code mass.

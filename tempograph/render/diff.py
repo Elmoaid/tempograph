@@ -375,6 +375,31 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             else:
                 lines.append("touched test count: 0 — no test files found for changed files")
 
+    # S160: New symbols — count brand-new fn/class symbols introduced in the diff.
+    # Many new symbols = significant API growth, not just modification.
+    # Only shown when 3+ new symbols are introduced.
+    _s160_new_syms: list[str] = []
+    for _fp160 in normalized:
+        if _is_test_file(_fp160):
+            continue
+        _fi160 = graph.files.get(_fp160)
+        if not _fi160:
+            continue
+        for _sid160 in _fi160.symbols:
+            if _sid160 not in graph.symbols:
+                continue
+            _sym160 = graph.symbols[_sid160]
+            if _sym160.kind.value not in ("function", "method", "class", "interface"):
+                continue
+            # "New" heuristic: exported symbol with 0 callers (not yet called = newly added)
+            if _sym160.exported and len(graph.callers_of(_sid160)) == 0:
+                _s160_new_syms.append(_sym160.name)
+    if len(_s160_new_syms) >= 3:
+        _s160_str = ", ".join(_s160_new_syms[:3])
+        if len(_s160_new_syms) > 3:
+            _s160_str += f" +{len(_s160_new_syms) - 3} more"
+        lines.append(f"new symbols: {len(_s160_new_syms)} exported fns/classes with 0 callers ({_s160_str})")
+
     # S149: Mixed concern — diff touches both source and test files.
     # Mixing src+test changes in one commit complicates cherry-picks, bisects, and reverts.
     # Flag when the diff has 1+ source files AND 1+ test files.
