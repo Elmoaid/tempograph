@@ -1423,6 +1423,29 @@ def render_overview(graph: Tempo) -> str:
             _s243_str += f" +{len(_s243_detected) - 3} more"
         lines.append(f"frameworks: {_s243_str}")
 
+    # S252: God symbol — single non-test symbol called from 10+ distinct files.
+    # One function/class/module that everything depends on is an architectural bottleneck.
+    # Only shown when 1+ symbol has 10+ distinct non-test caller files.
+    _s252_god: list[tuple[int, str, str]] = []
+    for _sym252 in graph.symbols.values():
+        if _sym252.kind.value not in ("function", "method", "class"):
+            continue
+        if _is_test_file(_sym252.file_path):
+            continue
+        _caller_files252 = {
+            c.file_path for c in graph.callers_of(_sym252.id)
+            if not _is_test_file(c.file_path) and c.file_path != _sym252.file_path
+        }
+        if len(_caller_files252) >= 10:
+            _s252_god.append((len(_caller_files252), _sym252.name, _sym252.file_path))
+    if _s252_god:
+        _s252_god.sort(key=lambda x: -x[0])
+        _n252, _name252, _fp252 = _s252_god[0]
+        lines.append(
+            f"god symbol: {_name252} ({_fp252.rsplit('/', 1)[-1]}) called from {_n252} files"
+            f" — central bottleneck; changes here blast everywhere"
+        )
+
     # S247: API-heavy codebase — 3+ source files with "api", "route", "endpoint", or
     # "view" in their names. Changes often need to update route handlers, serializers, and tests.
     # Only shown when 3+ such files detected (1-2 is typical for small apps).

@@ -907,6 +907,35 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 )
                 break
 
+    # S250: Cluster hotspot — 3+ hotspot files from the same directory.
+    # A whole module being unstable (not just one file) suggests coordination risk.
+    # Only shown when top-10 hotspot files include 3+ from the same directory.
+    if scores:
+        _s250_top_files = []
+        _s250_seen_files: set[str] = set()
+        for _, _sym250 in scores[:20]:
+            _fp250 = _sym250.file_path
+            if _fp250 not in _s250_seen_files and not _is_test_file(_fp250):
+                _s250_top_files.append(_fp250)
+                _s250_seen_files.add(_fp250)
+            if len(_s250_top_files) >= 10:
+                break
+        _s250_dirs: dict[str, list[str]] = {}
+        for _fp250 in _s250_top_files:
+            _dir250 = _fp250.rsplit("/", 1)[0] if "/" in _fp250 else "."
+            _s250_dirs.setdefault(_dir250, []).append(_fp250.rsplit("/", 1)[-1])
+        _s250_clusters = [(d, fs) for d, fs in _s250_dirs.items() if len(fs) >= 3]
+        if _s250_clusters:
+            _top_dir250, _top_files250 = max(_s250_clusters, key=lambda x: len(x[1]))
+            _f250_str = ", ".join(_top_files250[:3])
+            if len(_top_files250) > 3:
+                _f250_str += f" +{len(_top_files250) - 3} more"
+            _dir_label250 = _top_dir250.rsplit("/", 1)[-1] if "/" in _top_dir250 else _top_dir250
+            lines.append(
+                f"\ncluster hotspot: {len(_top_files250)} files in {_dir_label250}/ ({_f250_str})"
+                f" — whole module is unstable; coordinate changes carefully"
+            )
+
     # S242: Test file hotspot — top hotspot symbol lives in a test file.
     # Frequently-changed test code suggests flaky tests, brittle fixtures, or rapidly-evolving specs.
     # Only shown when the top-ranked hotspot symbol is itself in a test file.

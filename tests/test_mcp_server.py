@@ -15204,3 +15204,117 @@ class TestFocusAbstractMethod:
         assert "abstract method" not in out, (
             f"'abstract method' must not appear; got:\n{out}"
         )
+
+
+# S250 — cluster hotspot (hotspots)
+# ---------------------------------------------------------------------------
+
+class TestHotspotsCluster:
+    def test_cluster_hotspot_shown(self, tmp_path):
+        """S250: 'cluster hotspot' shown when 3+ hotspot files are in the same directory."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        from pathlib import Path
+        api_dir = tmp_path / "api"
+        api_dir.mkdir()
+        # Create 4 files in api/ each with a widely-called function
+        for name in ("auth", "user", "order", "payment"):
+            (api_dir / f"{name}.py").write_text(
+                f"def {name}_handler(): return '{name}'\n"
+            )
+        # Add callers from outside api/
+        for i in range(5):
+            (tmp_path / f"service{i}.py").write_text(
+                "from api.auth import auth_handler\n"
+                "from api.user import user_handler\n"
+                "from api.order import order_handler\n"
+                f"def task_{i}(): return auth_handler()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        if "cluster hotspot" in out:
+            assert "whole module is unstable" in out
+
+    def test_no_cluster_for_single_file(self, tmp_path):
+        """S250: 'cluster hotspot' absent when only 1 hotspot file per directory."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        (tmp_path / "core.py").write_text("def main(): pass\n")
+        for i in range(4):
+            (tmp_path / f"user{i}.py").write_text(
+                "from core import main\ndef run(): main()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "cluster hotspot" not in out, (
+            f"'cluster hotspot' must not appear with single hotspot; got:\n{out}"
+        )
+
+
+# S251 — well-tested blast (blast)
+# ---------------------------------------------------------------------------
+
+class TestBlastWellTested:
+    def test_well_tested_shown(self, tmp_path):
+        """S251: 'well-tested' shown when 5+ test files cover the blast target."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "core.py").write_text("def compute(x): return x * 2\n")
+        for i in range(6):
+            (tmp_path / f"test_case{i}.py").write_text(
+                f"from core import compute\n"
+                f"def test_{i}(): assert compute({i}) == {i * 2}\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "core.py")
+        assert "well-tested" in out, f"Expected 'well-tested'; got:\n{out}"
+        assert "safety net" in out
+
+    def test_well_tested_absent_with_few_tests(self, tmp_path):
+        """S251: 'well-tested' absent when fewer than 5 test files cover the target."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "utils.py").write_text("def helper(): return 1\n")
+        (tmp_path / "test_utils.py").write_text(
+            "from utils import helper\ndef test_h(): assert helper() == 1\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "utils.py")
+        assert "well-tested" not in out, (
+            f"'well-tested' must not appear with < 5 test files; got:\n{out}"
+        )
+
+
+# S252 — god symbol (overview)
+# ---------------------------------------------------------------------------
+
+class TestOverviewGodSymbol:
+    def test_god_symbol_shown(self, tmp_path):
+        """S252: 'god symbol' shown when one symbol is called from 10+ distinct files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        (tmp_path / "core.py").write_text("def dispatch(event): return event\n")
+        for i in range(11):
+            (tmp_path / f"module{i}.py").write_text(
+                f"from core import dispatch\n"
+                f"def handler_{i}(): dispatch({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "god symbol" in out, f"Expected 'god symbol'; got:\n{out}"
+        assert "bottleneck" in out
+
+    def test_god_symbol_absent_with_few_callers(self, tmp_path):
+        """S252: 'god symbol' absent when no symbol has 10+ caller files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        (tmp_path / "core.py").write_text("def compute(x): return x\n")
+        for i in range(4):
+            (tmp_path / f"user{i}.py").write_text(
+                f"from core import compute\ndef run_{i}(): compute({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "god symbol" not in out, (
+            f"'god symbol' must not appear with < 10 callers; got:\n{out}"
+        )

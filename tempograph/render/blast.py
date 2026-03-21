@@ -706,6 +706,20 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — callers must await; sync conversion breaks all call sites"
         )
 
+    # S251: Well-tested blast — blast target's exported symbols have many test callers.
+    # Positive signal: high test coverage means refactoring here has a safety net.
+    # Only shown when 5+ distinct test files call into this blast target.
+    _s251_test_caller_files: set[str] = set()
+    for _sym251 in symbols:
+        for _c251 in graph.callers_of(_sym251.id):
+            if _is_test_file(_c251.file_path):
+                _s251_test_caller_files.add(_c251.file_path)
+    if len(_s251_test_caller_files) >= 5:
+        lines.append(
+            f"well-tested: {len(_s251_test_caller_files)} test file(s) cover this module"
+            f" — high safety net; refactoring here is lower risk"
+        )
+
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
 
