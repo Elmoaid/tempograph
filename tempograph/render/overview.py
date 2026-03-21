@@ -2270,6 +2270,22 @@ def _signals_async_oop(
             f" — deep nesting makes refactors brittle; consider flatter module structure"
         )
 
+    # S507: Single language dominance — 90%+ of source files are in one language.
+    # Monoculture codebases gain simplicity but lose polyglot escape hatches;
+    # performance-critical or platform-specific requirements force a painful split later.
+    _s507_lang_counts: dict[str, int] = {}
+    for _fp507, _fi507 in graph.files.items():
+        if not _is_test_file(_fp507) and _fi507.language.value in _CODE_LANGS:
+            _s507_lang_counts[_fi507.language.value] = _s507_lang_counts.get(_fi507.language.value, 0) + 1
+    _s507_total = sum(_s507_lang_counts.values())
+    if _s507_total >= 10:
+        _s507_top_lang, _s507_top_n = max(_s507_lang_counts.items(), key=lambda x: x[1])
+        if _s507_top_n / _s507_total >= 0.90:
+            lines.append(
+                f"single language: {_s507_top_lang} accounts for {int(_s507_top_n / _s507_total * 100)}%"
+                f" of source files — tightly coupled to one runtime; polyglot needs require careful isolation"
+            )
+
     return lines
 
 

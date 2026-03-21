@@ -2882,6 +2882,24 @@ def _signals_focused_fn_advanced(
                     f" — treat as a pure transformation; any side-effect introduced is a silent contract break"
                 )
 
+    # S508: Untyped exported function — focused exported function has 3+ callers but no return hint.
+    # Widely-used functions without return annotations force callers to rely on documentation
+    # or source inspection; a type change silently breaks calling code at runtime.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim508 = next((s for s in _seed_syms if s.kind.value in ("function", "method")), None)
+        if _prim508 and _prim508.exported and not _is_test_file(_prim508.file_path):
+            _sig508 = _prim508.signature or ""
+            _has_return508 = "->" in _sig508
+            if not _has_return508:
+                _callers508 = list(graph.callers_of(_prim508.id))
+                _raw_callers508 = getattr(graph, "_callers", {}).get(_prim508.id, [])
+                _total_callers508 = len(_callers508) + len(_raw_callers508)
+                if _total_callers508 >= 3:
+                    lines.append(
+                        f"\nuntyped export: {_prim508.name} is exported with {_total_callers508} caller(s)"
+                        f" but has no return type annotation — callers rely on implicit return type"
+                    )
+
     return lines
 
 

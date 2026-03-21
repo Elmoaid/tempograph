@@ -1689,5 +1689,18 @@ def _collect_hotspots_signals(
                         f" — changing the hierarchy or message format breaks all except-handlers"
                     )
 
+    # S510: Async hotspot — top hotspot function is a coroutine (async def).
+    # Async hotspots are the most-called awaitables in the system; a change to their
+    # concurrency model (adding a lock, changing executor) blocks all callers.
+    if scores:
+        _top510 = scores[0][1]
+        if not _is_test_file(_top510.file_path) and _top510.kind.value in ("function", "method"):
+            _sig510 = _top510.signature or ""
+            if _sig510.startswith("async "):
+                out.append(
+                    f"\nasync hotspot: {_top510.name} is the top-called async function"
+                    f" — adding blocking calls or changing its event-loop behavior affects all awaiters"
+                )
+
     return out
 

@@ -1744,6 +1744,27 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — stale getters block attribute renames; remove before refactoring the data model"
         )
 
+    # S512: Dead test utilities — setup_/teardown_/fixture_ functions with 0 callers in test files.
+    # Leftover test helpers that are never called inflate test file complexity without providing
+    # coverage; they mislead about what is actually tested.
+    _s512_test_util_prefixes = ("setup_", "teardown_", "fixture_", "mock_", "stub_", "fake_", "helper_test")
+    _s512_dead_test_utils = [
+        sym for sym in graph.symbols.values()
+        if _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s512_test_util_prefixes)
+        and not graph.callers_of(sym.id)
+        and not getattr(graph, "_callers", {}).get(sym.id)
+    ]
+    if len(_s512_dead_test_utils) >= 2:
+        _tu_names512 = ", ".join(s.name for s in _s512_dead_test_utils[:3])
+        if len(_s512_dead_test_utils) > 3:
+            _tu_names512 += f" +{len(_s512_dead_test_utils) - 3} more"
+        lines.append(
+            f"dead test utilities: {len(_s512_dead_test_utils)} unused test helper(s) ({_tu_names512})"
+            f" — stale helpers mislead about test coverage; remove to clarify actual test scope"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
