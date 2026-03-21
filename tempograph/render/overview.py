@@ -3355,6 +3355,17 @@ def _signals_async_oop(
             f" — constant-heavy codebase; consider centralizing configuration into dedicated files"
         )
 
+    # S913: Test-heavy codebase — test files outnumber source files 2:1 or more.
+    # An unusually high test-to-code ratio may indicate orphaned tests, large integration
+    # test suites, or test files that outlasted the features they cover.
+    _test_fps913 = [fp for fp in graph.files if _is_test_file(fp)]
+    _src_fps913 = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_src_fps913) >= 3 and len(_test_fps913) >= len(_src_fps913) * 2:
+        lines.append(
+            f"test-heavy: {len(_test_fps913)} test files vs {len(_src_fps913)} source files"
+            f" — unusually high test/source ratio; check for orphaned or over-duplicated tests"
+        )
+
     return lines
 
 

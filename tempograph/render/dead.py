@@ -3155,6 +3155,30 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — may be registered background tasks; verify no dynamic registration before removing"
         )
 
+    # S917: Dead callback functions — unused on_/handle_/callback_/cb_ prefixed functions.
+    # Dead callbacks indicate event-driven logic removed from registration; they may still
+    # be referenced in configuration files or event registries outside the graph.
+    _cb_prefixes917 = ("on_", "handle_", "callback_", "cb_")
+    _cb_contains917 = ("callback", "_cb")
+    _dead_cbs917 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and (
+            any(s.name.lower().startswith(p) for p in _cb_prefixes917)
+            or any(kw in s.name.lower() for kw in _cb_contains917)
+        )
+    ]
+    if _dead_cbs917:
+        _cb_names917 = ", ".join(s.name for s in _dead_cbs917[:3])
+        if len(_dead_cbs917) > 3:
+            _cb_names917 += f" +{len(_dead_cbs917) - 3} more"
+        lines.append(
+            f"dead callbacks: {len(_dead_cbs917)} unused callback function(s) ({_cb_names917})"
+            f" — may still be registered in event configs; verify before removing"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

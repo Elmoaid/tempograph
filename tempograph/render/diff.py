@@ -2522,4 +2522,20 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — wide-scope change; check for missing abstraction or scattered responsibility"
             )
 
+    # S915: Multiple init files in diff — 2+ module entry files (__init__.py, index.js, etc.) changed.
+    # Module entry files control what a package exports; changing multiple simultaneously
+    # suggests a package restructure that may break public API contracts.
+    if changed_files:
+        _init_names915 = ("__init__.py", "index.js", "index.ts", "mod.rs", "index.jsx", "index.tsx")
+        _init_files915 = [
+            f for f in changed_files
+            if f.replace("\\", "/").rsplit("/", 1)[-1] in _init_names915
+        ]
+        if len(_init_files915) >= 2:
+            _init_short915 = ", ".join(f.replace("\\", "/").rsplit("/", 1)[-1] for f in _init_files915[:2])
+            lines.append(
+                f"multiple init files: {len(_init_files915)} module entry files changed ({_init_short915})"
+                f" — multiple module boundaries changed; verify public API exports are consistent"
+            )
+
     return "\n".join(lines)

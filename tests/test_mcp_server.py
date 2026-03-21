@@ -43036,3 +43036,215 @@ class TestDeadAsyncFunctionsS911:
         assert "dead async" not in out, (
             f"'dead async' must not appear when async function is called; got:\n{out}"
         )
+
+
+class TestDunderMethodFocusS912:
+    """S912: Focused symbol is a Python dunder method (not __init__/__new__)."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "container.py").write_text(
+            "class Container:\n"
+            "    def __init__(self, items):\n"
+            "        self._items = items\n"
+            "    def __len__(self):\n"
+            "        return len(self._items)\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from container import Container\ndef run(): c = Container([1, 2])\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "__len__")
+        assert "dunder method" in out, (
+            f"'dunder method' expected for __len__ focus; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "container.py").write_text(
+            "class Container:\n"
+            "    def __init__(self, items):\n"
+            "        self._items = items\n"
+            "    def get_items(self):\n"
+            "        return self._items\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from container import Container\n"
+            "def run(): return Container([]).get_items()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "get_items")
+        assert "dunder method" not in out, (
+            f"'dunder method' must not appear for regular method; got:\n{out}"
+        )
+
+
+
+# ── S913: Test-heavy codebase ──────────────────────────────────────────────────
+
+class TestTestHeavyCodebaseS913:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        for i in range(3):
+            (tmp_path / f"module_{i}.py").write_text(f"def fn_{i}(): return {i}\n")
+        for i in range(6):
+            (tmp_path / f"test_module_{i}.py").write_text(
+                f"def test_fn_{i}(): assert True\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "test-heavy" in out, f"expected test-heavy; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        for i in range(5):
+            (tmp_path / f"module_{i}.py").write_text(f"def fn_{i}(): return {i}\n")
+        for i in range(2):
+            (tmp_path / f"test_module_{i}.py").write_text(
+                f"def test_fn_{i}(): assert True\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "test-heavy" not in out, f"unexpected test-heavy; got: {out}"
+
+
+# ── S914: Test file blast ──────────────────────────────────────────────────────
+
+class TestTestFileBlastS914:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "test_utils.py").write_text("def test_helper(x): return x * 2\n")
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "test_utils.py")
+        assert "test file blast" in out, f"expected test file blast; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "utils.py").write_text("def helper(x): return x * 2\n")
+        (tmp_path / "app.py").write_text(
+            "from utils import helper\ndef run(): helper(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "utils.py")
+        assert "test file blast" not in out, f"unexpected test file blast; got: {out}"
+
+
+# ── S915: Multiple init files in diff ─────────────────────────────────────────
+
+class TestMultipleInitFilesS915:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "pkg_a").mkdir()
+        (tmp_path / "pkg_b").mkdir()
+        (tmp_path / "pkg_a" / "__init__.py").write_text("def init_a(): return 0\n")
+        (tmp_path / "pkg_b" / "__init__.py").write_text("def init_b(): return 1\n")
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["pkg_a/__init__.py", "pkg_b/__init__.py"])
+        assert "multiple init files" in out, f"expected multiple init files; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "utils.py").write_text("def helper(): return 1\n")
+        (tmp_path / "app.py").write_text(
+            "from utils import helper\ndef run(): helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["utils.py"])
+        assert "multiple init files" not in out, f"unexpected multiple init files; got: {out}"
+
+
+# ── S916: Single-caller hotspot ────────────────────────────────────────────────
+
+class TestSingleCallerHotspotS916:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        body = ["def complex_validator(a, b, c, d, e):"]
+        for i in range(8):
+            body.append(f"    if a: b = c + d * e + {i}")
+            body.append(f"    elif b: c = a + d - {i}")
+        body.append("    return a")
+        (tmp_path / "validator.py").write_text("\n".join(body) + "\n")
+        (tmp_path / "app.py").write_text(
+            "from validator import complex_validator\n"
+            "def run(): complex_validator(1, 2, 3, 4, 5)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "single-caller hotspot" in out, f"expected single-caller hotspot; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        body = ["def complex_validator(a, b, c, d, e):"]
+        for i in range(8):
+            body.append(f"    if a: b = c + d * e + {i}")
+            body.append(f"    elif b: c = a + d - {i}")
+        body.append("    return a")
+        (tmp_path / "validator.py").write_text("\n".join(body) + "\n")
+        for i in range(4):
+            (tmp_path / f"caller_{i}.py").write_text(
+                "from validator import complex_validator\n"
+                f"def run_{i}(): complex_validator(1, 2, 3, 4, 5)\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "single-caller hotspot" not in out, f"unexpected single-caller hotspot; got: {out}"
+
+
+# ── S917: Dead callback functions ─────────────────────────────────────────────
+
+class TestDeadCallbackFunctionsS917:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "events.py").write_text(
+            "def on_user_created(user): pass\n"
+            "def handle_payment(txn): pass\n"
+            "def active_fn(): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from events import active_fn\ndef run(): active_fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead callbacks" in out, f"expected dead callbacks; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "events.py").write_text("def on_user_created(user): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from events import on_user_created\n"
+            "def run(): on_user_created({'id': 1})\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead callbacks" not in out, f"unexpected dead callbacks; got: {out}"
