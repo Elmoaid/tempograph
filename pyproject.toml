@@ -73,5 +73,5 @@ Issues = "https://github.com/Elmoaid/tempograph/issues"
 packages = ["tempograph", "tempo"]
 
 [tool.pytest.ini_options]
-norecursedirs = ["archive", "bench", "node_modules", ".git", "tempo/ui", "dist", ".tempograph"]
+norecursedirs = ["archive", "bench", "node_modules", ".git", "tempo/ui", "dist", ".tempograph", ".worktrees"]
 testpaths = ["."]
