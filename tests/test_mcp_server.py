@@ -3398,3 +3398,41 @@ class TestDeadCodeAgeAnnotation:
         assert "[age:" not in out, (
             f"Expected no [age:] when git unavailable; got:\n{out}"
         )
+
+
+# ---------------------------------------------------------------------------
+# S18 — Overview mode: recently active files
+# ---------------------------------------------------------------------------
+
+class TestOverviewRecentlyActive:
+    """Verify that overview output shows recently-active files when git data is available."""
+
+    def test_recently_active_shown_when_commits_exist(self, tmp_path):
+        """When file_commit_counts returns data, 'recently active:' line appears in overview."""
+        from unittest.mock import patch
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "auth.py").write_text("def login():\n    pass\n")
+        (tmp_path / "models.py").write_text("def get_user():\n    pass\n")
+        g = build_graph(tmp_path, use_cache=False)
+
+        with patch("tempograph.git.file_commit_counts", return_value={"auth.py": 47, "models.py": 32}):
+            out = render_overview(g)
+
+        assert "recently active:" in out, f"Expected 'recently active:' in overview; got:\n{out}"
+        assert "auth.py (47)" in out, f"Expected top file with count; got:\n{out}"
+
+    def test_recently_active_skipped_when_no_commits(self, tmp_path):
+        """When file_commit_counts returns empty dict, 'recently active:' is absent."""
+        from unittest.mock import patch
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "orphan.py").write_text("def nothing():\n    pass\n")
+        g = build_graph(tmp_path, use_cache=False)
+
+        with patch("tempograph.git.file_commit_counts", return_value={}):
+            out = render_overview(g)
+
+        assert "recently active:" not in out, f"'recently active:' should be absent when no commits; got:\n{out}"
