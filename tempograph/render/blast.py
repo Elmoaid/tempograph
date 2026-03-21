@@ -1830,6 +1830,15 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — changes here affect system startup; verify initialization order and side effects"
         )
 
+    # S680: Test file blast — blast target is a test file.
+    # Running blast on a test file usually indicates the agent is looking at the wrong target;
+    # test files rarely need blast analysis and blasting them yields misleading results.
+    if _is_test_file(_fp589):
+        lines.append(
+            f"test file blast: {_fp589.rsplit('/', 1)[-1]} is a test file"
+            f" — blast radius of test files is rarely meaningful; consider targeting the source file"
+        )
+
     return "\n".join(lines)
 
 

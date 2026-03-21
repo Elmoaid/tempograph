@@ -2124,5 +2124,23 @@ def _collect_hotspots_signals(
                     f" ({len(_callers676)} test caller(s)) — over-exposed internal or tests bypassing public API"
                 )
 
+    # S682: Complexity outlier — top hotspot complexity is 5x+ the second hotspot's complexity.
+    # When one symbol dramatically outscores others in complexity, it's an extreme outlier;
+    # it concentrates cognitive risk and is the highest-priority refactoring target.
+    if len(scores) >= 2:
+        _top682 = scores[0][1]
+        _second682 = scores[1][1]
+        if (
+            _top682 is not None
+            and _second682 is not None
+            and not _is_test_file(_top682.file_path)
+            and _second682.complexity > 0
+            and _top682.complexity >= _second682.complexity * 5
+        ):
+            out.append(
+                f"\ncomplexity outlier: {_top682.name} complexity={_top682.complexity}"
+                f" vs next={_second682.complexity} — extreme outlier; highest-priority refactor target"
+            )
+
     return out
 

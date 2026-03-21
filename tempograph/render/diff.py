@@ -277,6 +277,15 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — release boundary; co-changed code ships immediately; hold to higher quality bar"
         )
 
+    # S681: Test-only diff — all changed files are test files (no production code modified).
+    # A diff touching only tests either adds coverage or modifies test behaviour;
+    # test-only changes are lower risk but should verify no production logic crept in.
+    if changed_files and all(_is_test_file(f) for f in changed_files):
+        lines.append(
+            f"test-only diff: all {len(changed_files)} changed file(s) are test files"
+            f" — lower risk change; confirm no production logic was added to test files"
+        )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 

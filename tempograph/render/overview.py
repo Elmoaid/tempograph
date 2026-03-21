@@ -2720,6 +2720,23 @@ def _signals_async_oop(
                 f" — gravity-well file; prioritize decomposing this file"
             )
 
+    # S679: High orphan ratio — more than 30% of source files have no importers.
+    # Files that nothing imports may be dead modules, scripts, or tools that
+    # have drifted from the main codebase; high orphan ratios signal poor cohesion.
+    _src_files679 = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_src_files679) >= 4:
+        _orphans679 = [
+            fp for fp in _src_files679
+            if not graph.importers_of(fp)
+        ]
+        _orphan_pct679 = len(_orphans679) / len(_src_files679)
+        if _orphan_pct679 > 0.30:
+            _opct679 = int(_orphan_pct679 * 100)
+            lines.append(
+                f"high orphan ratio: {_opct679}% of source files have no importers"
+                f" — many disconnected files; verify none are abandoned dead modules"
+            )
+
     return lines
 
 

@@ -2329,6 +2329,24 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — copy-paste drift; duplicated functions were never called anywhere"
         )
 
+    # S683: Dead long functions — unused functions with 10+ lines (significant speculative work).
+    # A large dead function represents substantial development effort that was never activated;
+    # the more lines, the more deliberate the original intent — and the higher the removal cost.
+    _dead_long683 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and s.line_count >= 10
+    ]
+    if _dead_long683:
+        _long_names683 = ", ".join(s.name for s in _dead_long683[:3])
+        if len(_dead_long683) > 3:
+            _long_names683 += f" +{len(_dead_long683) - 3} more"
+        lines.append(
+            f"dead long functions: {len(_dead_long683)} unused function(s) with 10+ lines ({_long_names683})"
+            f" — substantial speculative work; review intent before deleting"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
