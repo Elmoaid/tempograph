@@ -268,3 +268,79 @@ class TestScanCalls:
         _, edges, _ = p.parse()
         call_edges = [e for e in edges if e.kind == EdgeKind.CALLS]
         assert any("myHelper" in e.target_id for e in call_edges)
+
+
+# ── _extract_signature ────────────────────────────────────────────────────────
+
+class TestExtractSignature:
+    def _get_func_node(self, code: str):
+        import tree_sitter_python as tspython
+        from tree_sitter import Language as TSLanguage, Parser
+        ts_lang = TSLanguage(tspython.language())
+        parser = Parser(ts_lang)
+        source = code.encode()
+        tree = parser.parse(source)
+        for child in tree.root_node.children:
+            if child.type == "function_definition":
+                return child, source
+        return None, source
+
+    def test_single_line_function_signature(self):
+        node, source = self._get_func_node("def fn(x, y): return x + y\n")
+        assert node is not None
+        sig = _extract_signature(node, source, Language.PYTHON)
+        assert sig.startswith("def fn(")
+
+    def test_multiline_function_returns_first_line(self):
+        code = "def process(\n    x: int,\n    y: int,\n) -> int:\n    return x + y\n"
+        node, source = self._get_func_node(code)
+        assert node is not None
+        sig = _extract_signature(node, source, Language.PYTHON)
+        assert "\n" not in sig
+        assert sig.startswith("def process(")
+
+    def test_long_signature_truncated_at_200(self):
+        params = ", ".join(f"p{i}: int" for i in range(30))
+        code = f"def big({params}): pass\n"
+        node, source = self._get_func_node(code)
+        if node:
+            sig = _extract_signature(node, source, Language.PYTHON)
+            assert len(sig) <= 203  # 200 + possible "..."
+
+    def test_trailing_brace_stripped(self):
+        # Python first line won't have {, but ensure the strip logic doesn't mangle
+        node, source = self._get_func_node("def fn(): pass\n")
+        assert node is not None
+        sig = _extract_signature(node, source, Language.PYTHON)
+        assert not sig.endswith("{")
+
+
+# ── _compute_complexity direct ────────────────────────────────────────────────
+
+class TestComputeComplexityDirect:
+    def _parse_and_get_func_node(self, code: str):
+        import tree_sitter_python as tspython
+        from tree_sitter import Language as TSLanguage, Parser
+        ts_lang = TSLanguage(tspython.language())
+        parser = Parser(ts_lang)
+        source = code.encode()
+        tree = parser.parse(source)
+        for child in tree.root_node.children:
+            if child.type == "function_definition":
+                return child, source
+        return None, source
+
+    def test_direct_call_simple_function(self):
+        p = _parser("def fn(): pass\n")
+        node, source = self._parse_and_get_func_node("def fn(): pass\n")
+        assert node is not None
+        cx = p._compute_complexity(node)
+        assert cx == 1  # base complexity only
+
+    def test_direct_call_with_if(self):
+        code = "def fn(x):\n    if x:\n        return 1\n    return 0\n"
+        p = _parser(code)
+        node, source = self._parse_and_get_func_node(code)
+        assert node is not None
+        cx = p._compute_complexity(node)
+        assert cx >= 2
