@@ -215,7 +215,79 @@ def render_overview(graph: Tempo) -> str:
         _test_pct = int(_covered / len(_src_fps) * 100)
         lines.append(f"test coverage: {_covered}/{len(_src_fps)} source files ({_test_pct}%)")
 
-    # Module structure — just the shape, no noisy import counts
+    # Potentially unused modules: source files with 0 source importers AND no test coverage.
+    # Flags entire floating modules that nothing depends on and nothing tests — either dead
+    # features or undiscovered entry points agents should investigate.
+    # Only shown when project has 10+ source files AND has tests (otherwise too noisy).
+    _ENTRY_BASENAMES = {
+        "__init__.py", "__main__.py", "main.py", "app.py", "manage.py",
+        "cli.py", "server.py", "wsgi.py", "asgi.py", "run.py", "start.py",
+        "index.js", "index.ts", "index.tsx", "main.ts", "main.tsx", "app.ts",
+        "main.go", "main.rs", "lib.rs", "mod.rs",  # Rust crate/module roots
+        "main.swift", "Program.cs",
+    }
+    if len(_src_fps) >= 10 and _test_fps:
+        _unused_modules: list[str] = []
+        for _fp in _src_fps:
+            _basename = _fp.rsplit("/", 1)[-1]
+            if _basename in _ENTRY_BASENAMES:
+                continue  # skip known entry points and package markers
+            # Skip TypeScript type-only files (.types.ts, .d.ts) — we skip `import type`
+            # statements, so these always appear as having 0 importers (false positive).
+            if _basename.endswith(".types.ts") or _basename.endswith(".d.ts"):
+                continue
+            if len(graph.files[_fp].symbols) < 3:
+                continue  # too minimal to flag
+            _src_importers_fp = [i for i in graph.importers_of(_fp) if not _is_test_file(i)]
+            _test_importers_fp = [i for i in graph.importers_of(_fp) if _is_test_file(i)]
+            _test_callers_fp = any(
+                _is_test_file(c.file_path)
+                for sid in graph.files[_fp].symbols
+                for c in graph.callers_of(sid)
+            )
+            if not _src_importers_fp and not _test_importers_fp and not _test_callers_fp:
+                _unused_modules.append(_fp)
+        if len(_unused_modules) >= 2:
+            _parts = _fp.rsplit("/", 2)
+            def _short_fp(fp: str) -> str:
+                parts = fp.rsplit("/", 2)
+                return "/".join(parts[-2:]) if len(parts) >= 2 else fp
+            _um_names = [_short_fp(fp) for fp in _unused_modules[:4]]
+            _um_str = ", ".join(_um_names)
+            if len(_unused_modules) > 4:
+                _um_str += f" +{len(_unused_modules) - 4} more"
+            lines.append(f"potentially unused ({len(_unused_modules)}): {_um_str}")
+
+    # Tech debt markers: TODO/FIXME/HACK/XXX comment counts in source files.
+    # Quick signal for known issues, shortcuts, and incomplete work.
+    # Only source-code files with symbols; capped to avoid I/O cost on huge repos.
+    import re as _re  # noqa: PLC0415
+    _TD_PAT = _re.compile(r'\b(TODO|FIXME|HACK|XXX)\b')
+    _td_counts: dict[str, int] = {}
+    _td_file_count = 0
+    for _fp in _src_fps[:200]:  # cap at 200 to keep I/O bounded
+        if Path(_fp).suffix not in _SRC_EXTS:
+            continue
+        try:
+            _content = (Path(graph.root) / _fp).read_text(errors="replace")
+            _matches = _TD_PAT.findall(_content)
+            if _matches:
+                _td_file_count += 1
+                for _m in _matches:
+                    _td_counts[_m] = _td_counts.get(_m, 0) + 1
+        except Exception:
+            pass
+    if _td_counts:
+        _td_total = sum(_td_counts.values())
+        if _td_total >= 3:
+            _td_parts = [
+                f"{_td_counts[k]} {k}s"
+                for k in ("TODO", "FIXME", "HACK", "XXX")
+                if _td_counts.get(k, 0) > 0
+            ]
+            lines.append(f"tech debt: {_td_total} markers in {_td_file_count} files ({', '.join(_td_parts)})")
+
+    # Module structure -- just the shape, no noisy import counts
     modules: dict[str, list[str]] = {}
     for fp in graph.files:
         parts = fp.split("/")
@@ -1141,6 +1213,18 @@ def _build_symbol_block_lines(
         except Exception:
             pass
     block_lines = [f"{prefix} {sym.kind.value} {sym.qualified_name}{_blast_ann}{_age_ann} — {loc}{orbit_note}"]
+    # Container annotation for methods: show parent class with caller count.
+    # Helps agents understand the class context of the focused method.
+    if depth == 0 and sym.kind.value == "method" and "::" in sym.id:
+        _name_part = sym.id.split("::", 1)[1]
+        if "." in _name_part:
+            _class_id = sym.id.rsplit(".", 1)[0]  # "file.py::ClassName"
+            _class_sym = graph.symbols.get(_class_id)
+            if _class_sym:
+                _c_callers = len(graph.callers_of(_class_id))
+                _c_methods = len([c for c in graph.children_of(_class_id) if c.kind.value == "method"])
+                _c_ann = f"{_c_callers} callers" if _c_callers else "no callers"
+                block_lines.append(f"{indent}  container: {_class_sym.kind.value} {_class_sym.name} ({_c_ann}, {_c_methods} methods)")
     if sym.signature and depth < 2:
         block_lines.append(f"{indent}  sig: {sym.signature[:150]}")
     if sym.doc and depth == 0:
@@ -1154,6 +1238,12 @@ def _build_symbol_block_lines(
         if depth == 0 and not sym.exported and not graph.callers_of(sym.id):
             if _dead_code_confidence(sym, graph) >= 40:
                 warnings.append("POSSIBLY DEAD — 0 callers, not exported (run dead_code mode to confirm)")
+        # Test-only callers: symbol has callers but ALL are test files.
+        # Production code never calls this — likely test helper or fixture, not real API.
+        if depth == 0:
+            _callers = graph.callers_of(sym.id)
+            if len(_callers) >= 2 and all(_is_test_file(c.file_path) for c in _callers):
+                warnings.append("TEST-ONLY CALLERS — not called from production code")
         if warnings:
             block_lines.append(f"{indent}  ⚠ {', '.join(warnings)}")
 
@@ -1230,6 +1320,21 @@ def _build_symbol_block_lines(
                     _c_ann = f" ({_c_callers})" if _c_callers >= 1 else ""
                     _child_strs.append(f"{c.kind.value[:4]} {c.name}{_c_ann}")
                 block_lines.append(f"{indent}  contains: {', '.join(_child_strs)}")
+
+            # Implementors: classes/traits that extend or implement this symbol.
+            # Shown only for CLASS/INTERFACE seeds to surface the inheritance fanout.
+            if sym.kind in (SymbolKind.CLASS, SymbolKind.INTERFACE):
+                _subtypes = graph.subtypes_of(sym.name)
+                if _subtypes:
+                    _sub_strs = [
+                        f"{s.qualified_name} ({s.file_path.rsplit('/', 1)[-1]}:{s.line_start})"
+                        for s in _subtypes[:8]
+                    ]
+                    _overflow_sub = len(_subtypes) - 8
+                    _sub_line = f"{indent}  implementors: {', '.join(_sub_strs)}"
+                    if _overflow_sub > 0:
+                        _sub_line += f" (+{_overflow_sub} more)"
+                    block_lines.append(_sub_line)
     return block_lines
 
 
@@ -1412,6 +1517,27 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     hot_section = _render_hot_callers_section(graph, _seed_syms, token_count, max_tokens)
     if hot_section:
         lines.append(hot_section)
+
+    # File siblings: other notable symbols in the primary seed's file.
+    # Shows agents what else is in the file without requiring a blast query.
+    # Only shown when token budget allows and siblings have callers (i.e. are live code).
+    if _seed_syms and token_count < max_tokens - 80:
+        _prim = _seed_syms[0]
+        _fi = graph.files.get(_prim.file_path)
+        if _fi and len(_fi.symbols) > 2:
+            _prim_children = {c.id for c in graph.children_of(_prim.id)}
+            _sibs: list[tuple[int, "Symbol"]] = []
+            for _sid in _fi.symbols:
+                if _sid == _prim.id or _sid in _prim_children or _sid not in graph.symbols:
+                    continue
+                _s = graph.symbols[_sid]
+                _nc = len(graph.callers_of(_sid))
+                if _nc >= 1:
+                    _sibs.append((_nc, _s))
+            _sibs.sort(key=lambda x: -x[0])
+            if _sibs[:4]:
+                _sb_parts = [f"{s.name} ({n})" for n, s in _sibs[:4]]
+                lines.append(f"\nIn {_prim.file_path.rsplit('/', 1)[-1]}: {', '.join(_sb_parts)}")
 
     return "\n".join(lines)
 
@@ -1631,7 +1757,12 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                     _importer_users.setdefault(caller.file_path, []).append(caller.name)
         _all_test_fps = {fp for fp in graph.files if _is_test_file(fp)}
         _src_importers = [imp for imp in importers if not _is_test_file(imp)]
-        for imp in sorted(importers):
+        # Sort by call count descending: most-dependent callers appear first.
+        # Ties broken by file path for stable output.
+        _sorted_importers = sorted(
+            importers, key=lambda imp: (-len(_importer_users.get(imp, [])), imp)
+        )
+        for imp in _sorted_importers:
             users = _importer_users.get(imp, [])
             unique_users = list(dict.fromkeys(users))[:3]  # deduplicate, cap at 3
             if unique_users:
@@ -1718,6 +1849,18 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             lines.append(f"  {_tfp}{_lbl}")
         if len(_blast_tests) > 5:
             lines.append(f"  ... and {len(_blast_tests) - 5} more")
+        lines.append("")
+
+    # Co-change partners: files that historically changed together with this file.
+    # Based on git history — not code structure. Helps agents know what else needs
+    # updating when this file changes, even if there's no import/call relationship.
+    _cc_orbit = _cochange_orbit(graph.root, [file_path], {file_path})
+    if _cc_orbit:
+        _cc_parts = []
+        for _cc_fp, _cc_score, _cc_days in _cc_orbit[:4]:
+            _cc_age = "recent" if _cc_days < 45 else ("aging" if _cc_days < 120 else "stale")
+            _cc_parts.append(f"{_cc_fp.rsplit('/', 1)[-1]} ({_cc_score:.0%} {_cc_age})")
+        lines.append(f"Co-change partners: {', '.join(_cc_parts)}")
         lines.append("")
 
     if not importers and not external_callers and not render_targets:
@@ -2154,6 +2297,33 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         _cx_parts = [f"{sym.qualified_name} (cx={cx})" for cx, sym in _cx_syms[:3]]
         lines.append("")
         lines.append(f"Most complex: {', '.join(_cx_parts)}")
+
+    # Untested hotspots: high-scoring symbols in files with no test coverage.
+    # The riskiest code to modify: high coupling/complexity AND no safety net.
+    # Only shown when test files exist in the project (otherwise whole project lacks tests).
+    _all_test_fps_hs = {fp for fp in graph.files if _is_test_file(fp)}
+    if _all_test_fps_hs and scores:
+        _untested: list[tuple[float, Symbol]] = []
+        for _sc, _sym in scores[:top_n]:
+            if _is_test_file(_sym.file_path):
+                continue
+            # Only flag symbols with real cross-file exposure (≥2 cross-file callers)
+            _cross = len({
+                c.file_path for c in graph.callers_of(_sym.id)
+                if c.file_path != _sym.file_path
+            })
+            if _cross < 2:
+                continue
+            _base = _sym.file_path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+            if not any(_base in t for t in _all_test_fps_hs):
+                _untested.append((_sc, _sym))
+        if len(_untested) >= 1:
+            _uh_parts = [
+                f"{sym.qualified_name} ({sym.file_path.rsplit('/', 1)[-1]})"
+                for _, sym in _untested[:3]
+            ]
+            lines.append("")
+            lines.append(f"Untested hotspots: {', '.join(_uh_parts)}")
 
     # File concentration: which files dominate the hotspot list.
     # If one file has 5+ hotspots, agents should read it first — it's the bottleneck.
