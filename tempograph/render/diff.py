@@ -2684,4 +2684,25 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — fixture changes silently affect all dependent tests; run the full test suite"
             )
 
+    # S969: Dependency file in diff — changed files include a package manifest.
+    # Dependency version changes can introduce breaking API changes, security vulnerabilities,
+    # or transitive conflicts that are invisible until runtime or integration test time.
+    if changed_files:
+        _dep_names969 = (
+            "requirements.txt", "requirements-dev.txt", "pyproject.toml",
+            "package.json", "package-lock.json", "yarn.lock",
+            "cargo.toml", "go.mod", "go.sum", "gemfile", "gemfile.lock",
+            "pom.xml", "build.gradle",
+        )
+        _dep_files969 = [
+            f for f in changed_files
+            if f.replace("\\", "/").rsplit("/", 1)[-1].lower() in _dep_names969
+        ]
+        if _dep_files969:
+            _dname969 = _dep_files969[0].replace("\\", "/").rsplit("/", 1)[-1]
+            lines.append(
+                f"dependency change: {len(_dep_files969)} dependency manifest(s) changed (e.g. {_dname969})"
+                f" — version bumps may introduce breaking API changes or transitive conflicts; review changelogs"
+            )
+
     return "\n".join(lines)
