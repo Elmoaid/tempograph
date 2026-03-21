@@ -291,7 +291,7 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
     # and are more likely to miss subtle interactions between the changes.
     if len(changed_files) >= 5:
         lines.append(
-            f"large diff: {len(changed_files)} files changed"
+            f"multi-file diff: {len(changed_files)} files changed"
             f" — consider splitting into smaller focused PRs for easier review"
         )
 
@@ -359,6 +359,16 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f"same-directory diff: all {len(changed_files)} changed files are in {_dirs717[0]}/"
                 f" — cohesive change; cross-module dependencies unlikely but verify shared utils"
             )
+
+    # S723: Config-only diff — all changed files are configuration/constants/exceptions files.
+    # A diff that only touches config/constants may have no logic changes, but every consumer
+    # of the changed values could be affected; validate all dependents are still compatible.
+    _cfg_names723 = {"config.py", "settings.py", "constants.py", "exceptions.py", "errors.py", "env.py"}
+    if changed_files and all(f.replace("\\", "/").rsplit("/", 1)[-1] in _cfg_names723 for f in changed_files):
+        lines.append(
+            f"config-only diff: all {len(changed_files)} changed file(s) are config/constants files"
+            f" — verify that all consumers are compatible with updated values"
+        )
 
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"

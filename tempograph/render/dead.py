@@ -2469,6 +2469,25 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — abandoned config strategy or superseded loading mechanism"
         )
 
+    # S725: Dead async functions — unused functions with an async signature.
+    # Async functions indicate concurrent or I/O workflows; dead ones signal abandoned parallel
+    # execution strategies, superseded event loops, or incomplete async migrations.
+    _dead_async725 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and s.signature is not None
+        and s.signature.lstrip().startswith("async")
+    ]
+    if _dead_async725:
+        _async_names725 = ", ".join(s.name for s in _dead_async725[:3])
+        if len(_dead_async725) > 3:
+            _async_names725 += f" +{len(_dead_async725) - 3} more"
+        lines.append(
+            f"dead async functions: {len(_dead_async725)} unused async function(s) ({_async_names725})"
+            f" — abandoned async workflow or incomplete async migration"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
