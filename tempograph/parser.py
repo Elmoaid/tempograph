@@ -23,7 +23,7 @@ from .types import (
     EXTENSION_TO_LANGUAGE,
 )
 from .lang._utils import _node_text, _first_comment_above, _extract_signature
-from .lang import PythonHandlerMixin, JSHandlerMixin, GoHandlerMixin, JavaHandlerMixin, CsharpHandlerMixin, RubyHandlerMixin, ZigHandlerMixin, CHandlerMixin, RustHandlerMixin, SwiftHandlerMixin, PHPHandlerMixin, KotlinHandlerMixin, DartHandlerMixin
+from .lang import PythonHandlerMixin, JSHandlerMixin, GoHandlerMixin, JavaHandlerMixin, CsharpHandlerMixin, RubyHandlerMixin, ZigHandlerMixin, CHandlerMixin, RustHandlerMixin, SwiftHandlerMixin, PHPHandlerMixin, KotlinHandlerMixin, DartHandlerMixin, ElixirHandlerMixin
 
 # Build tree-sitter languages
 _LANGUAGES: dict[Language, TSLanguage] = {}
@@ -67,7 +67,7 @@ _LANGUAGE_PACK_NAMES: dict[Language, str] = {
 }
 
 
-class FileParser(PythonHandlerMixin, JSHandlerMixin, GoHandlerMixin, JavaHandlerMixin, CsharpHandlerMixin, RubyHandlerMixin, ZigHandlerMixin, CHandlerMixin, RustHandlerMixin, SwiftHandlerMixin, PHPHandlerMixin, KotlinHandlerMixin, DartHandlerMixin):
+class FileParser(PythonHandlerMixin, JSHandlerMixin, GoHandlerMixin, JavaHandlerMixin, CsharpHandlerMixin, RubyHandlerMixin, ZigHandlerMixin, CHandlerMixin, RustHandlerMixin, SwiftHandlerMixin, PHPHandlerMixin, KotlinHandlerMixin, DartHandlerMixin, ElixirHandlerMixin):
     """Parse a single source file and extract symbols + edges."""
 
     def __init__(self, file_path: str, language: Language, source: bytes, *, is_tauri: bool = False):
