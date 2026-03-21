@@ -695,6 +695,52 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — parallel new implementation likely exists; verify migration is not being bypassed"
             )
 
+    # S861: Init file in diff — __init__.py changed.
+    # __init__.py changes alter a package's public surface or initialization order;
+    # this affects all importers of the package, not just callers of changed symbols.
+    if changed_files:
+        _init_files861 = [
+            f for f in changed_files
+            if f.replace("\\", "/").rsplit("/", 1)[-1] == "__init__.py"
+        ]
+        if _init_files861:
+            lines.append(
+                f"init file in diff: {len(_init_files861)} __init__.py file(s) changed"
+                f" — package public surface changed; all importers of this package are affected"
+            )
+
+    # S867: Dependency definition in diff — diff includes requirements/package.json/pyproject.
+    # Changes to dependency files affect the entire dependency tree; version bumps can
+    # introduce breaking changes or security vulnerabilities across the codebase.
+    _dep_markers867 = (
+        "requirements", "pyproject", "setup.py", "setup.cfg", "Pipfile",
+        "package.json", "Cargo.toml", "go.mod", "pom.xml", "build.gradle",
+    )
+    _dep_files867 = [
+        f for f in changed_files
+        if any(f.rsplit("/", 1)[-1].lower() == m.lower()
+               or f.rsplit("/", 1)[-1].lower().startswith(m.lower().rstrip("."))
+               for m in _dep_markers867)
+    ]
+    if _dep_files867:
+        lines.append(
+            f"dependency file in diff: {len(_dep_files867)} dependency definition file(s) changed"
+            f" — version changes affect the whole codebase; verify compatibility across all consumers"
+        )
+
+    # S885: Docs-only diff — all changed files are documentation (markdown/rst/txt).
+    # Doc-only diffs carry no runtime risk but may contain outdated examples; agents
+    # should verify that code examples in docs still match the current implementation.
+    _doc_exts885 = (".md", ".rst", ".txt", ".adoc")
+    if changed_files:
+        _doc_files885 = [f for f in changed_files if any(f.lower().endswith(e) for e in _doc_exts885)]
+        _non_doc885 = [f for f in changed_files if not any(f.lower().endswith(e) for e in _doc_exts885)]
+        if _doc_files885 and not _non_doc885:
+            lines.append(
+                f"docs diff: all {len(_doc_files885)} changed file(s) are documentation"
+                f" — doc-only change; verify examples still match current implementation"
+            )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 
@@ -2391,5 +2437,89 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f"docs in diff: {_doc_name596} changed ({_paired596})"
             f" — verify documentation accurately reflects the current code state"
         )
+
+    # S873: Test-only diff — all changed files are test files.
+    # A diff that only modifies tests without touching source code may indicate
+    # tests were updated to match a bug rather than the bug being fixed.
+    if changed_files:
+        _non_test_changed873 = [f for f in changed_files if not _is_test_file(f)]
+        _test_changed873 = [f for f in changed_files if _is_test_file(f)]
+        if _test_changed873 and not _non_test_changed873:
+            lines.append(
+                f"test-only diff: all {len(_test_changed873)} changed file(s) are test files"
+                f" — tests modified without source changes; verify tests weren't updated to hide bugs"
+            )
+
+    # S879: Large diff — 5 or more files changed in this diff.
+    # Wide-impact changes spanning many files are harder to review, more likely to have
+    # unintended interactions, and riskier to roll back if a problem is discovered.
+    if len(changed_files) >= 5:
+        lines.append(
+            f"large diff: {len(changed_files)} files changed"
+            f" — broad change surface; review each file independently for unintended side-effects"
+        )
+
+    # S891: New files in diff — changed files not found in graph (newly created).
+    # New files lack historical usage context; verify they are properly integrated
+    # into the module structure and not accidentally orphaned.
+    if changed_files:
+        _new_files891 = [
+            f for f in changed_files
+            if f not in graph.files and not any(gf.endswith(f) or f.endswith(gf) for gf in graph.files)
+        ]
+        if _new_files891:
+            _new_names891 = ", ".join(_new_files891[:2])
+            if len(_new_files891) > 2:
+                _new_names891 += f" +{len(_new_files891) - 2} more"
+            lines.append(
+                f"new files: {len(_new_files891)} changed file(s) not in graph ({_new_names891})"
+                f" — newly created files have no usage history; verify integration and imports"
+            )
+
+    # S897: Co-located diff — 2+ changed files are in the same directory.
+    # Multiple changes within one directory suggest a localized refactor; verify that
+    # the directory's public interface contracts remain intact after the changes.
+    if len(changed_files) >= 2:
+        _dirs897 = [
+            f.replace("\\", "/").rsplit("/", 1)[0] if "/" in f.replace("\\", "/") else "."
+            for f in changed_files
+        ]
+        _dir_counts897: dict[str, int] = {}
+        for d in _dirs897:
+            _dir_counts897[d] = _dir_counts897.get(d, 0) + 1
+        _max_dir_count897 = max(_dir_counts897.values())
+        _max_dir_name897 = max(_dir_counts897, key=_dir_counts897.__getitem__)
+        if _max_dir_count897 >= 2 and _max_dir_name897 != ".":
+            lines.append(
+                f"co-located diff: {_max_dir_count897} changed files in {_max_dir_name897}/"
+                f" — directory-scoped change; verify public interface contracts remain intact"
+            )
+
+    # S903: Mixed doc/code diff — diff includes both documentation and source code files.
+    # Mixed diffs indicate a doc update was bundled with a code change; agents should
+    # verify that the documentation accurately reflects the accompanying code changes.
+    _doc_exts903 = (".md", ".rst", ".txt", ".adoc")
+    if changed_files:
+        _doc903 = [f for f in changed_files if any(f.lower().endswith(e) for e in _doc_exts903)]
+        _code903 = [f for f in changed_files if not any(f.lower().endswith(e) for e in _doc_exts903)]
+        if _doc903 and _code903:
+            lines.append(
+                f"mixed diff: {len(_doc903)} doc file(s) and {len(_code903)} source file(s) changed together"
+                f" — mixed doc+code diff; verify docs accurately reflect the code changes"
+            )
+
+    # S909: Cross-module diff — changed files span 3+ different directories.
+    # A diff touching many directories suggests a cross-cutting concern; this often
+    # indicates a missing abstraction or scattered responsibility that should be encapsulated.
+    if len(changed_files) >= 3:
+        _diff_dirs909 = {
+            f.replace("\\", "/").rsplit("/", 1)[0] if "/" in f.replace("\\", "/") else "."
+            for f in changed_files
+        }
+        if len(_diff_dirs909) >= 3:
+            lines.append(
+                f"cross-module diff: {len(_diff_dirs909)} different directories changed"
+                f" — wide-scope change; check for missing abstraction or scattered responsibility"
+            )
 
     return "\n".join(lines)

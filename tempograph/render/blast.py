@@ -2180,6 +2180,113 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — changing test helpers invalidates assumptions across the test suite"
         )
 
+    # S860: API file blast — blast target is in an api/views/endpoints/routes directory.
+    # API layer files define external contracts; changes affect all API consumers,
+    # not just the internal callers tracked in the graph.
+    _path_parts860 = _fp589.replace("\\", "/").split("/")
+    _api_kws860 = {"api", "views", "endpoints", "routes", "controllers", "handlers"}
+    if any(part.lower() in _api_kws860 for part in _path_parts860[:-1]):
+        lines.append(
+            f"api layer blast: {_fp589.rsplit('/', 1)[-1]} is in an API layer directory"
+            f" — external contracts; changes affect API consumers beyond the call graph"
+        )
+
+    # S866: Migration file blast — blast target is a database migration file.
+    # Migration files alter database schema; changes affect all queries against the modified
+    # tables and cannot be rolled back without a reverse migration.
+    _fname866 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    _migration_kws866 = ("migration", "migrate", "upgrade", "downgrade", "alembic")
+    if any(kw in _fname866 for kw in _migration_kws866):
+        lines.append(
+            f"migration file blast: {_fp589.rsplit('/', 1)[-1]} is a database migration"
+            f" — schema change; verify all models and queries match the new schema"
+        )
+
+    # S872: Serializer/formatter blast — blast target file handles serialization or encoding.
+    # Serializer files transform data structures to/from external formats; changes affect
+    # all I/O boundaries and may silently break protocol compatibility.
+    _fname872 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    _serial_kws872 = ("serial", "format", "codec", "marshal", "encode", "decode", "schema")
+    if any(kw in _fname872 for kw in _serial_kws872):
+        lines.append(
+            f"serializer blast: {_fp589.rsplit('/', 1)[-1]} handles serialization or encoding"
+            f" — format changes affect all I/O boundaries; verify protocol compatibility"
+        )
+
+    # S884: Security-sensitive blast — blast target handles authentication or credentials.
+    # Security files contain access-control logic; bugs introduced here can expose
+    # data or bypass authorization for the entire application.
+    _sec_kws884 = ("auth", "token", "secret", "credential", "password", "jwt", "oauth", "crypto", "session")
+    _fname884 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if any(kw in _fname884 for kw in _sec_kws884):
+        lines.append(
+            f"security blast: {_fp589.rsplit('/', 1)[-1]} handles authentication or security"
+            f" — security-sensitive file; bugs here can expose data or bypass authorization"
+        )
+
+    # S878: Config file blast — blast target is a configuration or settings file.
+    # Config files are loaded at startup and read by many modules; changes propagate
+    # to all modules that consume configuration values at runtime.
+    _config_kws878 = ("config", "settings", "conf", "setup", "options", "params")
+    _fname878 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if any(kw in _fname878 for kw in _config_kws878):
+        lines.append(
+            f"config blast: {_fp589.rsplit('/', 1)[-1]} is a configuration or settings file"
+            f" — config changes affect all modules that read from it; review startup and default values"
+        )
+
+    # S890: Database file blast — blast target handles database access or ORM operations.
+    # Database files interact with persistent storage; bugs here can cause data corruption,
+    # inconsistency, or silent query failures across the whole application.
+    _db_kws890 = ("db", "database", "orm", "model", "migration", "repo", "repository", "dao", "query")
+    _fname890 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if (
+        any(kw in _fname890 for kw in _db_kws890)
+        and "mock" not in _fname890
+        and "test" not in _fname890
+    ):
+        lines.append(
+            f"database blast: {_fp589.rsplit('/', 1)[-1]} handles database operations"
+            f" — database changes risk data corruption or silent query failures; review transactions"
+        )
+
+    # S896: Event handler blast — blast target handles events, messages, or pub/sub.
+    # Event handler files process incoming messages from external producers; changes affect
+    # all producers and consumers of those messages, often across service boundaries.
+    _event_kws896 = ("handler", "listener", "subscriber", "receiver", "consumer", "event", "message", "queue")
+    _fname896 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if any(kw in _fname896 for kw in _event_kws896):
+        lines.append(
+            f"event handler blast: {_fp589.rsplit('/', 1)[-1]} handles events or messages"
+            f" — event handler changes affect all producers and consumers; verify message contracts"
+        )
+
+    # S902: Router blast — blast target is a router, controller, or API endpoint file.
+    # Router files define URL-to-handler mappings; changes affect the public API surface
+    # and may break clients relying on stable endpoints or response contracts.
+    _router_kws902 = ("route", "router", "endpoint", "controller", "view", "urls", "api")
+    _fname902 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if any(kw in _fname902 for kw in _router_kws902):
+        lines.append(
+            f"router blast: {_fp589.rsplit('/', 1)[-1]} contains routes or endpoints"
+            f" — changes affect API surface; review backward compatibility and client contracts"
+        )
+
+    # S908: Dense file blast — blast target has 30+ symbols defined in it.
+    # Files with high symbol density concentrate many concerns; changes here have a
+    # higher chance of introducing unintended side effects between co-located symbols.
+    _syms_in_file908 = [
+        s for s in graph.symbols.values()
+        if s.file_path == _fp589 or (
+            not _fp589.startswith("/") and _fp589 in s.file_path
+        )
+    ]
+    if len(_syms_in_file908) >= 30:
+        lines.append(
+            f"dense file blast: {_fp589.rsplit('/', 1)[-1]} has {len(_syms_in_file908)} symbols"
+            f" — dense file; changes have higher chance of unintended side effects"
+        )
+
     return "\n".join(lines)
 
 

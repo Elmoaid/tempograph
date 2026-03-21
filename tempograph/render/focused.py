@@ -3882,6 +3882,149 @@ def _signals_focused_fn_advanced(
                 f" — callers using operators (+, ==, < etc.) implicitly invoke this method"
             )
 
+    # S858: Abstract method focus — focused method lives in an abstract/base class.
+    # Abstract methods define contracts that all subclasses must implement; changing their
+    # signatures requires updating every concrete implementation in the hierarchy.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim858 = _seed_syms[0]
+        if (
+            _prim858.kind.value == "method"
+            and not _is_test_file(_prim858.file_path)
+            and _prim858.parent_id is not None
+        ):
+            _parent858 = graph.symbols.get(_prim858.parent_id)
+            if _parent858 and (
+                _parent858.name.startswith("Abstract")
+                or _parent858.name.startswith("Base")
+                or "ABC" in _parent858.name
+            ):
+                lines.append(
+                    f"\nabstract method: {_prim858.name} is in abstract class {_parent858.name}"
+                    f" — signature changes require updating all concrete subclass implementations"
+                )
+
+    # S864: High-arity function — focused function has 7+ parameters.
+    # Functions with many parameters are hard to call correctly; they usually indicate
+    # a missing abstraction that should be a config object, dataclass, or separate builder.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim864 = _seed_syms[0]
+        if _prim864.kind.value in ("function", "method") and not _is_test_file(_prim864.file_path):
+            _sig864 = _prim864.signature or ""
+            _open864 = _sig864.find("(")
+            _close864 = _sig864.rfind(")")
+            if _open864 != -1 and _close864 != -1:
+                _raw864 = _sig864[_open864 + 1:_close864]
+                _params864 = [
+                    p.strip().split(":")[0].split("=")[0].strip()
+                    for p in _raw864.split(",")
+                    if p.strip() and p.strip().split(":")[0].split("=")[0].strip() not in ("self", "cls", "*", "**")
+                    and not p.strip().startswith("*")
+                ]
+                if len(_params864) >= 7:
+                    lines.append(
+                        f"\nhigh arity: {_prim864.name} has {len(_params864)} parameters"
+                        f" — too many parameters; consider a config object or builder pattern"
+                    )
+
+    # S882: Class focus — the focused symbol is a class, not a function or method.
+    # Focusing on a class shows the whole class; agents should use method-level focus
+    # for targeted changes to avoid unintended modifications to sibling methods.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim882 = _seed_syms[0]
+        if _prim882.kind.value == "class" and not _is_test_file(_prim882.file_path):
+            _children882 = [
+                s for s in graph.symbols.values()
+                if s.parent_id == _prim882.id
+                and s.kind.value in ("method", "function")
+            ]
+            if _children882:
+                lines.append(
+                    f"\nclass focus: {_prim882.name} is a class with {len(_children882)} method(s)"
+                    f" — focus on individual methods for targeted changes; class-level focus shows all methods"
+                )
+
+    # S876: Long function focus — focused function spans 30+ lines.
+    # Long functions are hard to reason about end-to-end; agents should be extra cautious
+    # about side effects and implicit state changes buried deep in the function body.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim876 = _seed_syms[0]
+        if _prim876.kind.value in ("function", "method") and not _is_test_file(_prim876.file_path):
+            if _prim876.line_count >= 30:
+                lines.append(
+                    f"\nlong function: {_prim876.name} spans {_prim876.line_count} lines"
+                    f" — long functions hide complexity; review all side effects before changing"
+                )
+
+    # S870: No-caller symbol focus — focused function or method has zero recorded callers.
+    # A symbol with no callers is either an entry point, a dead symbol, or called via
+    # reflection/dynamic dispatch; agents should investigate before assuming it is safe to remove.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim870 = _seed_syms[0]
+        if (
+            _prim870.kind.value in ("function", "method")
+            and not _is_test_file(_prim870.file_path)
+            and not _prim870.name.startswith("_")
+        ):
+            _callers870 = graph.callers_of(_prim870.id)
+            if not _callers870:
+                lines.append(
+                    f"\nno callers: {_prim870.name} has no recorded callers"
+                    f" — may be an entry point, unused, or called via reflection/dynamic dispatch"
+                )
+
+    # S888: Multi-caller focus — focused function is called from 3+ distinct files.
+    # Functions called from many files are cross-cutting concerns; any change to the
+    # signature or behavior requires coordinated updates across all call sites.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim888 = _seed_syms[0]
+        if _prim888.kind.value in ("function", "method") and not _is_test_file(_prim888.file_path):
+            _callers888 = graph.callers_of(_prim888.id)
+            _caller_files888 = {c.file_path for c in _callers888 if not _is_test_file(c.file_path)}
+            if len(_caller_files888) >= 3:
+                lines.append(
+                    f"\nmulti-caller: {_prim888.name} is called from {len(_caller_files888)} distinct files"
+                    f" — cross-cutting function; changes require coordinated updates across {len(_caller_files888)} files"
+                )
+
+    # S894: Deprecated file focus — focused symbol is in a file marked as deprecated or legacy.
+    # Files named with legacy/deprecated patterns often contain unmaintained code;
+    # modifications may conflict with replacement implementations elsewhere.
+    _legacy_kws894 = ("deprecated", "legacy", "old_", "_old", "obsolete", "archive", "compat")
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim894 = _seed_syms[0]
+        _fbase894 = _prim894.file_path.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+        if any(kw in _fbase894 for kw in _legacy_kws894):
+            lines.append(
+                f"\ndeprecated file: {_prim894.name} is in {_prim894.file_path.rsplit('/', 1)[-1]}"
+                f" — file appears deprecated; check if functionality has been migrated before modifying"
+            )
+
+    # S900: Property focus — focused symbol is a property or computed getter.
+    # Properties are transparent to callers but may have hidden side effects;
+    # agents should verify no mutation or expensive computation occurs in getter bodies.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim900 = _seed_syms[0]
+        if _prim900.kind.value == "property" and not _is_test_file(_prim900.file_path):
+            lines.append(
+                f"\nproperty: {_prim900.name} is a property"
+                f" — transparent to callers but may hide side effects; verify getter has no mutations"
+            )
+
+    # S906: Constructor focus — focused symbol is a constructor (__init__, __new__).
+    # Constructors establish object invariants; changes may silently break all
+    # instantiation sites, especially when default argument values are modified.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim906 = _seed_syms[0]
+        if (
+            _prim906.kind.value in ("function", "method")
+            and _prim906.name in ("__init__", "__new__", "constructor")
+            and not _is_test_file(_prim906.file_path)
+        ):
+            lines.append(
+                f"\nconstructor: {_prim906.name} is a constructor"
+                f" — changes may break all instantiation sites; review default arguments carefully"
+            )
+
     return lines
 
 

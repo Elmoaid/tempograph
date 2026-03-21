@@ -3181,6 +3181,28 @@ def _signals_async_oop(
                 f" — over-fragmented; consider consolidating related small modules"
             )
 
+    # S859: Low module cohesion — many source files each have 5+ top-level functions.
+    # When many modules each expose many unrelated functions, the codebase lacks
+    # cohesion; functions should be grouped by shared data or purpose, not by accident.
+    _src_fps859 = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_src_fps859) >= 5:
+        _high_fn_files859 = []
+        for _fp859 in _src_fps859:
+            _fi859 = graph.files[_fp859]
+            _top_fns859 = [
+                graph.symbols[sid] for sid in _fi859.symbols
+                if sid in graph.symbols
+                and graph.symbols[sid].kind.value == "function"
+                and graph.symbols[sid].parent_id is None
+            ]
+            if len(_top_fns859) >= 5:
+                _high_fn_files859.append(_fp859)
+        if len(_high_fn_files859) >= len(_src_fps859) * 0.5:
+            lines.append(
+                f"low cohesion: {len(_high_fn_files859)}/{len(_src_fps859)} files each expose 5+ top-level functions"
+                f" — functions may not be grouped by shared purpose; consider grouping by domain"
+            )
+
     # S853: High dead ratio — over 40% of exported source symbols are unused.
     # A repo where most of its public API is dead is accumulating significant cleanup debt;
     # maintaining dead symbols wastes review time and creates misleading documentation.
@@ -3200,6 +3222,138 @@ def _signals_async_oop(
                 f"high dead ratio: {len(_dead_exported853)}/{len(_all_exported853)} exported symbols ({_ratio853:.0%}) appear unused"
                 f" — significant cleanup debt; review dead code before adding more public API"
             )
+
+    # S865: Abstract-heavy codebase — 3+ classes with Abstract/Base prefix or ABC suffix.
+    # Many abstract base classes indicate a deep class hierarchy; agents must understand
+    # which concrete implementations exist and whether all contracts are satisfied.
+    _abstract_classes865 = [
+        s for s in graph.symbols.values()
+        if s.kind.value == "class"
+        and not _is_test_file(s.file_path)
+        and (s.name.startswith("Abstract") or s.name.startswith("Base") or s.name.endswith("ABC"))
+    ]
+    if len(_abstract_classes865) >= 3:
+        _abc_names865 = ", ".join(s.name for s in _abstract_classes865[:3])
+        lines.append(
+            f"abstract-heavy: {len(_abstract_classes865)} abstract/base classes ({_abc_names865})"
+            f" — deep class hierarchy; verify all contracts are implemented by concrete subclasses"
+        )
+
+    # S883: Monolith file — one file contains 50%+ of all source symbols.
+    # A single file dominating the symbol count indicates a concentration of logic;
+    # changes to it carry higher blast radius than changes to smaller, focused files.
+    _src_syms883 = [
+        s for s in graph.symbols.values()
+        if not _is_test_file(s.file_path) and s.kind.value in ("function", "method", "class")
+    ]
+    if len(_src_syms883) >= 6:
+        _file_counts883: dict[str, int] = {}
+        for s in _src_syms883:
+            _file_counts883[s.file_path] = _file_counts883.get(s.file_path, 0) + 1
+        _top_file883, _top_count883 = max(_file_counts883.items(), key=lambda x: x[1])
+        _pct883 = int(_top_count883 / len(_src_syms883) * 100)
+        if _pct883 >= 50:
+            lines.append(
+                f"monolith file: {_top_file883.rsplit('/', 1)[-1]} contains {_pct883}% of source symbols"
+                f" — concentrated logic; changes have wide blast radius"
+            )
+
+    # S877: Low docstring coverage — 70%+ of exported non-test functions lack docstrings.
+    # Undocumented functions require reading the full body to understand intent; agents
+    # generating or modifying code in this codebase should add docstrings proactively.
+    _src_fns877 = [
+        s for s in graph.symbols.values()
+        if s.kind.value in ("function", "method")
+        and s.exported
+        and not _is_test_file(s.file_path)
+    ]
+    if len(_src_fns877) >= 5:
+        _undoc877 = [s for s in _src_fns877 if not s.doc]
+        _undoc_pct877 = int(len(_undoc877) / len(_src_fns877) * 100)
+        if _undoc_pct877 >= 70:
+            lines.append(
+                f"low doc coverage: {_undoc_pct877}% of exported functions lack docstrings"
+                f" — undocumented codebase; read function bodies carefully to infer intent"
+            )
+
+    # S871: No test files — repo has 5+ source files but no test files.
+    # An untested codebase means all changes carry undetected regression risk;
+    # agents should flag any behavior changes as potentially breaking.
+    _test_files871 = [fp for fp in graph.files if _is_test_file(fp)]
+    if not _test_files871 and len(graph.files) >= 5:
+        lines.append(
+            f"no test files: {len(graph.files)} source files but no test files detected"
+            f" — untested codebase; changes carry higher risk of undetected regressions"
+        )
+
+    # S889: High fan-in file — one file is imported by 5+ other source files.
+    # Files with high fan-in are critical infrastructure; any change triggers a
+    # large blast radius across the dependency tree of importing modules.
+    _fan_in889: dict[str, int] = {}
+    for fp889 in graph.files:
+        if not _is_test_file(fp889):
+            importers889 = graph.importers_of(fp889)
+            count889 = sum(1 for i in importers889 if not _is_test_file(i))
+            if count889 > 0:
+                _fan_in889[fp889] = count889
+    if _fan_in889:
+        _top_fp889, _top_in889 = max(_fan_in889.items(), key=lambda x: x[1])
+        if _top_in889 >= 5:
+            lines.append(
+                f"high fan-in: {_top_fp889.rsplit('/', 1)[-1]} imported by {_top_in889} files"
+                f" — critical infrastructure; changes here have wide blast radius"
+            )
+
+    # S895: Circular import pair — two source files mutually import each other.
+    # Circular imports create tight coupling and make isolated testing impossible;
+    # they are a common source of import-order errors and refactoring difficulty.
+    _seen_pairs895: set[tuple[str, str]] = set()
+    for fp895 in graph.files:
+        if _is_test_file(fp895):
+            continue
+        importers895 = {i for i in graph.importers_of(fp895) if not _is_test_file(i)}
+        for imp895 in importers895:
+            if fp895 in {i for i in graph.importers_of(imp895) if not _is_test_file(i)}:
+                pair895 = tuple(sorted([fp895.rsplit("/", 1)[-1], imp895.rsplit("/", 1)[-1]]))
+                _seen_pairs895.add(pair895)  # type: ignore[arg-type]
+    if _seen_pairs895:
+        _ex895 = sorted(_seen_pairs895)[0]
+        lines.append(
+            f"circular imports: {len(_seen_pairs895)} mutual import pair(s)"
+            f" — e.g. {_ex895[0]} ↔ {_ex895[1]}; circular imports create tight coupling"
+        )
+
+    # S901: Flat structure — all source files are in a single root directory.
+    # A flat codebase with 5+ files and no subdirectories becomes hard to navigate
+    # as it grows; consider grouping by module or domain to improve discoverability.
+    if len(graph.files) >= 5:
+        _src_files901 = [fp for fp in graph.files if not _is_test_file(fp)]
+        _dirs901 = {
+            fp.replace("\\", "/").rsplit("/", 1)[0] if "/" in fp.replace("\\", "/") else "."
+            for fp in _src_files901
+        }
+        if len(_dirs901) == 1 and "." in _dirs901 and len(_src_files901) >= 5:
+            lines.append(
+                f"flat structure: all {len(_src_files901)} source files are in the root directory"
+                f" — no subdirectory organization; consider grouping by module as codebase grows"
+            )
+
+    # S907: High constant ratio — repo has more constants than functions (config-heavy codebase).
+    # A constant-heavy repo often has scattered configuration values mixed with business logic;
+    # centralizing into dedicated config files improves discoverability and reduces change risk.
+    _all_fns907 = [
+        s for s in graph.symbols.values()
+        if s.kind.value in ("function", "method") and not _is_test_file(s.file_path)
+    ]
+    _all_consts907 = [
+        s for s in graph.symbols.values()
+        if s.kind.value == "constant" and not _is_test_file(s.file_path)
+    ]
+    if len(_all_fns907) >= 5 and len(_all_consts907) > len(_all_fns907):
+        lines.append(
+            f"high constant ratio: {len(_all_consts907)} constants vs {len(_all_fns907)} functions"
+            f" — constant-heavy codebase; consider centralizing configuration into dedicated files"
+        )
 
     return lines
 

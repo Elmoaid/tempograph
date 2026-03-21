@@ -2608,5 +2608,130 @@ def _collect_hotspots_signals(
                     f" — top hotspot in deprecated module; callers should be migrated to the new path"
                 )
 
+    # S862: Private hotspot — top hotspot function name starts with _ (single underscore).
+    # A private function that has become the top hotspot is being used beyond its intended scope;
+    # callers are coupling to implementation details that should be encapsulated.
+    if scores:
+        _top862 = scores[0][1]
+        if (
+            _top862 is not None
+            and _top862.name.startswith("_")
+            and not _top862.name.startswith("__")
+            and not _is_test_file(_top862.file_path)
+        ):
+            _callers862 = graph.callers_of(_top862.id)
+            out.append(
+                f"\nprivate hotspot: {_top862.name} is a private function but the top hotspot ({len(_callers862)} callers)"
+                f" — private implementation detail with wide usage; consider exposing it as public API"
+            )
+
+    # S868: Super-hotspot — top hotspot has 10+ direct callers.
+    # A function with 10+ callers is extremely widely used; any behavioral change
+    # requires coordination with all callers and is high-risk to refactor or remove.
+    if scores:
+        _top868 = scores[0][1]
+        if _top868 is not None and not _is_test_file(_top868.file_path):
+            _callers868 = graph.callers_of(_top868.id)
+            if len(_callers868) >= 10:
+                out.append(
+                    f"\nsuper hotspot: {_top868.name} has {len(_callers868)} direct callers"
+                    f" — extremely wide usage; changes require coordination across {len(_callers868)} callers"
+                )
+
+    # S874: Wide-file hotspot — top hotspot has callers from 5+ different files.
+    # A hotspot with callers spread across many files is a cross-cutting concern;
+    # any change ripples through a wide surface area of the codebase.
+    if scores:
+        _top874 = scores[0][1]
+        if _top874 is not None and not _is_test_file(_top874.file_path):
+            _callers874 = graph.callers_of(_top874.id)
+            _caller_files874 = {c.file_path for c in _callers874}
+            if len(_caller_files874) >= 5:
+                out.append(
+                    f"\nwide-file hotspot: {_top874.name} is called from {len(_caller_files874)} distinct files"
+                    f" — cross-cutting concern; changes affect {len(_caller_files874)} files across the codebase"
+                )
+
+    # S886: Utility file hotspot — top hotspot is in a utils/helpers/common/shared file.
+    # Utility hotspots are often depended on by unrelated parts of the codebase; changes
+    # can cause surprising regressions across multiple feature areas simultaneously.
+    if scores:
+        _top886 = scores[0][1]
+        if _top886 is not None and not _is_test_file(_top886.file_path):
+            _fname886 = _top886.file_path.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+            _util_kws886 = ("util", "helper", "common", "shared", "base", "mixin", "core")
+            if any(kw in _fname886 for kw in _util_kws886):
+                out.append(
+                    f"\nutility hotspot: {_fname886} is a utility/shared file with the top hotspot ({_top886.name})"
+                    f" — utility hotspots cause cross-feature regressions; changes require wide test coverage"
+                )
+
+    # S880: Uncalled hotspot — top complexity hotspot has no recorded callers.
+    # A complex function with no callers may be dead code that accumulated complexity
+    # without being exercised; investigate before refactoring or deleting.
+    if scores:
+        _top880 = scores[0][1]
+        if _top880 is not None and not _is_test_file(_top880.file_path):
+            _callers880 = graph.callers_of(_top880.id)
+            if not _callers880:
+                out.append(
+                    f"\nuncalled hotspot: {_top880.name} is the most complex symbol but has no recorded callers"
+                    f" — may be dead code or an entry point called via dynamic dispatch"
+                )
+
+    # S892: Hotspot cluster — 3+ of the top 10 hotspots are in the same file.
+    # A file containing multiple top hotspots is an implicit coupling point; changes
+    # to any one symbol can ripple through co-located hotspots in the same file.
+    if len(scores) >= 3:
+        _cluster_files892: dict[str, int] = {}
+        for _, sym892 in scores[:10]:
+            if sym892 is not None and not _is_test_file(sym892.file_path):
+                _cluster_files892[sym892.file_path] = _cluster_files892.get(sym892.file_path, 0) + 1
+        if _cluster_files892:
+            _top_cluster_count892 = max(_cluster_files892.values())
+            if _top_cluster_count892 >= 3:
+                _top_cluster_fp892 = max(_cluster_files892, key=_cluster_files892.__getitem__)
+                out.append(
+                    f"\nhotspot cluster: {_top_cluster_fp892.rsplit('/', 1)[-1]} contains"
+                    f" {_top_cluster_count892} of top hotspots"
+                    f" — concentrated complexity; changes here affect multiple high-impact symbols"
+                )
+
+    # S898: Long method hotspot — top hotspot function spans 50+ lines.
+    # A long, high-complexity function is the highest-risk refactoring target;
+    # extracting helpers should be done incrementally to avoid introducing regressions.
+    if scores:
+        _top898 = scores[0][1]
+        if _top898 is not None and not _is_test_file(_top898.file_path):
+            if _top898.line_count >= 50:
+                out.append(
+                    f"\nlong method hotspot: {_top898.name} spans {_top898.line_count} lines"
+                    f" — large complex function; extract smaller helpers incrementally to reduce risk"
+                )
+
+    # S904: Test hotspot — the top complexity hotspot is a test function.
+    # A complex test is a sign of over-engineered setup; this makes tests brittle and
+    # hard to maintain, increasing the risk that test failures are ignored or bypassed.
+    if scores:
+        _top904 = scores[0][1]
+        if _top904 is not None and _is_test_file(_top904.file_path):
+            out.append(
+                f"\ncomplex test hotspot: {_top904.name} in {_top904.file_path.rsplit('/', 1)[-1]}"
+                f" — top hotspot is a test function; extract fixtures and helpers to reduce test maintenance"
+            )
+
+    # S910: Concentration hotspot — all top 5 hotspots are in the same file.
+    # When every high-complexity symbol lives in a single file, changes there have
+    # zero isolation from other hot code paths; this file is the highest-risk target.
+    if len(scores) >= 5:
+        _top5_files910 = {sym910.file_path for _, sym910 in scores[:5] if sym910 is not None}
+        if len(_top5_files910) == 1:
+            _sole_file910 = next(iter(_top5_files910))
+            if not _is_test_file(_sole_file910):
+                out.append(
+                    f"\nconcentration hotspot: all top 5 hotspots are in {_sole_file910.rsplit('/', 1)[-1]}"
+                    f" — extreme complexity concentration; highest-risk file in the codebase"
+                )
+
     return out
 
