@@ -2884,7 +2884,24 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
                 lc = sym.line_count
                 total_lines += lc
                 age = _sym_age(sym)
-                lines.append(f"    {sym.kind.value} {sym.qualified_name} (L{sym.line_start}-{sym.line_end}, {lc} lines) [confidence: {conf}]{age}")
+                # Superseded hint: if name has legacy/old/deprecated suffix, find active replacement.
+                _sup_hint = ""
+                _STALE_SUFFIXES = ("_old", "_legacy", "_v1", "_v2", "_deprecated", "_backup", "_bak", "_orig")
+                _lower = sym.name.lower()
+                for _suf in _STALE_SUFFIXES:
+                    if _lower.endswith(_suf):
+                        _base = sym.name[:-(len(_suf))]
+                        _replacement = next(
+                            (s for s in graph.symbols.values()
+                             if s.name.lower() == _base.lower()
+                             and s.id != sym.id
+                             and graph.callers_of(s.id)),
+                            None
+                        )
+                        if _replacement:
+                            _sup_hint = f" → possibly replaced by: {_replacement.name}"
+                        break
+                lines.append(f"    {sym.kind.value} {sym.qualified_name} (L{sym.line_start}-{sym.line_end}, {lc} lines) [confidence: {conf}]{age}{_sup_hint}")
             if len(by_line) > 10:
                 lines.append(f"    ... and {len(by_line) - 10} more")
             lines.append("")

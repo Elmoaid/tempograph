@@ -5849,3 +5849,52 @@ class TestOverviewFnSizeDistribution:
         assert "fn sizes:" not in out, (
             f"fn sizes: must not appear for tiny repo (<5 functions); got:\n{out}"
         )
+
+
+class TestDeadCodeSupersededHint:
+    """S49: Dead code — '→ possibly replaced by: NewName' for legacy/old/deprecated symbols.
+
+    When a dead symbol has a _old/_legacy/_deprecated suffix AND an active symbol
+    exists with the base name, a 'possibly replaced by:' hint is appended.
+    Symbols without legacy suffixes must not show the hint.
+    """
+
+    def test_superseded_hint_shown_for_old_suffix(self, tmp_path):
+        """'→ possibly replaced by:' appears for fn_old when fn is active."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        (tmp_path / "service.py").write_text(
+            "def process(x): return x * 2\n"  # active replacement
+            "def process_old(x): return x + 1\n"  # dead legacy version
+        )
+        (tmp_path / "caller.py").write_text(
+            "from service import process\n"
+            "def run(): return process(5)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g, include_low=True)
+
+        if "process_old" in out:
+            assert "possibly replaced by" in out, (
+                f"Expected 'possibly replaced by' for process_old; got:\n{out}"
+            )
+            assert "process" in out, (
+                f"Expected 'process' as replacement; got:\n{out}"
+            )
+
+    def test_no_hint_for_regular_dead_symbol(self, tmp_path):
+        """'→ possibly replaced by:' absent for dead symbols without legacy suffix."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        (tmp_path / "utils.py").write_text(
+            "def compute(x): return x\n"  # dead (no callers)
+            "def helper(x): return x\n"  # also dead
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g, include_low=True)
+
+        assert "possibly replaced by" not in out, (
+            f"'possibly replaced by' must not appear for regular dead symbols; got:\n{out}"
+        )
