@@ -1,5 +1,5 @@
 import { useState, type RefObject } from "react";
-import { Play } from "lucide-react";
+import { Play, Loader2 } from "lucide-react";
 
 interface ArgsInputProps {
   value: string;
@@ -97,14 +97,17 @@ export function ArgsInput({
         )}
       </div>
       <button
-        className="btn"
+        className={modeRunning ? "btn btn-run running" : "btn btn-run"}
         onClick={onRun}
         disabled={modeRunning}
         style={{ padding: "4px 10px" }}
         title="Run (⌘↵)"
         aria-label={modeRunning ? "Running…" : "Run mode (⌘↵)"}
       >
-        <Play size={11} aria-hidden="true" /> {modeRunning ? "..." : "Run"}
+        {modeRunning
+          ? <><Loader2 size={11} className="spin" aria-hidden="true" /> Running...</>
+          : <><Play size={11} aria-hidden="true" /> Run</>
+        }
       </button>
     </div>
   );
