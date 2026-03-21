@@ -25039,3 +25039,242 @@ class TestDeadMagicMethodsS518:
         assert "dead magic methods" not in out, (
             f"'dead magic methods' must not appear when model.py is imported; got:\n{out}"
         )
+
+
+# ── S513: Generator function focused ─────────────────────────────────────────
+
+class TestGeneratorFunctionFocusedS513:
+    """S513: Focused function with -> Iterator return hint emits generator function signal."""
+
+    def test_generator_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "data.py").write_text(
+            "from typing import Iterator\n"
+            "def stream_rows(path: str) -> Iterator[str]:\n"
+            "    with open(path) as f:\n"
+            "        for line in f:\n"
+            "            yield line\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from data import stream_rows\ndef process(): list(stream_rows('x.csv'))\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="stream_rows")
+        assert "generator function" in out, (
+            f"Expected 'generator function' for Iterator return; got:\n{out}"
+        )
+
+    def test_generator_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def compute(x: int) -> int:\n    return x * 2\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from utils import compute\ndef run(): return compute(5)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="compute")
+        assert "generator function" not in out, (
+            f"'generator function' must not appear for non-generator; got:\n{out}"
+        )
+
+
+# ── S514: Mixed async/sync overview ──────────────────────────────────────────
+
+class TestMixedAsyncSyncOverviewS514:
+    """S514: 3+ async + 3+ sync source functions emits mixed async/sync signal."""
+
+    def test_mixed_async_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        (tmp_path / "handlers.py").write_text(
+            "import asyncio\n"
+            "async def handle_a(): pass\n"
+            "async def handle_b(): pass\n"
+            "async def handle_c(): pass\n"
+            "def sync_a(): pass\n"
+            "def sync_b(): pass\n"
+            "def sync_c(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "mixed async/sync" in out, (
+            f"Expected 'mixed async/sync' for 3+ async + 3+ sync fns; got:\n{out}"
+        )
+
+    def test_mixed_async_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def sync_a(x): return x\n"
+            "def sync_b(x): return x + 1\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "mixed async/sync" not in out, (
+            f"'mixed async/sync' must not appear for sync-only code; got:\n{out}"
+        )
+
+
+# ── S515: Config file blast ───────────────────────────────────────────────────
+
+class TestConfigFileBlastS515:
+    """S515: Blast target with config/settings in name emits config file blast signal."""
+
+    def test_config_blast_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "config.py").write_text(
+            "DEBUG = False\nDB_URL = 'sqlite:///db.sqlite3'\n"
+        )
+        (tmp_path / "service.py").write_text(
+            "from config import DB_URL\ndef connect(): return DB_URL\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="config.py")
+        assert "config file blast" in out, (
+            f"Expected 'config file blast' for config.py; got:\n{out}"
+        )
+
+    def test_config_blast_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def helper(x): return x\n")
+        (tmp_path / "main.py").write_text(
+            "from utils import helper\ndef run(): return helper(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="utils.py")
+        assert "config file blast" not in out, (
+            f"'config file blast' must not appear for non-config file; got:\n{out}"
+        )
+
+
+# ── S516: Generated file in diff ──────────────────────────────────────────────
+
+class TestGeneratedFileInDiffS516:
+    """S516: Diff touching a _pb2 or _generated file emits generated file in diff signal."""
+
+    def test_generated_diff_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "schema_pb2.py").write_text(
+            "# Auto-generated by protoc\nclass SchemaProto:\n    pass\n"
+        )
+        (tmp_path / "service.py").write_text(
+            "from schema_pb2 import SchemaProto\ndef parse(): return SchemaProto()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["schema_pb2.py"])
+        assert "generated file in diff" in out, (
+            f"Expected 'generated file in diff' for _pb2 file; got:\n{out}"
+        )
+
+    def test_generated_diff_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def helper(x): return x\n")
+        (tmp_path / "main.py").write_text(
+            "from utils import helper\ndef run(): return helper(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["utils.py"])
+        assert "generated file in diff" not in out, (
+            f"'generated file in diff' must not appear for regular file; got:\n{out}"
+        )
+
+
+# ── S517: Deprecated hotspot ──────────────────────────────────────────────────
+
+class TestDeprecatedHotspotS517:
+    """S517: Top hotspot function with deprecated/legacy in name emits the signal."""
+
+    def test_deprecated_hotspot_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "api.py").write_text(
+            "def get_user_legacy(id):\n    return {'id': id}\n"
+        )
+        callers = "\n".join(
+            f"from api import get_user_legacy\n"
+            f"def caller_{i}(): get_user_legacy({i})\n"
+            for i in range(5)
+        )
+        (tmp_path / "callers.py").write_text(callers)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "deprecated hotspot" in out, (
+            f"Expected 'deprecated hotspot' for _legacy function; got:\n{out}"
+        )
+
+    def test_deprecated_hotspot_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "api.py").write_text(
+            "def get_user(id):\n    return {'id': id}\n"
+        )
+        callers = "\n".join(
+            f"from api import get_user\ndef caller_{i}(): get_user({i})\n"
+            for i in range(5)
+        )
+        (tmp_path / "callers.py").write_text(callers)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "deprecated hotspot" not in out, (
+            f"'deprecated hotspot' must not appear for normal function; got:\n{out}"
+        )
+
+
+# ── S518: Dead magic methods dead ─────────────────────────────────────────────
+
+class TestDeadMagicMethodsS518:
+    """S518: 2+ dead dunder methods (__str__/__repr__) in non-imported file emit signal."""
+
+    def test_dead_magic_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "models.py").write_text(
+            "class Event:\n"
+            "    def __init__(self, name): self.name = name\n"
+            "    def __str__(self): return self.name\n"
+            "    def __repr__(self): return f'Event({self.name!r})'\n"
+            "    def __len__(self): return len(self.name)\n"
+        )
+        (tmp_path / "main.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead magic methods" in out, (
+            f"Expected 'dead magic methods' for orphaned dunder methods; got:\n{out}"
+        )
+
+    def test_dead_magic_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "models.py").write_text(
+            "class Event:\n"
+            "    def __init__(self, name): self.name = name\n"
+            "    def __str__(self): return self.name\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from models import Event\n"
+            "def run(): e = Event('x'); str(e)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead magic methods" not in out, (
+            f"'dead magic methods' must not appear when model.py is imported; got:\n{out}"
+        )
