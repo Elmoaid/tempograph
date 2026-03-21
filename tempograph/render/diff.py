@@ -1704,4 +1704,23 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — cannot be meaningfully reviewed; large binaries bloat the repo permanently"
         )
 
+    # S584: Version file in diff — diff includes a version declaration file.
+    # Version bumps in the same diff as feature code can create ambiguous release boundaries;
+    # agents should confirm whether the version change is intentional and complete.
+    _version_markers584 = ("version.py", "_version.py", "VERSION", "version.txt")
+    _version_files584 = [
+        f for f in changed_files
+        if f.rsplit("/", 1)[-1] in _version_markers584
+        or f.lower().endswith("pyproject.toml")
+        or f.lower().endswith("setup.cfg")
+        or f.lower().endswith("package.json")
+        or f.lower() == "version"
+    ]
+    if _version_files584:
+        _ver_name584 = _version_files584[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"version file in diff: {_ver_name584} changed alongside code"
+            f" — confirm version bump is intentional and changelog is updated"
+        )
+
     return "\n".join(lines)

@@ -27607,3 +27607,39 @@ class TestWideFileHotspotS580:
         assert "wide-file hotspot" not in out, (
             f"'wide-file hotspot' must not appear when file has fewer than 10 symbols; got:\n{out}"
         )
+
+class TestDeadServiceClassS581:
+    """S581: Dead service-layer class (Manager/Service/Controller/etc.) emits signal."""
+
+    def test_dead_service_class_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "services.py").write_text(
+            "class UserManager:\n"
+            "    def __init__(self): pass\n"
+            "    def create_user(self, name): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead service classes" in out, (
+            f"Expected 'dead service classes' for unused UserManager class; got:\n{out}"
+        )
+
+    def test_dead_service_class_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "services.py").write_text(
+            "class UserManager:\n"
+            "    def create_user(self, name): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from services import UserManager\n"
+            "mgr = UserManager()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead service classes" not in out, (
+            f"'dead service classes' must not appear when service class is imported; got:\n{out}"
+        )

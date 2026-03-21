@@ -3068,6 +3068,29 @@ def _signals_focused_fn_advanced(
                     f" — pure stub or data container; consider @dataclass, TypedDict, or NamedTuple"
                 )
 
+    # S581: Many parameters — focused function has 6 or more parameters.
+    # Wide parameter lists are a design smell: they reduce callsite readability,
+    # increase coupling, and often indicate a missing abstraction (e.g. config object).
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim581 = _seed_syms[0]
+        if _prim581.kind.value in ("function", "method") and not _is_test_file(_prim581.file_path):
+            _sig581 = _prim581.signature or ""
+            # Count params: find content between first ( and matching ), split by comma
+            _paren581 = _sig581.find("(")
+            _rparen581 = _sig581.rfind(")")
+            if _paren581 != -1 and _rparen581 != -1:
+                _params_str581 = _sig581[_paren581 + 1:_rparen581].strip()
+                if _params_str581:
+                    _param_count581 = len([
+                        p for p in _params_str581.split(",")
+                        if p.strip() and p.strip() not in ("self", "cls")
+                    ])
+                    if _param_count581 >= 6:
+                        lines.append(
+                            f"\nmany parameters: {_prim581.name} has {_param_count581} parameters"
+                            f" — wide signatures reduce readability; consider a config object or named tuple"
+                        )
+
     return lines
 
 

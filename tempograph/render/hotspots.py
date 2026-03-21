@@ -1877,5 +1877,23 @@ def _collect_hotspots_signals(
                     f" which has {_fi580_syms} symbols — dense module; changes require large context window"
                 )
 
+    # S585: Low-complexity hotspot — top hotspot function has cyclomatic complexity < 3.
+    # A heavily-called but trivially simple function suggests it's a routing shim or
+    # dispatcher; the real complexity lives in its callees, not the hotspot itself.
+    if scores:
+        _top585 = scores[0][1]
+        if (
+            not _is_test_file(_top585.file_path)
+            and _top585.kind.value in ("function", "method")
+            and _top585.complexity < 3
+        ):
+            _caller_count585 = len(graph.callers_of(_top585.id))
+            if _caller_count585 >= 3:
+                out.append(
+                    f"\nlow-complexity hotspot: {_top585.name} has {_caller_count585} callers"
+                    f" but complexity {_top585.complexity} — likely a dispatcher or shim;"
+                    f" real complexity lives in its callees"
+                )
+
     return out
 

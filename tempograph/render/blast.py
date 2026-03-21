@@ -1603,6 +1603,22 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — changes here may break consumers not visible in the local import graph"
         )
 
+    # S583: Many callers per symbol — blast target has 10+ cross-file callers.
+    # Symbols with very high caller counts are de-facto stable APIs; any signature
+    # or behavioral change requires updating many call sites simultaneously.
+    _s583_syms = [
+        sym for sym in graph.symbols.values()
+        if sym.file_path == file_path or sym.file_path.replace("\\", "/") == _fp578
+    ]
+    if _s583_syms:
+        _max_callers583 = max(len(graph.callers_of(s.id)) for s in _s583_syms)
+        if _max_callers583 >= 10:
+            _hot_sym583 = max(_s583_syms, key=lambda s: len(graph.callers_of(s.id)))
+            lines.append(
+                f"high-caller symbol: {_hot_sym583.name} has {_max_callers583} callers"
+                f" — de-facto stable API; signature changes require updating many call sites"
+            )
+
     return "\n".join(lines)
 
 

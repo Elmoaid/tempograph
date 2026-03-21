@@ -2430,6 +2430,23 @@ def _signals_async_oop(
             f" — source was renamed or deleted; tests cover nothing and create false confidence"
         )
 
+    # S582: No cross-file imports — 5+ source files but zero import edges between them.
+    # A fully disconnected module graph means every file is an island; either the project
+    # uses dynamic imports not detected by the parser, or the files share no dependencies at all.
+    _s582_src_files = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_s582_src_files) >= 5:
+        _s582_import_edges = [
+            e for e in graph.edges
+            if e.kind.value == "imports"
+            and not _is_test_file(e.source_id)
+            and not _is_test_file(e.target_id)
+        ]
+        if not _s582_import_edges:
+            lines.append(
+                f"no cross-file imports: {len(_s582_src_files)} source files with zero import edges detected"
+                f" — may use dynamic imports, path manipulation, or files are truly unrelated"
+            )
+
     return lines
 
 
