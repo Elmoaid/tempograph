@@ -1592,6 +1592,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                 f" — high-density change surface; changes compete for reviewer attention and test coverage"
             )
 
+    # S578: Shared module blast — blast file lives in a shared/common/core/lib directory.
+    # Modules in shared infrastructure directories are used by many packages by convention;
+    # changes can break consumers that don't appear in the local import graph.
+    _fp578 = file_path.replace("\\", "/")
+    _shared_markers578 = ("/shared/", "/common/", "/core/", "/lib/", "/base/", "/foundation/")
+    if any(m in f"/{_fp578}/" for m in _shared_markers578):
+        lines.append(
+            f"shared module blast: {file_path.rsplit('/', 1)[-1]} is in a shared infrastructure directory"
+            f" — changes here may break consumers not visible in the local import graph"
+        )
+
     return "\n".join(lines)
 
 
