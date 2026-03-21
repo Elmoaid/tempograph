@@ -10,130 +10,96 @@ from ._utils import _node_text, _first_comment_above, _extract_signature
 class DartHandlerMixin:
     """Mixin providing Dart-specific parsing methods for FileParser."""
 
-    # ── Dart entry point ────────────────────────────────────────
+    # ── Dart entry point ─────────────────────────────────────
 
     def _handle_dart(self, node: Node) -> None:
-        """Walk the top-level program node."""
-        children = list(node.children)
+        children = node.children
         i = 0
         while i < len(children):
             child = children[i]
             t = child.type
+
             if t == "import_or_export":
-                self._dart_handle_import(child)
-            elif t == "function_signature":
-                # Top-level function: signature followed by body
-                body = children[i + 1] if i + 1 < len(children) and children[i + 1].type == "function_body" else None
-                self._handle_dart_function(child, body, is_method=False)
-                if body:
-                    i += 1  # skip body on next iteration
-            elif t in ("class_definition", "mixin_declaration"):
+                self.imports.append(_node_text(child, self.source).strip())
+            elif t == "class_definition":
                 self._handle_dart_class(child)
             elif t == "enum_declaration":
                 self._handle_dart_enum(child)
+            elif t == "mixin_declaration":
+                self._handle_dart_mixin(child)
+            elif t == "extension_declaration":
+                self._handle_dart_extension(child)
+            elif t == "type_alias":
+                self._handle_dart_type_alias(child)
+            elif t == "function_signature":
+                # Top-level function: signature node followed by function_body
+                body = children[i + 1] if i + 1 < len(children) and children[i + 1].type == "function_body" else None
+                self._handle_dart_top_function(child, body)
+                if body:
+                    i += 1  # skip body node
+            elif t in ("const_builtin", "final_builtin"):
+                # const/final top-level variable: keyword followed by static_final_declaration_list
+                kind_kw = t
+                if i + 1 < len(children) and children[i + 1].type == "static_final_declaration_list":
+                    i += 1
+                    self._handle_dart_top_var(children[i], const=(kind_kw == "const_builtin"))
+            elif t == "static_final_declaration_list":
+                # Standalone (shouldn't happen normally but handle defensively)
+                self._handle_dart_top_var(child, const=False)
+            elif t in ("inferred_type", "type_identifier"):
+                # var/typed top-level variable: type node followed by initialized_identifier_list
+                if i + 1 < len(children) and children[i + 1].type == "initialized_identifier_list":
+                    i += 1
+                    self._handle_dart_top_var_initialized(children[i])
+
             i += 1
 
-    # ── Dart imports ────────────────────────────────────────────
+    # ── Top-level function ───────────────────────────────────
 
-    def _dart_handle_import(self, node: Node) -> None:
-        """Extract import URI from import_or_export node."""
-        for lib in node.children:
-            if lib.type != "library_import":
-                continue
-            for spec in lib.children:
-                if spec.type != "import_specification":
-                    continue
-                for part in spec.children:
-                    if part.type == "configurable_uri":
-                        for uri_node in part.children:
-                            if uri_node.type == "uri":
-                                text = _node_text(uri_node, self.source).strip("'\"")
-                                if text:
-                                    self.imports.append(text)
-
-    # ── Dart visibility ─────────────────────────────────────────
-
-    def _dart_is_private(self, name: str) -> bool:
-        """In Dart, names starting with '_' are library-private."""
-        return name.startswith("_")
-
-    # ── Dart top-level / method function ────────────────────────
-
-    def _handle_dart_function(
-        self,
-        sig_node: Node,
-        body_node: Node | None,
-        *,
-        is_method: bool,
-    ) -> None:
-        """Create a Symbol from a Dart function_signature + optional function_body."""
-        # Name: identifier child of function_signature
-        name_node = self._dart_first_child_of_type(sig_node, "identifier")
+    def _handle_dart_top_function(self, sig_node: Node, body_node: Node | None) -> None:
+        name_node = self._dart_find_child(sig_node, "identifier")
         if not name_node:
             return
         name = _node_text(name_node, self.source)
         if not name:
             return
-
-        exported = not self._dart_is_private(name)
-        qualified_name = name
-        if self._symbol_stack:
-            parent_qname = self._parent_qualified_name()
-            if parent_qname:
-                qualified_name = f"{parent_qname}.{name}"
-
-        kind = SymbolKind.METHOD if is_method else SymbolKind.FUNCTION
         sym_id = self._make_id(name)
+        exported = not name.startswith("_")
         doc = _first_comment_above(sig_node, self.source)
-
-        line_start = sig_node.start_point[0] + 1
-        line_end = (body_node.end_point[0] + 1) if body_node else (sig_node.end_point[0] + 1)
-
+        end_node = body_node if body_node else sig_node
         sym = Symbol(
-            id=sym_id, name=name,
-            qualified_name=qualified_name,
-            kind=kind, language=self.language,
+            id=sym_id, name=name, qualified_name=name,
+            kind=SymbolKind.FUNCTION, language=self.language,
             file_path=self.file_path,
-            line_start=line_start,
-            line_end=line_end,
+            line_start=sig_node.start_point[0] + 1,
+            line_end=end_node.end_point[0] + 1,
             signature=_extract_signature(sig_node, self.source, self.language),
             doc=doc,
             exported=exported,
             parent_id=self._current_parent_id(),
-            byte_size=(body_node.end_byte if body_node else sig_node.end_byte) - sig_node.start_byte,
-            complexity=self._compute_complexity(body_node or sig_node),
+            byte_size=end_node.end_byte - sig_node.start_byte,
+            complexity=self._compute_complexity(body_node) if body_node else 1,
         )
         self.symbols.append(sym)
-        if self._current_parent_id():
-            self.edges.append(Edge(EdgeKind.CONTAINS, self._current_parent_id(), sym_id))
         if body_node:
             self._scan_calls(body_node, sym_id)
 
-    # ── Dart class / mixin ──────────────────────────────────────
+    # ── Class ────────────────────────────────────────────────
 
     def _handle_dart_class(self, node: Node) -> None:
-        """Handle class_definition or mixin_declaration."""
-        is_mixin = node.type == "mixin_declaration"
-        is_abstract = any(
-            c.type == "abstract" for c in node.children
-        )
-
-        # Name node
-        name_node = self._dart_first_child_of_type(node, "identifier")
+        name_node = self._dart_find_child(node, "identifier")
         if not name_node:
             return
         name = _node_text(name_node, self.source)
         if not name:
             return
 
-        exported = not self._dart_is_private(name)
-        kind = SymbolKind.CLASS
         sym_id = self._make_id(name)
+        exported = not name.startswith("_")
         doc = _first_comment_above(node, self.source)
-
         sym = Symbol(
             id=sym_id, name=name, qualified_name=name,
-            kind=kind, language=self.language,
+            kind=SymbolKind.CLASS, language=self.language,
             file_path=self.file_path,
             line_start=node.start_point[0] + 1,
             line_end=node.end_point[0] + 1,
@@ -146,67 +112,38 @@ class DartHandlerMixin:
         )
         self.symbols.append(sym)
 
-        # Superclass: class_definition → superclass → type_identifier
+        # Inheritance edges
         for child in node.children:
             if child.type == "superclass":
-                type_id = self._dart_first_child_of_type(child, "type_identifier")
+                type_id = self._dart_find_child(child, "type_identifier")
                 if type_id:
-                    self.edges.append(Edge(
-                        EdgeKind.INHERITS, sym_id,
-                        _node_text(type_id, self.source),
-                        node.start_point[0] + 1,
-                    ))
+                    parent_name = _node_text(type_id, self.source)
+                    if parent_name:
+                        self.edges.append(Edge(EdgeKind.INHERITS, sym_id, f"_ext_::{parent_name}"))
             elif child.type == "interfaces":
-                for c in child.children:
-                    if c.type == "type_identifier":
-                        self.edges.append(Edge(
-                            EdgeKind.IMPLEMENTS, sym_id,
-                            _node_text(c, self.source),
-                            node.start_point[0] + 1,
-                        ))
+                for sub in child.children:
+                    if sub.type == "type_identifier":
+                        iface_name = _node_text(sub, self.source)
+                        if iface_name:
+                            self.edges.append(Edge(EdgeKind.IMPLEMENTS, sym_id, f"_ext_::{iface_name}"))
 
-        # Walk class_body for methods
-        body = self._dart_first_child_of_type(node, "class_body")
+        # Walk class body
+        body = self._dart_find_child(node, "class_body")
         if body:
-            self._symbol_stack.append(sym_id)
-            self._dart_walk_class_body(body)
-            self._symbol_stack.pop()
+            self._dart_walk_class_body(body, sym_id)
 
-    def _dart_walk_class_body(self, body: Node) -> None:
-        """Walk a class_body, extracting methods."""
-        children = list(body.children)
-        i = 0
-        while i < len(children):
-            child = children[i]
-            if child.type == "method_signature":
-                # method_signature → function_signature → identifier
-                func_sig = self._dart_first_child_of_type(child, "function_signature")
-                if func_sig:
-                    body_node = (
-                        children[i + 1]
-                        if i + 1 < len(children) and children[i + 1].type == "function_body"
-                        else None
-                    )
-                    self._handle_dart_function(func_sig, body_node, is_method=True)
-                    if body_node:
-                        i += 1
-            i += 1
-
-    # ── Dart enum ───────────────────────────────────────────────
+    # ── Enum ─────────────────────────────────────────────────
 
     def _handle_dart_enum(self, node: Node) -> None:
-        """Handle enum_declaration."""
-        name_node = self._dart_first_child_of_type(node, "identifier")
+        name_node = self._dart_find_child(node, "identifier")
         if not name_node:
             return
         name = _node_text(name_node, self.source)
         if not name:
             return
-
-        exported = not self._dart_is_private(name)
         sym_id = self._make_id(name)
+        exported = not name.startswith("_")
         doc = _first_comment_above(node, self.source)
-
         sym = Symbol(
             id=sym_id, name=name, qualified_name=name,
             kind=SymbolKind.ENUM, language=self.language,
@@ -218,15 +155,272 @@ class DartHandlerMixin:
             exported=exported,
             parent_id=self._current_parent_id(),
             byte_size=node.end_byte - node.start_byte,
-            complexity=0,
         )
         self.symbols.append(sym)
 
-    # ── Dart utility ────────────────────────────────────────────
+    # ── Mixin ────────────────────────────────────────────────
 
-    def _dart_first_child_of_type(self, node: Node, type_name: str) -> Node | None:
-        """Return the first direct child with the given type, or None."""
+    def _handle_dart_mixin(self, node: Node) -> None:
+        name_node = self._dart_find_child(node, "identifier")
+        if not name_node:
+            return
+        name = _node_text(name_node, self.source)
+        if not name:
+            return
+        sym_id = self._make_id(name)
+        exported = not name.startswith("_")
+        doc = _first_comment_above(node, self.source)
+        sym = Symbol(
+            id=sym_id, name=name, qualified_name=name,
+            kind=SymbolKind.CLASS, language=self.language,
+            file_path=self.file_path,
+            line_start=node.start_point[0] + 1,
+            line_end=node.end_point[0] + 1,
+            signature=name,
+            doc=doc,
+            exported=exported,
+            parent_id=self._current_parent_id(),
+            byte_size=node.end_byte - node.start_byte,
+        )
+        self.symbols.append(sym)
+
+        body = self._dart_find_child(node, "class_body")
+        if body:
+            self._dart_walk_class_body(body, sym_id)
+
+    # ── Extension ────────────────────────────────────────────
+
+    def _handle_dart_extension(self, node: Node) -> None:
+        name_node = self._dart_find_child(node, "identifier")
+        if name_node:
+            name = _node_text(name_node, self.source)
+        else:
+            # Anonymous extension — use the extended type
+            type_node = self._dart_find_child(node, "type_identifier")
+            name = f"extension on {_node_text(type_node, self.source)}" if type_node else "extension"
+
+        if not name:
+            return
+        sym_id = self._make_id(name)
+        exported = not name.startswith("_")
+        doc = _first_comment_above(node, self.source)
+        sym = Symbol(
+            id=sym_id, name=name, qualified_name=name,
+            kind=SymbolKind.CLASS, language=self.language,
+            file_path=self.file_path,
+            line_start=node.start_point[0] + 1,
+            line_end=node.end_point[0] + 1,
+            signature=name,
+            doc=doc,
+            exported=exported,
+            parent_id=self._current_parent_id(),
+            byte_size=node.end_byte - node.start_byte,
+        )
+        self.symbols.append(sym)
+
+        body = self._dart_find_child(node, "extension_body")
+        if body:
+            self._dart_walk_class_body(body, sym_id)
+
+    # ── Type alias ───────────────────────────────────────────
+
+    def _handle_dart_type_alias(self, node: Node) -> None:
+        name_node = self._dart_find_child(node, "type_identifier")
+        if not name_node:
+            return
+        name = _node_text(name_node, self.source)
+        if not name:
+            return
+        sym_id = self._make_id(name)
+        exported = not name.startswith("_")
+        sym = Symbol(
+            id=sym_id, name=name, qualified_name=name,
+            kind=SymbolKind.TYPE_ALIAS, language=self.language,
+            file_path=self.file_path,
+            line_start=node.start_point[0] + 1,
+            line_end=node.end_point[0] + 1,
+            signature=_node_text(node, self.source).strip().rstrip(";"),
+            exported=exported,
+            parent_id=self._current_parent_id(),
+            byte_size=node.end_byte - node.start_byte,
+        )
+        self.symbols.append(sym)
+
+    # ── Top-level variables ──────────────────────────────────
+
+    def _handle_dart_top_var(self, decl_list: Node, *, const: bool) -> None:
+        for child in decl_list.children:
+            if child.type == "static_final_declaration":
+                name_node = self._dart_find_child(child, "identifier")
+                if not name_node:
+                    continue
+                name = _node_text(name_node, self.source)
+                if not name:
+                    continue
+                sym_id = self._make_id(name)
+                exported = not name.startswith("_")
+                kind = SymbolKind.CONSTANT if const else SymbolKind.VARIABLE
+                doc = _first_comment_above(decl_list, self.source)
+                sym = Symbol(
+                    id=sym_id, name=name, qualified_name=name,
+                    kind=kind, language=self.language,
+                    file_path=self.file_path,
+                    line_start=child.start_point[0] + 1,
+                    line_end=child.end_point[0] + 1,
+                    signature=name,
+                    doc=doc,
+                    exported=exported,
+                    parent_id=self._current_parent_id(),
+                    byte_size=child.end_byte - child.start_byte,
+                )
+                self.symbols.append(sym)
+
+    def _handle_dart_top_var_initialized(self, init_list: Node) -> None:
+        for child in init_list.children:
+            if child.type == "initialized_identifier":
+                name_node = self._dart_find_child(child, "identifier")
+                if not name_node:
+                    continue
+                name = _node_text(name_node, self.source)
+                if not name:
+                    continue
+                sym_id = self._make_id(name)
+                exported = not name.startswith("_")
+                doc = _first_comment_above(init_list, self.source)
+                sym = Symbol(
+                    id=sym_id, name=name, qualified_name=name,
+                    kind=SymbolKind.VARIABLE, language=self.language,
+                    file_path=self.file_path,
+                    line_start=child.start_point[0] + 1,
+                    line_end=child.end_point[0] + 1,
+                    signature=name,
+                    doc=doc,
+                    exported=exported,
+                    parent_id=self._current_parent_id(),
+                    byte_size=child.end_byte - child.start_byte,
+                )
+                self.symbols.append(sym)
+
+    # ── Class body walking ───────────────────────────────────
+
+    def _dart_walk_class_body(self, body: Node, parent_id: str) -> None:
+        self._symbol_stack.append(parent_id)
+        children = body.children
+        i = 0
+        while i < len(children):
+            child = children[i]
+            t = child.type
+
+            if t == "method_signature":
+                # Method: signature followed by function_body
+                body_node = children[i + 1] if i + 1 < len(children) and children[i + 1].type == "function_body" else None
+                self._handle_dart_method(child, body_node)
+                if body_node:
+                    i += 1
+            elif t == "declaration":
+                # Could be a constructor_signature inside
+                self._handle_dart_declaration(child)
+
+            i += 1
+        self._symbol_stack.pop()
+
+    def _handle_dart_method(self, sig_node: Node, body_node: Node | None) -> None:
+        name = self._dart_extract_method_name(sig_node)
+        if not name:
+            return
+        sym_id = self._make_id(name)
+        exported = not name.startswith("_")
+        doc = _first_comment_above(sig_node, self.source)
+        end_node = body_node if body_node else sig_node
+        sym = Symbol(
+            id=sym_id, name=name,
+            qualified_name=f"{self._parent_qualified_name()}.{name}" if self._symbol_stack else name,
+            kind=SymbolKind.METHOD, language=self.language,
+            file_path=self.file_path,
+            line_start=sig_node.start_point[0] + 1,
+            line_end=end_node.end_point[0] + 1,
+            signature=_extract_signature(sig_node, self.source, self.language),
+            doc=doc,
+            exported=exported,
+            parent_id=self._current_parent_id(),
+            byte_size=end_node.end_byte - sig_node.start_byte,
+            complexity=self._compute_complexity(body_node) if body_node else 1,
+        )
+        self.symbols.append(sym)
+        if self._current_parent_id():
+            self.edges.append(Edge(EdgeKind.CONTAINS, self._current_parent_id(), sym_id))
+        if body_node:
+            self._scan_calls(body_node, sym_id)
+
+    def _handle_dart_declaration(self, node: Node) -> None:
         for child in node.children:
-            if child.type == type_name:
+            if child.type == "constructor_signature":
+                self._handle_dart_constructor(child)
+                return
+
+    def _handle_dart_constructor(self, node: Node) -> None:
+        text = _node_text(node, self.source)
+        # Constructor name is the class name, possibly with .namedPart
+        # e.g. "MyClass(this._value)" or "MyClass.named(int v)"
+        # Extract from first identifier child
+        parts = []
+        for child in node.children:
+            if child.type == "identifier":
+                parts.append(_node_text(child, self.source))
+            elif child.type == ".":
+                pass  # separator between ClassName.namedPart
+        if not parts:
+            return
+        name = ".".join(parts) if len(parts) > 1 else parts[0]
+        sym_id = self._make_id(name)
+        exported = not name.startswith("_")
+        doc = _first_comment_above(node, self.source)
+        sym = Symbol(
+            id=sym_id, name=name,
+            qualified_name=f"{self._parent_qualified_name()}.{name}" if self._symbol_stack else name,
+            kind=SymbolKind.METHOD, language=self.language,
+            file_path=self.file_path,
+            line_start=node.start_point[0] + 1,
+            line_end=node.end_point[0] + 1,
+            signature=_extract_signature(node, self.source, self.language),
+            doc=doc,
+            exported=exported,
+            parent_id=self._current_parent_id(),
+            byte_size=node.end_byte - node.start_byte,
+        )
+        self.symbols.append(sym)
+        if self._current_parent_id():
+            self.edges.append(Edge(EdgeKind.CONTAINS, self._current_parent_id(), sym_id))
+
+    # ── Helpers ──────────────────────────────────────────────
+
+    def _dart_extract_method_name(self, sig_node: Node) -> str | None:
+        for child in sig_node.children:
+            if child.type == "function_signature":
+                name_node = self._dart_find_child(child, "identifier")
+                if name_node:
+                    return _node_text(name_node, self.source)
+            elif child.type == "factory_constructor_signature":
+                # factory ClassName.name(...) — extract identifier after '.'
+                parts = []
+                for sub in child.children:
+                    if sub.type == "identifier":
+                        parts.append(_node_text(sub, self.source))
+                if parts:
+                    return ".".join(parts) if len(parts) > 1 else parts[0]
+            elif child.type == "getter_signature":
+                name_node = self._dart_find_child(child, "identifier")
+                if name_node:
+                    return _node_text(name_node, self.source)
+            elif child.type == "setter_signature":
+                name_node = self._dart_find_child(child, "identifier")
+                if name_node:
+                    return _node_text(name_node, self.source)
+        return None
+
+    @staticmethod
+    def _dart_find_child(node: Node, node_type: str) -> Node | None:
+        for child in node.children:
+            if child.type == node_type:
                 return child
         return None
