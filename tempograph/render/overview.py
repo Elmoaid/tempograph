@@ -1118,6 +1118,29 @@ def render_overview(graph: Tempo) -> str:
             f" — changes here have wide blast radius"
         )
 
+    # S179: Mixed-role files — non-test source files that contain test_ symbols.
+    # Production code mixed with test code signals poor separation of concerns.
+    # Only shown when >= 1 such mixed file exists.
+    _s179_mixed: list[str] = []
+    for _fp179 in graph.files:
+        if _is_test_file(_fp179):
+            continue
+        _has_test_sym179 = any(
+            s.name.startswith("test_")
+            for s in graph.symbols.values()
+            if s.file_path == _fp179
+        )
+        if _has_test_sym179:
+            _s179_mixed.append(_fp179)
+    if _s179_mixed:
+        _s179_str = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s179_mixed[:3])
+        if len(_s179_mixed) > 3:
+            _s179_str += f" +{len(_s179_mixed) - 3} more"
+        lines.append(
+            f"mixed-role files: {len(_s179_mixed)} source files contain test_ symbols"
+            f" ({_s179_str}) — move tests to dedicated test files"
+        )
+
     # S173: Private ratio — percentage of non-test symbols that are unexported (private).
     # High private ratio (>= 80%) means the codebase hides most logic; low = over-exposed API.
     # Only shown when >= 20 source symbols exist.
@@ -1143,6 +1166,9 @@ def render_overview(graph: Tempo) -> str:
     }
     _s167_orphans: list[str] = []
     for _fp167 in graph.files:
+        fi167 = graph.files[_fp167]
+        if fi167.language.value not in _CODE_LANGS:
+            continue  # skip JSON, YAML, markdown, config — not meaningful orphans
         if _is_test_file(_fp167):
             continue
         _stem167 = _fp167.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
