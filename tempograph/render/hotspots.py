@@ -2625,5 +2625,18 @@ def _collect_hotspots_signals(
                 f" — private implementation detail with wide usage; consider exposing it as public API"
             )
 
+    # S868: Super-hotspot — top hotspot has 10+ direct callers.
+    # A function with 10+ callers is extremely widely used; any behavioral change
+    # requires coordination with all callers and is high-risk to refactor or remove.
+    if scores:
+        _top868 = scores[0][1]
+        if _top868 is not None and not _is_test_file(_top868.file_path):
+            _callers868 = graph.callers_of(_top868.id)
+            if len(_callers868) >= 10:
+                out.append(
+                    f"\nsuper hotspot: {_top868.name} has {len(_callers868)} direct callers"
+                    f" — extremely wide usage; changes require coordination across {len(_callers868)} callers"
+                )
+
     return out
 

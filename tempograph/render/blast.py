@@ -2191,6 +2191,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — external contracts; changes affect API consumers beyond the call graph"
         )
 
+    # S866: Migration file blast — blast target is a database migration file.
+    # Migration files alter database schema; changes affect all queries against the modified
+    # tables and cannot be rolled back without a reverse migration.
+    _fname866 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    _migration_kws866 = ("migration", "migrate", "upgrade", "downgrade", "alembic")
+    if any(kw in _fname866 for kw in _migration_kws866):
+        lines.append(
+            f"migration file blast: {_fp589.rsplit('/', 1)[-1]} is a database migration"
+            f" — schema change; verify all models and queries match the new schema"
+        )
+
     return "\n".join(lines)
 
 

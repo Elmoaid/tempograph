@@ -3903,6 +3903,29 @@ def _signals_focused_fn_advanced(
                     f" — signature changes require updating all concrete subclass implementations"
                 )
 
+    # S864: High-arity function — focused function has 7+ parameters.
+    # Functions with many parameters are hard to call correctly; they usually indicate
+    # a missing abstraction that should be a config object, dataclass, or separate builder.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim864 = _seed_syms[0]
+        if _prim864.kind.value in ("function", "method") and not _is_test_file(_prim864.file_path):
+            _sig864 = _prim864.signature or ""
+            _open864 = _sig864.find("(")
+            _close864 = _sig864.rfind(")")
+            if _open864 != -1 and _close864 != -1:
+                _raw864 = _sig864[_open864 + 1:_close864]
+                _params864 = [
+                    p.strip().split(":")[0].split("=")[0].strip()
+                    for p in _raw864.split(",")
+                    if p.strip() and p.strip().split(":")[0].split("=")[0].strip() not in ("self", "cls", "*", "**")
+                    and not p.strip().startswith("*")
+                ]
+                if len(_params864) >= 7:
+                    lines.append(
+                        f"\nhigh arity: {_prim864.name} has {len(_params864)} parameters"
+                        f" — too many parameters; consider a config object or builder pattern"
+                    )
+
     return lines
 
 

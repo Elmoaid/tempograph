@@ -41140,3 +41140,242 @@ class TestDeadSingletonsS863:
         assert "dead singletons" not in out, (
             f"'dead singletons' must not appear when get_instance is called; got:\n{out}"
         )
+
+# ── S864–S869 ──────────────────────────────────────────────────────────────────
+
+# ── S864: High-arity function focus ───────────────────────────────────────────
+
+class TestHighArityFocusS864:
+    """S864: Focused function with 7+ parameters emits high-arity signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "api.py").write_text(
+            "def complex_query(host, port, user, password, db, table, limit, offset): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from api import complex_query\n"
+            "def run(): complex_query('h', 1, 'u', 'p', 'd', 't', 10, 0)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "complex_query")
+        assert "high arity" in out, (
+            f"'high arity' expected for function with 8 parameters; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "api.py").write_text(
+            "def simple_query(host, port, db): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from api import simple_query\n"
+            "def run(): simple_query('h', 1, 'd')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "simple_query")
+        assert "high arity" not in out, (
+            f"'high arity' must not appear for function with 3 parameters; got:\n{out}"
+        )
+
+
+# ── S865: Abstract-heavy codebase ─────────────────────────────────────────────
+
+class TestAbstractHeavyS865:
+    """S865: 3+ Abstract*/Base* classes emits abstract-heavy signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "abstracts.py").write_text(
+            "class AbstractHandler:\n    def handle(self): pass\n\n"
+            "class AbstractRepository:\n    def get(self): pass\n\n"
+            "class AbstractService:\n    def execute(self): pass\n\n"
+            "class ConcreteHandler(AbstractHandler):\n    def handle(self): return 1\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from abstracts import ConcreteHandler\n"
+            "def run(): ConcreteHandler().handle()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "abstract-heavy" in out, (
+            f"'abstract-heavy' expected for 3+ Abstract* classes; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "service.py").write_text(
+            "class UserService:\n    def get_user(self): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from service import UserService\n"
+            "def run(): UserService().get_user()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "abstract-heavy" not in out, (
+            f"'abstract-heavy' must not appear when fewer than 3 abstract classes; got:\n{out}"
+        )
+
+
+# ── S866: Migration file blast ────────────────────────────────────────────────
+
+class TestMigrationFileBlastS866:
+    """S866: Blast target named migration/migrate emits migration-file-blast signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "add_user_migration.py").write_text(
+            "def upgrade(): pass\ndef downgrade(): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from add_user_migration import upgrade\ndef run(): upgrade()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "add_user_migration.py")
+        assert "migration file blast" in out, (
+            f"'migration file blast' expected for migration-named file; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "processor.py").write_text(
+            "def process(x): return x\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from processor import process\ndef run(): process(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "processor.py")
+        assert "migration file blast" not in out, (
+            f"'migration file blast' must not appear for non-migration file; got:\n{out}"
+        )
+
+
+# ── S867: Dependency file in diff ─────────────────────────────────────────────
+
+class TestDependencyFileInDiffS867:
+    """S867: requirements.txt or package.json in diff emits dependency-file-in-diff signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "requirements.txt").write_text("requests==2.28.0\n")
+        (tmp_path / "app.py").write_text("import requests\ndef fetch(): requests.get('http://example.com')\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["requirements.txt"])
+        assert "dependency file in diff" in out, (
+            f"'dependency file in diff' expected for requirements.txt; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "service.py").write_text("def process(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from service import process\ndef run(): process()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["service.py"])
+        assert "dependency file in diff" not in out, (
+            f"'dependency file in diff' must not appear for non-dependency file; got:\n{out}"
+        )
+
+
+# ── S868: Super-hotspot ────────────────────────────────────────────────────────
+
+class TestSuperHotspotS868:
+    """S868: Top hotspot with 10+ callers emits super-hotspot signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "core.py").write_text(
+            "def critical_fn(x): return x\n"
+        )
+        for i in range(12):
+            (tmp_path / f"user_{i}.py").write_text(
+                f"from core import critical_fn\n"
+                f"def run_{i}(): critical_fn({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "super hotspot" in out, (
+            f"'super hotspot' expected for function with 12 callers; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "core.py").write_text(
+            "def helper(x): return x\n"
+        )
+        for i in range(3):
+            (tmp_path / f"user_{i}.py").write_text(
+                f"from core import helper\n"
+                f"def run_{i}(): helper({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "super hotspot" not in out, (
+            f"'super hotspot' must not appear when top hotspot has fewer than 10 callers; got:\n{out}"
+        )
+
+
+
+# ── S869: Dead module-level constants ─────────────────────────────────────────
+
+class TestDeadModuleLevelConstantsS869:
+    """S869: Unused UPPERCASE module-level constants emits dead-constants signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "config.py").write_text(
+            "MAX_RETRIES = 3\n"
+            "DEFAULT_TIMEOUT = 30\n"
+            "def get_config(): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from config import get_config\n"
+            "def run(): get_config()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead constants" in out, (
+            f"'dead constants' expected for unused UPPERCASE constants; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "config.py").write_text(
+            "MAX_RETRIES = 3\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from config import MAX_RETRIES\n"
+            "def run(): return MAX_RETRIES\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead constants" not in out, (
+            f"'dead constants' must not appear when constant is imported; got:\n{out}"
+        )

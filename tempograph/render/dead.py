@@ -2980,6 +2980,27 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — unused global state accessors; verify no code bypasses through direct attribute access"
         )
 
+    # S869: Dead module-level constants — unused UPPERCASE constant definitions.
+    # Module-level constants represent configuration values and feature flags; unused ones
+    # indicate removed features or replaced configuration that was never cleaned up.
+    _dead_consts869 = [
+        s for s in dead
+        if s.kind.value == "constant"
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and s.name == s.name.upper()
+        and len(s.name) >= 2
+        and not s.name.startswith("_")
+    ]
+    if _dead_consts869:
+        _const_names869 = ", ".join(s.name for s in _dead_consts869[:3])
+        if len(_dead_consts869) > 3:
+            _const_names869 += f" +{len(_dead_consts869) - 3} more"
+        lines.append(
+            f"dead constants: {len(_dead_consts869)} unused module-level constant(s) ({_const_names869})"
+            f" — abandoned configuration; verify no code uses these via dynamic attribute lookup"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
