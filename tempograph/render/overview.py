@@ -3181,6 +3181,26 @@ def _signals_async_oop(
                 f" — over-fragmented; consider consolidating related small modules"
             )
 
+    # S853: High dead ratio — over 40% of exported source symbols are unused.
+    # A repo where most of its public API is dead is accumulating significant cleanup debt;
+    # maintaining dead symbols wastes review time and creates misleading documentation.
+    _all_exported853 = [
+        s for s in graph.symbols.values()
+        if not _is_test_file(s.file_path)
+        and s.parent_id is None
+        and not s.name.startswith("_")
+    ]
+    if len(_all_exported853) >= 10:
+        _dead853 = graph.find_dead_code()
+        _dead_ids853 = {s.id for s in _dead853}
+        _dead_exported853 = [s for s in _all_exported853 if s.id in _dead_ids853]
+        _ratio853 = len(_dead_exported853) / len(_all_exported853)
+        if _ratio853 >= 0.4:
+            lines.append(
+                f"high dead ratio: {len(_dead_exported853)}/{len(_all_exported853)} exported symbols ({_ratio853:.0%}) appear unused"
+                f" — significant cleanup debt; review dead code before adding more public API"
+            )
+
     return lines
 
 

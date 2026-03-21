@@ -679,6 +679,22 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — implicit dependencies; blast radius may be wider than direct callers"
             )
 
+    # S855: Legacy file in diff — changed files have _old/_legacy/_deprecated in their name.
+    # Changes to legacy-named files suggest a parallel new implementation exists;
+    # callers of legacy code may be overlooked when migration planning is done.
+    if changed_files:
+        _legacy_suffixes855 = ("_old", "_legacy", "_deprecated", "_v1", "_bak")
+        _legacy_files855 = [
+            f for f in changed_files
+            if any(f.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower().endswith(sfx)
+                   for sfx in _legacy_suffixes855)
+        ]
+        if _legacy_files855:
+            lines.append(
+                f"legacy file in diff: {len(_legacy_files855)} legacy-named file(s) changed"
+                f" — parallel new implementation likely exists; verify migration is not being bypassed"
+            )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 

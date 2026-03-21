@@ -3860,6 +3860,28 @@ def _signals_focused_fn_advanced(
                     f" — large namespace; callers depend on many internal symbols, increasing coupling"
                 )
 
+    # S852: Operator overload focus — focused method overloads a Python operator.
+    # Operator-overloaded methods change the semantics of standard operators for instances;
+    # callers using + / == / < etc. are implicitly coupled to this method's behavior.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim852 = _seed_syms[0]
+        _op_dunders852 = frozenset({
+            "__eq__", "__ne__", "__lt__", "__le__", "__gt__", "__ge__",
+            "__add__", "__sub__", "__mul__", "__truediv__", "__floordiv__",
+            "__mod__", "__pow__", "__and__", "__or__", "__xor__", "__lshift__",
+            "__rshift__", "__iadd__", "__isub__", "__imul__", "__itruediv__",
+            "__radd__", "__rsub__", "__rmul__",
+        })
+        if (
+            _prim852.kind.value == "method"
+            and not _is_test_file(_prim852.file_path)
+            and _prim852.name in _op_dunders852
+        ):
+            lines.append(
+                f"\noperator overload: {_prim852.name} overloads a Python operator"
+                f" — callers using operators (+, ==, < etc.) implicitly invoke this method"
+            )
+
     return lines
 
 
