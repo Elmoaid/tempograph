@@ -1654,6 +1654,68 @@ def render_overview(graph: Tempo) -> str:
             f" — understand the plugin lifecycle before touching extension APIs"
         )
 
+    # S324: Stub-heavy — 20%+ of source functions have a 1-line body (pass/raise NotImplementedError).
+    # Stubs indicate planned-but-unimplemented features; high stub ratio means the codebase
+    # is partly fictional — calling code assumes implementations that don't exist yet.
+    _s324_src_fns = [
+        s for s in graph.symbols.values()
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and s.file_path in graph.files
+        and graph.files[s.file_path].language.value in _CODE_LANGS
+    ]
+    _s324_stub_fns = [
+        s for s in _s324_src_fns
+        if s.line_count <= 1
+    ]
+    if len(_s324_src_fns) >= 10 and len(_s324_stub_fns) / len(_s324_src_fns) >= 0.20:
+        _pct324 = int(100 * len(_s324_stub_fns) / len(_s324_src_fns))
+        lines.append(
+            f"stub-heavy: {_pct324}% of functions are stubs ({len(_s324_stub_fns)}/{len(_s324_src_fns)})"
+            f" — many unimplemented functions; callers may depend on behavior that doesn't exist"
+        )
+
+    # S316: Async-heavy — 5+ source files use async def patterns.
+    # Async-heavy codebases require understanding event-loop semantics, cancellation,
+    # and context propagation before safely introducing blocking calls.
+    _s316_async_files: list[str] = []
+    for _fp316, _fi316 in graph.files.items():
+        if _is_test_file(_fp316):
+            continue
+        _imports316 = " ".join(_fi316.imports).lower() if _fi316.imports else ""
+        _has_async316 = "asyncio" in _imports316 or "aiohttp" in _imports316
+        if not _has_async316:
+            _has_async316 = any(
+                s.signature and s.signature.startswith("async ")
+                for s in graph.symbols.values()
+                if s.file_path == _fp316 and s.kind.value in ("function", "method")
+            )
+        if _has_async316:
+            _s316_async_files.append(_fp316)
+    if len(_s316_async_files) >= 5:
+        lines.append(
+            f"async-heavy: {len(_s316_async_files)} source files use async patterns"
+            f" — event-loop semantics apply; avoid introducing blocking calls"
+        )
+
+    # S322: Test gap — source files outnumber test files by 3× or more.
+    # A large source-to-test ratio means most code has no regression safety net;
+    # adding tests before refactoring is strongly advised.
+    _s322_src_files = [fp for fp in graph.files if not _is_test_file(fp)]
+    _s322_test_files = [fp for fp in graph.files if _is_test_file(fp)]
+    if len(_s322_src_files) >= 10 and _s322_test_files:
+        _s322_ratio = len(_s322_src_files) / max(len(_s322_test_files), 1)
+        if _s322_ratio >= 3.0:
+            lines.append(
+                f"test gap: {len(_s322_src_files)} source files vs {len(_s322_test_files)}"
+                f" test files ({_s322_ratio:.1f}×) — low coverage density; add tests before refactoring"
+            )
+    elif len(_s322_src_files) >= 10 and not _s322_test_files:
+        lines.append(
+            f"no tests: {len(_s322_src_files)} source files with 0 test files detected"
+            f" — add baseline tests before any refactor"
+        )
+
         # Suggest directories to exclude — detect likely noise
     noisy = _detect_noisy_dirs(graph, modules)
     if noisy:

@@ -895,6 +895,51 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" ({_ri_names307}) — changes here affect request handling directly"
         )
 
+    # S311: Deprecated API blast — target file name or path contains deprecated/legacy/compat.
+    # Deprecated code is often kept alive by undocumented callers; changes break them silently
+    # because consumers assume the API is stable despite the "deprecated" label.
+    _s311_dep_words = ("deprecated", "legacy", "compat", "obsolete", "old_", "_old", "v1_", "_v1")
+    _fp311_lower = file_path.lower().replace("\\", "/")
+    _is_deprecated311 = any(w in _fp311_lower for w in _s311_dep_words)
+    if _is_deprecated311 and importers:
+        lines.append(
+            f"deprecated API: {file_path.rsplit('/', 1)[-1]} is marked deprecated"
+            f" but still imported by {len(importers)} file(s)"
+            f" — callers may not know it's deprecated; add migration notes"
+        )
+
+    # S317: Core utility blast — target is in utils/helpers/common AND imported by 5+ files.
+    # Utility modules accumulate dependencies over time; changes often have wider impact
+    # than expected because every caller silently depends on subtle behavior.
+    _s317_util_dirs = ("utils", "helpers", "common", "shared", "lib", "core", "base")
+    _s317_is_util = any(
+        part in _s317_util_dirs
+        for part in file_path.lower().replace("\\", "/").split("/")[:-1]
+    ) or file_path.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower() in _s317_util_dirs
+    if _s317_is_util and len(importers) >= 5:
+        lines.append(
+            f"core utility blast: {file_path.rsplit('/', 1)[-1]} is a shared utility"
+            f" imported by {len(importers)} files — utility changes ripple everywhere; test thoroughly"
+        )
+
+    # S323: Shared config blast — target is a settings/config file imported by 5+ files.
+    # Config files hold global state (feature flags, limits, keys); changing a default
+    # value silently affects all paths that use that config.
+    _s323_cfg_names = {"settings", "config", "configuration", "constants", "env",
+                       "defaults", "params", "options", "app_config"}
+    _s323_stem = file_path.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    _is_config323 = (
+        _s323_stem in _s323_cfg_names
+        or _s323_stem.startswith("settings_")
+        or _s323_stem.endswith("_config")
+        or _s323_stem.endswith("_settings")
+    )
+    if _is_config323 and len(importers) >= 5:
+        lines.append(
+            f"config blast: {file_path.rsplit('/', 1)[-1]} is a config/settings file"
+            f" imported by {len(importers)} files — default value changes affect all consumers silently"
+        )
+
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
 

@@ -984,6 +984,53 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — removed integrations; implies features that no longer exist"
         )
 
+    # S315: Dead rate-limiters — rate_limit_*/throttle_*/debounce_* functions with 0 callers.
+    # Rate-limiting functions are security/stability controls; unused ones suggest
+    # an unprotected endpoint or a removed protection path.
+    # Only shown when 2+ such functions found (conf >= 30).
+    _s315_rl_prefixes = (
+        "rate_limit_", "throttle_", "debounce_", "limit_", "rate_check_", "quota_",
+    )
+    _s315_dead_rl = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s315_rl_prefixes)
+    ]
+    if len(_s315_dead_rl) >= 2:
+        _rl_names315 = ", ".join(s.name for s in _s315_dead_rl[:3])
+        if len(_s315_dead_rl) > 3:
+            _rl_names315 += f" +{len(_s315_dead_rl) - 3} more"
+        lines.append(
+            f"dead rate-limiters: {len(_s315_dead_rl)} unused throttle/limit fn(s) ({_rl_names315})"
+            f" — removed rate controls; verify endpoint is still protected"
+        )
+
+    # S321: Dead auth functions — auth_*/authenticate_*/authorize_* functions with 0 callers.
+    # Authentication/authorization functions are critical security controls;
+    # unused auth functions may indicate a bypass, a removed check, or an orphaned auth path.
+    # Only shown when 1+ such functions found (conf >= 40, high threshold for security signals).
+    _s321_auth_prefixes = (
+        "auth_", "authenticate_", "authorize_", "check_auth", "verify_auth",
+        "require_auth", "require_permission", "has_permission", "is_authorized",
+    )
+    _s321_dead_auth = [
+        sym for sym, conf in scored
+        if conf >= 40
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s321_auth_prefixes)
+    ]
+    if _s321_dead_auth:
+        _auth_names321 = ", ".join(s.name for s in _s321_dead_auth[:3])
+        if len(_s321_dead_auth) > 3:
+            _auth_names321 += f" +{len(_s321_dead_auth) - 3} more"
+        lines.append(
+            f"dead auth: {len(_s321_dead_auth)} unused auth fn(s) ({_auth_names321})"
+            f" — removed security check; verify endpoint is still protected before removing"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
