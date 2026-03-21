@@ -181,3 +181,58 @@ class TestDetectCircularImports:
         result = g.detect_circular_imports()
         for item in result:
             assert isinstance(item, list)
+
+
+# ── search_symbols_scored ─────────────────────────────────────────────────────
+
+class TestSearchSymbolsScored:
+    def test_returns_sorted_tuples(self, tmp_path):
+        g = _build(tmp_path, {"mod.py": "def greet(): pass\ndef farewell(): pass\n"})
+        results = g.search_symbols_scored("greet", use_hybrid=False)
+        assert isinstance(results, list)
+        assert all(isinstance(score, float) and hasattr(sym, 'name') for score, sym in results)
+
+    def test_exact_name_match_ranks_first(self, tmp_path):
+        g = _build(tmp_path, {
+            "mod.py": "def render_overview(): pass\ndef render_focused(): pass\n"
+        })
+        results = g.search_symbols_scored("render_overview", use_hybrid=False)
+        assert results[0][1].name == "render_overview"
+
+    def test_scores_sorted_descending(self, tmp_path):
+        g = _build(tmp_path, {"mod.py": "def foo(): pass\ndef bar(): pass\ndef foobar(): pass\n"})
+        results = g.search_symbols_scored("foo", use_hybrid=False)
+        scores = [s for s, _ in results]
+        assert scores == sorted(scores, reverse=True)
+
+    def test_unknown_query_returns_empty(self, tmp_path):
+        g = _build(tmp_path, {"mod.py": "def fn(): pass\n"})
+        results = g.search_symbols_scored("xyz_nonexistent_zzz", use_hybrid=False)
+        assert results == []
+
+    def test_exported_symbol_scores_higher(self, tmp_path):
+        # Both "process" names — the exported one should rank higher
+        g = _build(tmp_path, {
+            "pub.py": "def process(): pass\n",  # exported (no underscore)
+            "priv.py": "def _process(): pass\n",
+        })
+        results = g.search_symbols_scored("process", use_hybrid=False)
+        if len(results) >= 2:
+            exported = next((s for _, s in results if s.exported), None)
+            not_exported = next((s for _, s in results if not s.exported), None)
+            if exported and not_exported:
+                exported_score = next(sc for sc, s in results if s.id == exported.id)
+                priv_score = next(sc for sc, s in results if s.id == not_exported.id)
+                assert exported_score >= priv_score
+
+    def test_camelcase_query_matches_snake_case(self, tmp_path):
+        g = _build(tmp_path, {"mod.py": "def build_graph(): pass\n"})
+        results = g.search_symbols_scored("buildGraph", use_hybrid=False)
+        names = [s.name for _, s in results]
+        assert "build_graph" in names
+
+    def test_search_symbols_wrapper(self, tmp_path):
+        g = _build(tmp_path, {"mod.py": "def greet(): pass\n"})
+        results = g.search_symbols("greet")
+        assert isinstance(results, list)
+        assert any(s.name == "greet" for s in results)
