@@ -2125,6 +2125,15 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                 f" — many dependencies; transitive blast radius is wider than direct importers suggest"
             )
 
+    # S830: Init file blast — blast target is an __init__.py.
+    # __init__.py files define a package's public surface; blast radius here is
+    # especially wide because all importers of the package are affected.
+    if _fp589.replace("\\", "/").rsplit("/", 1)[-1] == "__init__.py":
+        lines.append(
+            f"init file blast: blast target is __init__.py"
+            f" — package public surface; all importers of this package are in blast radius"
+        )
+
     return "\n".join(lines)
 
 

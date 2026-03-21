@@ -3124,6 +3124,17 @@ def _signals_async_oop(
                 f" — files may benefit from splitting to improve navigability"
             )
 
+    # S829: No module-level constants — codebase has functions but no named constants.
+    # Repos with no constants use magic values directly; reviewers cannot tell if
+    # numeric literals are intentional limits or accidental values.
+    _fns829 = [s for s in graph.symbols.values() if s.kind.value == "function" and not _is_test_file(s.file_path)]
+    _consts829 = [s for s in graph.symbols.values() if s.kind.value in ("constant", "variable") and s.parent_id is None and not _is_test_file(s.file_path)]
+    if len(_fns829) >= 5 and not _consts829:
+        lines.append(
+            f"no module constants: {len(_fns829)} functions but zero named constants"
+            f" — magic values in source; consider extracting thresholds and limits to named constants"
+        )
+
     # S823: Test-heavy repo — test files outnumber source files 2:1 or more.
     # Over-investment in tests relative to source code may indicate over-engineering,
     # duplicated test scenarios, or abandoned source modules with surviving tests.
