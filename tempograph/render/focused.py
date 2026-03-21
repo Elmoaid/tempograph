@@ -3228,8 +3228,8 @@ def _signals_focused_fn_advanced(
         ):
             _callers630 = graph.callers_of(_prim630.id)
             lines.append(
-                f"\nproperty accessor: {_prim630.name} is a @property accessed by {len(_callers630)} caller(s)"
-                f" — looks like an attribute read but executes code; relevant if lazy/cached/expensive"
+                f"\nproperty accessor: {_prim630.name} is accessed as an attribute by {len(_callers630)} caller(s)"
+                f" — executes code on read; relevant if lazy/cached/expensive"
             )
 
     # S636: Init-file symbol — focused symbol lives in a package __init__.py (re-export surface).

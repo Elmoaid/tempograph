@@ -1956,10 +1956,11 @@ def _collect_hotspots_signals(
             and _top616.exported
         ):
             _caller_count616 = len(graph.callers_of(_top616.id))
-            out.append(
-                f"\nexported hotspot: {_top616.name} is a public symbol with {_caller_count616} callers"
-                f" — part of the module API; signature changes require coordinating all callers"
-            )
+            if _caller_count616 >= 2:
+                out.append(
+                    f"\nexported hotspot: {_top616.name} is a public symbol with {_caller_count616} callers"
+                    f" — part of the module API; signature changes require coordinating all callers"
+                )
 
     # S622: Class hotspot with many methods — top hotspot is a class with 5+ method children.
     # A heavily-called class with many methods is a god object candidate; it has multiple
