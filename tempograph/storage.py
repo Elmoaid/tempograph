@@ -16,7 +16,7 @@ from .types import Edge, EdgeKind, FileInfo, Language, Symbol, SymbolKind
 
 CACHE_DIR = ".tempograph"
 DB_FILE = "graph.db"
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # Module-level enum lookup dicts — O(1) vs try/except, ~31% faster in load_all()
 _SYMBOL_KIND_MAP: dict[str, SymbolKind] = {v.value: v for v in SymbolKind}
@@ -118,6 +118,11 @@ class GraphDB:
             END;
 
             INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '{SCHEMA_VERSION}');
+
+            CREATE TABLE IF NOT EXISTS indexes_blob (
+                edge_count INTEGER PRIMARY KEY,
+                data BLOB NOT NULL
+            );
         """)
         self._conn.commit()
         self._migrate()
@@ -134,6 +139,21 @@ class GraphDB:
                 self._conn.commit()
             except Exception:
                 pass  # column already exists
+        if version < 3:
+            # Add indexes_blob table — stores build_indexes pickle as BLOB directly,
+            # replacing the hex-inside-JSON encoding that inflated 966KB to 1.9MB and
+            # cost 2.5ms extra per warm build (json.loads + bytes.fromhex overhead).
+            try:
+                self._conn.execute(
+                    "CREATE TABLE IF NOT EXISTS indexes_blob "
+                    "(edge_count INTEGER PRIMARY KEY, data BLOB NOT NULL)"
+                )
+                # Drop old hex-encoded cache from meta table (now stale)
+                self._conn.execute("DELETE FROM meta WHERE key='indexes_cache'")
+                self._conn.execute("UPDATE meta SET value='3' WHERE key='schema_version'")
+                self._conn.commit()
+            except Exception:
+                pass
 
     def get_stored_files(self) -> dict[str, tuple[str, int]]:
         """Bulk-fetch {rel_path: (hash, mtime_ns)} for all stored files in one query.
@@ -458,30 +478,29 @@ class GraphDB:
         return stats
 
     def load_indexes(self, edge_count: int) -> dict | None:
-        """Load cached build_indexes result if edge_count matches. Returns None on miss."""
+        """Load cached build_indexes result if edge_count matches. Returns None on miss.
+
+        Uses a dedicated BLOB column instead of hex-inside-JSON encoding.
+        Eliminates json.loads(1.9MB) + bytes.fromhex(966KB) overhead (~2.5ms/warm build).
+        """
         import pickle
         try:
             row = self._conn.execute(
-                "SELECT value FROM meta WHERE key='indexes_cache'"
+                "SELECT data FROM indexes_blob WHERE edge_count=?", (edge_count,)
             ).fetchone()
             if row is None:
                 return None
-            blob = json.loads(row["value"])
-            if blob.get("edge_count") != edge_count:
-                return None
-            return pickle.loads(bytes.fromhex(blob["data"]))
+            return pickle.loads(row[0])
         except Exception:
             return None
 
     def save_indexes(self, indexes: dict, edge_count: int) -> None:
-        """Persist build_indexes result for warm build fast-path."""
+        """Persist build_indexes result for warm build fast-path (BLOB storage)."""
         import pickle
         try:
-            data = pickle.dumps(indexes).hex()
-            blob = json.dumps({"edge_count": edge_count, "data": data})
             self._conn.execute(
-                "INSERT OR REPLACE INTO meta (key, value) VALUES ('indexes_cache', ?)",
-                (blob,),
+                "INSERT OR REPLACE INTO indexes_blob (edge_count, data) VALUES (?, ?)",
+                (edge_count, sqlite3.Binary(pickle.dumps(indexes))),
             )
             self._conn.commit()
         except Exception:

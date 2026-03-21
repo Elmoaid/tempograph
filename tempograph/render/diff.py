@@ -219,6 +219,31 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             lines.append("")
             token_count = count_tokens("\n".join(lines))
 
+    # S212: Untested changes — changed non-test symbols with zero test callers.
+    # "Tests to run" shows which test files have coverage; this shows which SPECIFIC changed
+    # symbols have NONE. Complements coverage view: known coverage vs. known gap.
+    # Only shown for functions/methods/classes (constants/variables aren't directly testable).
+    if _all_changed_syms and token_count < max_tokens - 60:
+        _callable_kinds = {"function", "method", "class"}
+        _untested_changed: list[str] = []
+        for _uc_sym in _all_changed_syms:
+            if _uc_sym.kind.value not in _callable_kinds:
+                continue
+            _has_test_caller = any(_is_test_file(c.file_path) for c in graph.callers_of(_uc_sym.id))
+            if not _has_test_caller:
+                _uc_file = _uc_sym.file_path.rsplit("/", 1)[-1]
+                _untested_changed.append(f"{_uc_sym.name} ({_uc_file})")
+        if 1 <= len(_untested_changed):
+            _uc_str = ", ".join(_untested_changed[:6])
+            _uc_overflow = len(_untested_changed) - 6
+            _uc_line = f"untested changes ({len(_untested_changed)}): {_uc_str}"
+            if _uc_overflow > 0:
+                _uc_line += f" +{_uc_overflow} more"
+            _uc_line += " — no direct test coverage for these changed symbols"
+            lines.append(_uc_line)
+            lines.append("")
+            token_count = count_tokens("\n".join(lines))
+
     # Co-change partners missing from diff.
     # Warns the agent when a file that historically co-changes with a changed file is absent —
     # classic sign of an incomplete changeset (e.g. touched auth.py but not session.py).
@@ -400,6 +425,135 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             _s160_str += f" +{len(_s160_new_syms) - 3} more"
         lines.append(f"new symbols: {len(_s160_new_syms)} exported fns/classes with 0 callers ({_s160_str})")
 
+    # S199: Focused change — the diff touches only 1 source file (clean, low-risk commit).
+    # Single-file diffs have minimal blast radius; they're easy to review, revert, and bisect.
+    # Only shown when exactly 1 non-test source file is in the diff.
+    _s199_src_files = [fp for fp in normalized if not _is_test_file(fp)]
+    if len(_s199_src_files) == 1:
+        lines.append(
+            f"focused change: only {_s199_src_files[0].rsplit('/', 1)[-1]} modified"
+            f" — minimal blast radius, easy to review and revert"
+        )
+
+    # S193: Migration file — diff includes a database migration or schema file.
+    # Schema changes affect data integrity; they require extra care and often need backfill work.
+    # Only shown when 1+ migration-style file is in the diff.
+    _s193_migration_patterns = {"migration", "migrate", "schema", "alembic", "flyway"}
+    _s193_migration_files = [
+        fp for fp in normalized
+        if not _is_test_file(fp)
+        and (
+            any(p in fp.lower() for p in _s193_migration_patterns)
+            or fp.endswith(".sql")
+        )
+    ]
+    if _s193_migration_files:
+        _s193_str = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s193_migration_files[:3])
+        lines.append(
+            f"migration change: {_s193_str}"
+            f" — database/schema file modified, coordinate with data team"
+        )
+
+    # S187: Contract risk — the diff changes an exported symbol with 5+ external callers.
+    # Changing a widely-called exported symbol is a potential breaking change for all callers.
+    # Only shown when 1+ such high-caller exported symbol is in the changed files.
+    _s187_risky: list[tuple[int, str]] = []
+    for _fp187 in normalized:
+        if _is_test_file(_fp187):
+            continue
+        for _sym187 in graph.symbols.values():
+            if _sym187.file_path != _fp187 or not _sym187.exported:
+                continue
+            if _sym187.kind.value not in ("function", "method", "class"):
+                continue
+            _ext_callers187 = {
+                c.file_path for c in graph.callers_of(_sym187.id)
+                if c.file_path not in set(normalized)
+            }
+            if len(_ext_callers187) >= 5:
+                _s187_risky.append((len(_ext_callers187), _sym187.name))
+    if _s187_risky:
+        _s187_risky.sort(reverse=True)
+        _s187_top = _s187_risky[0]
+        lines.append(
+            f"contract risk: {_s187_top[1]} has {_s187_top[0]} external callers"
+            f" — changing this exported symbol may break callers"
+        )
+
+    # S181: Test-heavy diff — the majority of changed files are test files.
+    # A diff that's mostly tests without paired source changes may indicate speculative tests.
+    # Only shown when >= 4 total files and >= 50% are test files.
+    if len(normalized) >= 4:
+        _s181_test_count = sum(1 for fp in normalized if _is_test_file(fp))
+        _s181_pct = _s181_test_count / len(normalized) * 100
+        if _s181_pct >= 50:
+            lines.append(
+                f"test-heavy diff: {_s181_test_count}/{len(normalized)} files are tests"
+                f" ({_s181_pct:.0f}%) — verify paired source changes exist"
+            )
+
+    # S175: Config file change — the diff includes a configuration or settings file.
+    # Config changes affect runtime behavior globally; they warrant extra scrutiny.
+    # Only shown when 1+ config file is in the diff.
+    _s175_config_stems = {
+        "settings", "config", "configuration", "constants", "env",
+        "defaults", "options", "params", "parameters",
+    }
+    _s175_config_files = [
+        fp for fp in normalized
+        if fp.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower() in _s175_config_stems
+        and not _is_test_file(fp)
+    ]
+    if _s175_config_files:
+        _s175_str = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s175_config_files[:3])
+        lines.append(
+            f"config change: {_s175_str}"
+            f" — settings file modified, check for unintended global effects"
+        )
+
+    # S169: Entry point change — the diff includes an application entry point file.
+    # Entry points are user-facing; changes here are immediately visible to end users.
+    # Only shown when 1+ entry point filename is among the changed files.
+    _s169_entry_stems = {
+        "main", "app", "index", "manage", "cli", "server", "run",
+        "wsgi", "asgi", "__main__", "start", "entrypoint",
+    }
+    _s169_entry_files = [
+        fp for fp in normalized
+        if fp.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower() in _s169_entry_stems
+        and not _is_test_file(fp)
+    ]
+    if _s169_entry_files:
+        _s169_str = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s169_entry_files[:3])
+        lines.append(
+            f"entry point change: {_s169_str}"
+            f" — user-facing file(s) modified, immediate user impact"
+        )
+
+    # S163: Caller update needed — symbols in the diff have callers in files NOT in the diff.
+    # These external call sites may need updating after the diff's logic change.
+    # Only shown when 3+ distinct external caller files exist.
+    _s163_changed_fps = set(normalized)
+    _s163_ext_callers: set[str] = set()
+    for _fp163 in normalized:
+        if _is_test_file(_fp163):
+            continue
+        for _sym163 in graph.symbols.values():
+            if _sym163.file_path != _fp163:
+                continue
+            for _caller163 in graph.callers_of(_sym163.id):
+                if _caller163.file_path not in _s163_changed_fps:
+                    _s163_ext_callers.add(_caller163.file_path)
+    if len(_s163_ext_callers) >= 3:
+        _s163_names = [fp.rsplit("/", 1)[-1] for fp in sorted(_s163_ext_callers)[:3]]
+        _s163_str = ", ".join(_s163_names)
+        if len(_s163_ext_callers) > 3:
+            _s163_str += f" +{len(_s163_ext_callers) - 3} more"
+        lines.append(
+            f"caller update needed: {len(_s163_ext_callers)} files call changed symbols but"
+            f" aren't in this diff ({_s163_str})"
+        )
+
     # S149: Mixed concern — diff touches both source and test files.
     # Mixing src+test changes in one commit complicates cherry-picks, bisects, and reverts.
     # Flag when the diff has 1+ source files AND 1+ test files.
@@ -441,5 +595,300 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
         if len(_s135_names) > 3:
             _s135_str += f" +{len(_s135_names) - 3} more"
         lines.append(f"changed file size: {_s135_total_lines} lines ({_s135_str})")
+
+    # S211: Missing co-editors — files that historically change WITH the diff files
+    # but are absent from the current diff. A common source of incomplete PRs.
+    # Only shown when 2+ absent co-editors exist with >= 3 co-changes each.
+    if graph.root:
+        try:
+            from ..git import cochange_pairs as _cp211, is_git_repo as _igr211
+            if _igr211(graph.root):
+                _diff_src211 = [fp for fp in normalized if not _is_test_file(fp)]
+                _diff_set211 = set(normalized)
+                _missing211: dict[str, int] = {}
+                for _fp211 in _diff_src211[:3]:  # check top-3 source files to stay fast
+                    for _p211 in _cp211(graph.root, _fp211, n=8):
+                        if (_p211["path"] not in _diff_set211
+                                and not _is_test_file(_p211["path"])
+                                and _p211["count"] >= 3):
+                            _missing211[_p211["path"]] = max(
+                                _missing211.get(_p211["path"], 0), _p211["count"]
+                            )
+                if len(_missing211) >= 2:
+                    _top211 = sorted(_missing211.items(), key=lambda x: -x[1])[:3]
+                    _m211_str = ", ".join(fp.rsplit("/", 1)[-1] for fp, _ in _top211)
+                    if len(_missing211) > 3:
+                        _m211_str += f" +{len(_missing211) - 3} more"
+                    lines.append(
+                        f"missing co-editors: {_m211_str}"
+                        f" — usually change alongside diff files but absent here"
+                    )
+        except Exception:
+            pass
+
+    # S205: Tests-only diff — all diff files are test files, 0 source files.
+    # A commit that only touches tests may be missing the paired implementation change.
+    # Only shown when >= 2 test files are in the diff and no source files.
+    _s205_src_files = [fp for fp in normalized if not _is_test_file(fp)]
+    _s205_test_files = [fp for fp in normalized if _is_test_file(fp)]
+    if not _s205_src_files and len(_s205_test_files) >= 2:
+        _t205_names = [fp.rsplit("/", 1)[-1] for fp in _s205_test_files[:3]]
+        _t205_str = ", ".join(_t205_names)
+        if len(_s205_test_files) > 3:
+            _t205_str += f" +{len(_s205_test_files) - 3} more"
+        lines.append(
+            f"tests-only diff: {len(_s205_test_files)} test files ({_t205_str}),"
+            f" 0 source files — may be missing implementation changes"
+        )
+
+    # S215: Wide diff — the diff spans >= 5 distinct source files.
+    # More source files = higher cognitive load to review; increases chance of missed side effects.
+    # Only shown when 5+ distinct non-test files are in the diff.
+    _s215_src_files = [fp for fp in normalized if not _is_test_file(fp)]
+    if len(_s215_src_files) >= 5:
+        _s215_names = [fp.rsplit("/", 1)[-1] for fp in _s215_src_files[:3]]
+        _s215_str = ", ".join(_s215_names)
+        if len(_s215_src_files) > 3:
+            _s215_str += f" +{len(_s215_src_files) - 3} more"
+        lines.append(
+            f"wide diff: {len(_s215_src_files)} source files changed ({_s215_str})"
+            f" — high review surface, consider splitting"
+        )
+
+    # S222: Dependency file change — diff includes a package manifest or lockfile.
+    # Changes to requirements.txt, package.json, pyproject.toml, go.mod etc. update dependencies,
+    # which may introduce breaking changes or transitive security issues.
+    # Only shown when 1+ dependency file is in the diff.
+    _s222_dep_names = {
+        "requirements.txt", "requirements.in", "package.json", "package-lock.json",
+        "yarn.lock", "pyproject.toml", "poetry.lock", "go.mod", "go.sum",
+        "Pipfile", "Pipfile.lock", "Cargo.toml", "Cargo.lock",
+    }
+    _s222_dep_files = [
+        fp for fp in changed_files
+        if fp.rsplit("/", 1)[-1] in _s222_dep_names
+    ]
+    if _s222_dep_files:
+        _dep_names = [fp.rsplit("/", 1)[-1] for fp in _s222_dep_files[:3]]
+        _dep_str = ", ".join(_dep_names)
+        lines.append(
+            f"dependency change: {_dep_str} in diff"
+            f" — check for transitive breaking changes or security advisories"
+        )
+
+    # S229: Security-sensitive change — diff includes files with security-related names.
+    # Auth, crypto, token, and permission files are high-risk; changes need careful review.
+    # Only shown when 1+ diff file name matches security-sensitive patterns.
+    _s229_sec_patterns = (
+        "auth", "crypto", "password", "token", "secret", "permission", "access",
+        "login", "session", "jwt", "oauth", "ssl", "cert", "key",
+    )
+    _s229_sec_files = [
+        fp for fp in list(normalized) + [f for f in changed_files if f not in normalized]
+        if any(pat in fp.rsplit("/", 1)[-1].lower() for pat in _s229_sec_patterns)
+    ]
+    if _s229_sec_files:
+        _sec_names = [fp.rsplit("/", 1)[-1] for fp in _s229_sec_files[:3]]
+        _sec_str = ", ".join(_sec_names)
+        lines.append(
+            f"security-sensitive change: {_sec_str} in diff"
+            f" — auth/crypto/token files require careful review"
+        )
+
+    # S235: Schema/contract change — diff includes API schema or data contract files.
+    # Proto, OpenAPI, GraphQL, SQL schema changes = breaking change risk for all consumers.
+    # Only shown when 1+ schema file is in the diff.
+    _s235_schema_exts = (".proto", ".graphql", ".gql", ".avro")
+    _s235_schema_names = ("schema.sql", "openapi.yaml", "openapi.json", "swagger.yaml",
+                          "swagger.json", "schema.json", "schema.graphql")
+    _s235_schema_files = [
+        fp for fp in list(normalized) + [f for f in changed_files if f not in normalized]
+        if fp.endswith(_s235_schema_exts) or fp.rsplit("/", 1)[-1].lower() in _s235_schema_names
+    ]
+    if _s235_schema_files:
+        _sch_names = [fp.rsplit("/", 1)[-1] for fp in _s235_schema_files[:3]]
+        _sch_str = ", ".join(_sch_names)
+        lines.append(
+            f"schema change: {_sch_str} in diff"
+            f" — API contract change, all consumers must be updated"
+        )
+
+    # S240: Changelog/release file in diff — diff includes CHANGELOG, HISTORY, or RELEASE notes.
+    # These files mark public releases; changes in the same diff should be backward-compatible
+    # and well-tested — treat like a release commit.
+    # Only shown when 1+ changelog-style file appears in the diff.
+    _s240_changelog_names = {
+        "changelog", "changelog.md", "changelog.rst", "changelog.txt",
+        "history", "history.md", "history.rst", "history.txt",
+        "release", "release.md", "release_notes.md", "releases.md",
+        "news.rst", "changes.rst",
+    }
+    _s240_files = [
+        fp for fp in list(normalized) + [f for f in changed_files if f not in normalized]
+        if fp.rsplit("/", 1)[-1].lower() in _s240_changelog_names
+    ]
+    if _s240_files:
+        _cl_names = [fp.rsplit("/", 1)[-1] for fp in _s240_files[:2]]
+        _cl_str = ", ".join(_cl_names)
+        lines.append(
+            f"release commit: {_cl_str} in diff"
+            f" — treat as public release; changes must be backward-compatible"
+        )
+
+    # S245: Infrastructure/environment file in diff — .env.example, docker-compose.yml,
+    # Dockerfile, k8s manifests, etc. These require out-of-band coordination with ops.
+    # Only shown when 1+ infra/env file appears in the diff.
+    _s245_infra_exts = (".yml", ".yaml", ".toml", ".tf", ".hcl")
+    _s245_infra_names = {
+        "dockerfile", ".env.example", ".env.template", "docker-compose.yml",
+        "docker-compose.yaml", "docker-compose.override.yml",
+        ".travis.yml", ".github", "makefile", "justfile",
+    }
+    _s245_infra_paths = ("k8s/", "kubernetes/", "helm/", "terraform/", ".github/workflows/",
+                         "deploy/", "infra/", "infrastructure/")
+    _s245_files = []
+    for _fp245 in list(normalized) + [f for f in changed_files if f not in normalized]:
+        _name245 = _fp245.rsplit("/", 1)[-1].lower()
+        _fp245_lower = _fp245.lower()
+        if (
+            _name245 in _s245_infra_names
+            or any(_fp245_lower.startswith(p) or f"/{p}" in _fp245_lower for p in _s245_infra_paths)
+        ):
+            _s245_files.append(_fp245)
+    if _s245_files:
+        _inf_names = [fp.rsplit("/", 1)[-1] for fp in _s245_files[:3]]
+        _inf_str = ", ".join(_inf_names)
+        if len(_s245_files) > 3:
+            _inf_str += f" +{len(_s245_files) - 3} more"
+        lines.append(
+            f"infra change: {_inf_str} in diff"
+            f" — environment/deployment files require ops coordination"
+        )
+
+
+    # S254: Migration file in diff — diff includes database migration files.
+    # DB migrations are irreversible in production; they require DBA review and
+    # deployment coordination separate from regular code review.
+    _s254_mig_dirs = ("migrations/", "migration/", "alembic/versions/", "db/migrate/",
+                      "db/migrations/", "database/migrations/")
+    _s254_mig_files = [
+        fp for fp in list(normalized) + [f for f in changed_files if f not in normalized]
+        if any(d in fp.lower().replace("\\", "/") for d in _s254_mig_dirs)
+    ]
+    if _s254_mig_files:
+        _mig_names = [fp.rsplit("/", 1)[-1] for fp in _s254_mig_files[:3]]
+        _mig_str = ", ".join(_mig_names)
+        if len(_s254_mig_files) > 3:
+            _mig_str += f" +{len(_s254_mig_files) - 3} more"
+        lines.append(
+            f"migration file: {_mig_str} in diff"
+            f" — DB migrations are irreversible; coordinate with DBA before deploy"
+        )
+
+
+    # S267: Broad diff — changed files span 3+ top-level directories.
+    # Cross-module changes increase coordination risk; changes in one module may
+    # invalidate assumptions in another. Each boundary crossing needs explicit validation.
+    _s261_all_changed = list(normalized) + [f for f in changed_files if f not in normalized]
+    _s261_top_dirs = {
+        fp.split("/")[0] for fp in _s261_all_changed
+        if "/" in fp and not fp.split("/")[0].startswith(".")
+    }
+    if len(_s261_top_dirs) >= 3:
+        _dir_list261 = sorted(_s261_top_dirs)[:3]
+        _dir_str261 = ", ".join(_dir_list261)
+        if len(_s261_top_dirs) > 3:
+            _dir_str261 += f" +{len(_s261_top_dirs) - 3} more"
+        lines.append(
+            f"broad diff: changes span {len(_s261_top_dirs)} modules ({_dir_str261})"
+            f" — cross-module change; verify interface contracts at each boundary"
+        )
+
+
+    # S273: Documentation file in diff — diff includes README, docs/, or changelog files.
+    # Documentation changes may indicate API or behavior changes that need broader
+    # communication; or doc changes without code changes (doc-only PR, low risk).
+    _s273_doc_names = {
+        "readme.md", "readme.rst", "readme.txt", "changelog.md", "changelog.rst",
+        "history.md", "contributing.md", "authors.md", "license", "license.md",
+    }
+    _s273_doc_dirs = ("docs/", "doc/", "documentation/", ".github/")
+    _s273_doc_files = []
+    for _fp273 in list(normalized) + [f for f in changed_files if f not in normalized]:
+        _name273 = _fp273.rsplit("/", 1)[-1].lower()
+        _fp273_lower = _fp273.lower()
+        if (
+            _name273 in _s273_doc_names
+            or any(_fp273_lower.startswith(d) or f"/{d}" in _fp273_lower for d in _s273_doc_dirs)
+        ):
+            _s273_doc_files.append(_fp273)
+    if _s273_doc_files:
+        _doc_names273 = [fp.rsplit("/", 1)[-1] for fp in _s273_doc_files[:3]]
+        _doc_str273 = ", ".join(_doc_names273)
+        lines.append(
+            f"docs in diff: {_doc_str273}"
+            f" — documentation changed; verify code changes are reflected"
+        )
+
+
+    # S276: Hotspot in diff — a changed file is also a top hotspot (high-churn) file.
+    # Editing an already-hot file increases instability and conflict risk further.
+    # Show when any changed file ranks in top-5 by cross-file caller count.
+    if normalized:
+        _s276_scores: list[tuple[int, str]] = []
+        for _fp276 in normalized:
+            if _is_test_file(_fp276):
+                continue
+            _callers276 = len([
+                s for s in graph.symbols.values()
+                if s.file_path == _fp276
+                and len([c for c in graph.callers_of(s.id) if c.file_path != _fp276]) >= 2
+            ])
+            if _callers276 > 0:
+                _s276_scores.append((_callers276, _fp276))
+        _s276_scores.sort(reverse=True)
+        if _s276_scores and _s276_scores[0][0] >= 3:
+            _s276_n, _s276_fp = _s276_scores[0]
+            lines.append(
+                f"hotspot in diff: {_s276_fp.rsplit('/', 1)[-1]} is a high-churn file"
+                f" ({_s276_n} widely-called symbols) — extra care needed; this file changes often"
+            )
+
+
+    # S282: Tests removed — diff includes removal of test files (test_*.py or *_test.py).
+    # Removing tests while changing code is a coverage regression; signal for teams
+    # to verify the removed tests are no longer needed (not hiding failures).
+    _s282_removed_tests = [
+        fp for fp in changed_files
+        if _is_test_file(fp)
+    ]
+    if _s282_removed_tests:
+        _removed_names282 = [fp.rsplit("/", 1)[-1] for fp in _s282_removed_tests[:3]]
+        _removed_str282 = ", ".join(_removed_names282)
+        if len(_s282_removed_tests) > 3:
+            _removed_str282 += f" +{len(_s282_removed_tests) - 3} more"
+        lines.append(
+            f"tests in diff: {_removed_str282}"
+            f" — test files modified; verify coverage isn't regressing"
+        )
+
+
+    # S288: Version bump — diff includes version manifest files (pyproject.toml, package.json).
+    # Version changes may indicate an intentional release; they require changelog review
+    # and tag coordination across repos.
+    _s288_version_files = {
+        "pyproject.toml", "setup.cfg", "setup.py", "package.json", "cargo.toml",
+        "version.py", "version.txt", "_version.py", "__version__.py",
+    }
+    _s288_found = [
+        fp for fp in list(normalized) + [f for f in changed_files if f not in normalized]
+        if fp.rsplit("/", 1)[-1].lower() in _s288_version_files
+    ]
+    if _s288_found:
+        _ver_names288 = [fp.rsplit("/", 1)[-1] for fp in _s288_found[:3]]
+        lines.append(
+            f"version file: {', '.join(_ver_names288)} in diff"
+            f" — version manifest changed; verify changelog and tag are updated"
+        )
 
     return "\n".join(lines)

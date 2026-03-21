@@ -436,6 +436,414 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                 f" — package entry point, changes affect all importers"
             )
 
+    # S201: Isolated file — blast target has 0 external importers and 0 external callers.
+    # A file with no incoming dependencies is safe to modify or delete without coordination.
+    # Only shown when file has neither external importers nor symbols with external callers.
+    _s201_importers = [
+        i for i in graph.importers_of(file_path)
+        if i in graph.files and i != file_path
+    ]
+    _s201_has_ext_callers = any(
+        any(c.file_path != file_path for c in graph.callers_of(s.id))
+        for s in symbols
+    )
+    if not _s201_importers and not _s201_has_ext_callers:
+        lines.append(
+            f"isolated file: no external importers or callers"
+            f" — safe to modify or delete without coordination"
+        )
+
+    # S195: Blast fan-out — blast target's symbols call into 5+ distinct external files.
+    # High outgoing call fan-out = the file reaches widely; changes ripple in multiple directions.
+    # Only shown when symbols in blast target call into 5+ distinct non-target files.
+    _s195_callee_files: set[str] = set()
+    for _sym195 in symbols:
+        for _callee195 in graph.callees_of(_sym195.id):
+            if _callee195.file_path != file_path and not _is_test_file(_callee195.file_path):
+                _s195_callee_files.add(_callee195.file_path)
+    if len(_s195_callee_files) >= 5:
+        _fan_names = [fp.rsplit("/", 1)[-1] for fp in sorted(_s195_callee_files)[:3]]
+        _fan_str = ", ".join(_fan_names)
+        if len(_s195_callee_files) > 3:
+            _fan_str += f" +{len(_s195_callee_files) - 3} more"
+        lines.append(
+            f"blast fan-out: calls into {len(_s195_callee_files)} external files"
+            f" ({_fan_str}) — wide outgoing dependency, changes may cascade"
+        )
+
+    # S189: Sibling files — other source files sharing the same directory as the blast target.
+    # Co-located files are often tightly coupled and may need coordinated updates.
+    # Only shown when 2+ sibling source files exist in the same directory.
+    _s189_target_dir = file_path.rsplit("/", 1)[0] if "/" in file_path else "."
+    _s189_siblings = [
+        fp for fp in graph.files
+        if fp != file_path and not _is_test_file(fp)
+        and (fp.rsplit("/", 1)[0] if "/" in fp else ".") == _s189_target_dir
+    ]
+    if len(_s189_siblings) >= 2:
+        _sib_names = [fp.rsplit("/", 1)[-1] for fp in _s189_siblings[:3]]
+        _sib_str = ", ".join(_sib_names)
+        if len(_s189_siblings) > 3:
+            _sib_str += f" +{len(_s189_siblings) - 3} more"
+        lines.append(
+            f"sibling files: {len(_s189_siblings)} co-located files ({_sib_str})"
+            f" — may require coordinated updates"
+        )
+
+    # S183: Large export count — blast target exports >= 10 symbols.
+    # High export count = large public API surface; any change is a potential breaking change.
+    # Only shown when the blast file exports >= 10 fn/method/class/interface symbols.
+    _s183_exported = [
+        s for s in symbols
+        if s.exported and s.kind.value in ("function", "method", "class", "interface")
+    ]
+    if len(_s183_exported) >= 10:
+        lines.append(
+            f"large export count: {len(_s183_exported)} exported symbols"
+            f" — broad public API surface, changes risk breaking callers"
+        )
+
+    # S177: Cross-module callers — callers of blast-target symbols span 4+ distinct top-level dirs.
+    # When 4+ modules call this file, a change requires coordination across many subsystems.
+    # Only shown when callers come from 4+ distinct top-level directories.
+    _s177_caller_modules: set[str] = set()
+    for _sym177 in symbols:
+        for _c177 in graph.callers_of(_sym177.id):
+            _parts177 = _c177.file_path.split("/")
+            _mod177 = _parts177[0] if len(_parts177) > 1 else "."
+            if _mod177 != file_path.split("/")[0]:  # exclude own module
+                _s177_caller_modules.add(_mod177)
+    if len(_s177_caller_modules) >= 4:
+        _s177_mods_str = ", ".join(sorted(_s177_caller_modules)[:4])
+        if len(_s177_caller_modules) > 4:
+            _s177_mods_str += f" +{len(_s177_caller_modules) - 4} more"
+        lines.append(
+            f"cross-module callers: {len(_s177_caller_modules)} modules depend on this file"
+            f" ({_s177_mods_str})"
+        )
+
+    # S171: Indirect blast — files that are 2 hops away via importers (importers of importers).
+    # Changing this file ripples to direct importers AND to their importers.
+    # Only shown when 5+ distinct 2nd-hop importer files exist.
+    _s171_direct = {i for i in graph.importers_of(file_path) if i in graph.files and i != file_path}
+    _s171_indirect: set[str] = set()
+    for _dir171 in _s171_direct:
+        for _ind171 in graph.importers_of(_dir171):
+            if _ind171 in graph.files and _ind171 != file_path and _ind171 not in _s171_direct:
+                _s171_indirect.add(_ind171)
+    if len(_s171_indirect) >= 5:
+        lines.append(
+            f"indirect blast: {len(_s171_indirect)} files 2 hops away via importers"
+            f" — change propagates further than direct importers"
+        )
+
+    # S165: Call depth — BFS through CALLS edges from blast target, longest chain depth.
+    # Deep call chains (>= 4 hops) amplify risk: a change propagates through many stack frames.
+    # Only shown when BFS from any symbol in the target file reaches depth >= 4.
+    _s165_seed_ids = {s.id for s in symbols}
+    _s165_max_depth = 0
+    _s165_deepest_name = ""
+    for _seed_id165 in list(_s165_seed_ids)[:10]:  # cap BFS seeds for performance
+        _s165_visited: set[str] = {_seed_id165}
+        _s165_frontier = [(_seed_id165, 0)]
+        while _s165_frontier:
+            _cur_id165, _depth165 = _s165_frontier.pop(0)
+            if _depth165 > _s165_max_depth:
+                _s165_max_depth = _depth165
+                _s165_deepest_name = graph.symbols[_seed_id165].name if _seed_id165 in graph.symbols else ""
+            if _depth165 >= 6:  # safety cap
+                continue
+            for _callee165 in graph.callees_of(_cur_id165):
+                if _callee165.id not in _s165_visited:
+                    _s165_visited.add(_callee165.id)
+                    _s165_frontier.append((_callee165.id, _depth165 + 1))
+    if _s165_max_depth >= 4:
+        lines.append(
+            f"call depth: {_s165_max_depth} hops from {_s165_deepest_name}"
+            f" — deep call chain increases change blast"
+        )
+
+    # S207: Single importer — exactly 1 file imports the blast target.
+    # Narrow dependency means blast is contained; useful to know before refactoring.
+    # Positive signal: suppressed when importers != 1 (too many = already shown in blast header).
+    _s207_importers = [
+        i for i in graph.importers_of(file_path)
+        if i in graph.files and i != file_path
+    ]
+    if len(_s207_importers) == 1:
+        _s207_name = _s207_importers[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"single importer: only {_s207_name} imports this file"
+            f" — narrow dependency, check that consumer before modifying"
+        )
+
+    # S217: Entry point blast — the blast target is an application entry point.
+    # Entry points (main.py, app.py, index.js, cli.py) are widely invoked; changing them
+    # affects startup, CLI behavior, or the entire request path.
+    # Only shown when blast file stem matches known entry point names.
+    _s217_entry_stems = {
+        "main", "app", "index", "server", "cli", "run", "manage", "wsgi", "asgi", "__main__"
+    }
+    _s217_stem = file_path.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if _s217_stem in _s217_entry_stems:
+        lines.append(
+            f"entry point blast: {file_path.rsplit('/', 1)[-1]} is an application entry point"
+            f" — changes affect startup / CLI / full request path"
+        )
+
+    # S219: Call concentration — ≥75% of external CALLS callers reference the same exported symbol.
+    # When callers overwhelmingly use one specific symbol, the real blast bottleneck is narrower
+    # than the file-level view suggests. Helps agents focus review on that one symbol.
+    # Only shown when 4+ distinct non-test external caller files exist and concentration >= 75%.
+    _s219_exp_ids = {s.id for s in symbols if s.exported and s.kind.value in ("function", "method")}
+    _s219_unique_callers = {
+        loc.split(":")[0]
+        for locs in external_callers.values()
+        for loc in locs
+        if not _is_test_file(loc.split(":")[0])
+    }
+    if len(_s219_unique_callers) >= 4 and _s219_exp_ids:
+        _s219_counts: dict[str, int] = {}
+        for _e219 in graph.edges:
+            if _e219.kind is EdgeKind.CALLS and _e219.target_id in _s219_exp_ids:
+                _fp219 = _e219.source_id.split("::")[0]
+                if _fp219 != file_path and not _is_test_file(_fp219):
+                    _s219_counts[_e219.target_id] = _s219_counts.get(_e219.target_id, 0) + 1
+        if _s219_counts:
+            _s219_total = sum(_s219_counts.values())
+            _s219_top_id, _s219_top_n = max(_s219_counts.items(), key=lambda kv: kv[1])
+            if _s219_total > 0 and _s219_top_n / _s219_total >= 0.75:
+                _s219_name = next(
+                    (s.name for s in symbols if s.id == _s219_top_id), _s219_top_id.split("::")[-1]
+                )
+                _s219_pct = int(_s219_top_n / _s219_total * 100)
+                lines.append(
+                    f"call concentration: {_s219_pct}% of callers use {_s219_name}"
+                    f" — that symbol is the real blast bottleneck"
+                )
+
+    # S224: Test file blast — the blast target is a test file.
+    # Test files typically have few or no production importers; changes are lower risk.
+    # Positive signal: flagged as safe to refactor/delete without coordinating production code.
+    if _is_test_file(file_path):
+        lines.append(
+            f"test file blast: {file_path.rsplit('/', 1)[-1]} is a test file"
+            f" — no production code depends on this; safe to modify independently"
+        )
+
+    # S231: Package init blast — blast target is an __init__.py file.
+    # __init__.py re-exports symbols for the entire package; all package importers are affected.
+    # Only shown when blast file is an __init__.py.
+    if file_path.rsplit("/", 1)[-1] in ("__init__.py", "__init__.ts", "__init__.js"):
+        lines.append(
+            f"package init blast: {file_path} is a package init"
+            f" — all importers of the package are affected by changes here"
+        )
+
+    # S237: Internal-only file — blast target exports no symbols.
+    # Files with no exports are internal implementation details; changes stay within the module.
+    # Positive signal: safe to refactor without breaking callers' public interface expectations.
+    if symbols and not any(s.exported for s in symbols):
+        lines.append(
+            f"internal-only file: {file_path.rsplit('/', 1)[-1]} has no exported symbols"
+            f" — changes don't affect public interface"
+        )
+
+    # S246: Mixin/base class blast — blast target defines a class that other classes inherit from.
+    # Mixin or base class changes cascade silently through ALL inheriting classes.
+    # Only shown when 1+ class in the file is a base/mixin (other classes inherit from it).
+    _s246_mixin_indicators = ("mixin", "base", "abstract", "interface")
+    _s246_class_syms = [s for s in symbols if s.kind.value == "class"]
+    _s246_mixin_classes = [
+        s for s in _s246_class_syms
+        if any(ind in s.name.lower() for ind in _s246_mixin_indicators)
+    ]
+    if not _s246_mixin_classes:
+        # Also detect via INHERITS edges: if any other class inherits from classes in this file
+        _s246_this_class_ids = {s.id for s in _s246_class_syms}
+        _s246_subclasses: list[str] = []
+        for _e246 in graph.edges:
+            if (
+                _e246.kind.value == "inherits"
+                and _e246.target_id in _s246_this_class_ids
+                and _e246.source_id.split("::")[0] != file_path
+            ):
+                _s246_subclasses.append(_e246.source_id.split("::")[-1])
+        if len(_s246_subclasses) >= 2:
+            _s246_mixin_classes = _s246_class_syms  # trigger signal
+    if _s246_mixin_classes:
+        _s246_names = [s.name for s in _s246_mixin_classes[:2]]
+        _s246_str = ", ".join(_s246_names)
+        # Count subclasses across the graph
+        _s246_all_ids = {s.id for s in _s246_mixin_classes}
+        _s246_n_subs = sum(
+            1 for _e in graph.edges
+            if _e.kind.value == "inherits" and _e.target_id in _s246_all_ids
+            and _e.source_id.split("::")[0] != file_path
+        )
+        if _s246_n_subs >= 1:
+            lines.append(
+                f"mixin/base blast: {_s246_str} has {_s246_n_subs} subclass(es)"
+                f" — changes cascade silently through all inheritors"
+            )
+
+    # S239: Async function blast — blast target contains async functions.
+    # Callers must properly await async functions; any refactoring to sync breaks all call sites.
+    # Only shown when 1+ async function exists in the blast target (Python/JS/TS).
+    _s239_async_syms = [
+        s for s in symbols
+        if s.kind.value in ("function", "method")
+        and s.signature
+        and (s.signature.startswith("async def ") or s.signature.startswith("async "))
+    ]
+    if _s239_async_syms:
+        _s239_names = [s.name for s in _s239_async_syms[:3]]
+        _s239_str = ", ".join(_s239_names)
+        if len(_s239_async_syms) > 3:
+            _s239_str += f" +{len(_s239_async_syms) - 3} more"
+        lines.append(
+            f"async blast: {len(_s239_async_syms)} async fn(s) ({_s239_str})"
+            f" — callers must await; sync conversion breaks all call sites"
+        )
+
+    # S261: Platform-specific blast — blast target file name indicates it's platform-specific.
+    # Platform-specific code needs testing on that exact platform (CI may not cover it).
+    # Only shown when file name contains a platform indicator.
+    _s254_platform_markers = (
+        "_windows", "_win32", "_win64", "_linux", "_darwin", "_macos", "_osx",
+        "_posix", "_unix", "_freebsd", "_android", "_ios", "_arm", "_x86",
+    )
+    _s254_base254 = file_path.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    _s254_platform = next(
+        (m.lstrip("_") for m in _s254_platform_markers if _s254_base254.endswith(m)),
+        None
+    )
+    if _s254_platform:
+        lines.append(
+            f"platform-specific: {file_path.rsplit('/', 1)[-1]} targets {_s254_platform}"
+            f" — test on that platform; CI may not cover it"
+        )
+
+    # S251: Well-tested blast — blast target's exported symbols have many test callers.
+    # Positive signal: high test coverage means refactoring here has a safety net.
+    # Only shown when 5+ distinct test files call into this blast target.
+    _s251_test_caller_files: set[str] = set()
+    for _sym251 in symbols:
+        for _c251 in graph.callers_of(_sym251.id):
+            if _is_test_file(_c251.file_path):
+                _s251_test_caller_files.add(_c251.file_path)
+    if len(_s251_test_caller_files) >= 5:
+        lines.append(
+            f"well-tested: {len(_s251_test_caller_files)} test file(s) cover this module"
+            f" — high safety net; refactoring here is lower risk"
+        )
+
+
+    # S256: High fan-out blast — blast target imports from many other modules.
+    # A file with wide dependencies is harder to refactor in isolation; changes
+    # often require updates across all its upstream dependencies.
+    _s256_imports = [
+        e for e in graph.edges
+        if e.kind.value == "imports" and e.source_id == file_path
+    ]
+    _s256_import_count = len({e.target_id for e in _s256_imports})
+    if _s256_import_count >= 6:
+        lines.append(
+            f"high fan-out: imports from {_s256_import_count} modules"
+            f" — wide dependency surface; refactoring this file requires many upstream checks"
+        )
+
+
+    # S263: Leaf module — blast target has no outgoing imports (fully self-contained).
+    # Leaf modules are the easiest to extract, test, or replace in isolation.
+    # Positive signal: shown when blast target has 3+ symbols but zero import edges out.
+    if symbols:
+        _s263_outgoing = [
+            e for e in graph.edges
+            if e.kind.value == "imports" and e.source_id == file_path
+        ]
+        if not _s263_outgoing and len(symbols) >= 3:
+            lines.append(
+                f"leaf module: no outgoing imports"
+                f" — self-contained; safe to extract, mock, or replace in isolation"
+            )
+
+
+    # S269: Deep importer chain — a direct importer of this file is itself imported by many files.
+    # This means changes here amplify: they affect the direct importer AND everything that
+    # depends on that importer, creating a second-order blast radius.
+    _s269_deep_importers = []
+    for _imp269 in graph.importers_of(file_path):
+        if _imp269 not in graph.files or _imp269 == file_path:
+            continue
+        _s269_second_order = len([
+            f for f in graph.importers_of(_imp269)
+            if f in graph.files and f != file_path and f != _imp269
+        ])
+        if _s269_second_order >= 5:
+            _s269_deep_importers.append((_s269_second_order, _imp269.rsplit("/", 1)[-1]))
+    if _s269_deep_importers:
+        _s269_deep_importers.sort(reverse=True)
+        _n269, _name269 = _s269_deep_importers[0]
+        lines.append(
+            f"deep importer chain: {_name269} imports this and is itself imported by {_n269} files"
+            f" — second-order blast; changes propagate further than direct importers suggest"
+        )
+
+
+    # S278: Test infrastructure blast — blast target is a conftest or shared test fixture.
+    # Changes to test infrastructure (conftest.py, fixtures.py, test_utils.py) affect
+    # ALL tests that rely on those fixtures; blast is test-suite-wide.
+    _s278_infra_names = {"conftest", "fixtures", "test_utils", "test_helpers", "test_base",
+                         "testutils", "testhelpers", "factory", "factories", "fakes", "mocks"}
+    _s278_stem = file_path.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if _s278_stem in _s278_infra_names or _is_test_file(file_path):
+        _s278_test_importers = [
+            f for f in graph.importers_of(file_path)
+            if f in graph.files and _is_test_file(f)
+        ]
+        if _s278_test_importers:
+            lines.append(
+                f"test infra blast: {len(_s278_test_importers)} test file(s) depend on this fixture"
+                f" — changes here affect the entire test suite"
+            )
+
+
+    # S284: Cross-package blast — blast target is imported by files in 3+ top-level directories.
+    # When a file's importers span many packages, a change creates a coordinated multi-team
+    # blast; each package team must review and validate the impact.
+    _s284_importer_dirs: set[str] = set()
+    for _imp284 in graph.importers_of(file_path):
+        if _imp284 in graph.files and _imp284 != file_path:
+            _dir284 = _imp284.split("/")[0] if "/" in _imp284 else "."
+            if not _dir284.startswith("."):
+                _s284_importer_dirs.add(_dir284)
+    if len(_s284_importer_dirs) >= 3:
+        _dirs284 = sorted(_s284_importer_dirs)[:3]
+        _dir_str284 = ", ".join(_dirs284)
+        if len(_s284_importer_dirs) > 3:
+            _dir_str284 += f" +{len(_s284_importer_dirs) - 3} more"
+        lines.append(
+            f"cross-package blast: imported by {len(_s284_importer_dirs)} packages ({_dir_str284})"
+            f" — multi-team impact; coordinate changes across all consuming packages"
+        )
+
+
+    # S290: No importers — blast target has exported symbols but nothing imports it.
+    # A non-test file with exported symbols and zero importers may be dead code,
+    # a new module not yet wired in, or an external entry point (tested separately).
+    if symbols:
+        _s290_importers = [
+            f for f in graph.importers_of(file_path)
+            if f in graph.files and f != file_path
+        ]
+        _s290_exported = [s for s in symbols if s.exported]
+        if not _s290_importers and _s290_exported and not _is_test_file(file_path):
+            lines.append(
+                f"no importers: {len(_s290_exported)} exported symbol(s) but nothing imports this file"
+                f" — may be dead code, an unwired module, or a standalone entry point"
+            )
+
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
 

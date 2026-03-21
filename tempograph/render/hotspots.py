@@ -650,6 +650,152 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 f" — highest combined velocity+complexity"
             )
 
+    # S200: Size hotspot — the top hotspot file is also the largest file by line count.
+    # The most-changed file also being the largest = maximum cognitive load per change.
+    # Only shown when the top hotspot file is in the top 3 by line count.
+    if scores and graph.files:
+        _top200_fp = scores[0][1].file_path
+        _all_line_counts = sorted(
+            [(fi.line_count, fp) for fp, fi in graph.files.items()
+             if not _is_test_file(fp) and hasattr(fi, 'line_count') and fi.line_count],
+            reverse=True,
+        )
+        _top3_large = {fp for _, fp in _all_line_counts[:3]}
+        if _top200_fp in _top3_large:
+            _top200_lines = graph.files[_top200_fp].line_count if _top200_fp in graph.files else 0
+            _top200_base = _top200_fp.rsplit("/", 1)[-1]
+            if _top200_lines and _top200_lines >= 50:
+                lines.append(
+                    f"\nsize hotspot: {_top200_base} is top hotspot AND largest file"
+                    f" ({_top200_lines} lines) — maximum cognitive load per change"
+                )
+
+    # S194: Test file hotspot — a test file appears in the top 5 hotspot ranks.
+    # Test files in the hotspot list indicate test churn, flaky tests, or spec instability.
+    # Only shown when 1+ test file is among the top 5 hotspot-ranked files.
+    if scores:
+        _top5_test_files194 = [
+            sym.file_path for _, sym in scores[:5]
+            if _is_test_file(sym.file_path)
+        ]
+        # Deduplicate
+        _seen194: set[str] = set()
+        _unique_test_fps194 = [
+            fp for fp in _top5_test_files194
+            if not (fp in _seen194 or _seen194.add(fp))  # type: ignore[func-returns-value]
+        ]
+        if _unique_test_fps194:
+            _t194_name = _unique_test_fps194[0].rsplit("/", 1)[-1]
+            lines.append(
+                f"\ntest file hotspot: {_t194_name} in top 5 hotspots — test churn"
+                f" may indicate flaky tests or rapidly-changing spec"
+            )
+
+    # S188: Avg complexity of top hotspot — the top hotspot file's functions are complex on average.
+    # Complex-on-average files have high maintenance cost beyond any single function.
+    # Only shown when avg complexity of fns in top hotspot file >= 8.
+    if scores:
+        _top188_fp = scores[0][1].file_path
+        _cx_vals188 = [
+            s.complexity for s in graph.symbols.values()
+            if s.file_path == _top188_fp
+            and s.kind.value in ("function", "method")
+            and s.complexity is not None
+        ]
+        if _cx_vals188:
+            _avg_cx188 = sum(_cx_vals188) / len(_cx_vals188)
+            if _avg_cx188 >= 8:
+                _top188_base = _top188_fp.rsplit("/", 1)[-1]
+                lines.append(
+                    f"\nhigh avg complexity: {_top188_base} — avg cx {_avg_cx188:.1f}"
+                    f" across {len(_cx_vals188)} fns — entire file is complex"
+                )
+
+    # S182: Hot cluster — 2+ top hotspot files share the same parent directory.
+    # When multiple hot files cluster in one directory, that dir is a change concentration zone.
+    # Only shown when 2+ of the top-20 hotspots are in the same directory.
+    if scores and len(scores) >= 4:
+        _s182_dir_counts: dict[str, list[str]] = {}
+        for _sc182, _sym182 in scores[:20]:
+            _dir182 = _sym182.file_path.rsplit("/", 1)[0] if "/" in _sym182.file_path else "."
+            if _dir182 != ".":
+                _s182_dir_counts.setdefault(_dir182, [])
+                if _sym182.file_path not in _s182_dir_counts[_dir182]:
+                    _s182_dir_counts[_dir182].append(_sym182.file_path)
+        _s182_clusters = sorted(
+            [(len(fps), d) for d, fps in _s182_dir_counts.items() if len(fps) >= 2],
+            reverse=True,
+        )
+        if _s182_clusters:
+            _s182_count, _s182_dir = _s182_clusters[0]
+            _s182_dir_name = _s182_dir.rsplit("/", 1)[-1]
+            lines.append(
+                f"\nhot cluster: {_s182_dir_name}/ — {_s182_count} hotspot files"
+                f" concentrated in one directory"
+            )
+
+    # S176: Interface hotspot — the top hotspot file contains an interface or abstract class.
+    # Interfaces are contracts; changing them breaks all implementors, amplifying blast radius.
+    # Only shown when the top hotspot file contains >= 1 interface/abstract symbol.
+    if scores:
+        _top176_fp = scores[0][1].file_path
+        _s176_ifaces = [
+            s for s in graph.symbols.values()
+            if s.file_path == _top176_fp
+            and s.kind.value in ("interface", "abstract_class")
+        ]
+        if _s176_ifaces:
+            _s176_names = [s.name for s in _s176_ifaces[:3]]
+            _s176_str = ", ".join(_s176_names)
+            _top176_base = _top176_fp.rsplit("/", 1)[-1]
+            lines.append(
+                f"\ninterface hotspot: {_top176_base} defines {len(_s176_ifaces)}"
+                f" interface(s) ({_s176_str}) — contract changes break all implementors"
+            )
+
+    # S170: Velocity spike — the top hotspot file's velocity is >= 3x the median velocity.
+    # A single file being changed far more than the rest is a concentration risk.
+    # Only shown when 3+ files have non-zero velocity and top >= 3x median.
+    if velocity and len(velocity) >= 3:
+        _vels170 = sorted(velocity.values())
+        _median170_idx = len(_vels170) // 2
+        _median170 = _vels170[_median170_idx]
+        if _median170 > 0:
+            _top170_fp = max(velocity, key=velocity.get)  # type: ignore[arg-type]
+            _top170_v = velocity[_top170_fp]
+            if _top170_v >= _median170 * 3.0:
+                _top170_name = _top170_fp.rsplit("/", 1)[-1]
+                lines.append(
+                    f"\nvelocity spike: {_top170_name} — {_top170_v:.1f}/wk"
+                    f" vs median {_median170:.1f}/wk ({_top170_v / _median170:.1f}×)"
+                )
+
+    # S164: Zero-test hotspot — the highest-ranked hotspot file has no corresponding test file.
+    # Hotspot files are changed most often; lacking tests makes them highest refactor risk.
+    # Only shown when the top hotspot file has no matching test file in the repo.
+    if scores:
+        _top164_fp = scores[0][1].file_path
+        _top164_base = _top164_fp.rsplit("/", 1)[-1]
+        _top164_stem = _top164_base.rsplit(".", 1)[0]
+        _s164_test_patterns = {
+            f"test_{_top164_stem}",
+            f"{_top164_stem}_test",
+            f"{_top164_stem}.test",
+            f"{_top164_stem}.spec",
+        }
+        _s164_has_test = any(
+            any(
+                p in fp.rsplit("/", 1)[-1].lower()
+                for p in _s164_test_patterns
+            )
+            for fp in graph.files
+            if _is_test_file(fp)
+        )
+        if not _s164_has_test:
+            lines.append(
+                f"\nzero-test hotspot: {_top164_base} — top hotspot with no matching test file"
+            )
+
     # S144: Recursive fns in hotspots — top-ranked symbols that call themselves.
     # Recursive functions are harder to modify: changing loop invariants or base cases
     # requires understanding the full recursion contract. Flag when 2+ are in top hotspots.
@@ -670,4 +816,278 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             lines.append("")
             lines.append(f"recursive hotspots: {len(_recursive_syms144)} recursive fns in top ranks ({_r_str})")
 
-    return "\n".join(lines)
+    # S206: Fan-in spike — top-ranked hotspot symbol has significantly more callers than average.
+    # A hotspot that is also a caller magnet is the highest-risk change target.
+    # Only shown when the top hotspot's caller count >= 3x the average of the top 10.
+    if scores:
+        _caller_counts206 = []
+        for _sc206, _sym206 in scores[:10]:
+            _n_callers206 = len(graph.callers_of(_sym206.id))
+            _caller_counts206.append((_n_callers206, _sym206))
+        if len(_caller_counts206) >= 3:
+            _avg206 = sum(c for c, _ in _caller_counts206) / len(_caller_counts206)
+            _top_count206, _top_sym206 = max(_caller_counts206, key=lambda x: x[0])
+            if _avg206 > 0 and _top_count206 >= _avg206 * 3.0:
+                lines.append(
+                    f"\nfan-in spike: {_top_sym206.name} — {_top_count206} callers"
+                    f" vs avg {_avg206:.1f} ({_top_count206 / _avg206:.1f}×)"
+                )
+
+    # S216: Exported hotspot — the top hotspot file exports many symbols.
+    # Frequently-changed exported symbols mean frequent contract changes for all callers.
+    # Only shown when top hotspot file exports >= 5 fn/method/class symbols.
+    if scores:
+        _top216_fp = scores[0][1].file_path
+        _s216_exported = [
+            s for s in graph.symbols.values()
+            if s.file_path == _top216_fp
+            and s.exported
+            and s.kind.value in ("function", "method", "class", "interface")
+        ]
+        if len(_s216_exported) >= 5:
+            _top216_base = _top216_fp.rsplit("/", 1)[-1]
+            lines.append(
+                f"\nexported hotspot: {_top216_base} has {len(_s216_exported)} exported symbols"
+                f" — frequent changes mean frequent contract churn for callers"
+            )
+
+    # S223: Mono-class file — the top hotspot file is dominated by a single large class.
+    # A huge central class is hard to test, hard to extend, and concentrates cognitive load.
+    # Only shown when the top hotspot file has 1 class that contains >= 50% of its symbols.
+    if scores:
+        _top223_fp = scores[0][1].file_path
+        _top223_syms = [s for s in graph.symbols.values() if s.file_path == _top223_fp]
+        _top223_classes = [s for s in _top223_syms if s.kind.value == "class"]
+        if len(_top223_classes) == 1 and len(_top223_syms) >= 6:
+            _cls223 = _top223_classes[0]
+            _cls223_children = graph.children_of(_cls223.id)
+            if len(_cls223_children) >= len(_top223_syms) * 0.5:
+                _top223_base = _top223_fp.rsplit("/", 1)[-1]
+                lines.append(
+                    f"\nmono-class file: {_top223_base} dominated by {_cls223.name}"
+                    f" ({len(_cls223_children)} of {len(_top223_syms)} symbols)"
+                    f" — consider splitting into smaller classes"
+                )
+
+    # S230: Low-complexity hotspot — top hotspot file's functions all have very low complexity.
+    # High change frequency + low complexity = likely config/data churn, not logic changes.
+    # Only shown when top hotspot file has 3+ fns and avg cx <= 2.
+    if scores:
+        _top230_fp = scores[0][1].file_path
+        _cx_vals230 = [
+            s.complexity for s in graph.symbols.values()
+            if s.file_path == _top230_fp
+            and s.kind.value in ("function", "method")
+            and s.complexity is not None
+        ]
+        if len(_cx_vals230) >= 3:
+            _avg_cx230 = sum(_cx_vals230) / len(_cx_vals230)
+            if _avg_cx230 <= 2:
+                _top230_base = _top230_fp.rsplit("/", 1)[-1]
+                lines.append(
+                    f"\nlow-complexity hotspot: {_top230_base} avg cx {_avg_cx230:.1f}"
+                    f" — frequently changed but simple; likely config/data churn"
+                )
+
+    # S236: Ghost hotspot — top hotspot symbol has 0 direct test callers.
+    # Frequently-changed code with no test callers is high-risk; no safety net.
+    # Only shown when the top-ranked hotspot fn/method has 0 test callers.
+    if scores:
+        for _sc236, _sym236 in scores[:5]:
+            if _sym236.kind.value not in ("function", "method"):
+                continue
+            _test_callers236 = [
+                c for c in graph.callers_of(_sym236.id)
+                if _is_test_file(c.file_path)
+            ]
+            if not _test_callers236 and not _is_test_file(_sym236.file_path):
+                lines.append(
+                    f"\nghost hotspot: {_sym236.name} ({_sym236.file_path.rsplit('/', 1)[-1]})"
+                    f" — top hotspot with 0 test callers, no safety net"
+                )
+                break
+
+    # S250: Cluster hotspot — 3+ hotspot files from the same directory.
+    # A whole module being unstable (not just one file) suggests coordination risk.
+    # Only shown when top-10 hotspot files include 3+ from the same directory.
+    if scores:
+        _s250_top_files = []
+        _s250_seen_files: set[str] = set()
+        for _, _sym250 in scores[:20]:
+            _fp250 = _sym250.file_path
+            if _fp250 not in _s250_seen_files and not _is_test_file(_fp250):
+                _s250_top_files.append(_fp250)
+                _s250_seen_files.add(_fp250)
+            if len(_s250_top_files) >= 10:
+                break
+        _s250_dirs: dict[str, list[str]] = {}
+        for _fp250 in _s250_top_files:
+            _dir250 = _fp250.rsplit("/", 1)[0] if "/" in _fp250 else "."
+            _s250_dirs.setdefault(_dir250, []).append(_fp250.rsplit("/", 1)[-1])
+        _s250_clusters = [(d, fs) for d, fs in _s250_dirs.items() if len(fs) >= 3]
+        if _s250_clusters:
+            _top_dir250, _top_files250 = max(_s250_clusters, key=lambda x: len(x[1]))
+            _f250_str = ", ".join(_top_files250[:3])
+            if len(_top_files250) > 3:
+                _f250_str += f" +{len(_top_files250) - 3} more"
+            _dir_label250 = _top_dir250.rsplit("/", 1)[-1] if "/" in _top_dir250 else _top_dir250
+            lines.append(
+                f"\ncluster hotspot: {len(_top_files250)} files in {_dir_label250}/ ({_f250_str})"
+                f" — whole module is unstable; coordinate changes carefully"
+            )
+
+    # S260: Undocumented hotspot — top hotspot fn/method has no docstring.
+    # Frequently-changed undocumented functions accumulate hidden complexity.
+    # Only shown when the top non-test hotspot function has no docstring (empty signature body).
+    if scores:
+        _top253 = next(
+            (sym for _, sym in scores[:5]
+             if sym.kind.value in ("function", "method") and not _is_test_file(sym.file_path)),
+            None
+        )
+        if _top253:
+            _sig253 = _top253.signature or ""
+            # A docstring would typically appear in the signature or be tracked as metadata.
+            # Heuristic: if name doesn't end in _ (dunder) and has no docstring indicator.
+            _has_doc = '"""' in _sig253 or "'''" in _sig253 or "# doc" in _sig253
+            if not _has_doc and not _top253.name.startswith("__"):
+                lines.append(
+                    f"\nundocumented hotspot: {_top253.name}"
+                    f" — top hotspot has no docstring; add docs when modifying"
+                )
+
+    # S242: Test file hotspot — top hotspot symbol lives in a test file.
+    # Frequently-changed test code suggests flaky tests, brittle fixtures, or rapidly-evolving specs.
+    # Only shown when the top-ranked hotspot symbol is itself in a test file.
+    if scores:
+        _top242_sym = next(
+            (sym for _, sym in scores[:3] if sym.kind.value in ("function", "method")),
+            None
+        )
+        if _top242_sym and _is_test_file(_top242_sym.file_path):
+            lines.append(
+                f"\ntest file hotspot: {_top242_sym.name} ({_top242_sym.file_path.rsplit('/', 1)[-1]})"
+                f" — most-changed symbol is in a test; consider stabilizing test infrastructure"
+            )
+
+
+    # S255: Utility hotspot — the top-ranked hotspot lives in a generic utility module.
+    # Utility modules are shared across many callers; hotspot status here risks coupling
+    # unrelated features through shared helpers.
+    # Only shown when the top hotspot file is named utils/helpers/common/shared/base.
+    _s255_util_stems = {"utils", "util", "helpers", "helper", "common", "shared", "base",
+                        "mixins", "mixin", "tools", "lib", "misc", "core"}
+    if scores:
+        _s255_seen: set[str] = set()
+        for _, _sym255 in scores[:5]:
+            _fp255 = _sym255.file_path
+            if _fp255 in _s255_seen or _is_test_file(_fp255):
+                continue
+            _s255_seen.add(_fp255)
+            _stem255 = _fp255.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+            if _stem255 in _s255_util_stems:
+                _importers255 = len(graph.importers_of(_fp255))
+                lines.append(
+                    f"\nutility hotspot: {_fp255.rsplit('/', 1)[-1]} is a shared utility"
+                    f" ({_importers255} importer(s)) — changes here have wide blast radius"
+                )
+                break
+
+
+    # S262: Stable hotspot — top-ranked hotspot symbol has 3+ test callers.
+    # High churn with high test coverage is lower risk; changes here are unlikely
+    # to go undetected. Positive signal for teams considering refactors.
+    if scores:
+        for _sc262, _sym262 in scores[:5]:
+            if _sym262.kind.value not in ("function", "method"):
+                continue
+            if _is_test_file(_sym262.file_path):
+                continue
+            _test_callers262 = [c for c in graph.callers_of(_sym262.id) if _is_test_file(c.file_path)]
+            if len(_test_callers262) >= 3:
+                lines.append(
+                    f"\nstable hotspot: {_sym262.name} has {len(_test_callers262)} test callers"
+                    f" — well-tested high-churn symbol; refactoring here has a safety net"
+                )
+                break
+
+
+    # S268: Churn concentration — top 3+ hotspot symbols all live in the same file.
+    # When high-churn symbols concentrate in one file, that file is an instability
+    # hotspot: changes there are frequent, contested, and risk merge conflicts.
+    if scores:
+        _s268_top_files: list[str] = []
+        _s268_seen_files268: set[str] = set()
+        for _, _sym268 in scores[:10]:
+            _fp268 = _sym268.file_path
+            if _fp268 not in _s268_seen_files268 and not _is_test_file(_fp268):
+                _s268_top_files.append(_fp268)
+                _s268_seen_files268.add(_fp268)
+            if len(_s268_top_files) >= 5:
+                break
+        if _s268_top_files:
+            _s268_file_counts: dict[str, int] = {}
+            for _, _sym268 in scores[:10]:
+                _fp268 = _sym268.file_path
+                if not _is_test_file(_fp268):
+                    _s268_file_counts[_fp268] = _s268_file_counts.get(_fp268, 0) + 1
+            _s268_max_file = max(_s268_file_counts, key=_s268_file_counts.get)
+            if _s268_file_counts[_s268_max_file] >= 3:
+                _s268_label = _s268_max_file.rsplit("/", 1)[-1]
+                lines.append(
+                    f"\nchurn concentration: {_s268_file_counts[_s268_max_file]} of top hotspots"
+                    f" in {_s268_label} — single file is instability center, high merge conflict risk"
+                )
+
+
+    # S277: Single-caller hotspot — top hotspot symbol is called from only 1 other symbol.
+    # A high-complexity function with only one caller may be an inlined helper that
+    # could be folded back, or a function named for the wrong abstraction level.
+    if scores:
+        for _sc277, _sym277 in scores[:5]:
+            if _sym277.kind.value not in ("function", "method"):
+                continue
+            if _is_test_file(_sym277.file_path):
+                continue
+            _ext_callers277 = [
+                c for c in graph.callers_of(_sym277.id)
+                if c.file_path != _sym277.file_path
+            ]
+            if len(_ext_callers277) == 1:
+                _caller_name277 = _ext_callers277[0].name
+                lines.append(
+                    f"\nsingle-caller hotspot: {_sym277.name} called only from {_caller_name277}"
+                    f" — high-churn fn with one user; consider inlining or renaming"
+                )
+                break
+
+
+    # S283: Untested hotspot — top hotspot file has no test coverage AND repo has no tests at all.
+    # The riskiest combination: high-churn code with zero test infrastructure.
+    _s283_any_tests = any(_is_test_file(fp) for fp in graph.files)
+    if not _s283_any_tests and scores:
+        _s283_top = next((sym for _, sym in scores[:3] if not _is_test_file(sym.file_path)), None)
+        if _s283_top:
+            lines.append(
+                f"\nuntested repo: no test files found — all hotspot churn is completely unprotected"
+            )
+
+
+    # S289: Interface module hotspot — top hotspot symbol lives in an __init__.py file.
+    # Package init files act as public interfaces; changes there affect ALL importers
+    # of the package, not just files that use that symbol directly.
+    if scores:
+        _s289_top = next(
+            (sym for _, sym in scores[:5]
+             if not _is_test_file(sym.file_path)
+             and sym.file_path.rsplit("/", 1)[-1] == "__init__.py"),
+            None
+        )
+        if _s289_top:
+            _importers289 = len([f for f in graph.importers_of(_s289_top.file_path) if f in graph.files])
+            lines.append(
+                f"\ninterface hotspot: {_s289_top.name} is in __init__.py"
+                f" ({_importers289} package importer(s)) — changes here affect all package consumers"
+            )
+
+    return "\n".join(lines)  # ALWAYS return here — never inside a conditional block
