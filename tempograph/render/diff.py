@@ -2558,4 +2558,15 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — database schema changes; ensure backward-compatible migration for rolling deployments"
             )
 
+    # S927: Test-only change — all graph-indexed changed files are test files.
+    # A test-only diff may indicate coverage was added after the fact, or tests were
+    # updated to match undocumented behavior changes rather than the intended spec.
+    if normalized and len(normalized) >= 2:
+        _all_test927 = all(_is_test_file(fp) for fp in normalized)
+        if _all_test927:
+            lines.append(
+                f"test-only diff: all {len(normalized)} changed file(s) are test files"
+                f" — no production code changed; verify tests reflect intentional behavior, not bugs"
+            )
+
     return "\n".join(lines)

@@ -2760,5 +2760,19 @@ def _collect_hotspots_signals(
                     f" — hotspot changes break tests; verify both test and production callers"
                 )
 
+    # S928: Shallow hotspot — the top hotspot is short (≤5 lines) but heavily called.
+    # A short but hot function may be a performance bottleneck or a traffic concentrator;
+    # inlining or caching its result can yield outsized performance gains.
+    if scores:
+        _top928 = scores[0][1]
+        if _top928 is not None and not _is_test_file(_top928.file_path):
+            _callers928 = graph.callers_of(_top928.id)
+            if _top928.line_count is not None and _top928.line_count <= 5 and len(_callers928) >= 5:
+                out.append(
+                    f"\nshallow hotspot: {_top928.name} is only {_top928.line_count} line(s)"
+                    f" but called from {len(_callers928)} places"
+                    f" — short but widely called; consider inlining or caching its result"
+                )
+
     return out
 

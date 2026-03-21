@@ -3199,6 +3199,26 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — removed presentation paths; verify the business logic they contained is no longer needed"
         )
 
+    # S929: Dead data classes — unused classes with no methods (pure data containers).
+    # Data classes with no methods are often replaced by dicts, TypedDicts, or dataclasses;
+    # orphaned ones may indicate a model layer that was refactored without removing old types.
+    _dead_data929 = []
+    for _cls929 in [s for s in dead if s.kind.value == "class" and not _is_test_file(s.file_path)]:
+        _children929 = [
+            s for s in graph.symbols.values()
+            if s.parent_id == _cls929.id and s.kind.value in ("method", "function")
+        ]
+        if not _children929:
+            _dead_data929.append(_cls929)
+    if _dead_data929:
+        _data_names929 = ", ".join(s.name for s in _dead_data929[:3])
+        if len(_dead_data929) > 3:
+            _data_names929 += f" +{len(_dead_data929) - 3} more"
+        lines.append(
+            f"dead data classes: {len(_dead_data929)} unused method-free class(es) ({_data_names929})"
+            f" — no-method classes may be leftover models; consider converting to TypedDict or dataclass"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

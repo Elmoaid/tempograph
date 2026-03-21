@@ -3382,6 +3382,17 @@ def _signals_async_oop(
             f" — unclear invocation path; check for __main__ blocks or framework-driven entry points"
         )
 
+    # S925: Mixed language repo — both Python and JavaScript/TypeScript files coexist.
+    # Multi-language repos require agents to understand cross-language contracts; changes
+    # to shared interfaces (APIs, schemas, events) must be reflected in both languages.
+    _py_files925 = [fp for fp in graph.files if fp.endswith(".py") and not _is_test_file(fp)]
+    _js_files925 = [fp for fp in graph.files if fp.endswith((".js", ".ts", ".jsx", ".tsx"))]
+    if len(_py_files925) >= 2 and len(_js_files925) >= 2:
+        lines.append(
+            f"mixed languages: {len(_py_files925)} Python file(s) and {len(_js_files925)} JS/TS file(s)"
+            f" — cross-language repo; ensure shared API contracts are updated consistently"
+        )
+
     return lines
 
 

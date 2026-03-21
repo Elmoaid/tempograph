@@ -4057,6 +4057,27 @@ def _signals_focused_fn_advanced(
                 f" — intended for internal use only; refactoring is lower risk but may affect subclass overrides"
             )
 
+    # S924: Name collision — focused symbol's name appears in multiple files.
+    # When the same function name is defined across several modules, changes to one
+    # may create confusion about which definition is being called at a given call site.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim924 = _seed_syms[0]
+        if _prim924.kind.value in ("function", "method") and not _is_test_file(_prim924.file_path):
+            _same_name924 = [
+                s for s in graph.symbols.values()
+                if s.name == _prim924.name
+                and s.id != _prim924.id
+                and s.kind.value in ("function", "method")
+                and not _is_test_file(s.file_path)
+            ]
+            if _same_name924:
+                _files924 = {s.file_path.rsplit("/", 1)[-1] for s in _same_name924}
+                lines.append(
+                    f"\nname collision: {_prim924.name} also defined in {len(_same_name924)} other file(s)"
+                    f" ({', '.join(sorted(_files924)[:3])})"
+                    f" — same name across modules; verify callers import the intended definition"
+                )
+
     return lines
 
 

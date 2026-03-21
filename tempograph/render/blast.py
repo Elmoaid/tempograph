@@ -2307,6 +2307,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — cache changes affect shared state; verify invalidation logic and concurrent access"
         )
 
+    # S926: Middleware blast — blast target is a middleware or interceptor file.
+    # Middleware runs on every request; changes here have the widest possible runtime impact
+    # and are harder to test exhaustively than endpoint-scoped changes.
+    _mw_kws926 = ("middleware", "interceptor", "filter", "guard", "hook", "pipeline", "chain")
+    _fname926 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if any(kw in _fname926 for kw in _mw_kws926):
+        lines.append(
+            f"middleware blast: {_fp589.rsplit('/', 1)[-1]} is a middleware or interceptor"
+            f" — runs on every request; changes have maximum runtime impact; test exhaustively"
+        )
+
     return "\n".join(lines)
 
 

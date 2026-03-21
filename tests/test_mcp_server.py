@@ -43467,3 +43467,202 @@ class TestDeadFormattersS923:
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_dead_code(g)
         assert "dead formatters" not in out, f"unexpected dead formatters; got: {out}"
+
+
+# ── S924–S929 ──────────────────────────────────────────────────────────────────
+
+# ── S924: Name collision ──────────────────────────────────────────────────────
+
+class TestNameCollisionS924:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "auth.py").write_text("def validate(token): return bool(token)\n")
+        (tmp_path / "forms.py").write_text("def validate(data): return bool(data)\n")
+        (tmp_path / "app.py").write_text(
+            "from auth import validate as auth_validate\n"
+            "from forms import validate as form_validate\n"
+            "def run(): auth_validate('tok')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "validate")
+        assert "name collision" in out, f"expected name collision; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "auth.py").write_text("def authenticate(token): return bool(token)\n")
+        (tmp_path / "app.py").write_text(
+            "from auth import authenticate\ndef run(): authenticate('tok')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "authenticate")
+        assert "name collision" not in out, f"unexpected name collision; got: {out}"
+
+
+# ── S925: Mixed language repo ─────────────────────────────────────────────────
+
+class TestMixedLanguageRepoS925:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "server.py").write_text("def start(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        (tmp_path / "client.js").write_text("function fetchData() {}\n")
+        (tmp_path / "app.ts").write_text("export function run() {}\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "mixed languages" in out, f"expected mixed languages; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "server.py").write_text("def start(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        (tmp_path / "models.py").write_text("class User: pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "mixed languages" not in out, f"unexpected mixed languages; got: {out}"
+
+
+# ── S926: Middleware blast ────────────────────────────────────────────────────
+
+class TestMiddlewareBlastS926:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "auth_middleware.py").write_text(
+            "def process_request(req): return req\n"
+            "def process_response(res): return res\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from auth_middleware import process_request\ndef run(): process_request({})\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "auth_middleware.py")
+        assert "middleware blast" in out, f"expected middleware blast; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "user_service.py").write_text("def get_user(uid): return uid\n")
+        (tmp_path / "app.py").write_text(
+            "from user_service import get_user\ndef run(): get_user(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "user_service.py")
+        assert "middleware blast" not in out, f"unexpected middleware blast; got: {out}"
+
+
+# ── S927: Test-only diff ──────────────────────────────────────────────────────
+
+class TestTestOnlyDiffS927:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "test_app.py").write_text("def test_run(): pass\n")
+        (tmp_path / "test_utils.py").write_text("def test_helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["test_app.py", "test_utils.py"])
+        assert "test-only diff" in out, f"expected test-only diff; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "test_app.py").write_text("def test_run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "test_app.py"])
+        assert "test-only diff" not in out, f"unexpected test-only diff; got: {out}"
+
+
+# ── S928: Shallow hotspot ─────────────────────────────────────────────────────
+
+class TestShallowHotspotS928:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "core.py").write_text(
+            "def get_value(key):\n"
+            "    return key\n"
+        )
+        for i in range(6):
+            (tmp_path / f"module_{i}.py").write_text(
+                "from core import get_value\n"
+                f"def fn_{i}(): get_value('key_{i}')\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "shallow hotspot" in out, f"expected shallow hotspot; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        body = ["def process(a, b, c, d, e):"]
+        for i in range(10):
+            body.append(f"    if a: b = c + d * e + {i}")
+        body.append("    return a")
+        (tmp_path / "core.py").write_text("\n".join(body) + "\n")
+        (tmp_path / "app.py").write_text(
+            "from core import process\ndef run(): process(1,2,3,4,5)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "shallow hotspot" not in out, f"unexpected shallow hotspot; got: {out}"
+
+
+# ── S929: Dead data classes ────────────────────────────────────────────────────
+
+class TestDeadDataClassesS929:
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "models.py").write_text(
+            "class UserData:\n"
+            "    name = ''\n"
+            "    email = ''\n"
+            "\n"
+            "class Config:\n"
+            "    debug = False\n"
+            "\n"
+            "def active_fn(): return True\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from models import active_fn\ndef run(): active_fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead data classes" in out, f"expected dead data classes; got: {out}"
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "models.py").write_text(
+            "class UserData:\n"
+            "    name = ''\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from models import UserData\ndef run(): return UserData()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead data classes" not in out, f"unexpected dead data classes; got: {out}"
