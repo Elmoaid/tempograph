@@ -1864,5 +1864,18 @@ def _collect_hotspots_signals(
                     f" — internal test utility, not production-critical; safe to refactor aggressively"
                 )
 
+    # S580: Wide-file hotspot — top hotspot file has 10+ symbols, making it a dense module.
+    # High-symbol-count files concentrate many responsibilities; even small changes require
+    # understanding a large context window of co-located symbols.
+    if scores:
+        _top580 = scores[0][1]
+        if not _is_test_file(_top580.file_path) and _top580.file_path in graph.files:
+            _fi580_syms = len(graph.files[_top580.file_path].symbols)
+            if _fi580_syms >= 10:
+                out.append(
+                    f"\nwide-file hotspot: {_top580.name} is in {_top580.file_path.rsplit('/', 1)[-1]}"
+                    f" which has {_fi580_syms} symbols — dense module; changes require large context window"
+                )
+
     return out
 

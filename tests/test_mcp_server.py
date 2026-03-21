@@ -27430,3 +27430,180 @@ class TestDeadContextManagerS575:
         assert "dead context managers" not in out, (
             f"'dead context managers' must not appear when class is imported; got:\n{out}"
         )
+
+
+# ── S576: Empty class focused ──────────────────────────────────────────────────
+
+class TestEmptyClassFocusedS576:
+    """S576: Class with no methods emits empty class signal."""
+
+    def test_empty_class_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "models.py").write_text(
+            "class UserProfile:\n"
+            "    pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "UserProfile")
+        assert "empty class" in out, (
+            f"Expected 'empty class' for class with no methods; got:\n{out}"
+        )
+
+    def test_empty_class_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "models.py").write_text(
+            "class UserProfile:\n"
+            "    def __init__(self): self.name = ''\n"
+            "    def get_name(self): return self.name\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "UserProfile")
+        assert "empty class" not in out, (
+            f"'empty class' must not appear when class has methods; got:\n{out}"
+        )
+
+
+# ── S577: Orphan test overview ─────────────────────────────────────────────────
+
+class TestOrphanTestOverviewS577:
+    """S577: Test file with no matching source file emits orphan tests signal."""
+
+    def test_orphan_test_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        (tmp_path / "test_deleted_module.py").write_text(
+            "def test_something(): assert True\n"
+        )
+        (tmp_path / "other.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "orphan tests" in out, (
+            f"Expected 'orphan tests' when test file has no matching source; got:\n{out}"
+        )
+
+    def test_orphan_test_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def add(a, b): return a + b\n")
+        (tmp_path / "test_utils.py").write_text(
+            "from utils import add\ndef test_add(): assert add(1,2) == 3\n"
+        )
+        (tmp_path / "models.py").write_text("class User: pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "orphan tests" not in out, (
+            f"'orphan tests' must not appear when test file matches source; got:\n{out}"
+        )
+
+
+# ── S578: Shared module blast ──────────────────────────────────────────────────
+
+class TestSharedModuleBlastS578:
+    """S578: Blast target in shared/common/core directory emits shared module blast signal."""
+
+    def test_shared_blast_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        shared_dir = tmp_path / "src" / "shared"
+        shared_dir.mkdir(parents=True)
+        (shared_dir / "auth.py").write_text("def verify_token(t): return bool(t)\n")
+        (tmp_path / "src" / "api.py").write_text(
+            "from shared.auth import verify_token\ndef handle(): return verify_token('x')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "src/shared/auth.py")
+        assert "shared module blast" in out, (
+            f"Expected 'shared module blast' for file in shared/ dir; got:\n{out}"
+        )
+
+    def test_shared_blast_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "widgets.py").write_text("def render_btn(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from widgets import render_btn\ndef main(): render_btn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "widgets.py")
+        assert "shared module blast" not in out, (
+            f"'shared module blast' must not appear for non-shared directory; got:\n{out}"
+        )
+
+
+# ── S579: Binary file in diff ──────────────────────────────────────────────────
+
+class TestBinaryFileDiffS579:
+    """S579: Binary/media file in diff emits binary file changed signal."""
+
+    def test_binary_file_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["assets/logo.png", "app.py"])
+        assert "binary file changed" in out, (
+            f"Expected 'binary file changed' for .png in diff; got:\n{out}"
+        )
+
+    def test_binary_file_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["app.py", "utils.py"])
+        assert "binary file changed" not in out, (
+            f"'binary file changed' must not appear for .py-only diff; got:\n{out}"
+        )
+
+
+# ── S580: Wide-file hotspot ────────────────────────────────────────────────────
+
+class TestWideFileHotspotS580:
+    """S580: Top hotspot file with 10+ symbols emits wide-file hotspot signal."""
+
+    def test_wide_file_hotspot_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        fns = "\n".join(f"def fn{i}(): pass" for i in range(12))
+        (tmp_path / "big_module.py").write_text(
+            fns + "\n"
+            "def core_fn():\n"
+            + "".join(f"    fn{i}()\n" for i in range(12))
+        )
+        (tmp_path / "caller.py").write_text(
+            "from big_module import core_fn\ndef run(): core_fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "wide-file hotspot" in out, (
+            f"Expected 'wide-file hotspot' for top hotspot in 12-symbol file; got:\n{out}"
+        )
+
+    def test_wide_file_hotspot_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "small.py").write_text(
+            "def alpha(): pass\ndef beta(): pass\ndef gamma(): pass\n"
+            "def top_fn():\n    alpha()\n    beta()\n    gamma()\n"
+        )
+        (tmp_path / "user.py").write_text(
+            "from small import top_fn\ndef run(): top_fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "wide-file hotspot" not in out, (
+            f"'wide-file hotspot' must not appear when file has fewer than 10 symbols; got:\n{out}"
+        )

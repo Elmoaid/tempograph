@@ -3054,6 +3054,20 @@ def _signals_focused_fn_advanced(
                     f" — ensure a base case is reachable; missing base case causes RuntimeError: maximum recursion depth"
                 )
 
+    # S576: Empty class — focused symbol is a class with 0 method or nested-class children.
+    # Classes with no methods are pure data containers, stubs, or accidentally empty;
+    # they either belong as dataclasses/TypedDicts or were never finished.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim576 = _seed_syms[0]
+        if _prim576.kind.value == "class" and not _is_test_file(_prim576.file_path):
+            _children576 = graph.children_of(_prim576.id)
+            _method_children576 = [c for c in _children576 if c.kind.value in ("method", "class", "function")]
+            if not _method_children576:
+                lines.append(
+                    f"\nempty class: {_prim576.name} has no methods"
+                    f" — pure stub or data container; consider @dataclass, TypedDict, or NamedTuple"
+                )
+
     return lines
 
 
