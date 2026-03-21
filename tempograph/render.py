@@ -140,6 +140,24 @@ def render_overview(graph: Tempo) -> str:
     except Exception:
         pass
 
+    # Hot symbols: top 3 source functions by unique cross-file caller files.
+    # Helps agents immediately identify the highest-traffic API surfaces.
+    _hot_syms: list[tuple[int, str, str]] = []  # (unique_caller_files, name, file)
+    for sym in graph.symbols.values():
+        if sym.kind.value not in ("function", "method") or _is_test_file(sym.file_path):
+            continue
+        cross_files = {
+            c.file_path for c in graph.callers_of(sym.id)
+            if c.file_path != sym.file_path and not _is_test_file(c.file_path)
+        }
+        if len(cross_files) >= 3:
+            _hot_syms.append((len(cross_files), sym.qualified_name, sym.file_path))
+    if _hot_syms:
+        _hot_syms.sort(key=lambda x: -x[0])
+        _hot_parts = [f"{name} ({n})" for n, name, _ in _hot_syms[:3]]
+        lines.append("")
+        lines.append(f"hot symbols: {', '.join(_hot_parts)}")
+
     # Module structure — just the shape, no noisy import counts
     modules: dict[str, list[str]] = {}
     for fp in graph.files:

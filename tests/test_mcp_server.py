@@ -3409,3 +3409,90 @@ class TestBlastTestCoverage:
         tests_block = out[out.find("Tests to run"):]
         count = tests_block.count("test_service.py")
         assert count == 1, f"test_service.py should appear exactly once in Tests to run block, got {count}; block:\n{tests_block}"
+
+
+class TestOverviewHotSymbols:
+    """Tests for 'hot symbols:' section in render_overview (S21).
+
+    Overview lists top 3 functions by unique cross-file caller file count.
+    Only source (non-test) functions with ≥3 unique caller files are shown.
+    """
+
+    def _build(self, tmp_path, files: dict) -> object:
+        from tempograph.builder import build_graph
+
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_hot_symbols_shown_when_threshold_met(self, tmp_path):
+        """Overview shows 'hot symbols:' when a function has ≥3 unique cross-file callers."""
+        from tempograph.render import render_overview
+
+        g = self._build(tmp_path, {
+            "core.py": "def util():\n    pass\n",
+            "a.py": "from core import util\ndef fa():\n    util()\n",
+            "b.py": "from core import util\ndef fb():\n    util()\n",
+            "c.py": "from core import util\ndef fc():\n    util()\n",
+        })
+        out = render_overview(g)
+
+        assert "hot symbols:" in out, f"Must show hot symbols when threshold met; got:\n{out}"
+        assert "util" in out, f"Must name the hot function; got:\n{out}"
+
+    def test_hot_symbols_absent_when_below_threshold(self, tmp_path):
+        """Overview omits 'hot symbols:' when no function has ≥3 unique cross-file callers."""
+        from tempograph.render import render_overview
+
+        g = self._build(tmp_path, {
+            "core.py": "def util():\n    pass\n",
+            "a.py": "from core import util\ndef fa():\n    util()\n",
+            "b.py": "from core import util\ndef fb():\n    util()\n",
+        })
+        out = render_overview(g)
+
+        assert "hot symbols:" not in out, (
+            f"Must NOT show hot symbols when only 2 unique callers; got:\n{out}"
+        )
+
+    def test_hot_symbols_excludes_test_files(self, tmp_path):
+        """Hot symbols count excludes cross-file callers from test files."""
+        from tempograph.render import render_overview
+
+        g = self._build(tmp_path, {
+            "core.py": "def util():\n    pass\n",
+            # 3 cross-file callers from test files — should NOT count
+            "test_a.py": "from core import util\ndef test_a():\n    util()\n",
+            "test_b.py": "from core import util\ndef test_b():\n    util()\n",
+            "test_c.py": "from core import util\ndef test_c():\n    util()\n",
+            # Only 1 production caller
+            "prod.py": "from core import util\ndef use():\n    util()\n",
+        })
+        out = render_overview(g)
+
+        # test_*.py are callers but the "hot symbols" ranking should use cross-file source callers
+        # With 3 test callers but only 1 prod caller, util should NOT appear
+        # (threshold is ≥3 unique caller files; test files are excluded from the count)
+        assert "hot symbols:" not in out, (
+            f"Must NOT count test files toward hot symbols threshold; got:\n{out}"
+        )
+
+    def test_hot_symbols_count_shown(self, tmp_path):
+        """Hot symbols shows the caller file count in parentheses."""
+        from tempograph.render import render_overview
+        import re
+
+        g = self._build(tmp_path, {
+            "core.py": "def util():\n    pass\n",
+            "a.py": "from core import util\ndef fa():\n    util()\n",
+            "b.py": "from core import util\ndef fb():\n    util()\n",
+            "c.py": "from core import util\ndef fc():\n    util()\n",
+            "d.py": "from core import util\ndef fd():\n    util()\n",
+        })
+        out = render_overview(g)
+
+        assert "hot symbols:" in out
+        m = re.search(r"util \((\d+)\)", out)
+        assert m is not None, f"Must show count in parentheses; got:\n{out}"
+        count = int(m.group(1))
+        assert count >= 3, f"Expected ≥3 unique caller files, got {count}"
