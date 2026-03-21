@@ -693,6 +693,44 @@ def _render_cochange_section(graph, seed_file_paths: list[str]) -> str:
     return ""
 
 
+def _render_dependency_files_section(
+    graph, ordered: list[tuple], seen_files: set[str], token_count: int, max_tokens: int
+) -> str:
+    """Build the 'Depends on:' section — outgoing dependency files for seed symbols.
+
+    Collects callees of depth-0 (seed) symbols, groups by file, and shows
+    up to 3 callee names per file. Skipped when fewer than 2 dependency files
+    remain after filtering the seed's own file."""
+    if token_count > max_tokens - 50:
+        return ""
+
+    seed_files = {sym.file_path for sym, depth in ordered if depth == 0}
+    dep_map: dict[str, list[str]] = {}
+    for sym, depth in ordered:
+        if depth != 0:
+            continue
+        for callee in graph.callees_of(sym.id):
+            fp = callee.file_path
+            if fp in seed_files:
+                continue
+            if fp not in dep_map:
+                dep_map[fp] = []
+            if callee.name not in dep_map[fp]:
+                dep_map[fp].append(callee.name)
+
+    if len(dep_map) < 2:
+        return ""
+
+    sorted_deps = sorted(dep_map.items(), key=lambda x: -len(x[1]))[:6]
+    parts = ["\nDepends on:"]
+    for fp, names in sorted_deps:
+        shown = ", ".join(names[:3])
+        if len(names) > 3:
+            shown += f", +{len(names) - 3} more"
+        parts.append(f"  {fp} ({shown})")
+    return "\n".join(parts)
+
+
 def _render_recent_changes_section(graph, seed_file_paths: list[str]) -> str:
     """Build the 'Recent changes (basename):' section for render_focused."""
     if not graph.root or not seed_file_paths:
@@ -1051,6 +1089,11 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                 lines.append(f"  {_tfp} ({_tcount} caller{'s' if _tcount != 1 else ''})")
         elif _has_source_callers:
             lines.append("\nTests: none")
+
+    # Outgoing dependency files: what files do the seed symbols depend on?
+    dep_section = _render_dependency_files_section(graph, ordered, seen_files, token_count, max_tokens)
+    if dep_section:
+        lines.append(dep_section)
 
     return "\n".join(lines)
 
