@@ -2921,5 +2921,19 @@ def _collect_hotspots_signals(
                 f" — internal implementation detail under high maintenance pressure; consider extraction"
             )
 
+    # S994: Contained hotspot — top hotspot callers are all within the same file.
+    # A complex function called only internally has a contained blast radius;
+    # changes affect only the hosting module, not external consumers.
+    if scores:
+        _top994 = scores[0][1]
+        if _top994 is not None and not _is_test_file(_top994.file_path):
+            _callers994 = [c for c in graph.callers_of(_top994.id) if not _is_test_file(c.file_path)]
+            _external994 = [c for c in _callers994 if c.file_path != _top994.file_path]
+            if _callers994 and not _external994:
+                out.append(
+                    f"\ncontained hotspot: {_top994.name} — all {len(_callers994)} caller(s) are within {_top994.file_path.rsplit('/', 1)[-1]}"
+                    f"; blast radius limited to this file"
+                )
+
     return out
 

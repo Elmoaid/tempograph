@@ -3418,6 +3418,26 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — removed guards may leave callers passing invalid data silently"
         )
 
+    # S995: Dead formatters — unused format_/render_/display_/present_/fmt_ prefixed functions.
+    # Dead formatter functions indicate removed output transformation pipelines;
+    # callers may receive raw or incorrectly structured data when formatters go missing.
+    _fmt_prefixes995 = ("format_", "fmt_", "render_", "display_", "present_", "show_", "print_", "stringify_")
+    _dead_formatters995 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().startswith(p) for p in _fmt_prefixes995)
+    ]
+    if _dead_formatters995:
+        _fmt_names995 = ", ".join(s.name for s in _dead_formatters995[:3])
+        if len(_dead_formatters995) > 3:
+            _fmt_names995 += f" +{len(_dead_formatters995) - 3} more"
+        lines.append(
+            f"dead formatters: {len(_dead_formatters995)} unused output formatting function(s) ({_fmt_names995})"
+            f" — removed formatters may leave callers receiving raw or incorrectly structured data"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

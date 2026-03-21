@@ -797,6 +797,21 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — no production code changed; verify tests are strengthening, not relaxing, coverage"
             )
 
+    # S993: Init file in diff — changed files include a package __init__.py.
+    # Changes to __init__.py alter package-level exports and re-exports; adding or removing
+    # symbols from __init__.py changes the public API of the entire package silently.
+    if changed_files:
+        _init_files993 = [
+            f for f in changed_files
+            if f.replace("\\", "/").rsplit("/", 1)[-1] == "__init__.py"
+        ]
+        if _init_files993:
+            _ipath993 = _init_files993[0].replace("\\", "/")
+            lines.append(
+                f"init file in diff: {_ipath993} — package-level exports changed"
+                f"; adding or removing names here silently changes the API of the whole package"
+            )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 

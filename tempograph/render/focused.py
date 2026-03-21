@@ -4252,6 +4252,21 @@ def _signals_focused_fn_advanced(
                     f" — may be dead in production or needs wiring up to the application flow"
                 )
 
+    # S990: External-only — focused symbol has callers but all are from different files.
+    # A function never called within its own file is a pure export; its interface
+    # is always visible to external modules and changes always affect other files.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim990 = _seed_syms[0]
+        if not _is_test_file(_prim990.file_path) and _prim990.kind.value in ("function", "method"):
+            _callers990 = graph.callers_of(_prim990.id)
+            _internal990 = [c for c in _callers990 if c.file_path == _prim990.file_path]
+            _external990 = [c for c in _callers990 if c.file_path != _prim990.file_path]
+            if _external990 and not _internal990:
+                lines.append(
+                    f"\nexternal-only: {_prim990.name} has {len(_external990)} caller(s) all from external files"
+                    f" — pure public API; changes always affect other modules, never just this file"
+                )
+
     return lines
 
 
