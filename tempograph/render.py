@@ -2020,10 +2020,13 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
 
     # Load per-file velocity for annotation (graceful fallback if not a git repo).
     _vel: dict[str, float] = {}
+    _churn_counts: dict[str, int] = {}
     if graph.root:
         try:
-            from .git import file_change_velocity as _fcv
+            from .git import file_change_velocity as _fcv, file_commit_counts as _fcc, is_git_repo as _igr
             _vel = _fcv(graph.root)
+            if _igr(graph.root):
+                _churn_counts = _fcc(graph.root)
         except Exception:
             pass
 
@@ -2037,6 +2040,17 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
         _blast_n = len({i for i in graph.importers_of(fp) if i != fp and i in graph.files})
         _blast_ann = f" [blast: {_blast_n}]" if _blast_n >= 2 else ""
         lines.append(f"  {fp} ({fi.line_count} lines, {len(fi.symbols)} symbols){_vel_ann}{_blast_ann}")
+        # Change risk score: callers (blast radius) + churn (commit frequency)
+        _callers_count = sum(
+            len({c.file_path for c in graph.callers_of(sid) if c.file_path != fp})
+            for sid in fi.symbols if sid in graph.symbols
+        )
+        _churn = _churn_counts.get(fp, 0)
+        _risk = _callers_count + _churn * 2
+        if _risk >= 12:
+            lines.append(f"  change risk: HIGH (callers: {_callers_count}, churn: {_churn})")
+        elif _risk >= 6:
+            lines.append(f"  change risk: MEDIUM (callers: {_callers_count}, churn: {_churn})")
     lines.append("")
 
     # Exported symbols with external callers (breaking change risk)
