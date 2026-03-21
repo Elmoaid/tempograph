@@ -1895,7 +1895,11 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 continue
             if sym.parent_id and sym.kind == SymbolKind.FUNCTION:
                 continue
-            entry = f"  {sym.kind.value} {sym.qualified_name} L{sym.line_start}-{sym.line_end}"
+            # Cross-file caller count: tells agents how widely this symbol is used.
+            # Changes to high-caller symbols need broader review + testing.
+            _cross_callers = len({c.file_path for c in graph.callers_of(sym.id) if c.file_path != sym.file_path})
+            _caller_ann = f" [callers: {_cross_callers}]" if _cross_callers > 0 else ""
+            entry = f"  {sym.kind.value} {sym.qualified_name}{_caller_ann} L{sym.line_start}-{sym.line_end}"
             if sym.signature:
                 entry += f"\n    {sym.signature[:120]}"
             entry_tokens = count_tokens(entry)
@@ -2096,6 +2100,20 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 warnings.append(f"blast: {bc} files depend{breakdown} — changes need broad review")
         if warnings:
             lines.append(f"    → {'; '.join(warnings)}")
+
+    # High-complexity summary: top symbols by raw cyclomatic complexity.
+    # Separate from overall hotspot rank — a rarely-called function with cx=200
+    # is still a refactor target even if it doesn't score high by coupling.
+    _cx_syms = [
+        (sym.complexity, sym)
+        for _, sym in scores
+        if sym.complexity >= 20 and not _is_test_file(sym.file_path)
+    ]
+    if len(_cx_syms) >= 2:
+        _cx_syms.sort(key=lambda x: -x[0])
+        _cx_parts = [f"{sym.qualified_name} (cx={cx})" for cx, sym in _cx_syms[:3]]
+        lines.append("")
+        lines.append(f"Most complex: {', '.join(_cx_parts)}")
 
     # File concentration: which files dominate the hotspot list.
     # If one file has 5+ hotspots, agents should read it first — it's the bottleneck.

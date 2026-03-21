@@ -4211,6 +4211,56 @@ class TestHotspotsConcentration:
                 assert "(" in line  # format: "filename.py (N/M)"
 
 
+class TestHotspotsHighComplexity:
+    """S34: Hotspots mode — 'Most complex:' summary for high-cx functions.
+
+    When 2+ hotspot symbols have cx >= 20, append a 'Most complex:' line
+    listing the top 3 by raw cyclomatic complexity. Separate refactor signal
+    from coupling-based rank.
+    """
+
+    def test_most_complex_shown_for_high_cx_symbols(self, tmp_path):
+        """Most complex: line appears when symbols have cx >= 20."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        # Write a function with high branching to get high cx
+        complex_body = "def complex_fn(a, b, c, d, e):\n"
+        for i in range(25):
+            complex_body += f"    if a == {i}:\n        return b + {i}\n"
+        complex_body += "    return c\n"
+        (tmp_path / "hard.py").write_text(complex_body)
+        # Simple callers to push it into hotspot list
+        for i in range(3):
+            (tmp_path / f"user_{i}.py").write_text(
+                f"from hard import complex_fn\ndef fn_{i}(): return complex_fn(1,2,3,4,5)\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g, top_n=20)
+
+        if "Most complex:" in out:
+            assert "complex_fn" in out, f"complex_fn must appear in Most complex:; got:\n{out}"
+            assert "cx=" in out
+
+    def test_most_complex_omitted_when_cx_too_low(self, tmp_path):
+        """Most complex: is omitted when all symbols have cx < 20."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        # Simple functions with minimal branching (cx = 1)
+        (tmp_path / "simple.py").write_text("def fn_a(): return 1\ndef fn_b(): return 2\n")
+        for i in range(3):
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from simple import fn_a, fn_b\ndef use_{i}(): return fn_a() + fn_b()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g, top_n=20)
+
+        assert "Most complex:" not in out, (
+            f"Most complex: must not appear when all cx < 20; got:\n{out}"
+        )
+
+
 class TestFocusBlastAnnotation:
     """S29: Focus mode — blast annotation on seed symbol header.
 
@@ -4516,3 +4566,46 @@ class TestFocusSymbolAge:
             out = render_focused(g, "helper")
 
         assert "[age:" not in out, f"Must not show [age:] for fresh symbol (3d); got:\n{out}"
+
+
+class TestDiffKeySymbolCallerAnnotation:
+    """S34: Diff mode 'Key symbols' — [callers: N] annotation on each symbol.
+
+    When render_diff_context shows key symbols, each symbol with cross-file callers
+    should show [callers: N] so agents know the blast radius before editing.
+    Symbols with no cross-file callers should show no annotation.
+    """
+
+    def _build(self, tmp_path, files: dict) -> object:
+        from tempograph.builder import build_graph
+
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_caller_annotation_shown_for_widely_used_symbol(self, tmp_path):
+        """[callers: N] appears for a symbol called from multiple external files."""
+        from tempograph.render import render_diff_context
+
+        g = self._build(tmp_path, {
+            "core.py": "def service():\n    return 1\n",
+            "user_a.py": "from core import service\ndef run_a(): return service()\n",
+            "user_b.py": "from core import service\ndef run_b(): return service()\n",
+        })
+        out = render_diff_context(g, ["core.py"])
+
+        assert "Key symbols in changed files:" in out, f"Must show key symbols section; got:\n{out}"
+        assert "[callers:" in out, f"Must show [callers:] annotation for widely-used symbol; got:\n{out}"
+
+    def test_no_caller_annotation_for_internal_only_symbol(self, tmp_path):
+        """No [callers:] annotation when a symbol has no cross-file callers."""
+        from tempograph.render import render_diff_context
+
+        g = self._build(tmp_path, {
+            "core.py": "def _internal():\n    return 1\n\ndef public():\n    return _internal()\n",
+        })
+        out = render_diff_context(g, ["core.py"])
+
+        assert "[callers:" not in out, (
+            f"Must NOT show [callers:] for symbols with no cross-file callers; got:\n{out}"
+        )
