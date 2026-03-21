@@ -270,7 +270,7 @@ class TestParameters:
 class TestTokenBudgets:
     def test_overview_cheap(self):
         r = assert_ok(overview(REPO_PATH, output_format="json"))
-        assert r["tokens"] < 1350  # bumped: S100-S146 signals add ~50 tokens each
+        assert r["tokens"] < 1400  # bumped S185-S190+S20: more scenarios + lang handlers
 
     def test_stats_cheap(self):
         r = assert_ok(stats(REPO_PATH, output_format="json"))
@@ -13361,6 +13361,8 @@ class TestDeadErrorHandlers:
 class TestFocusCochangePartners:
     def test_no_crash_without_git(self, tmp_path):
         """S191 silently skips when repo has no git history — no exception."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
         (tmp_path / "mod.py").write_text("def compute(x): return x * 2\n")
         (tmp_path / "caller.py").write_text(
             "from mod import compute\ndef main(): compute(1)\n"
@@ -13370,11 +13372,11 @@ class TestFocusCochangePartners:
         # Should not raise; output still contains the symbol
         assert "compute" in out
 
-    def test_cochange_section_header_format(self, tmp_path):
+    def test_cochange_section_header_format(self):
         """When cochange partners appear, line starts with expected prefix."""
-        # Can't reproduce cochange partners in a tmp_path (no git history),
-        # but verify the output format by checking the actual repo.
-        g = build_graph(str(REPO_PATH), use_cache=True)
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        g = build_graph(REPO_PATH, use_cache=True)
         out = render_focused(g, "build_graph")
         # If S191 fires, it must use 'cochange partners' keyword
         if "cochange partners" in out:
@@ -13388,6 +13390,8 @@ class TestFocusCochangePartners:
 class TestFocusTestFilePointer:
     def test_points_to_matching_test_file(self, tmp_path):
         """S192 surfaces 'test_report.py' when only that test file covers report.py."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
         (tmp_path / "report.py").write_text(
             "def generate_report(path):\n    return 'report'\n"
         )
@@ -13406,6 +13410,8 @@ class TestFocusTestFilePointer:
 
     def test_no_pointer_when_multiple_test_files_match(self, tmp_path):
         """S192 suppressed when stem matches > 1 test file (ambiguous)."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
         (tmp_path / "auth.py").write_text("def login(u): return True\n")
         (tmp_path / "app.py").write_text(
             "from auth import login\ndef main(): login('u')\n"
