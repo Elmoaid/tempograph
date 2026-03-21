@@ -10714,3 +10714,38 @@ class TestFocusSiblingCount:
         assert "sibling count" not in out, (
             f"'sibling count' must not appear for small file (4 fns); got:\n{out}"
         )
+
+
+class TestDiffTouchedTestCount:
+    """S133: Diff — 'touched test count: N test files cover the diff'."""
+
+    def test_touched_tests_shown_when_tests_exist(self, tmp_path):
+        """Changed source file with a matching test file → 'touched test count:' appears."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_diff_context
+
+        (tmp_path / "service.py").write_text("def process(x):\n    return x * 2\n")
+        (tmp_path / "test_service.py").write_text(
+            "from service import process\ndef test_process():\n    assert process(2) == 4\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["service.py"])
+        assert "touched test count" in out, (
+            f"Expected 'touched test count' when test_service.py exists; got:\n{out}"
+        )
+        assert "1 test" in out or "test files" in out, out
+
+    def test_touched_tests_zero_when_no_tests(self, tmp_path):
+        """Changed source file with no matching test file → 'touched test count: 0' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_diff_context
+
+        (tmp_path / "utils.py").write_text("def helper(x):\n    return x\n")
+        (tmp_path / "test_other.py").write_text(
+            "def test_something():\n    pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["utils.py"])
+        assert "touched test count: 0" in out, (
+            f"Expected 'touched test count: 0' when no matching test file exists; got:\n{out}"
+        )
