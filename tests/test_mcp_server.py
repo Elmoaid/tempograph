@@ -6249,3 +6249,49 @@ class TestOverviewLargestFunctions:
         assert "largest fns:" not in out, (
             f"'largest fns:' must not appear when all functions are small; got:\n{out}"
         )
+
+
+class TestDeadCodeLargestDead:
+    """S55: Dead code — 'Largest dead:' section showing top dead symbols by line count.
+
+    When 2+ dead symbols (medium+high confidence) have >=20 lines, shows top 3 by size.
+    Identifies highest-ROI individual deletions.
+    """
+
+    def _build(self, tmp_path, files: dict):
+        from tempograph.builder import build_graph
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_largest_dead_shown_for_large_dead_symbols(self, tmp_path):
+        """'Largest dead:' appears when 2+ dead functions have >=20 lines."""
+        from tempograph.render import render_dead_code
+
+        big_dead = "def big_dead_func():\n" + "    pass\n" * 30
+        medium_dead = "\ndef medium_dead_func():\n" + "    pass\n" * 25
+
+        g = self._build(tmp_path, {"legacy.py": big_dead + medium_dead})
+        out = render_dead_code(g)
+        assert "Largest dead:" in out, (
+            f"Expected 'Largest dead:' when large dead symbols exist; got:\n{out}"
+        )
+        assert "big_dead_func" in out or "medium_dead_func" in out, (
+            f"Expected dead function name in 'Largest dead'; got:\n{out}"
+        )
+
+    def test_largest_dead_absent_when_all_small(self, tmp_path):
+        """'Largest dead:' absent when dead functions are all small (<20 lines)."""
+        from tempograph.render import render_dead_code
+
+        g = self._build(tmp_path, {
+            "module.py": (
+                "def tiny_dead(): return 1\n"
+                "def small_dead():\n"
+                "    return 2\n"
+            ),
+        })
+        out = render_dead_code(g)
+        assert "Largest dead:" not in out, (
+            f"'Largest dead:' must not appear when dead functions are small; got:\n{out}"
+        )
