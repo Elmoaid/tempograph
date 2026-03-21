@@ -7970,3 +7970,44 @@ class TestOverviewAbstractionsCount:
         assert "abstractions:" not in out, (
             f"'abstractions:' must not appear when no interface symbols; got:\n{out}"
         )
+
+
+class TestFocusFileSiblings:
+    """S78: Focus depth-0 — 'in this file: N others (...)' sibling context.
+
+    Shows other top-level symbols co-located with the seed in the same file.
+    Helps agents understand file context without reading it.
+    Shown when there are >= 2 other top-level symbols in the file.
+    """
+
+    def test_siblings_shown_for_multi_symbol_file(self, tmp_path):
+        """File with 3 top-level functions → 'in this file:' shown for seed."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "utils.py").write_text(
+            "def alpha(): pass\n"
+            "def beta(): pass\n"
+            "def gamma(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "alpha")
+        assert "in this file:" in out, (
+            f"Expected 'in this file:' for file with 3 functions; got:\n{out}"
+        )
+        # The other 2 functions should be listed
+        assert "beta" in out or "gamma" in out, (
+            f"Expected sibling function names in 'in this file:' line; got:\n{out}"
+        )
+
+    def test_siblings_absent_for_single_symbol_file(self, tmp_path):
+        """File with only 1 function → no 'in this file:' annotation."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "solo.py").write_text("def only_fn(): return 1\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "only_fn")
+        assert "in this file:" not in out, (
+            f"'in this file:' must not appear for single-symbol file; got:\n{out}"
+        )

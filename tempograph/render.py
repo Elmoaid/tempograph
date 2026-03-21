@@ -1753,6 +1753,24 @@ def _build_symbol_block_lines(
                 _c_methods = len([c for c in graph.children_of(_class_id) if c.kind.value == "method"])
                 _c_ann = f"{_c_callers} callers" if _c_callers else "no callers"
                 block_lines.append(f"{indent}  container: {_class_sym.kind.value} {_class_sym.name} ({_c_ann}, {_c_methods} methods)")
+    # S81: Sibling hot annotation — other hot functions (3+ cross-file callers) in same file.
+    # When multiple sibling functions are hot, agents know the whole file is a hotspot.
+    if depth == 0 and sym.kind.value in ("function", "method") and sym.file_path in graph.files:
+        _file_sids = graph.files[sym.file_path].symbols
+        _hot_siblings: list[tuple[int, str]] = []
+        for _fsid in _file_sids:
+            if _fsid == sym.id or _fsid not in graph.symbols:
+                continue
+            _fs = graph.symbols[_fsid]
+            if _fs.kind.value not in ("function", "method") or _is_test_file(_fs.file_path):
+                continue
+            _fs_cross = len({c.file_path for c in graph.callers_of(_fsid) if c.file_path != _fs.file_path})
+            if _fs_cross >= 3:
+                _hot_siblings.append((_fs_cross, _fs.name))
+        _hot_siblings.sort(reverse=True)
+        if len(_hot_siblings) >= 2:
+            _hs_strs = [f"{name} ({n})" for n, name in _hot_siblings[:3]]
+            block_lines.append(f"{indent}  also hot: {', '.join(_hs_strs)}")
     # Recent commit messages: last 2 commits that touched the seed symbol's file.
     # Gives agents instant "why was this last changed" context without running git log.
     if depth == 0 and graph.root:
@@ -1837,6 +1855,34 @@ def _build_symbol_block_lines(
         block_lines.append(f"{indent}  sig: {sym.signature[:150]}")
     if sym.doc and depth == 0:
         block_lines.append(f"{indent}  doc: {sym.doc}")
+    # File siblings: other symbols defined in the same file at depth 0.
+    # Gives agents immediate context about what surrounds this symbol
+    # without requiring a separate file read.
+    if depth == 0:
+        _siblings = [
+            s for s in graph.symbols.values()
+            if s.file_path == sym.file_path and s.id != sym.id
+            and s.kind.value in ("class", "function", "method", "interface", "module")
+            and s.parent_id is None  # top-level only
+        ]
+        if len(_siblings) >= 2:
+            # Prioritize: classes first, then functions/methods
+            _sib_sorted = sorted(
+                _siblings,
+                key=lambda s: (0 if s.kind.value in ("class", "interface", "module") else 1, s.name)
+            )
+            _kind_abbr = {"function": "fn", "method": "fn", "class": "cls",
+                          "interface": "iface", "module": "mod"}
+            _sib_parts = [
+                f"{_kind_abbr.get(s.kind.value, s.kind.value)} {s.name}" for s in _sib_sorted[:3]
+            ]
+            _sib_overflow = len(_siblings) - 3
+            _sib_str = ", ".join(_sib_parts)
+            if _sib_overflow > 0:
+                _sib_str += f" +{_sib_overflow} more"
+            block_lines.append(
+                f"{indent}  in this file: {len(_siblings)} others ({_sib_str})"
+            )
     if depth <= 1:
         warnings = []
         if sym.line_count > 500:
