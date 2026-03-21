@@ -306,6 +306,46 @@ def render_overview(graph: Tempo) -> str:
             ]
             lines.append(f"tech debt: {_td_total} markers in {_td_file_count} files ({', '.join(_td_parts)})")
 
+    # Deepest import chain: longest path from any source file through import edges.
+    # High depth = deep coupling = hard to refactor. Only shown when depth >= 5.
+    # Uses iterative DFS on the import graph; stops early at depth 12 to stay fast.
+    # Skips test files and considers only source files with symbols.
+    _MAX_CHAIN = 12
+    _best_chain: list[str] = []
+    _import_adj: dict[str, list[str]] = {}  # file → files it imports
+    for _edge in graph.edges:
+        if _edge.kind == EdgeKind.IMPORTS:
+            # IMPORTS edges use file paths directly as source_id/target_id
+            _src_fp = _edge.source_id
+            _tgt_fp = _edge.target_id
+            if (
+                _src_fp in graph.files and _tgt_fp in graph.files
+                and not _is_test_file(_src_fp) and not _is_test_file(_tgt_fp)
+            ):
+                _import_adj.setdefault(_src_fp, [])
+                if _tgt_fp not in _import_adj[_src_fp]:
+                    _import_adj[_src_fp].append(_tgt_fp)
+    # DFS from each file with symbols, find longest non-cyclic chain
+    _src_imp_fps = [fp for fp in _import_adj if fp in graph.files and graph.files[fp].symbols]
+    for _start in _src_imp_fps[:100]:  # cap to 100 starts for performance
+        # Iterative DFS: (file, chain)
+        _stack = [(_start, [_start])]
+        while _stack:
+            _cur, _chain = _stack.pop()
+            if len(_chain) > len(_best_chain):
+                _best_chain = _chain
+            if len(_chain) >= _MAX_CHAIN:
+                continue
+            for _nxt in _import_adj.get(_cur, []):
+                if _nxt not in _chain:  # avoid cycles
+                    _stack.append((_nxt, _chain + [_nxt]))
+    if len(_best_chain) >= 5:
+        def _short(fp: str) -> str:
+            parts = fp.split("/")
+            return "/".join(parts[-2:]) if len(parts) > 2 else fp
+        _chain_names = [_short(fp) for fp in _best_chain]
+        lines.append(f"dep depth: {len(_best_chain)} ({' → '.join(_chain_names[:5])}{'...' if len(_best_chain) > 5 else ''})")
+
     # Module structure -- just the shape, no noisy import counts
     modules: dict[str, list[str]] = {}
     for fp in graph.files:
