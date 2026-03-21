@@ -181,6 +181,18 @@ def render_overview(graph: Tempo) -> str:
             lines.append("")
             lines.append(f"top imported: {', '.join(_ti_parts)}")
 
+    # Test coverage ratio: source files with a matching test file (name-pattern match).
+    # Signals overall project health — agents use this to identify undertested areas.
+    _src_fps = [fp for fp in graph.files if not _is_test_file(fp)]
+    _test_fps = {fp for fp in graph.files if _is_test_file(fp)}
+    if _src_fps and _test_fps:
+        _covered = sum(
+            1 for fp in _src_fps
+            if any(fp.rsplit("/", 1)[-1].rsplit(".", 1)[0] in t for t in _test_fps)
+        )
+        _test_pct = int(_covered / len(_src_fps) * 100)
+        lines.append(f"test coverage: {_covered}/{len(_src_fps)} source files ({_test_pct}%)")
+
     # Module structure — just the shape, no noisy import counts
     modules: dict[str, list[str]] = {}
     for fp in graph.files:
@@ -2117,7 +2129,21 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
     medium = [(s, c) for s, c in scored if 40 <= c < 70]
     low = [(s, c) for s, c in scored if c < 40]
 
-    lines = [f"Potential dead code ({len(dead)} symbols):", ""]
+    lines = [f"Potential dead code ({len(dead)} symbols):"]
+
+    # Quick wins: top files with the most HIGH confidence dead symbols.
+    # Shows agents where to start cleanup without reading the full list.
+    if high:
+        _qw_counts: dict[str, int] = {}
+        for sym, _ in high:
+            _qw_counts[sym.file_path] = _qw_counts.get(sym.file_path, 0) + 1
+        _qw_sorted = sorted(_qw_counts.items(), key=lambda x: -x[1])[:2]
+        _qw_parts = [
+            f"{fp.rsplit('/', 1)[-1]} ({n} high-conf)" for fp, n in _qw_sorted
+        ]
+        lines.append(f"Quick wins: {', '.join(_qw_parts)}")
+
+    lines.append("")
     total_lines = 0
 
     tiers = [("HIGH CONFIDENCE (safe to remove)", high),
