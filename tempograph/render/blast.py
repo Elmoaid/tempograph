@@ -2029,6 +2029,16 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — value changes silently affect every consumer; test all affected code paths"
         )
 
+    # S776: Many-importer blast — the blast target is imported by 10+ source files.
+    # Files with 10+ dependents are structural hubs; any breaking change requires
+    # updating all dependents simultaneously and risks cascading failures.
+    _importers776 = [f for f in graph.importers_of(_fp589) if not _is_test_file(f)]
+    if len(_importers776) >= 10:
+        lines.append(
+            f"many-importer blast: {_fp589.rsplit('/', 1)[-1]} is imported by {len(_importers776)} source files"
+            f" — structural hub; breaking changes cascade to {len(_importers776)} dependents"
+        )
+
     return "\n".join(lines)
 
 

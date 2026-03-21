@@ -3003,6 +3003,19 @@ def _signals_async_oop(
                 f" — classes are large; consider splitting responsibilities"
             )
 
+    # S775: Large average file size — avg source file exceeds 200 lines.
+    # When source files average more than 200 lines, the codebase has large files
+    # that are hard to navigate and review — consider splitting into smaller modules.
+    _src_files775 = [fi for fp, fi in graph.files.items() if not _is_test_file(fp)]
+    if len(_src_files775) >= 3:
+        _total_lines775 = sum(fi.line_count if fi.line_count else 0 for fi in _src_files775)
+        _avg_lines775 = _total_lines775 / len(_src_files775)
+        if _avg_lines775 >= 200:
+            lines.append(
+                f"large avg file size: {_avg_lines775:.0f} avg lines per source file"
+                f" — files are large; consider splitting into smaller, focused modules"
+            )
+
     return lines
 
 

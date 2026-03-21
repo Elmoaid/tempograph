@@ -500,6 +500,16 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" consider splitting into smaller focused PRs to ease review"
         )
 
+    # S777: Init file in diff — one or more __init__.py files are changed.
+    # Changes to __init__.py affect the public interface of a package;
+    # they may expose or hide names and break star imports in consumers.
+    _init_files777 = [f for f in changed_files if f.replace("\\", "/").endswith("__init__.py")]
+    if _init_files777:
+        lines.append(
+            f"init file in diff: {len(_init_files777)} __init__.py file(s) changed"
+            f" — package interface may change; check for broken star imports or re-exports"
+        )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 

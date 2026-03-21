@@ -2656,6 +2656,25 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — unnecessary wrapping; extract the method as a module-level function"
         )
 
+    # S779: Dead dispatch functions — unused functions with dispatch/route/handle naming.
+    # Dispatch and routing functions coordinate control flow; when dead, they indicate
+    # an abandoned routing strategy, an unused API endpoint, or a removed feature branch.
+    _dispatch_kws779 = ("dispatch", "route_", "handle_request", "process_", "execute_")
+    _dead_disp779 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().startswith(kw) or s.name.lower() == kw.rstrip("_") for kw in _dispatch_kws779)
+    ]
+    if _dead_disp779:
+        _d_names779 = ", ".join(s.name for s in _dead_disp779[:3])
+        if len(_dead_disp779) > 3:
+            _d_names779 += f" +{len(_dead_disp779) - 3} more"
+        lines.append(
+            f"dead dispatch functions: {len(_dead_disp779)} unused dispatch/routing function(s) ({_d_names779})"
+            f" — abandoned control-flow logic; endpoint or feature was removed"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

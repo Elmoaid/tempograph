@@ -3645,6 +3645,34 @@ def _signals_focused_fn_advanced(
                     f" — may be dead code or a pending API; verify before removing"
                 )
 
+    # S774: Near-isolated symbol — focused symbol's file has only 2 top-level symbols
+    # and the sibling has no cross-file callers either.
+    # Two-symbol files where both symbols are uncalled are strong deletion candidates.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim774 = _seed_syms[0]
+        if not _is_test_file(_prim774.file_path):
+            _file774 = graph.files.get(_prim774.file_path)
+            if _file774:
+                _top_syms774 = [
+                    graph.symbols[sid] for sid in _file774.symbols
+                    if sid in graph.symbols and graph.symbols[sid].parent_id is None
+                ]
+                if len(_top_syms774) == 2:
+                    _sibling774 = next(
+                        (s for s in _top_syms774 if s.id != _prim774.id), None
+                    )
+                    if _sibling774:
+                        _sibling_cross774 = [
+                            c for c in graph.callers_of(_sibling774.id)
+                            if c.file_path != _prim774.file_path
+                        ]
+                        if not _sibling_cross774:
+                            lines.append(
+                                f"\nnear-isolated: {_prim774.file_path.rsplit('/', 1)[-1]} has only"
+                                f" {_prim774.name} and {_sibling774.name} — sibling has no callers;"
+                                f" consider removing the whole file"
+                            )
+
     return lines
 
 

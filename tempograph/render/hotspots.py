@@ -2382,5 +2382,21 @@ def _collect_hotspots_signals(
                 f" — test suite is more coupled than production code; consolidate into conftest fixtures"
             )
 
+    # S778: High-complexity hotspot — the top hotspot has cyclomatic complexity >= 10.
+    # High-complexity symbols are hard to reason about and test; when they are also
+    # top hotspots (many callers), bugs ripple widely and are hard to isolate.
+    if scores:
+        _top778 = scores[0][1]
+        if (
+            _top778 is not None
+            and not _is_test_file(_top778.file_path)
+            and _top778.complexity is not None
+            and _top778.complexity >= 10
+        ):
+            out.append(
+                f"\nhigh-complexity hotspot: {_top778.name} has cyclomatic complexity {_top778.complexity}"
+                f" — top hotspot with high complexity; bugs here propagate to {len(graph.callers_of(_top778.id))} callers"
+            )
+
     return out
 
