@@ -841,6 +841,30 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — may be detached coroutines or removed event loop callbacks"
         )
 
+
+    # S285: Dead factory functions — create_*/make_*/build_* functions with 0 callers.
+    # Dead factory functions suggest removed object creation paths; they may indicate
+    # refactored construction logic where old factories were abandoned.
+    # Only shown when 2+ such functions found (conf >= 40).
+    _s285_factory_prefixes = ("create_", "make_", "build_", "construct_", "instantiate_",
+                              "new_", "factory_", "get_or_create_")
+    _s285_dead_factories = [
+        sym for sym, conf in scored
+        if conf >= 40
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.startswith(p) for p in _s285_factory_prefixes)
+    ]
+    if len(_s285_dead_factories) >= 2:
+        _fac_names = [s.name for s in _s285_dead_factories[:3]]
+        _fac_str = ", ".join(_fac_names)
+        if len(_s285_dead_factories) > 3:
+            _fac_str += f" +{len(_s285_dead_factories) - 3} more"
+        lines.append(
+            f"dead factories: {len(_s285_dead_factories)} unused factory fn(s) ({_fac_str})"
+            f" — object creation paths removed or replaced; safe to clean up"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

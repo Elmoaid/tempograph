@@ -270,7 +270,7 @@ class TestParameters:
 class TestTokenBudgets:
     def test_overview_cheap(self):
         r = assert_ok(overview(REPO_PATH, output_format="json"))
-        assert r["tokens"] < 1400  # bumped S185-S190+S20: more scenarios + lang handlers
+        assert r["tokens"] < 1600  # bumped: _display_path + entry point filter
 
     def test_stats_cheap(self):
         r = assert_ok(stats(REPO_PATH, output_format="json"))
@@ -16532,4 +16532,206 @@ class TestDeadAsyncFunctions:
         out = render_dead_code(g)
         assert "dead async fns" not in out, (
             f"'dead async fns' must not appear when async fns are awaited; got:\n{out}"
+        )
+
+
+# S280 — entry point overload (overview)
+# ---------------------------------------------------------------------------
+
+class TestOverviewEntryPointOverload:
+    def test_entry_overload_shown(self, tmp_path):
+        """S280: 'entry point overload' shown when 5+ entry point files exist."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        for name in ("main.py", "app.py", "cli.py", "worker.py", "server.py", "manage.py"):
+            (tmp_path / name).write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "entry point overload" in out, f"Expected 'entry point overload'; got:\n{out}"
+        assert "multi-mode app" in out
+
+    def test_entry_overload_absent_for_normal_app(self, tmp_path):
+        """S280: 'entry point overload' absent when fewer than 5 entry points."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        (tmp_path / "main.py").write_text("def run(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "entry point overload" not in out, (
+            f"'entry point overload' must not appear with 1-2 entry points; got:\n{out}"
+        )
+
+
+# S281 — undocumented public function (focus)
+# ---------------------------------------------------------------------------
+
+class TestFocusUndocumented:
+    def test_undocumented_shown(self, tmp_path):
+        """S281: 'undocumented' shown when exported fn has 3+ callers but no docstring."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        (tmp_path / "api.py").write_text(
+            "def serialize(obj): return str(obj)\n"
+        )
+        for i in range(4):
+            (tmp_path / f"module{i}.py").write_text(
+                f"from api import serialize\ndef process_{i}(x): return serialize(x)\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "serialize")
+        assert "undocumented" in out, f"Expected 'undocumented'; got:\n{out}"
+        assert "no docstring" in out
+
+    def test_undocumented_absent_for_low_callers(self, tmp_path):
+        """S281: 'undocumented' absent when fn has fewer than 3 callers."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        (tmp_path / "utils.py").write_text(
+            "def helper(x): return x\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from utils import helper\ndef run(): helper(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper")
+        assert "undocumented" not in out, (
+            f"'undocumented' must not appear for fn with < 3 callers; got:\n{out}"
+        )
+
+
+# S282 — tests in diff (diff)
+# ---------------------------------------------------------------------------
+
+class TestDiffTestsInDiff:
+    def test_tests_in_diff_shown(self, tmp_path):
+        """S282: 'tests in diff' shown when test files appear in the diff."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        (tests_dir / "test_app.py").write_text("def test_run(): assert True\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "tests/test_app.py"])
+        assert "tests in diff" in out, f"Expected 'tests in diff'; got:\n{out}"
+        assert "coverage" in out
+
+    def test_tests_in_diff_absent_for_source_only(self, tmp_path):
+        """S282: 'tests in diff' absent when diff has only source files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "utils.py"])
+        assert "tests in diff" not in out, (
+            f"'tests in diff' must not appear for source-only diff; got:\n{out}"
+        )
+
+
+# S283 — untested repo hotspot (hotspots)
+# ---------------------------------------------------------------------------
+
+class TestHotspotsUntestedRepo:
+    def test_untested_repo_shown(self, tmp_path):
+        """S283: 'untested repo' shown when repo has no test files at all."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        (tmp_path / "core.py").write_text("def process(x): return x\n")
+        for i in range(5):
+            (tmp_path / f"service{i}.py").write_text(
+                f"from core import process\ndef work_{i}(): process({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "untested repo" in out, f"Expected 'untested repo'; got:\n{out}"
+        assert "unprotected" in out
+
+    def test_untested_repo_absent_when_tests_exist(self, tmp_path):
+        """S283: 'untested repo' absent when repo has at least one test file."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        (tmp_path / "core.py").write_text("def process(x): return x\n")
+        for i in range(5):
+            (tmp_path / f"service{i}.py").write_text(
+                f"from core import process\ndef work_{i}(): process({i})\n"
+            )
+        (tmp_path / "test_core.py").write_text("from core import process\ndef test_p(): process(1)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "untested repo" not in out, (
+            f"'untested repo' must not appear when tests exist; got:\n{out}"
+        )
+
+
+# S284 — cross-package blast (blast)
+# ---------------------------------------------------------------------------
+
+class TestBlastCrossPackage:
+    def test_cross_package_shown(self, tmp_path):
+        """S284: 'cross-package blast' shown when blast target is imported by 3+ top-level dirs."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "shared.py").write_text("def common(): return 1\n")
+        for pkg in ("auth", "billing", "reporting", "api"):
+            pkg_dir = tmp_path / pkg
+            pkg_dir.mkdir()
+            (pkg_dir / "service.py").write_text(
+                f"from shared import common\ndef {pkg}_run(): common()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "shared.py")
+        assert "cross-package blast" in out, f"Expected 'cross-package blast'; got:\n{out}"
+        assert "multi-team impact" in out
+
+    def test_cross_package_absent_for_single_package(self, tmp_path):
+        """S284: 'cross-package blast' absent when importers are in < 3 packages."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "utils.py").write_text("def helper(): return 1\n")
+        pkg = tmp_path / "app"
+        pkg.mkdir()
+        (pkg / "core.py").write_text("from utils import helper\ndef run(): helper()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "utils.py")
+        assert "cross-package blast" not in out, (
+            f"'cross-package blast' must not appear for single-package; got:\n{out}"
+        )
+
+
+# S285 — dead factory functions (dead)
+# ---------------------------------------------------------------------------
+
+class TestDeadFactoryFunctions:
+    def test_dead_factories_shown(self, tmp_path):
+        """S285: 'dead factories' shown when 2+ create_*/make_* fns are unused."""
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "builders.py").write_text(
+            "def create_user(name): return {'name': name}\n"
+            "def make_order(items): return {'items': items}\n"
+            "def build_report(data): return str(data)\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead factories" in out, f"Expected 'dead factories'; got:\n{out}"
+        assert "creation paths" in out
+
+    def test_dead_factories_absent_when_used(self, tmp_path):
+        """S285: 'dead factories' absent when factory fns are called."""
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "builders.py").write_text(
+            "def create_user(name): return {'name': name}\n"
+        )
+        (tmp_path / "service.py").write_text(
+            "from builders import create_user\n"
+            "def register(name): return create_user(name)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead factories" not in out, (
+            f"'dead factories' must not appear when factory fns are used; got:\n{out}"
         )
