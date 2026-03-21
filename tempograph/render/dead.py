@@ -396,7 +396,28 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — event wiring may have been removed"
         )
 
-    # S196: Dead fixtures — setup_*/teardown_* functions that are dead.
+    # S218: Dead initializers — init/setup/configure functions with 0 callers (conf >= 40).
+    # Dead setup functions suggest abandoned initialization paths; risky if they contain side effects.
+    # Only shown when 1+ dead initializer found.
+    _s218_init_patterns = ("init_", "initialize_", "setup_app", "configure_", "bootstrap_", "startup_")
+    _s218_dead_inits = [
+        sym for sym, conf in scored
+        if conf >= 40
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.startswith(p) for p in _s218_init_patterns)
+    ]
+    if len(_s218_dead_inits) >= 1:
+        _init_names = [s.name for s in _s218_dead_inits[:3]]
+        _init_str = ", ".join(_init_names)
+        if len(_s218_dead_inits) > 3:
+            _init_str += f" +{len(_s218_dead_inits) - 3} more"
+        lines.append(
+            f"dead initializers: {len(_s218_dead_inits)} unused init/setup fn(s) ({_init_str})"
+            f" — abandoned initialization paths"
+        )
+
+        # S196: Dead fixtures — setup_*/teardown_* functions that are dead.
     # Test fixture functions with 0 callers are often orphaned test infrastructure.
     # Only shown when 2+ such dead fixture functions found.
     _s196_dead_fixtures = [

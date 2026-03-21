@@ -577,6 +577,45 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — narrow dependency, check that consumer before modifying"
         )
 
+    # S217: Entry point blast — the blast target is an application entry point.
+    # Entry points (main.py, app.py, index.js, cli.py) are widely invoked; changing them
+    # affects startup, CLI behavior, or the entire request path.
+    # Only shown when blast file stem matches known entry point names.
+    _s217_entry_stems = {
+        "main", "app", "index", "server", "cli", "run", "manage", "wsgi", "asgi", "__main__"
+    }
+    _s217_stem = file_path.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if _s217_stem in _s217_entry_stems:
+        lines.append(
+            f"entry point blast: {file_path.rsplit('/', 1)[-1]} is an application entry point"
+            f" — changes affect startup / CLI / full request path"
+        )
+
+    # S219: Call concentration — ≥75% of external CALLS callers reference the same exported symbol.
+    # When callers overwhelmingly use one specific symbol, the real blast bottleneck is narrower
+    # than the file-level view suggests. Helps agents focus review on that one symbol.
+    # Only shown when 4+ non-test external CALLS callers exist and concentration >= 75%.
+    _s219_exp_ids = {s.id for s in symbols if s.exported and s.kind.value in ("function", "method")}
+    if len(external_callers) >= 4 and _s219_exp_ids:
+        _s219_counts: dict[str, int] = {}
+        for _e219 in graph.edges:
+            if _e219.kind is EdgeKind.CALLS and _e219.target_id in _s219_exp_ids:
+                _fp219 = _e219.source_id.split("::")[0]
+                if _fp219 != file_path and not _is_test_file(_fp219):
+                    _s219_counts[_e219.target_id] = _s219_counts.get(_e219.target_id, 0) + 1
+        if _s219_counts:
+            _s219_total = sum(_s219_counts.values())
+            _s219_top_id, _s219_top_n = max(_s219_counts.items(), key=lambda kv: kv[1])
+            if _s219_total > 0 and _s219_top_n / _s219_total >= 0.75:
+                _s219_name = next(
+                    (s.name for s in symbols if s.id == _s219_top_id), _s219_top_id.split("::")[-1]
+                )
+                _s219_pct = int(_s219_top_n / _s219_total * 100)
+                lines.append(
+                    f"call concentration: {_s219_pct}% of callers use {_s219_name}"
+                    f" — that symbol is the real blast bottleneck"
+                )
+
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
 

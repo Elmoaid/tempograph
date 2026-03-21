@@ -641,4 +641,18 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" 0 source files — may be missing implementation changes"
         )
 
+    # S215: Wide diff — the diff spans >= 5 distinct source files.
+    # More source files = higher cognitive load to review; increases chance of missed side effects.
+    # Only shown when 5+ distinct non-test files are in the diff.
+    _s215_src_files = [fp for fp in normalized if not _is_test_file(fp)]
+    if len(_s215_src_files) >= 5:
+        _s215_names = [fp.rsplit("/", 1)[-1] for fp in _s215_src_files[:3]]
+        _s215_str = ", ".join(_s215_names)
+        if len(_s215_src_files) > 3:
+            _s215_str += f" +{len(_s215_src_files) - 3} more"
+        lines.append(
+            f"wide diff: {len(_s215_src_files)} source files changed ({_s215_str})"
+            f" — high review surface, consider splitting"
+        )
+
     return "\n".join(lines)

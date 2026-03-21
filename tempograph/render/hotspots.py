@@ -833,4 +833,22 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                     f" vs avg {_avg206:.1f} ({_top_count206 / _avg206:.1f}×)"
                 )
 
-    return "\n".join(lines)
+    # S216: Exported hotspot — the top hotspot file exports many symbols.
+    # Frequently-changed exported symbols mean frequent contract changes for all callers.
+    # Only shown when top hotspot file exports >= 5 fn/method/class symbols.
+    if scores:
+        _top216_fp = scores[0][1].file_path
+        _s216_exported = [
+            s for s in graph.symbols.values()
+            if s.file_path == _top216_fp
+            and s.exported
+            and s.kind.value in ("function", "method", "class", "interface")
+        ]
+        if len(_s216_exported) >= 5:
+            _top216_base = _top216_fp.rsplit("/", 1)[-1]
+            lines.append(
+                f"\nexported hotspot: {_top216_base} has {len(_s216_exported)} exported symbols"
+                f" — frequent changes mean frequent contract churn for callers"
+            )
+
+        return "\n".join(lines)

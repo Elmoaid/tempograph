@@ -1942,6 +1942,23 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                     f" changes affect async context propagation"
                 )
 
+    # S214: Private symbol with external callers — symbol named with leading underscore
+    # is called from other files, leaking an implementation detail into the public interface.
+    # Only shown when seed starts with '_' (single) and has >= 1 external non-test caller.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim214 = _seed_syms[0]
+        if _prim214.name.startswith("_") and not _prim214.name.startswith("__"):
+            _ext_callers214 = [
+                c for c in graph.callers_of(_prim214.id)
+                if c.file_path != _prim214.file_path and not _is_test_file(c.file_path)
+            ]
+            if _ext_callers214:
+                lines.append(
+                    f"\nprivate symbol with external callers: {_prim214.name}"
+                    f" called from {len(_ext_callers214)} external file(s)"
+                    f" — underscore naming convention violated"
+                )
+
     return "\n".join(lines)
 
 

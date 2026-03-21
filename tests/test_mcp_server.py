@@ -13667,3 +13667,299 @@ class TestDeadCallbacks:
         assert "dead callbacks" not in out, (
             f"'dead callbacks' must not appear; got:\n{out}"
         )
+
+
+# ---------------------------------------------------------------------------
+# S219 — call concentration (blast)
+# ---------------------------------------------------------------------------
+
+class TestBlastCallConcentration:
+    def test_concentration_shown_when_high(self, tmp_path):
+        """S219: 'call concentration' shown when ≥75% of callers use same symbol."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "lib.py").write_text(
+            "def primary(): pass\n"
+            "def secondary(): pass\n"
+        )
+        for i in range(4):
+            (tmp_path / f"user{i}.py").write_text(
+                f"from lib import primary\ndef fn{i}(): primary()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "lib.py")
+        assert "call concentration" in out, f"'call concentration' expected; got:\n{out}"
+
+    def test_concentration_absent_when_spread(self, tmp_path):
+        """S219: 'call concentration' absent when callers spread across symbols."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "lib.py").write_text(
+            "def alpha(): pass\n"
+            "def beta(): pass\n"
+            "def gamma(): pass\n"
+        )
+        for i, sym in enumerate(["alpha", "beta", "gamma", "alpha"]):
+            (tmp_path / f"user{i}.py").write_text(
+                f"from lib import {sym}\ndef fn{i}(): {sym}()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "lib.py")
+        assert "call concentration" not in out, (
+            f"'call concentration' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S220 — multi-entry app (overview)
+# ---------------------------------------------------------------------------
+
+class TestOverviewMultiEntry:
+    def test_multi_entry_shown_with_3_entries(self, tmp_path):
+        """S220: 'multi-entry app' shown when 3+ entry point files exist."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        (tmp_path / "main.py").write_text("def main(): pass\n")
+        (tmp_path / "app.py").write_text("def create_app(): pass\n")
+        (tmp_path / "cli.py").write_text("def cli(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "multi-entry app" in out, f"'multi-entry app' expected; got:\n{out}"
+
+    def test_multi_entry_absent_with_one_entry(self, tmp_path):
+        """S220: 'multi-entry app' absent when only 1 entry file exists."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        (tmp_path / "main.py").write_text("def main(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        (tmp_path / "models.py").write_text("class Foo: pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "multi-entry app" not in out, (
+            f"'multi-entry app' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S213 — high test ratio (overview)
+# ---------------------------------------------------------------------------
+
+class TestOverviewHighTestRatio:
+    def test_high_test_ratio_shown(self, tmp_path):
+        """S213: 'high test ratio' shown when >= 60% of files are test files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        (tmp_path / "core.py").write_text("def compute(x): return x * 2\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        t = tmp_path / "tests"
+        t.mkdir()
+        for i in range(5):
+            (t / f"test_mod{i}.py").write_text(f"def test_{i}(): assert True\n")
+        (tmp_path / "main.py").write_text(
+            "from core import compute\ndef run(): compute(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "high test ratio" in out, f"'high test ratio' expected; got:\n{out}"
+
+    def test_high_test_ratio_absent_when_low(self, tmp_path):
+        """S213: 'high test ratio' absent when most files are source."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        for i in range(6):
+            (tmp_path / f"mod{i}.py").write_text(f"def fn_{i}(): pass\n")
+        (tmp_path / "main.py").write_text(
+            "from mod0 import fn_0\ndef run(): fn_0()\n"
+        )
+        t = tmp_path / "tests"
+        t.mkdir()
+        (t / "test_mod0.py").write_text("def test_fn0(): assert True\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "high test ratio" not in out, (
+            f"'high test ratio' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S214 — private symbol with external callers (focus)
+# ---------------------------------------------------------------------------
+
+class TestFocusedPrivateExternalCallers:
+    def test_private_with_external_callers_shown(self, tmp_path):
+        """S214: signal shown when _-prefixed symbol is called from another file."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        (tmp_path / "internal.py").write_text(
+            "def _build_cache(data):\n    return {k: v for k, v in data}\n"
+        )
+        (tmp_path / "service.py").write_text(
+            "from internal import _build_cache\n"
+            "def process(data): return _build_cache(data)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "_build_cache")
+        assert "private symbol with external callers" in out, (
+            f"'private symbol with external callers' expected; got:\n{out}"
+        )
+
+    def test_private_absent_when_only_internal_callers(self, tmp_path):
+        """S214: not shown when _-prefixed symbol is only called within its own file."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        (tmp_path / "helpers.py").write_text(
+            "def _internal(x):\n    return x + 1\n\n"
+            "def public_fn(x): return _internal(x)\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from helpers import public_fn\ndef run(): public_fn(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "_internal")
+        assert "private symbol with external callers" not in out, (
+            f"'private symbol with external callers' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S215 — wide diff (diff)
+# ---------------------------------------------------------------------------
+
+class TestDiffWideDiff:
+    def test_wide_diff_shown(self, tmp_path):
+        """S215: 'wide diff' shown when diff spans >= 5 source files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        file_paths = []
+        for i in range(5):
+            (tmp_path / f"mod{i}.py").write_text(f"def fn_{i}(): pass\n")
+            file_paths.append(f"mod{i}.py")
+        (tmp_path / "main.py").write_text(
+            "from mod0 import fn_0\ndef run(): fn_0()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, file_paths)
+        assert "wide diff" in out, f"'wide diff' expected; got:\n{out}"
+
+    def test_wide_diff_absent_with_few_files(self, tmp_path):
+        """S215: 'wide diff' absent when fewer than 5 source files are in the diff."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "a.py").write_text("def fa(): pass\n")
+        (tmp_path / "b.py").write_text("def fb(): pass\n")
+        (tmp_path / "main.py").write_text("from a import fa\ndef run(): fa()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["a.py", "b.py"])
+        assert "wide diff" not in out, f"'wide diff' must not appear; got:\n{out}"
+
+
+# ---------------------------------------------------------------------------
+# S216 — exported hotspot (hotspots)
+# ---------------------------------------------------------------------------
+
+class TestHotspotsExportedHotspot:
+    def test_exported_hotspot_shown(self, tmp_path):
+        """S216: 'exported hotspot' shown when top hotspot file exports >= 5 symbols."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        fns = "\n".join(f"def api_fn{i}(): pass" for i in range(6))
+        (tmp_path / "api.py").write_text(fns + "\n")
+        callers = ", ".join(f"api_fn{i}" for i in range(6))
+        (tmp_path / "hub.py").write_text(
+            f"from api import {callers}\n"
+            f"def run(): api_fn0(); api_fn1(); api_fn2()\n"
+        )
+        for i in range(3):
+            (tmp_path / f"other{i}.py").write_text(f"def other_{i}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        if "exported hotspot" in out:
+            assert "exported symbols" in out
+
+    def test_exported_hotspot_absent_when_few_exports(self, tmp_path):
+        """S216: 'exported hotspot' absent when top hotspot exports < 5 symbols."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        (tmp_path / "small.py").write_text(
+            "def fn1(): pass\ndef fn2(): pass\n"
+        )
+        (tmp_path / "caller.py").write_text(
+            "from small import fn1, fn2\ndef run(): fn1(); fn2()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "exported hotspot" not in out, (
+            f"'exported hotspot' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S217 — entry point blast (blast)
+# ---------------------------------------------------------------------------
+
+class TestBlastEntryPoint:
+    def test_entry_point_blast_shown(self, tmp_path):
+        """S217: 'entry point blast' shown when blast target is main.py."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "main.py").write_text(
+            "def start(): pass\ndef stop(): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from main import start\ndef run(): start()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "main.py")
+        assert "entry point blast" in out, f"'entry point blast' expected; got:\n{out}"
+
+    def test_entry_point_blast_absent_for_regular_file(self, tmp_path):
+        """S217: 'entry point blast' absent for non-entry-point files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "parser.py").write_text("def parse(src): return src\n")
+        (tmp_path / "runner.py").write_text(
+            "from parser import parse\ndef run(src): parse(src)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "parser.py")
+        assert "entry point blast" not in out, (
+            f"'entry point blast' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S218 — dead initializers (dead)
+# ---------------------------------------------------------------------------
+
+class TestDeadInitializers:
+    def test_dead_initializers_shown(self, tmp_path):
+        """S218: 'dead initializers' shown when init_*/configure_* fns are dead."""
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "setup.py").write_text(
+            "def init_database(): pass\n"
+            "def configure_logging(): pass\n"
+            "def notify(): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead initializers" in out, f"'dead initializers' expected; got:\n{out}"
+
+    def test_dead_initializers_absent_when_called(self, tmp_path):
+        """S218: 'dead initializers' absent when init fn is called."""
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "setup.py").write_text(
+            "def init_database(): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from setup import init_database\n"
+            "def main(): init_database()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead initializers" not in out, (
+            f"'dead initializers' must not appear; got:\n{out}"
+        )

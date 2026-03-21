@@ -23,17 +23,21 @@ def _find_entry_points(graph: Tempo) -> list[str]:
                 entries.append(f)
                 break
 
-    # Main entry points
+    # Main entry points (mod.rs excluded — it's a module declaration, not an entry point)
     for f in files:
         base = f.rsplit("/", 1)[-1]
         if base in ("main.py", "main.ts", "main.tsx", "main.rs", "main.go",
                      "index.ts", "index.tsx", "index.js", "app.py", "app.ts",
-                     "lib.rs", "mod.rs", "__main__.py", "server.py", "cli.py"):
+                     "lib.rs", "__main__.py", "server.py", "cli.py"):
             entries.append(f)
 
-    # Symbols named main/run/app at top level
+    # Symbols named main/run/app at top level (skip examples/ and benchmarks/)
+    _EXAMPLE_PATH_PARTS = {"examples", "example", "benchmarks", "bench", "benches", "samples"}
     for sym in graph.symbols.values():
         if sym.parent_id:
+            continue
+        path_parts = set(sym.file_path.replace("\\", "/").split("/"))
+        if path_parts & _EXAMPLE_PATH_PARTS:
             continue
         if sym.name in ("main", "app", "run_server", "create_app", "cli"):
             entries.append(f"{sym.file_path}::{sym.name}")
@@ -1286,7 +1290,43 @@ def render_overview(graph: Tempo) -> str:
             f" — not imported or called from anywhere"
         )
 
-    # Suggest directories to exclude — detect likely noise
+    # S213: High test ratio — more than 60% of source files are test files.
+    # Test-heavy repos are healthy, but very high ratios may indicate missing source coverage.
+    # Positive signal: only shown when ratio >= 60% and there are 5+ total files.
+    _all_files213 = [fp for fp in graph.files if graph.files[fp].language.value in _CODE_LANGS]
+    _test_files213 = [fp for fp in _all_files213 if _is_test_file(fp)]
+    if len(_all_files213) >= 5:
+        _test_ratio213 = len(_test_files213) / len(_all_files213) * 100
+        if _test_ratio213 >= 60:
+            lines.append(
+                f"high test ratio: {len(_test_files213)}/{len(_all_files213)} files are tests"
+                f" ({_test_ratio213:.0f}%) — well-tested codebase"
+            )
+
+    # S220: Multi-entry app — repo has 3+ distinct application entry point files.
+    # Multiple entry points can mean inconsistent startup paths or divergent CLI/server behaviors.
+    # Agents should verify cross-cutting changes (config, auth, logging) apply to all entry points.
+    # Only shown when 3+ entry point stems found among non-test source files.
+    _s220_entry_stems = {
+        "main", "app", "index", "server", "cli", "run", "manage",
+        "wsgi", "asgi", "__main__", "entrypoint", "entry_point",
+    }
+    _s220_entry_files = [
+        fp for fp in graph.files
+        if not _is_test_file(fp)
+        and fp.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower() in _s220_entry_stems
+        and graph.files[fp].language.value in _CODE_LANGS
+    ]
+    if len(_s220_entry_files) >= 3:
+        _s220_names = [fp.rsplit("/", 1)[-1] for fp in _s220_entry_files[:4]]
+        _s220_suffix = f" (+{len(_s220_entry_files) - 3} more)" if len(_s220_entry_files) > 3 else ""
+        _s220_str = ", ".join(_s220_names[:3]) + _s220_suffix
+        lines.append(
+            f"multi-entry app: {len(_s220_entry_files)} entry points ({_s220_str})"
+            f" — cross-cutting changes (config, auth, logging) must apply to all"
+        )
+
+        # Suggest directories to exclude — detect likely noise
     noisy = _detect_noisy_dirs(graph, modules)
     if noisy:
         lines.append("")
