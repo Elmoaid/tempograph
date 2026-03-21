@@ -3,6 +3,33 @@ from __future__ import annotations
 from ..types import Tempo, Symbol, SymbolKind
 from ._utils import count_tokens, _is_test_file, _dead_code_confidence, _DISPATCH_PATTERNS
 
+
+def _file_effort_badge(syms: list[tuple[Symbol, int]], graph: Tempo) -> str:
+    """Compute cleanup effort badge for a file group of dead symbols.
+
+    Effort score = dead_count * (1 + avg_external_caller_weight), where symbols
+    with 0 external callers are weighted as 0.5 (trivially removable).
+    Tiers: HIGH > 10, MEDIUM 4-10, LOW < 4.
+    """
+    if not syms:
+        return ""
+    weights = []
+    for sym, _conf in syms:
+        ext_callers = sum(
+            1 for c in graph.callers_of(sym.id) if c.file_path != sym.file_path
+        )
+        weights.append(0.5 if ext_callers == 0 else float(ext_callers))
+    avg_w = sum(weights) / len(weights)
+    score = len(syms) * (1.0 + avg_w)
+    if score > 10:
+        label = "HIGH"
+    elif score >= 4:
+        label = "MEDIUM"
+    else:
+        label = "LOW"
+    return f" [effort: {label}]"
+
+
 def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8000, include_low: bool = False) -> str:
     """Find exported symbols that appear to be unused (never referenced externally).
 
@@ -300,7 +327,8 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         for fp, file_syms in sorted_files:
             n = len(file_syms)
             sym_label = f"{n} dead symbol{'s' if n != 1 else ''}"
-            lines.append(f"  {fp} ({sym_label}){_last_touched(fp)}:")
+            _effort = _file_effort_badge(file_syms, graph)
+            lines.append(f"  {fp} ({sym_label}){_last_touched(fp)}{_effort}:")
             by_line = sorted(file_syms, key=lambda x: x[0].line_start)
             shown_syms = by_line[:10]
             for sym, conf in shown_syms:
