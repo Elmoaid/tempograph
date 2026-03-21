@@ -1333,6 +1333,22 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — bugs or performance regressions affect every request through this pipeline"
         )
 
+    # S459: Core utility blast — blast target has 20+ exported functions used across 5+ files.
+    # A file acting as a utility hub is a de-facto shared library; any breaking change
+    # (renaming a function, changing a return type) ripples through every consumer.
+    _s459_exported_fns = [
+        s for s in graph.symbols.values()
+        if s.file_path == file_path
+        and s.kind.value in ("function", "method")
+        and s.exported
+    ]
+    if len(_s459_exported_fns) >= 20 and len(importers) >= 5:
+        lines.append(
+            f"utility hub blast: {file_path.rsplit('/', 1)[-1]} exports {len(_s459_exported_fns)}"
+            f" functions used by {len(importers)} files"
+            f" — treat as a shared library; any breaking change needs broad coordination"
+        )
+
     return "\n".join(lines)
 
 

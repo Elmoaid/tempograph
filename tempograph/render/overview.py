@@ -2115,6 +2115,25 @@ def _signals_async_oop(
             f" — most changes are unverified; add tests before refactoring"
         )
 
+    # S458: Monorepo structure — multiple independent packages with their own package files.
+    # Monorepos host multiple services in one repo; a change to a shared library
+    # requires updating every consumer service and re-testing each independently.
+    _s458_pkg_files = (
+        "setup.py", "setup.cfg", "pyproject.toml", "package.json",
+        "cargo.toml", "go.mod", "pom.xml", "build.gradle",
+    )
+    _s458_pkg_dirs: set[str] = set()
+    for _fp458 in graph.files:
+        _fname458 = _fp458.rsplit("/", 1)[-1].lower()
+        if _fname458 in _s458_pkg_files:
+            _dir458 = _fp458.rsplit("/", 1)[0] if "/" in _fp458 else "."
+            _s458_pkg_dirs.add(_dir458)
+    if len(_s458_pkg_dirs) >= 3:
+        lines.append(
+            f"monorepo: {len(_s458_pkg_dirs)} independent package roots detected"
+            f" — shared-library changes require updating every consumer; test each service independently"
+        )
+
     return lines
 
 

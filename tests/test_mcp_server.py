@@ -22660,3 +22660,203 @@ class TestDeadFormattersS456:
         assert "dead formatters" not in out, (
             f"'dead formatters' must not appear when formatter is called; got:\n{out}"
         )
+
+
+class TestHighParamCountFocusedS457:
+    """S457: Function with 6+ parameters emits high parameter count signal."""
+
+    def test_high_param_count_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "api.py").write_text(
+            "def create_user(name, email, password, role, org_id, team_id, is_active=True):\n"
+            "    return {}\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "create_user")
+        assert "high parameter count" in out, (
+            f"Expected 'high parameter count' signal for 7-param function; got:\n{out}"
+        )
+
+    def test_high_param_count_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "util.py").write_text(
+            "def add(a, b):\n    return a + b\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "add")
+        assert "high parameter count" not in out, (
+            f"'high parameter count' must not appear for 2-param function; got:\n{out}"
+        )
+
+
+class TestMonorepoStructureS458:
+    """S458: Multiple independent package roots emits monorepo signal."""
+
+    def test_monorepo_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # Create 3 package directories each with pyproject.toml + source
+        for svc in ("service_a", "service_b", "service_c"):
+            svc_dir = tmp_path / svc
+            svc_dir.mkdir()
+            (svc_dir / "pyproject.toml").write_text("[project]\nname='test'\n")
+            (svc_dir / "main.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "monorepo" in out, (
+            f"Expected 'monorepo' signal for 3 service dirs; got:\n{out}"
+        )
+
+    def test_monorepo_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "monorepo: " not in out, (
+            f"'monorepo: ' signal must not appear for single-package repo; got:\n{out}"
+        )
+
+
+class TestUtilityHubBlastS459:
+    """S459: File with 20+ exported functions used by 5+ importers emits utility hub blast."""
+
+    def test_utility_hub_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        # Create utils.py with 22 exported functions
+        fns = "\n".join(f"def util_{i}(x): return x + {i}" for i in range(22))
+        (tmp_path / "utils.py").write_text(fns + "\n")
+        # 5 files that import utils
+        for i in range(5):
+            imports = ", ".join(f"util_{j}" for j in range(4))
+            (tmp_path / f"module_{i}.py").write_text(
+                f"from utils import {imports}\n"
+                f"def fn_{i}(): return util_0(1)\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "utils.py")
+        assert "utility hub blast" in out, (
+            f"Expected 'utility hub blast' for utils.py with 22 exports, 5 importers; got:\n{out}"
+        )
+
+    def test_utility_hub_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def helper(x): return x\n")
+        (tmp_path / "app.py").write_text("from utils import helper\ndef run(): helper(1)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "utils.py")
+        assert "utility hub blast" not in out, (
+            f"'utility hub blast' must not appear for small utils file; got:\n{out}"
+        )
+
+
+class TestBottleneckFunctionS461:
+    """S461: Function with 4× more callers than next emits bottleneck signal."""
+
+    def test_bottleneck_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        # core.py: a hub function called from 8+ files
+        (tmp_path / "core.py").write_text(
+            "def hub_function(x): return x\n"
+            "def side_function(x): return x + 1\n"
+        )
+        # 8 files call hub_function
+        for i in range(8):
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from core import hub_function\ndef fn_{i}(): return hub_function({i})\n"
+            )
+        # 1 file calls side_function
+        (tmp_path / "single.py").write_text(
+            "from core import side_function\ndef use_side(): return side_function(0)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "bottleneck function" in out, (
+            f"Expected 'bottleneck function' for hub_function (8 callers vs 1); got:\n{out}"
+        )
+
+    def test_bottleneck_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def a(x): return x\ndef b(x): return x + 1\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "bottleneck function" not in out, (
+            f"'bottleneck function' must not appear for balanced callers; got:\n{out}"
+        )
+
+
+class TestSchemaMigrationDiffS460:
+    """S460: Database migration files in diff emits schema migration signal."""
+
+    def test_schema_migration_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "migrations/0001_add_users.py"])
+        assert "schema migration" in out, (
+            f"Expected 'schema migration' signal when migration file in diff; got:\n{out}"
+        )
+
+    def test_schema_migration_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py"])
+        assert "schema migration" not in out, (
+            f"'schema migration' must not appear when no migration files change; got:\n{out}"
+        )
+
+
+class TestDeadValidatorsS462:
+    """S462: Unused validate_*/check_* functions emit dead validators signal."""
+
+    def test_dead_validators_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "validators.py").write_text(
+            "def validate_email(email):\n    pass\n\n"
+            "def check_password_strength(pwd):\n    pass\n\n"
+            "def verify_token(token):\n    pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead validators" in out, (
+            f"Expected 'dead validators' signal for unused validator fns; got:\n{out}"
+        )
+
+    def test_dead_validators_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "validators.py").write_text(
+            "def validate_email(email):\n    return '@' in email\n"
+        )
+        (tmp_path / "runner.py").write_text(
+            "from validators import validate_email\ndef run(e): validate_email(e)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead validators" not in out, (
+            f"'dead validators' must not appear when validator is called; got:\n{out}"
+        )
