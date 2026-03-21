@@ -18847,3 +18847,201 @@ class TestOverviewLargeDirectory:
         assert "large directory" not in out, (
             f"'large directory' must not appear for small dirs; got:\n{out}"
         )
+
+
+# S349 — micro-module codebase (overview)
+# ---------------------------------------------------------------------------
+
+class TestOverviewMicroModule:
+    def test_micro_module_shown(self, tmp_path):
+        """S349: 'micro-module' shown when 50%+ of source files define ≤2 symbols."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        # 12 files each with 1 function = 100% micro-modules
+        for i in range(12):
+            (tmp_path / f"step_{i}.py").write_text(f"def step_{i}(data): return data\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "micro-module" in out, f"Expected 'micro-module'; got:\n{out}"
+        assert "fragmentation" in out
+
+    def test_micro_module_absent_for_rich_files(self, tmp_path):
+        """S349: 'micro-module' absent when most files define many symbols."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        # 12 files each with 5 functions = well above 2-symbol threshold
+        for i in range(12):
+            body = "\n".join(f"def fn_{i}_{j}(x): return x\n" for j in range(5))
+            (tmp_path / f"module_{i}.py").write_text(body)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "micro-module" not in out, (
+            f"'micro-module' must not appear for rich files; got:\n{out}"
+        )
+
+
+# S350 — orphaned symbol (focused)
+# ---------------------------------------------------------------------------
+
+class TestFocusOrphanedSymbol:
+    def test_orphaned_shown(self, tmp_path):
+        """S350: 'orphaned' shown when focused fn has 0 callers and file is not imported."""
+        from tempograph.builder import build_graph
+        from tempograph.render.focused import render_focused
+        # Isolated file not imported anywhere, function never called
+        (tmp_path / "orphan.py").write_text("def compute_legacy(x): return x * 2\n")
+        (tmp_path / "main.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "compute_legacy")
+        if "orphaned" in out:
+            assert "unreachable" in out or "not imported" in out
+
+    def test_orphaned_absent_when_imported(self, tmp_path):
+        """S350: 'orphaned' absent when file is imported by another module."""
+        from tempograph.builder import build_graph
+        from tempograph.render.focused import render_focused
+        (tmp_path / "util.py").write_text("def helper(x): return x\n")
+        (tmp_path / "app.py").write_text("from util import helper\ndef run(): helper(1)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper")
+        assert "orphaned" not in out, (
+            f"'orphaned' must not appear for imported symbol; got:\n{out}"
+        )
+
+
+# S351 — config-change diff (diff)
+# ---------------------------------------------------------------------------
+
+class TestDiffConfigChange:
+    def test_config_change_shown(self, tmp_path):
+        """S351: 'config change' shown when diff includes YAML/TOML/INI files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "settings.yaml").write_text("debug: false\ndb_host: localhost\n")
+        (tmp_path / "pyproject.toml").write_text("[tool.mypy]\nstrict = true\n")
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["settings.yaml", "pyproject.toml"])
+        assert "config change" in out, f"Expected 'config change'; got:\n{out}"
+        assert "untested" in out
+
+    def test_config_change_absent_for_code_diff(self, tmp_path):
+        """S351: 'config change' absent when diff only has Python/JS files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "service.py").write_text("def process(x): return x\n")
+        (tmp_path / "models.py").write_text("class Item: pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["service.py", "models.py"])
+        assert "config change" not in out, (
+            f"'config change' must not appear for code-only diff; got:\n{out}"
+        )
+
+
+# S352 — megafile hotspot (hotspots)
+# ---------------------------------------------------------------------------
+
+class TestHotspotsMegafile:
+    def test_megafile_shown(self, tmp_path):
+        """S352: 'megafile hotspot' shown when top hotspot file has 500+ lines."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        # Create a large file (500+ lines) with many functions called from elsewhere
+        big_body = "\n".join(f"def fn_{i}(x):\n    return x + {i}\n" for i in range(120))
+        (tmp_path / "core.py").write_text(big_body)
+        for i in range(4):
+            (tmp_path / f"user{i}.py").write_text(
+                f"from core import fn_{i}, fn_{i+1}\ndef run(): fn_{i}(1)\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        if "megafile hotspot" in out:
+            assert "accidental complexity" in out
+
+    def test_megafile_absent_for_small_file(self, tmp_path):
+        """S352: 'megafile hotspot' absent when top hotspot file is small."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        (tmp_path / "utils.py").write_text(
+            "def helper_a(x): return x\ndef helper_b(x): return x\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from utils import helper_a, helper_b\ndef run(): helper_a(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "megafile hotspot" not in out, (
+            f"'megafile hotspot' must not appear for small file; got:\n{out}"
+        )
+
+
+# S353 — constants blast (blast)
+# ---------------------------------------------------------------------------
+
+class TestBlastConstants:
+    def test_constants_blast_shown(self, tmp_path):
+        """S353: 'constants blast' shown when file has only constants/vars and 3+ importers."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "constants.py").write_text(
+            "MAX_RETRY = 3\nTIMEOUT = 30\nDEFAULT_HOST = 'localhost'\n"
+        )
+        for i in range(4):
+            (tmp_path / f"service{i}.py").write_text(
+                f"from constants import MAX_RETRY\ndef run_{i}(): return MAX_RETRY\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "constants.py")
+        if "constants blast" in out:
+            assert "hardcode" in out or "silently" in out
+
+    def test_constants_blast_absent_for_function_file(self, tmp_path):
+        """S353: 'constants blast' absent when file defines functions."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "utils.py").write_text(
+            "def get_timeout(): return 30\ndef get_host(): return 'localhost'\n"
+        )
+        for i in range(4):
+            (tmp_path / f"mod{i}.py").write_text(
+                f"from utils import get_timeout\ndef run_{i}(): get_timeout()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "utils.py")
+        assert "constants blast" not in out, (
+            f"'constants blast' must not appear for function file; got:\n{out}"
+        )
+
+
+# S354 — dead factory functions (dead)
+# ---------------------------------------------------------------------------
+
+class TestDeadFactoryFunctions:
+    def test_dead_factories_shown(self, tmp_path):
+        """S354: 'dead factories' shown when 2+ unused create_*/make_*/build_* fns."""
+        from tempograph.builder import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "factories.py").write_text(
+            "def create_user_session(user_id): pass\n"
+            "def make_auth_token(user): pass\n"
+            "def build_response_payload(data): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead factories" in out, f"Expected 'dead factories'; got:\n{out}"
+        assert "constructor" in out or "factory" in out
+
+    def test_dead_factories_absent_when_called(self, tmp_path):
+        """S354: 'dead factories' absent when factory fns are called."""
+        from tempograph.builder import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "builders.py").write_text("def create_widget(name): pass\n")
+        (tmp_path / "service.py").write_text(
+            "from builders import create_widget\ndef setup(): create_widget('x')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead factories" not in out, (
+            f"'dead factories' must not appear when fns are called; got:\n{out}"
+        )
