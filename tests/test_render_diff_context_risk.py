@@ -89,3 +89,43 @@ class TestDiffChangeRiskScore:
         file_commit_counts.cache_clear()
 
         assert "change risk: MEDIUM" in out, f"Expected MEDIUM from churn; got:\n{out}"
+
+
+class TestDiffUntestedChanges:
+    """S197: render_diff_context should list changed callables with zero test coverage."""
+
+    def _build(self, tmp_path, files: dict):
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_untested_fn_appears(self, tmp_path):
+        """Function in changed file with no test caller is listed as untested change."""
+        g = self._build(tmp_path, {
+            "core.py": "def tested_fn():\n    pass\n\ndef untested_fn():\n    pass\n",
+            "test_core.py": "from core import tested_fn\ndef test_x():\n    tested_fn()\n",
+        })
+        out = render_diff_context(g, ["core.py"])
+        assert "untested changes" in out, f"Expected 'untested changes' section; got:\n{out}"
+        assert "untested_fn" in out, f"Expected untested_fn listed; got:\n{out}"
+        # Count must be 1 — only untested_fn is uncovered, not tested_fn
+        assert "untested changes (1)" in out, f"Expected count=1; got:\n{out}"
+
+    def test_all_tested_no_section(self, tmp_path):
+        """When all changed callables have test callers, the untested section is absent."""
+        g = self._build(tmp_path, {
+            "core.py": "def fn():\n    pass\n",
+            "test_core.py": "from core import fn\ndef test_fn():\n    fn()\n",
+        })
+        out = render_diff_context(g, ["core.py"])
+        assert "untested changes" not in out, f"Unexpected 'untested changes'; got:\n{out}"
+
+    def test_overflow_count_shown(self, tmp_path):
+        """When > 6 untested callables, first 6 shown with +N more."""
+        fns = "\n".join(f"def fn{i}():\n    pass" for i in range(8))
+        g = self._build(tmp_path, {
+            "core.py": fns,
+        })
+        out = render_diff_context(g, ["core.py"])
+        assert "untested changes" in out, f"Expected untested changes; got:\n{out}"
+        assert "+2 more" in out, f"Expected '+2 more' overflow; got:\n{out}"

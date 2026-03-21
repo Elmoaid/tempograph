@@ -412,7 +412,7 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                         sections.append(cc_section)
                         token_count += count_tokens(cc_section)
 
-    hotspot_budget = int(max_tokens * 0.15)
+    hotspot_budget = int(max_tokens * 0.20)
     if token_count < max_tokens - 100:
         hotspot_output = render_hotspots(graph, top_n=5)
         ht = count_tokens(hotspot_output)
