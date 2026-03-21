@@ -8738,3 +8738,158 @@ class TestBlastCallChainPreview:
         assert "Call chains (entry paths):" not in out, (
             f"'Call chains' must not appear for 1-hop callers only; got:\n{out}"
         )
+
+
+class TestFocusCalleeChain:
+    """Focus shows 'callee chain: A → B → C' for depth-0 seeds with 1-4 cross-file callees."""
+
+    def test_callee_chain_shown_for_function_with_cross_file_callees(self, tmp_path):
+        """Function calling a cross-file function → 'callee chain:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "parser.py").write_text("def parse(data): return data\n")
+        (tmp_path / "processor.py").write_text(
+            "from parser import parse\n"
+            "def process(raw):\n    return parse(raw)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process")
+        assert "callee chain:" in out, (
+            f"Expected 'callee chain:' for function with cross-file callee; got:\n{out}"
+        )
+
+    def test_callee_chain_absent_for_no_cross_file_callees(self, tmp_path):
+        """Function with only same-file callees → no 'callee chain:'."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "utils.py").write_text(
+            "def _helper(x): return x + 1\n"
+            "def process(x): return _helper(x)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process")
+        assert "callee chain:" not in out, (
+            f"'callee chain:' must not appear for same-file callees; got:\n{out}"
+        )
+
+
+class TestOverviewLoneFiles:
+    """Overview shows 'lone files:' when 3+ source files have no imports or importers."""
+
+    def test_lone_files_shown_when_many_isolated_files(self, tmp_path):
+        """4 isolated source files → 'lone files:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        # Create a connected pair
+        (tmp_path / "core.py").write_text("def fn(): pass\n")
+        (tmp_path / "user.py").write_text("from core import fn\ndef use(): return fn()\n")
+        # Create 4 truly isolated files (>= 6 total files needed to trigger check)
+        for i in range(4):
+            (tmp_path / f"lone_{i}.py").write_text(f"def lone_fn_{i}(): return {i}\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "lone files" in out, (
+            f"Expected 'lone files' when 4 isolated source files; got:\n{out}"
+        )
+
+    def test_lone_files_absent_when_all_files_connected(self, tmp_path):
+        """All files import from each other → no 'lone files:' line."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "a.py").write_text("def fn_a(): pass\n")
+        (tmp_path / "b.py").write_text("from a import fn_a\ndef fn_b(): return fn_a()\n")
+        (tmp_path / "c.py").write_text("from b import fn_b\ndef fn_c(): return fn_b()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "lone files" not in out, (
+            f"'lone files' must not appear when all files are connected; got:\n{out}"
+        )
+
+
+class TestHotspotsRefactorTargets:
+    """Hotspots shows 'Refactor targets:' for high-cx private functions with no external callers."""
+
+    def test_refactor_targets_shown_for_complex_private_fns(self, tmp_path):
+        """2+ private functions with cx >= 5 and no external callers → 'Refactor targets:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        def make_complex_fn(name: str, n: int) -> str:
+            body = f"def {name}(x):\n    if x == 0:\n        return 0\n"
+            for i in range(1, n):
+                body += f"    elif x == {i}:\n        return {i}\n"
+            body += "    return -1\n"
+            return body
+
+        (tmp_path / "internal.py").write_text(
+            make_complex_fn("_classify_a", 7) + "\n" +
+            make_complex_fn("_classify_b", 6) + "\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "Refactor targets:" in out, (
+            f"Expected 'Refactor targets:' for high-cx private fns; got:\n{out}"
+        )
+
+    def test_refactor_targets_absent_when_fns_are_simple(self, tmp_path):
+        """Functions with cx < 5 → no 'Refactor targets:' line."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        (tmp_path / "simple.py").write_text(
+            "def _a(x): return x + 1\n"
+            "def _b(x): return x * 2\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "Refactor targets:" not in out, (
+            f"'Refactor targets:' must not appear for simple functions; got:\n{out}"
+        )
+
+
+class TestOverviewCoChangePairs:
+    """S87 — co-change pairs in overview based on git history."""
+
+    def test_co_change_pairs_shown_when_git_history_has_coupled_files(self, tmp_path):
+        """Overview shows co-change pairs for git repos with co-changing source files."""
+        import subprocess
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        # Init a real git repo with commits that couple two files
+        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True)
+
+        # Create files and commit them together 3 times
+        for i in range(3):
+            (tmp_path / "core.py").write_text(f"def process(x): return x + {i}\n")
+            (tmp_path / "helper.py").write_text(f"def helper(x): return x * {i}\n")
+            subprocess.run(["git", "add", "-A"], cwd=tmp_path, capture_output=True)
+            subprocess.run(["git", "commit", "-m", f"commit {i}"], cwd=tmp_path, capture_output=True)
+
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "co-change pairs:" in out, (
+            f"Expected 'co-change pairs:' when files co-change in git; got:\n{out}"
+        )
+        assert "core.py" in out or "helper.py" in out, (
+            f"Expected co-changing file names in output; got:\n{out}"
+        )
+
+    def test_co_change_pairs_absent_without_git(self, tmp_path):
+        """Overview has no co-change pairs line when no git repo."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "core.py").write_text("def process(x): return x\n")
+        (tmp_path / "helper.py").write_text("def helper(x): return x\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "co-change pairs:" not in out, (
+            f"'co-change pairs:' must not appear without git history; got:\n{out}"
+        )
