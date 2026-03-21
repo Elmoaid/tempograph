@@ -9344,3 +9344,50 @@ class TestDeadCodeRemovableLines:
         assert "lines removable" not in out, (
             f"'lines removable' must not appear for small dead code; got:\n{out}"
         )
+
+
+class TestBlastPeakExposure:
+    """S99: Blast 'Peak exposure:' — exported symbol with most cross-file callers."""
+
+    def test_peak_exposure_shown_for_heavily_called_export(self, tmp_path):
+        """When one exported fn has 3+ external callers, 'Peak exposure:' is shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        (tmp_path / "api.py").write_text(
+            "def get_user(): return 1\n"
+            "def delete_user(): return 2\n"
+        )
+        for i in range(4):
+            (tmp_path / f"service_{i}.py").write_text(
+                f"from api import get_user\ndef run_{i}(): return get_user()\n"
+            )
+        # delete_user has only 1 caller — should not be peak
+        (tmp_path / "admin.py").write_text(
+            "from api import delete_user\ndef admin(): return delete_user()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="api.py")
+        assert "Peak exposure:" in out, (
+            f"Expected 'Peak exposure:' for fn with 4 external callers; got:\n{out}"
+        )
+        assert "get_user" in out, f"Expected 'get_user' as peak export; got:\n{out}"
+
+    def test_peak_exposure_absent_when_few_callers(self, tmp_path):
+        """Exported fn with only 2 cross-file callers → no 'Peak exposure:'."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        (tmp_path / "utils.py").write_text(
+            "def helper_a(): return 1\n"
+            "def helper_b(): return 2\n"
+        )
+        for i in range(2):
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from utils import helper_a\ndef use_{i}(): return helper_a()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="utils.py")
+        assert "Peak exposure:" not in out, (
+            f"'Peak exposure:' must not appear for fn with only 2 callers; got:\n{out}"
+        )
