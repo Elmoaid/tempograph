@@ -201,6 +201,22 @@ def render_overview(graph: Tempo) -> str:
         _fs_parts = [f"{k}: {v}" for k, v in _fn_sizes.items() if v > 0]
         lines.append(f"fn sizes: {', '.join(_fs_parts)}")
 
+    # Largest functions: top 3 non-test functions by line count.
+    # Agents should avoid reading these in full; grep/focus is safer.
+    _large_fns = sorted(
+        (
+            (sym.line_count, sym.name, sym.file_path)
+            for sym in graph.symbols.values()
+            if sym.kind.value in ("function", "method")
+            and not _is_test_file(sym.file_path)
+            and sym.line_count >= 50
+        ),
+        key=lambda x: -x[0],
+    )
+    if len(_large_fns) >= 2:
+        _lf_parts = [f"{name} ({lc}L)" for lc, name, _ in _large_fns[:3]]
+        lines.append(f"largest fns: {', '.join(_lf_parts)}")
+
     # Top imported: files most imported by other source files — true infrastructure files.
     # Distinct from hot symbols (call frequency) and hot files (commit count).
     _importer_counts: dict[str, int] = {}
@@ -1037,6 +1053,15 @@ def _render_all_callers_section(
     hidden_files = n_files_total - len(shown_files)
 
     parts = [f"\nCallers ({total} in {n_files_total} file{'s' if n_files_total != 1 else ''}):"]
+    # S54: module span — top-level directory distribution when callers come from 3+ dirs
+    _mod_counts: dict[str, int] = {}
+    for fp in by_file:
+        _mod = fp.split("/")[0] if "/" in fp else ""
+        if _mod:
+            _mod_counts[_mod] = _mod_counts.get(_mod, 0) + 1
+    if len(_mod_counts) >= 3:
+        _span_parts = [f"{m}/ ({n})" for m, n in sorted(_mod_counts.items(), key=lambda x: -x[1])[:4]]
+        parts.append(f"  span: {', '.join(_span_parts)}")
     for fp, entries in shown_files:
         # De-duplicate by caller name, preserve order
         seen_names: set[str] = set()
@@ -1694,44 +1719,6 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     if hot_section:
         lines.append(hot_section)
         token_count += count_tokens(hot_section)
-
-    # Similar symbols: functions/methods that share ≥2 callees with the seed.
-    # Surfaces parallel implementations that likely need the same change.
-    # Only applies to FUNCTION/METHOD seeds (not classes, not test files).
-    if _seed_syms and token_count < max_tokens - 60:
-        _prim_s = _seed_syms[0]
-        if _prim_s.kind.value in ("function", "method") and not _is_test_file(_prim_s.file_path):
-            # Exclude class/type constructors — they're shared ubiquitously and
-            # create false positives (every handler that creates Symbol/Edge looks
-            # "similar" to every other handler, which is meaningless noise).
-            _seed_callees = {
-                c.id for c in graph.callees_of(_prim_s.id)
-                if c.kind.value not in ("class", "type_alias", "enum")
-            }
-            if len(_seed_callees) >= 2:
-                _shared_counts: dict[str, int] = {}  # sym_id → shared callee count
-                for _callee_id in _seed_callees:
-                    for _caller in graph.callers_of(_callee_id):
-                        if (
-                            _caller.id != _prim_s.id
-                            and not _is_test_file(_caller.file_path)
-                            and _caller.kind.value in ("function", "method")
-                        ):
-                            _shared_counts[_caller.id] = _shared_counts.get(_caller.id, 0) + 1
-                _similar = [
-                    (cnt, graph.symbols[sid])
-                    for sid, cnt in _shared_counts.items()
-                    if cnt >= 2 and sid in graph.symbols
-                ]
-                if _similar:
-                    _similar.sort(key=lambda x: -x[0])
-                    _sim_parts = [
-                        f"{sym.name} ({sym.file_path.rsplit('/', 1)[-1]}, {cnt} shared)"
-                        for cnt, sym in _similar[:3]
-                    ]
-                    _sim_line = f"\nsimilar: {', '.join(_sim_parts)}"
-                    lines.append(_sim_line)
-                    token_count += count_tokens(_sim_line)
 
     # File siblings: other notable symbols in the primary seed's file.
     # Shows agents what else is in the file without requiring a blast query.

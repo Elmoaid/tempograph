@@ -6203,3 +6203,49 @@ class TestFocusBFSHubAnnotation:
         assert "[hub:" not in out, (
             f"Depth-0 seed must NOT get hub annotation (it gets blast: instead); got:\n{out}"
         )
+
+
+class TestOverviewLargestFunctions:
+    """S54: Overview — 'largest fns:' section showing top non-test functions by line count.
+
+    When 2+ source functions have >=50 lines, shows top 3 by line count with name and size.
+    Helps agents avoid reading huge functions in full.
+    """
+
+    def _build(self, tmp_path, files: dict):
+        from tempograph.builder import build_graph
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_largest_fns_shown_with_two_large_functions(self, tmp_path):
+        """'largest fns:' appears when 2+ functions have >=50 lines."""
+        from tempograph.render import render_overview
+
+        big_fn = "def big_func(x):\n" + "    pass\n" * 60
+        medium_fn = "\ndef medium_func(y):\n" + "    pass\n" * 55
+
+        g = self._build(tmp_path, {"module.py": big_fn + medium_fn})
+        out = render_overview(g)
+        assert "largest fns:" in out, (
+            f"Expected 'largest fns:' when large functions exist; got:\n{out}"
+        )
+        assert "big_func" in out or "medium_func" in out, (
+            f"Expected function name in 'largest fns'; got:\n{out}"
+        )
+
+    def test_largest_fns_absent_when_all_functions_small(self, tmp_path):
+        """'largest fns:' absent when no function reaches 50 lines."""
+        from tempograph.render import render_overview
+
+        g = self._build(tmp_path, {
+            "module.py": (
+                "def tiny(x): return x\n"
+                "def small(y):\n"
+                "    return y + 1\n"
+            ),
+        })
+        out = render_overview(g)
+        assert "largest fns:" not in out, (
+            f"'largest fns:' must not appear when all functions are small; got:\n{out}"
+        )
