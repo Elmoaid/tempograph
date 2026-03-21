@@ -2296,9 +2296,9 @@ class TestFileVolatilityWarning:
         result = file_commit_counts(REPO_PATH)
         assert isinstance(result, dict), "must return dict"
         assert len(result) > 0, "tempograph is active — must have file history"
-        # render.py is frequently edited — must appear
-        assert "tempograph/render.py" in result, "render.py must appear in commit history"
-        assert result["tempograph/render.py"] >= 1
+        # render/focused.py is frequently edited — must appear (render.py was decomposed)
+        assert "tempograph/render/focused.py" in result, "render/focused.py must appear in commit history"
+        assert result["tempograph/render/focused.py"] >= 1
 
     def test_file_commit_counts_empty_for_non_git_dir(self, tmp_path):
         """file_commit_counts returns empty dict gracefully for non-git directories."""
