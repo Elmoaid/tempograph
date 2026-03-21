@@ -4681,8 +4681,8 @@ class TestDiffCochangePartners:
             (tmp_path / name).write_text(content)
         return build_graph(str(tmp_path), use_cache=False)
 
-    def test_no_cochange_section_in_non_git_repo(self, tmp_path):
-        """Co-change partners: must not appear for a non-git directory."""
+    def test_no_cochange_warning_in_non_git_repo(self, tmp_path):
+        """Co-change warning: must not appear for a non-git directory."""
         from tempograph.render import render_diff_context
 
         g = self._build(tmp_path, {
@@ -4690,12 +4690,62 @@ class TestDiffCochangePartners:
         })
         out = render_diff_context(g, ["core.py"])
 
-        assert "Co-change partners:" not in out, (
-            f"Must not show co-change partners without git history; got:\n{out}"
+        assert "Co-change warning:" not in out, (
+            f"Must not show co-change warning without git history; got:\n{out}"
         )
 
+    def test_cochange_warning_shown_when_partner_missing(self, tmp_path):
+        """Co-change warning: shown when a co-change partner is absent from the diff."""
+        import subprocess
+        from tempograph.builder import build_graph
+        from tempograph.render import render_diff_context
+
+        # Set up real git repo so graph.root is valid (cochange_pairs checks is_git_repo)
+        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True)
+        (tmp_path / "auth.py").write_text("def login(): pass\n")
+        (tmp_path / "session.py").write_text("def create(): pass\n")
+        subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True)
+
+        g = build_graph(str(tmp_path), use_cache=False)
+
+        from unittest.mock import patch
+        # Simulate: auth.py and session.py always co-change (7 commits together)
+        with patch("tempograph.git.cochange_pairs", return_value=[{"path": "session.py", "count": 7}]):
+            # Only auth.py in diff — session.py is missing → warning expected
+            out = render_diff_context(g, ["auth.py"])
+
+        assert "Co-change warning:" in out, f"Expected warning; got:\n{out}"
+        assert "session.py" in out
+        assert "missing from changeset" in out
+
+    def test_cochange_warning_absent_when_partner_in_diff(self, tmp_path):
+        """Co-change warning: not shown when the co-change partner is already in the diff."""
+        import subprocess
+        from tempograph.builder import build_graph
+        from tempograph.render import render_diff_context
+
+        subprocess.run(["git", "init"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "t@t.com"], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, capture_output=True)
+        (tmp_path / "auth.py").write_text("def login(): pass\n")
+        (tmp_path / "session.py").write_text("def create(): pass\n")
+        subprocess.run(["git", "add", "."], cwd=tmp_path, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, capture_output=True)
+
+        g = build_graph(str(tmp_path), use_cache=False)
+
+        from unittest.mock import patch
+        with patch("tempograph.git.cochange_pairs", return_value=[{"path": "session.py", "count": 7}]):
+            # Both files in diff — no warning expected
+            out = render_diff_context(g, ["auth.py", "session.py"])
+
+        assert "Co-change warning:" not in out, f"Expected no warning; got:\n{out}"
+
     def test_cochange_section_present_in_real_repo(self):
-        """Co-change partners: appears for tempograph repo (real git history exists)."""
+        """Co-change warning: appears for tempograph repo (real git history exists)."""
         import os
         from tempograph.builder import build_graph
         from tempograph.render import render_diff_context
@@ -4704,9 +4754,10 @@ class TestDiffCochangePartners:
         g = build_graph(repo, use_cache=False)
         out = render_diff_context(g, ["tempograph/render.py"])
 
-        # render.py and git.py always co-change — should appear
-        # (test is lenient: section may be absent if git log is empty,
+        # render.py and git.py always co-change — warning may appear
+        # (lenient: section may be absent if partner isn't in graph.files,
         #  but when present it must have the right format)
-        if "Co-change partners:" in out:
-            line = next(l for l in out.split("\n") if "Co-change partners:" in l)
-            assert "%" in line, f"Co-change partners must include percentage; got:\n{line}"
+        if "Co-change warning:" in out:
+            line = next(l for l in out.split("\n") if "Co-change warning:" in l)
+            assert "x)" in line, f"Co-change warning must include count (Nx); got:\n{line}"
+            assert "missing from changeset" in line, f"Must include 'missing from changeset'; got:\n{line}"
