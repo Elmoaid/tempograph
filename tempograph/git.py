@@ -288,3 +288,52 @@ def recent_file_commits(repo: str, file_path: str, n: int = 3) -> list[dict]:
     return results
 
 
+def cochange_pairs(
+    repo_path: str, file_path: str, n: int = 3, min_count: int = 3
+) -> list[dict]:
+    """Return top N source files that co-change with file_path, by raw commit count.
+
+    Scans the last 200 commits. For each commit touching file_path, counts
+    which other non-test files also appeared. Returns [{"path": str, "count": int}, ...]
+    sorted by count desc. Excludes test files and the file itself.
+    Returns [] on error, no git history, or no co-change partners above min_count.
+    """
+    if not repo_path or not is_git_repo(repo_path):
+        return []
+    out = _run_git(
+        repo_path, "log", "--max-count=200", "--name-only", "--pretty=format:COMMIT_SEP"
+    )
+    if not out:
+        return []
+
+    from collections import Counter
+    counts: Counter[str] = Counter()
+
+    for commit_block in out.split("COMMIT_SEP"):
+        files = [f.strip() for f in commit_block.strip().splitlines() if f.strip()]
+        if len(files) < 2 or len(files) > 50:
+            continue
+        if file_path not in files:
+            continue
+        for f in files:
+            if f != file_path:
+                counts[f] += 1
+
+    def _is_test(p: str) -> bool:
+        name = p.rsplit("/", 1)[-1]
+        return (
+            name.startswith("test_")
+            or name.endswith("_test.py")
+            or name.endswith(".test.ts")
+            or name.endswith(".test.js")
+            or name.endswith(".spec.ts")
+            or name.endswith(".spec.js")
+        )
+
+    return [
+        {"path": fp, "count": cnt}
+        for fp, cnt in counts.most_common()
+        if cnt >= min_count and not _is_test(fp)
+    ][:n]
+
+

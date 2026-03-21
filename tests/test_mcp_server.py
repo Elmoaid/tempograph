@@ -1329,6 +1329,45 @@ class TestFocusRecentCommits:
         assert "Recent changes" not in output
 
 
+class TestFocusCochangeSuggestions:
+    """Verify that focus output includes a 'Co-changed with:' section for the primary file."""
+
+    def _build_simple_repo(self, tmp_path):
+        (tmp_path / "mod.py").write_text("def my_func():\n    pass\n")
+        from tempograph.builder import build_graph
+        return build_graph(str(tmp_path), use_config=False)
+
+    def test_cochange_section_appears(self, tmp_path):
+        """cochange_pairs returns 2 pairs → 'Co-changed with:' section present with counts."""
+        from unittest.mock import patch
+        from tempograph.render import render_focused
+
+        g = self._build_simple_repo(tmp_path)
+        fake_pairs = [
+            {"path": "tempograph/prepare.py", "count": 12},
+            {"path": "tempograph/keywords.py", "count": 7},
+        ]
+
+        with patch("tempograph.git.cochange_pairs", return_value=fake_pairs):
+            output = render_focused(g, "my_func")
+
+        assert "Co-changed with (mod.py):" in output
+        assert "tempograph/prepare.py — 12 commits together" in output
+        assert "tempograph/keywords.py — 7 commits together" in output
+
+    def test_no_cochange_section_when_empty(self, tmp_path):
+        """cochange_pairs returns [] → no 'Co-changed with:' section (no noise)."""
+        from unittest.mock import patch
+        from tempograph.render import render_focused
+
+        g = self._build_simple_repo(tmp_path)
+
+        with patch("tempograph.git.cochange_pairs", return_value=[]):
+            output = render_focused(g, "my_func")
+
+        assert "Co-changed with" not in output
+
+
 # ---------------------------------------------------------------------------
 # CommonJS export detection
 # ---------------------------------------------------------------------------

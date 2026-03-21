@@ -914,6 +914,20 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
         except Exception:
             pass
 
+    # Co-change suggestions: which source files historically move with the primary file?
+    # Raw commit count exposes implicit coupling that imports don't capture.
+    if graph.root and seed_file_paths:
+        try:
+            from .git import cochange_pairs
+            pairs = cochange_pairs(graph.root, seed_file_paths[0])
+            if pairs:
+                basename = Path(seed_file_paths[0]).name
+                lines.append(f"\nCo-changed with ({basename}):")
+                for p in pairs:
+                    lines.append(f"  • {p['path']} — {p['count']} commits together")
+        except Exception:
+            pass
+
     return "\n".join(lines)
 
 
