@@ -797,6 +797,58 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — no production code changed; verify tests are strengthening, not relaxing, coverage"
             )
 
+    # S993: Init file in diff — changed files include a package __init__.py.
+    # Changes to __init__.py alter package-level exports and re-exports; adding or removing
+    # symbols from __init__.py changes the public API of the entire package silently.
+    if changed_files:
+        _init_files993 = [
+            f for f in changed_files
+            if f.replace("\\", "/").rsplit("/", 1)[-1] == "__init__.py"
+        ]
+        if _init_files993:
+            _ipath993 = _init_files993[0].replace("\\", "/")
+            lines.append(
+                f"init file in diff: {_ipath993} — package-level exports changed"
+                f"; adding or removing names here silently changes the API of the whole package"
+            )
+
+    # S999: Large diff — five or more files changed in one commit.
+    # Wide diffs are harder to review atomically; unrelated changes increase the chance
+    # of reviewer fatigue, missed issues, and hard-to-bisect regressions.
+    if changed_files and len(changed_files) >= 5:
+        lines.append(
+            f"large diff: {len(changed_files)} files changed"
+            f" — wide diff increases review difficulty; consider splitting into focused commits per concern"
+        )
+
+    # S1005: Docs-only diff — all changed files are documentation files (.md, .rst, .txt).
+    # A diff that only touches docs has zero production regression risk;
+    # however, stale documentation is a common maintenance debt — verify accuracy of changed content.
+    if changed_files:
+        _doc_exts1005 = {".md", ".rst", ".txt", ".adoc", ".asciidoc"}
+        _doc_changed1005 = [
+            f for f in changed_files
+            if any(f.lower().endswith(ext) for ext in _doc_exts1005)
+        ]
+        if len(_doc_changed1005) == len(changed_files) and _doc_changed1005:
+            lines.append(
+                f"docs-only diff: all {len(_doc_changed1005)} changed file(s) are documentation"
+                f" — no production code changed; verify doc content reflects the current implementation"
+            )
+
+    # S1011: Single file diff — only one source file changed in this diff.
+    # A perfectly isolated change is easy to review and bisect; however verify
+    # the change does not have implicit dependencies requiring updates in other files.
+    _src_changed1011 = [
+        f for f in (changed_files or [])
+        if not any(f.lower().endswith(ext) for ext in (".md", ".rst", ".txt", ".adoc"))
+    ]
+    if len(_src_changed1011) == 1:
+        lines.append(
+            f"single file diff: only {_src_changed1011[0].rsplit('/', 1)[-1]} changed"
+            f" — isolated change; verify no implicit dependencies require updates in other files"
+        )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 

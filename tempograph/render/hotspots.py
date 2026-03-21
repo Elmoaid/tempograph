@@ -2857,7 +2857,7 @@ def _collect_hotspots_signals(
                     f" — extreme fan-in; breaking changes here cause simultaneous failures across many subsystems"
                 )
 
-    # S970: Exported hotspot — the top hotspot is a public exported function.
+    # S970: API-surface hotspot — the top hotspot is a public exported function.
     # Exported functions are API surface; internal refactors that seem safe may break
     # external consumers who rely on the exact signature or behavior.
     if scores:
@@ -2869,7 +2869,7 @@ def _collect_hotspots_signals(
             and _top970.kind.value in ("function", "method")
         ):
             out.append(
-                f"\nexported hotspot: {_top970.name} is a public exported function"
+                f"\napi-surface hotspot: {_top970.name} is a public exported function"
                 f" — API surface; signature or behavior changes may break external consumers"
             )
 
@@ -2919,6 +2919,63 @@ def _collect_hotspots_signals(
             out.append(
                 f"\nprivate hotspot: {_top988.name} is a private function and the top complexity hotspot"
                 f" — internal implementation detail under high maintenance pressure; consider extraction"
+            )
+
+    # S994: Contained hotspot — top hotspot callers are all within the same file.
+    # A complex function called only internally has a contained blast radius;
+    # changes affect only the hosting module, not external consumers.
+    if scores:
+        _top994 = scores[0][1]
+        if _top994 is not None and not _is_test_file(_top994.file_path):
+            _callers994 = [c for c in graph.callers_of(_top994.id) if not _is_test_file(c.file_path)]
+            _external994 = [c for c in _callers994 if c.file_path != _top994.file_path]
+            if _callers994 and not _external994:
+                out.append(
+                    f"\ncontained hotspot: {_top994.name} — all {len(_callers994)} caller(s) are within {_top994.file_path.rsplit('/', 1)[-1]}"
+                    f"; blast radius limited to this file"
+                )
+
+    # S1000: Massive hotspot — top hotspot spans 150 or more lines.
+    # Extreme function length multiplies the number of possible paths through the code;
+    # even a small change may interact with many branches and edge cases simultaneously.
+    if scores:
+        _top1000 = scores[0][1]
+        if _top1000 is not None and not _is_test_file(_top1000.file_path) and _top1000.line_count >= 150:
+            out.append(
+                f"\nmassive hotspot: {_top1000.name} spans {_top1000.line_count} lines"
+                f" — extreme complexity; refactoring into smaller units would significantly reduce maintenance risk"
+            )
+
+    # S1006: Entrypoint hotspot — top hotspot is in a well-known entrypoint file.
+    # Complex code at the application entry point is doubly risky: high complexity
+    # at the start of all execution means bugs affect every code path from the first call.
+    _entry_bases1006 = {"main.py", "app.py", "server.py", "index.py", "run.py", "cli.py", "__main__.py", "wsgi.py", "asgi.py"}
+    if scores:
+        _top1006 = scores[0][1]
+        if _top1006 is not None and not _is_test_file(_top1006.file_path):
+            _fbase1006 = _top1006.file_path.replace("\\", "/").rsplit("/", 1)[-1].lower()
+            if _fbase1006 in _entry_bases1006:
+                out.append(
+                    f"\nentrypoint hotspot: {_top1006.name} is in {_fbase1006}"
+                    f" — complex code at the start of all execution paths; changes affect every request/call"
+                )
+
+    # S1012: Co-located hotspots — top two hotspots are both in the same source file.
+    # When the highest-scoring symbols share a file, that file is a concentration risk;
+    # any regression in it simultaneously degrades the two most critical code paths.
+    if len(scores) >= 2:
+        _top_sym1012 = scores[0][1]
+        _second_sym1012 = scores[1][1]
+        if (
+            _top_sym1012 is not None
+            and _second_sym1012 is not None
+            and not _is_test_file(_top_sym1012.file_path)
+            and _top_sym1012.file_path == _second_sym1012.file_path
+        ):
+            _fname1012 = _top_sym1012.file_path.replace("\\", "/").rsplit("/", 1)[-1]
+            out.append(
+                f"\nco-located hotspots: {_top_sym1012.name} and {_second_sym1012.name} are both in {_fname1012}"
+                f" — hotspot concentration; a single regression here degrades two critical paths simultaneously"
             )
 
     return out

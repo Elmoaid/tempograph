@@ -3563,6 +3563,71 @@ def _signals_async_oop(
             f" — entry point is unclear; execution flow harder to trace for agents and reviewers"
         )
 
+    # S991: God class — a single class has 8 or more methods.
+    # A class with many methods accumulates multiple responsibilities; changes to one
+    # responsibility risk unintended coupling to others, making the class hard to test safely.
+    _class_method_counts991: dict[str, tuple[str, int]] = {}
+    for s in graph.symbols.values():
+        if s.kind.value == "method" and s.parent_id is not None and not _is_test_file(s.file_path):
+            _cname991 = s.parent_id.rsplit("::", 1)[-1] if "::" in s.parent_id else s.parent_id
+            _class_method_counts991[s.parent_id] = (_cname991, _class_method_counts991.get(s.parent_id, (_cname991, 0))[1] + 1)
+    _god_classes991 = [(name, cnt) for _, (name, cnt) in _class_method_counts991.items() if cnt >= 8]
+    if _god_classes991:
+        _top_god991 = max(_god_classes991, key=lambda x: x[1])
+        lines.append(
+            f"god class candidate: {_top_god991[0]} has {_top_god991[1]} methods"
+            f" — single class accumulating many responsibilities; changes may have unintended coupling"
+        )
+
+    # S997: Test heavy — test suite defines far more functions than source.
+    # When test count significantly exceeds source function count, CI slows and
+    # tests become brittle; agents may need to update many tests per code change.
+    _src_fns997 = [
+        s for s in graph.symbols.values()
+        if s.kind.value == "function" and s.parent_id is None and not _is_test_file(s.file_path)
+    ]
+    _test_fns997 = [
+        s for s in graph.symbols.values()
+        if s.kind.value in ("function", "test") and _is_test_file(s.file_path) and s.name.startswith("test_")
+    ]
+    if len(_src_fns997) >= 2 and len(_test_fns997) >= len(_src_fns997) * 3:
+        lines.append(
+            f"test heavy: {len(_test_fns997)} test functions for {len(_src_fns997)} source functions"
+            f" — high test burden; CI may be slow and expect many test updates per code change"
+        )
+
+    # S1003: Deep nesting — codebase contains files nested 3 or more directory levels deep.
+    # Deeply nested source files indicate complex package hierarchies; agents must track
+    # long import paths and may miss files hidden in rarely explored subdirectories.
+    _root1003 = graph.root.replace("\\", "/").rstrip("/")
+    _deep_files1003 = [
+        fp for fp in graph.files
+        if fp.replace("\\", "/").replace(_root1003 + "/", "").count("/") >= 3
+        and not _is_test_file(fp)
+    ]
+    if _deep_files1003:
+        _deepest1003 = max(_deep_files1003, key=lambda fp: fp.replace("\\", "/").replace(_root1003 + "/", "").count("/"))
+        _depth1003 = _deepest1003.replace("\\", "/").replace(_root1003 + "/", "").count("/")
+        lines.append(
+            f"deep nesting: {len(_deep_files1003)} source file(s) nested {_depth1003}+ levels deep"
+            f" — complex package hierarchy; agents may miss deeply nested modules"
+        )
+
+    # S1009: Mixed languages — codebase spans 3 or more distinct programming languages.
+    # Multi-language repos require agents to switch language context frequently;
+    # cross-language call boundaries are harder to trace and may hide type or contract mismatches.
+    _lang_counts1009 = {
+        lang: count
+        for lang, count in graph.stats.get("languages", {}).items()
+        if count > 0
+    }
+    if len(_lang_counts1009) >= 3:
+        _lang_list1009 = ", ".join(k for k, _ in sorted(_lang_counts1009.items(), key=lambda x: -x[1])[:5])
+        lines.append(
+            f"mixed languages: {len(_lang_counts1009)} languages detected ({_lang_list1009})"
+            f" — multi-language repo; cross-language call boundaries are harder to trace for agents"
+        )
+
     return lines
 
 

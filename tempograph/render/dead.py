@@ -3418,6 +3418,86 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — removed guards may leave callers passing invalid data silently"
         )
 
+    # S995: Dead formatters — unused format_/render_/display_/present_/fmt_ prefixed functions.
+    # Dead formatter functions indicate removed output transformation pipelines;
+    # callers may receive raw or incorrectly structured data when formatters go missing.
+    _fmt_prefixes995 = ("format_", "fmt_", "render_", "display_", "present_", "show_", "print_", "stringify_")
+    _dead_formatters995 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().startswith(p) for p in _fmt_prefixes995)
+    ]
+    if _dead_formatters995:
+        _fmt_names995 = ", ".join(s.name for s in _dead_formatters995[:3])
+        if len(_dead_formatters995) > 3:
+            _fmt_names995 += f" +{len(_dead_formatters995) - 3} more"
+        lines.append(
+            f"dead formatters: {len(_dead_formatters995)} unused output formatting function(s) ({_fmt_names995})"
+            f" — removed formatters may leave callers receiving raw or incorrectly structured data"
+        )
+
+    # S1001: Dead builders — unused build_/create_/make_/construct_/factory_ prefixed functions.
+    # Dead factory functions indicate removed object creation paths; callers may be unable
+    # to instantiate objects they expect, causing AttributeErrors or None-type failures.
+    _build_prefixes1001 = ("build_", "create_", "make_", "construct_", "new_", "factory_", "produce_", "generate_")
+    _dead_builders1001 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().startswith(p) for p in _build_prefixes1001)
+    ]
+    if _dead_builders1001:
+        _bld_names1001 = ", ".join(s.name for s in _dead_builders1001[:3])
+        if len(_dead_builders1001) > 3:
+            _bld_names1001 += f" +{len(_dead_builders1001) - 3} more"
+        lines.append(
+            f"dead builders: {len(_dead_builders1001)} unused factory/builder function(s) ({_bld_names1001})"
+            f" — removed object creation paths may leave callers unable to instantiate expected objects"
+        )
+
+    # S1007: Dead error handlers — unused handle_error_/on_error/error_handler_ prefixed functions.
+    # Dead error handlers indicate removed exception processing paths; callers may now
+    # propagate unhandled exceptions where errors were previously caught and reported.
+    _err_prefixes1007 = ("handle_error", "on_error", "error_handler", "handle_exception", "on_exception", "catch_error", "rescue_")
+    _dead_errhandlers1007 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().startswith(p) for p in _err_prefixes1007)
+    ]
+    if _dead_errhandlers1007:
+        _err_names1007 = ", ".join(s.name for s in _dead_errhandlers1007[:3])
+        if len(_dead_errhandlers1007) > 3:
+            _err_names1007 += f" +{len(_dead_errhandlers1007) - 3} more"
+        lines.append(
+            f"dead error handlers: {len(_dead_errhandlers1007)} unused error handler(s) ({_err_names1007})"
+            f" — removed exception handlers may leave callers with unhandled errors propagating silently"
+        )
+
+    # S1013: Dead migrations — unused migrate_/migration_/upgrade_/downgrade_ prefixed functions.
+    # Dead migration functions indicate abandoned schema evolution paths; if these are
+    # database migrations the schema version table may be inconsistent with the actual schema.
+    _mig_prefixes1013 = ("migrate_", "migration_", "upgrade_", "downgrade_", "rollback_", "apply_migration", "run_migration")
+    _dead_migrations1013 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().startswith(p) for p in _mig_prefixes1013)
+    ]
+    if _dead_migrations1013:
+        _mig_names1013 = ", ".join(s.name for s in _dead_migrations1013[:3])
+        if len(_dead_migrations1013) > 3:
+            _mig_names1013 += f" +{len(_dead_migrations1013) - 3} more"
+        lines.append(
+            f"dead migrations: {len(_dead_migrations1013)} unused migration function(s) ({_mig_names1013})"
+            f" — abandoned schema evolution paths; schema version table may be inconsistent with actual schema"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
