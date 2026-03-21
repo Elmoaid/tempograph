@@ -3358,6 +3358,21 @@ def _signals_focused_fn_advanced(
                     f" — copy-paste drift; callers may resolve to the wrong definition"
                 )
 
+    # S678: Long function — focused symbol is a function/method with 40+ lines.
+    # Long functions have multiple responsibilities and hidden branching;
+    # they are harder to test, review, and change without introducing bugs.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim678 = _seed_syms[0]
+        if (
+            not _is_test_file(_prim678.file_path)
+            and _prim678.kind.value in ("function", "method")
+            and _prim678.line_count >= 40
+        ):
+            lines.append(
+                f"\nlong function: {_prim678.name} is {_prim678.line_count} lines"
+                f" — consider extracting sub-functions to reduce cognitive load"
+            )
+
     return lines
 
 
