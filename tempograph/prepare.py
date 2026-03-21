@@ -186,7 +186,7 @@ def _coverage_line(query_tokens: list[str], graph: Tempo, context_files: list[st
 def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: str = "",
                    baseline_predicted_files: list[str] | None = None,
                    precision_filter: bool = False,
-                   definition_first: bool = False) -> str:
+                   definition_first: bool = True) -> str:
     """Batch context preparation: overview + focus + hotspots + diff in one token-budgeted output.
 
     If L2 learned insights exist for task_type, includes extra modes (dead code, quality)
@@ -260,7 +260,7 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                 # Definition-first fallback: when focus is too_broad and all path matching found nothing,
                 # return just the DEFINING file(s) of the top-ranked symbol.
                 # Handles: "redirect" → flask/helpers.py (where redirect() lives) rather than all callers.
-                # Gated behind definition_first=True (bench evidence required before enabling by default).
+                # Enabled by default (Phase 5.31 bench: +16.0% F1, p=0.012*, n=93).
                 if definition_first and too_broad and not path_fallback_files:
                     scored = graph.search_symbols_scored(kw)
                     if scored:
@@ -286,6 +286,14 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                 sections.append(fp)
                 token_count += count_tokens(fp)
             key_files = _extract_focus_files("\n\n".join(focus_parts), task_keywords=keywords)
+            # Inject path-fallback hits that aren't already in key_files.
+            # When focus was dominated by test/hub files, path-matched source files
+            # (e.g. keywords.py for "extract-cl-keywords") get lost. Prepend them.
+            if path_fallback_files:
+                _kf_set = set(key_files)
+                for _pf in path_fallback_files:
+                    if _pf not in _kf_set:
+                        key_files.insert(0, _pf)
             _context_files = key_files
             # Precision gate: >4 key files → topic too broad → skip injection.
             # Bench evidence (Phase 5.26, n=111): precision_filter=+3.9% (p=0.085, ns).

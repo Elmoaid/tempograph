@@ -340,6 +340,19 @@ def main(argv: list[str] | None = None) -> int:
                       duration_ms=int(elapsed * 1000), empty=is_empty_result(output))
         return 0
 
+    def _diff_files(args, repo_root: str) -> list[str]:
+        """Resolve changed files: explicit --file wins; otherwise auto-detect from git."""
+        if args.file:
+            return [f.strip() for f in args.file.split(",") if f.strip()]
+        # Auto-detect: unstaged + staged changes vs HEAD
+        try:
+            from .git import changed_files_vs_head, is_git_repo
+            if repo_root and is_git_repo(repo_root):
+                return changed_files_vs_head(repo_root)
+        except Exception:
+            pass
+        return []
+
     mode_map = {
         "overview": lambda: render_overview(graph),
         "map": lambda: render_map(graph, max_tokens=args.max_tokens),
@@ -347,7 +360,7 @@ def main(argv: list[str] | None = None) -> int:
         "focus": lambda: render_focused(graph, args.query or "main", max_tokens=args.max_tokens),
         "lookup": lambda: render_lookup(graph, args.query or ""),
         "blast": lambda: render_blast_radius(graph, args.file or "", query=args.query or ""),
-        "diff": lambda: render_diff_context(graph, [f.strip() for f in (args.file or "").split(",") if f.strip()], max_tokens=args.max_tokens),
+        "diff": lambda: render_diff_context(graph, _diff_files(args, graph.root), max_tokens=args.max_tokens),
         "hotspots": lambda: render_hotspots(graph),
         "deps": lambda: render_dependencies(graph),
         "dead": lambda: render_dead_code(graph),

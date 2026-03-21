@@ -142,7 +142,7 @@ EXTENSION_TO_LANGUAGE: dict[str, Language] = {
 }
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class Symbol:
     id: str                          # unique: "path/to/file.ts::ClassName.methodName"
     name: str                        # simple name: "methodName"
@@ -164,7 +164,7 @@ class Symbol:
         return self.line_end - self.line_start + 1
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class Edge:
     kind: EdgeKind
     source_id: str   # symbol or file id
@@ -201,6 +201,21 @@ class Tempo:
     _renderers: dict[str, list[str]] = field(default_factory=dict, repr=False)  # target → [sources that render it]
 
     def build_indexes(self) -> None:
+        # Fast path: load cached indexes from DB if edge count matches (warm build).
+        # Pickle deserialize (~1.5ms) is faster than recomputing from edges (~4ms).
+        db = getattr(self, '_db', None)
+        edge_count = len(self.edges)
+        if db is not None:
+            cached = db.load_indexes(edge_count)
+            if cached is not None:
+                self._callers = cached['callers']
+                self._callees = cached['callees']
+                self._children = cached['children']
+                self._importers = cached['importers']
+                self._renderers = cached['renderers']
+                self._subtypes = cached['subtypes']
+                return
+
         # Local variable binding avoids repeated attribute and global lookups in the hot loop.
         # 'is' comparison is correct for enum singletons and skips __eq__ dispatch overhead.
         _CALLS = EdgeKind.CALLS
@@ -232,10 +247,24 @@ class Tempo:
                 renderers.setdefault(tgt, []).append(src)
             elif k is _INHERITS or k is _IMPLEMENTS:
                 subtypes.setdefault(tgt, []).append(src)
-        # deduplicate
-        for d in (callers, callees, children, importers, renderers, subtypes):
-            for kk in d:
-                d[kk] = list(dict.fromkeys(d[kk]))
+        # Deduplicate — callers/callees carry ~98% of all duplicate entries.
+        # children and subtypes have near-zero dupes; skip them to save iteration.
+        _fromkeys = dict.fromkeys
+        for d in (callers, callees, importers, renderers):
+            for kk, v in d.items():
+                if len(v) > 1:
+                    d[kk] = list(_fromkeys(v))
+
+        # Cache computed indexes for next warm build.
+        if db is not None:
+            try:
+                db.save_indexes({
+                    'callers': callers, 'callees': callees,
+                    'children': children, 'importers': importers,
+                    'renderers': renderers, 'subtypes': subtypes,
+                }, edge_count)
+            except Exception:
+                pass
 
     def callers_of(self, symbol_id: str) -> list[Symbol]:
         return [self.symbols[s] for s in self._callers.get(symbol_id, []) if s in self.symbols]
@@ -326,6 +355,23 @@ class Tempo:
                   and _re.match(r'^[a-z][a-z0-9_]*$', t)]  # valid identifier chars only
         if not tokens:
             tokens = [t for t in query_lower.split() if len(t) > 1]
+        # IDF penalty: for multi-token queries, tokens that appear in many symbol names
+        # are generic words (test, handler, coverage) and should get lower weight.
+        # This prevents "add test coverage for parser" from flooding results with test classes.
+        _idf_factors: dict[str, float] = {}
+        if len(tokens) > 1:
+            _n_syms = len(self.symbols)
+            if _n_syms > 0:
+                _name_set = [sym.name.lower() for sym in self.symbols.values()]
+                for t in tokens:
+                    _freq = sum(1 for n in _name_set if t in n)
+                    _ratio = _freq / _n_syms
+                    if _ratio > 0.15:    # very common (>15%): heavy penalty
+                        _idf_factors[t] = 0.3
+                    elif _ratio > 0.05:  # moderately common (5-15%): mild penalty
+                        _idf_factors[t] = 0.6
+                    # else: rare/specific → factor = 1.0 (default)
+
         results: list[tuple[float, Symbol]] = []
         for sym in self.symbols.values():
             name_lower = sym.name.lower()
@@ -335,8 +381,15 @@ class Tempo:
             searchable = f"{name_lower} {qname_lower} {sig_lower} {doc_lower} {sym.file_path.lower()}"
             score = 0.0
             matched_count = 0  # only name/qname/sig/doc matches (used for conjunction bonus)
+            # Exact snake-normalized match: "buildGraph" → "buildgraph" == "build_graph" stripped.
+            # Prevents test classes (TestBuildGraph qname has "buildgraph" substring) from
+            # outranking the actual snake_case symbol. Applied once, before the token loop.
+            _name_stripped = name_lower.replace('_', '').replace('-', '')
+            if _re.match(r'^[a-z][a-z0-9]*$', query_lower) and _name_stripped == query_lower:
+                score += 15.0
+                matched_count += 1
             for token in tokens:
-                weight = min(len(token) / 3, 2.0)
+                weight = min(len(token) / 3, 2.0) * _idf_factors.get(token, 1.0)
                 if token == name_lower:
                     score += 10.0 * weight
                     matched_count += 1

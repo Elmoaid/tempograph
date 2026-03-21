@@ -73,8 +73,10 @@ function buildActiveModeInfo(activeKit: string | null, activeMode: string, custo
   return MODES.find(m => m.mode === activeMode);
 }
 
+const lastModeKey = (path: string) => `tempo-last-mode-${path}`;
+
 export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRunnerState & ModeRunnerActions {
-  const [activeMode, setActiveMode] = useState("overview");
+  const [activeMode, setActiveMode] = useState(() => localStorage.getItem(lastModeKey(repoPath)) || "overview");
   const [activeKit, setActiveKit] = useState<string | null>(null);
   const [sidebarTab, setSidebarTab] = useState<"kits" | "modes">("kits");
   const [customKits, setCustomKits] = useState<KitInfo[]>([]);
@@ -85,7 +87,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   const [copied, setCopied] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [history, setHistory] = useState<string[]>([]);
+  const [history, setHistory] = useState<string[]>(() => loadHistory(localStorage.getItem(lastModeKey(repoPath)) || "overview"));
   const feedbackGiven = useRef<Map<string, boolean>>(new Map<string, boolean>());
   const [feedbackMode, setFeedbackMode] = useState<string | null>(null);
   const argsInputRef = useRef<HTMLInputElement>(null);
@@ -146,6 +148,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   const switchMode = (mode: string) => {
     setActiveKit(null);
     setActiveMode(mode);
+    localStorage.setItem(lastModeKey(repoPath), mode);
     setModeArgs("");
     setHistoryOpen(false);
     setOutputFilter("");

@@ -73,15 +73,20 @@ def _extract_cl_keywords(task: str) -> list[str]:
     else:
         # Detect trunk merges: "Merge branch 'stable'", "Merge branch '2.2.x'"
         # Only skip when the task has NO useful branch info (pure trunk-to-trunk)
-        _trunk_m = re.match(r"^Merge branch '([^']+)'(?:\s+into\s+(\S+))?", task, re.IGNORECASE)
+        _trunk_m = re.match(r"^Merge branch '([^']+)'(?:\s+(?:of|into)\s+\S+)?", task, re.IGNORECASE)
         if _trunk_m:
             source = _trunk_m.group(1).lower().strip()
-            target = (_trunk_m.group(2) or "").lower().strip()
             _is_generic = lambda b: (b in _TRUNK_BRANCHES or re.match(r'^\d+\.\d+', b)
                                      or b in ("hotfix", "bugfix", "staging", "production") or not b)
-            if _is_generic(source) and _is_generic(target):
+            # source_leaf = last path segment (e.g. "feature/add-redis-caching" → "add-redis-caching")
+            source_leaf = source.split('/')[-1]
+            if _is_generic(source_leaf) or _is_generic(source):
                 return []  # pure trunk merge — no useful keywords
-        task = re.sub(r'^Merge (?:branch|pull request)[^\n]*\n?', '', task, flags=re.IGNORECASE)
+            # Non-trunk: use branch name as task (like Merge PR branch handling).
+            # "Merge branch 'feature/add-redis-caching'" → task = "add-redis-caching"
+            task = source_leaf
+        else:
+            task = re.sub(r'^Merge (?:branch|pull request)[^\n]*\n?', '', task, flags=re.IGNORECASE)
         # Extract conventional commit scopes BEFORE stripping them.
         # `feat(StreamMiddleware):`, `perf(Response):` → scope names the changed component.
         _cc_scopes = re.findall(
