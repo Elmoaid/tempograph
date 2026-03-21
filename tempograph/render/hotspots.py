@@ -2652,5 +2652,18 @@ def _collect_hotspots_signals(
                     f" — cross-cutting concern; changes affect {len(_caller_files874)} files across the codebase"
                 )
 
+    # S880: Uncalled hotspot — top complexity hotspot has no recorded callers.
+    # A complex function with no callers may be dead code that accumulated complexity
+    # without being exercised; investigate before refactoring or deleting.
+    if scores:
+        _top880 = scores[0][1]
+        if _top880 is not None and not _is_test_file(_top880.file_path):
+            _callers880 = graph.callers_of(_top880.id)
+            if not _callers880:
+                out.append(
+                    f"\nuncalled hotspot: {_top880.name} is the most complex symbol but has no recorded callers"
+                    f" — may be dead code or an entry point called via dynamic dispatch"
+                )
+
     return out
 

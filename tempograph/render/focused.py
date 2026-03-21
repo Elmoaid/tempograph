@@ -3926,6 +3926,18 @@ def _signals_focused_fn_advanced(
                         f" — too many parameters; consider a config object or builder pattern"
                     )
 
+    # S876: Long function focus — focused function spans 30+ lines.
+    # Long functions are hard to reason about end-to-end; agents should be extra cautious
+    # about side effects and implicit state changes buried deep in the function body.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim876 = _seed_syms[0]
+        if _prim876.kind.value in ("function", "method") and not _is_test_file(_prim876.file_path):
+            if _prim876.line_count >= 30:
+                lines.append(
+                    f"\nlong function: {_prim876.name} spans {_prim876.line_count} lines"
+                    f" — long functions hide complexity; review all side effects before changing"
+                )
+
     # S870: No-caller symbol focus — focused function or method has zero recorded callers.
     # A symbol with no callers is either an entry point, a dead symbol, or called via
     # reflection/dynamic dispatch; agents should investigate before assuming it is safe to remove.

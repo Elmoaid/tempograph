@@ -2213,6 +2213,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — format changes affect all I/O boundaries; verify protocol compatibility"
         )
 
+    # S878: Config file blast — blast target is a configuration or settings file.
+    # Config files are loaded at startup and read by many modules; changes propagate
+    # to all modules that consume configuration values at runtime.
+    _config_kws878 = ("config", "settings", "conf", "setup", "options", "params")
+    _fname878 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if any(kw in _fname878 for kw in _config_kws878):
+        lines.append(
+            f"config blast: {_fp589.rsplit('/', 1)[-1]} is a configuration or settings file"
+            f" — config changes affect all modules that read from it; review startup and default values"
+        )
+
     return "\n".join(lines)
 
 
