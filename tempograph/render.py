@@ -1468,6 +1468,13 @@ def _build_symbol_block_lines(
         if len(_hub_caller_files) >= 15:
             _hub_ann = f" [hub: {len(_hub_caller_files)} files]"
     block_lines = [f"{prefix} {sym.kind.value} {sym.qualified_name}{_blast_ann}{_hub_ann}{_age_ann}{_callee_ann}{_depth_ann} — {loc}{orbit_note}"]
+    # S61: "also in:" — warn when same symbol name exists in other files.
+    # Prevents agents from fixing the wrong copy in multi-file refactors.
+    if depth == 0:
+        _dupes = [s for s in graph.find_symbol(sym.name) if s.id != sym.id and not _is_test_file(s.file_path)]
+        if _dupes:
+            _dupe_strs = [f"{s.file_path.rsplit('/', 1)[-1]}:{s.line_start}" for s in _dupes[:3]]
+            block_lines.append(f"{indent}  also in: {', '.join(_dupe_strs)}")
     # Test coverage hint: show which test file(s) directly call this symbol.
     # If exported and no test callers → warn agents there's no safety net.
     # Only shown for functions/methods; skipped for classes/modules/constants.
@@ -1529,6 +1536,31 @@ def _build_symbol_block_lines(
                     )
         except Exception:
             pass
+    # Inline TODO/FIXME scanner: scan the focused function's source lines for
+    # open issues. Agents making changes NEED to see these — don't let them
+    # implement something that's already flagged as broken or incomplete.
+    if depth == 0 and sym.kind.value in ("function", "method") and graph.root:
+        try:
+            import os as _os, re as _re  # noqa: PLC0415
+            _full_path = _os.path.join(graph.root, sym.file_path)
+            if _os.path.isfile(_full_path):
+                with open(_full_path, encoding="utf-8", errors="replace") as _fh:
+                    _src_lines = _fh.readlines()
+                _todo_pat = _re.compile(
+                    r"#.*\b(TODO|FIXME|HACK|XXX|BUG)\b[:\s]*(.*)", _re.IGNORECASE
+                )
+                _hits: list[tuple[int, str, str]] = []
+                for _li in range(sym.line_start - 1, min(sym.line_end, len(_src_lines))):
+                    _m = _todo_pat.search(_src_lines[_li])
+                    if _m:
+                        _tag = _m.group(1).upper()
+                        _note = _m.group(2).strip()[:80]
+                        _hits.append((_li + 1, _tag, _note))
+                for _lineno, _tag, _note in _hits[:3]:
+                    _suffix = f': "{_note}"' if _note else ""
+                    block_lines.append(f"{indent}  {_tag.lower()}: L{_lineno}{_suffix}")
+        except Exception:
+            pass
     if sym.signature and depth < 2:
         block_lines.append(f"{indent}  sig: {sym.signature[:150]}")
     if sym.doc and depth == 0:
@@ -1539,8 +1571,14 @@ def _build_symbol_block_lines(
             warnings.append(f"LARGE ({sym.line_count} lines — use grep, don't read)")
         if sym.complexity > 50:
             warnings.append(f"HIGH COMPLEXITY (cx={sym.complexity})")
-        if depth == 0 and not sym.exported and not graph.callers_of(sym.id):
-            if _dead_code_confidence(sym, graph) >= 40:
+        if depth == 0 and not graph.callers_of(sym.id):
+            _name_lower = sym.name.lower()
+            _entry_patterns = ("handle_", "on_", "run", "start", "main", "execute", "dispatch",
+                               "route", "command", "hook", "middleware", "plugin", "setup", "teardown")
+            _is_entry = any(_name_lower.startswith(p) or _name_lower == p for p in _entry_patterns)
+            if _is_entry:
+                block_lines.append(f"{indent}  [likely entry point — wired externally, not dead]")
+            elif not sym.exported and _dead_code_confidence(sym, graph) >= 40:
                 warnings.append("POSSIBLY DEAD — 0 callers, not exported (run dead_code mode to confirm)")
         # Test-only callers: symbol has callers but ALL are test files.
         # Production code never calls this — likely test helper or fixture, not real API.

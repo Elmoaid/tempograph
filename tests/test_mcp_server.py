@@ -6827,3 +6827,142 @@ class TestOverviewStaleTests:
         assert "source changed, tests didn't" in out, (
             f"Expected explanation in stale tests output; got:\n{out}"
         )
+
+
+class TestFocusTodoFixmeScanner:
+    """S59: Focus mode — inline TODO/FIXME scanner.
+
+    Depth-0 function/method seeds get TODO/FIXME/HACK/XXX annotations
+    when those markers appear inside the function body. Shows tag, line
+    number, and note text. Absent when no markers found.
+    """
+
+    def test_todo_annotation_shown(self, tmp_path):
+        """TODO comment inside function body is surfaced as 'todo: LN ...'."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "proc.py").write_text(
+            "def process(data):\n"
+            "    # TODO: handle empty list\n"
+            "    return list(data)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process")
+        assert "todo:" in out.lower(), (
+            f"Expected 'todo:' annotation from inline TODO comment; got:\n{out}"
+        )
+        assert "handle empty list" in out, (
+            f"Expected TODO note text in output; got:\n{out}"
+        )
+
+    def test_fixme_annotation_shown(self, tmp_path):
+        """FIXME comment inside function body is surfaced as 'fixme: LN ...'."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "algo.py").write_text(
+            "def sort_items(items):\n"
+            "    # FIXME: O(n^2) — replace with heapq\n"
+            "    return sorted(items)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "sort_items")
+        assert "fixme:" in out.lower(), (
+            f"Expected 'fixme:' annotation from inline FIXME comment; got:\n{out}"
+        )
+
+    def test_no_annotation_when_no_markers(self, tmp_path):
+        """Clean function with no TODO/FIXME does not get scanner output."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "clean.py").write_text(
+            "def add(a, b):\n    return a + b\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "add")
+        for tag in ("todo:", "fixme:", "hack:", "xxx:", "bug:"):
+            assert tag not in out.lower(), (
+                f"'{tag}' must not appear in output for clean function; got:\n{out}"
+            )
+
+
+class TestFocusAlsoIn:
+    """S61: Focus mode — 'also in: file:line' when same symbol name exists in other source files.
+
+    Prevents agents from fixing the wrong copy in multi-file refactors.
+    Only shown at depth 0; test files excluded from 'also in' candidates.
+    """
+
+    def _build(self, tmp_path, files: dict):
+        from tempograph.builder import build_graph
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_also_in_shown_for_duplicate_symbol_name(self, tmp_path):
+        """'also in:' appears when same function name exists in another source file."""
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "auth.py": "def process(x): return x * 2\n",
+            "utils.py": "def process(x): return x + 1\n",
+            "main.py": "from auth import process\ndef run(): return process(1)\n",
+        })
+        out = render_focused(g, "auth.py::process")
+        assert "also in:" in out, f"Expected 'also in:' for duplicate symbol name; got:\n{out}"
+        assert "utils.py" in out, f"Expected 'utils.py' in 'also in' line; got:\n{out}"
+
+    def test_also_in_absent_for_unique_symbol_name(self, tmp_path):
+        """'also in:' absent when symbol name is unique across the repo."""
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "core.py": "def unique_transformer(x): return x * 2\n",
+            "main.py": "from core import unique_transformer\ndef run(): return unique_transformer(1)\n",
+        })
+        out = render_focused(g, "unique_transformer")
+        assert "also in:" not in out, f"'also in:' must not appear for unique names; got:\n{out}"
+
+
+class TestFocusEntryPointAnnotation:
+    """S63: Focus mode — '[likely entry point]' for 0-caller functions with dispatch-pattern names.
+
+    Functions named handle_*, on_*, run, main, execute, etc. with 0 callers are likely
+    wired externally (CLI, HTTP, event). Shown instead of 'POSSIBLY DEAD' warning.
+    """
+
+    def _build(self, tmp_path, files: dict):
+        from tempograph.builder import build_graph
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_entry_point_shown_for_dispatch_pattern_with_zero_callers(self, tmp_path):
+        """'likely entry point' appears for handle_ function with 0 callers."""
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "handler.py": "def handle_request(event): return event\n",
+        })
+        out = render_focused(g, "handle_request")
+        assert "likely entry point" in out, (
+            f"Expected 'likely entry point' for handle_ function with 0 callers; got:\n{out}"
+        )
+        assert "POSSIBLY DEAD" not in out, (
+            f"'POSSIBLY DEAD' must not appear for entry point pattern; got:\n{out}"
+        )
+
+    def test_entry_point_absent_for_regular_zero_caller_function(self, tmp_path):
+        """Regular function with 0 callers still shows 'POSSIBLY DEAD', not entry point."""
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "utils.py": "def unused_helper(x): return x\n",
+        })
+        out = render_focused(g, "unused_helper")
+        # Should NOT show entry point, may show POSSIBLY DEAD instead
+        assert "likely entry point" not in out, (
+            f"'likely entry point' must not appear for regular unused function; got:\n{out}"
+        )
