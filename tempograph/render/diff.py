@@ -496,7 +496,7 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
     # they may bundle unrelated changes or indicate a cross-cutting concern was modified.
     if len(changed_files) >= 5:
         lines.append(
-            f"wide diff: {len(changed_files)} files changed — large diff scope;"
+            f"wide diff: {len(changed_files)} files changed — broad scope;"
             f" consider splitting into smaller focused PRs to ease review"
         )
 
@@ -643,6 +643,23 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             lines.append(
                 f"multi-package diff: changes span {len(_pkgs837)} top-level packages ({', '.join(sorted(_pkgs837)[:3])})"
                 f" — cross-package change; coordinate release timing and verify interface contracts"
+            )
+
+    # S843: Types-only diff — all changed source files contain only class/type definitions.
+    # Diffs that only change class definitions affect object shape; callers that rely on
+    # attribute access or isinstance checks may break even if function signatures unchanged.
+    if changed_files:
+        _type_files843 = []
+        for f843 in changed_files:
+            fi843 = graph.files.get(f843)
+            if fi843:
+                _syms843 = [graph.symbols[sid] for sid in fi843.symbols if sid in graph.symbols]
+                if _syms843 and all(s.kind.value in ("class",) for s in _syms843):
+                    _type_files843.append(f843)
+        if _type_files843 and len(_type_files843) == len([f for f in changed_files if f in graph.files]):
+            lines.append(
+                f"types-only diff: all {len(_type_files843)} changed source file(s) contain only class definitions"
+                f" — shape-only change; isinstance checks and attribute access may silently break"
             )
 
     if not normalized:
