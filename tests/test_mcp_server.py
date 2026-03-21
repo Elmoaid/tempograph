@@ -20937,3 +20937,225 @@ class TestDeadValidatorsS408:
         assert "dead validators" not in out, (
             f"'dead validators' must not appear when validate_email is called; got:\n{out}"
         )
+
+
+# ── S409: High constants ratio ────────────────────────────────────────────────
+
+class TestHighConstantsRatioS409:
+    """S409: Codebase with 40%+ symbols being constants/variables emits the signal."""
+
+    def test_high_constants_ratio_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # Many variable/constant symbols
+        (tmp_path / "config.py").write_text(
+            "\n".join(f"VAR_{i} = {i}" for i in range(20)) + "\n"
+        )
+        (tmp_path / "utils.py").write_text(
+            "def helper(): pass\n"
+            "def process(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "high constants ratio" in out, (
+            f"Expected 'high constants ratio' signal; got:\n{out}"
+        )
+
+    def test_high_constants_ratio_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # Only functions — no constants
+        (tmp_path / "service.py").write_text(
+            "\n".join(f"def fn_{i}(): pass" for i in range(15)) + "\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "high constants ratio" not in out, (
+            f"'high constants ratio' must not appear for function-only codebase; got:\n{out}"
+        )
+
+
+# ── S410: Long parameter list ─────────────────────────────────────────────────
+
+class TestLongParameterListS410:
+    """S410: Focused function with 5+ parameters emits the signal."""
+
+    def test_long_param_list_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "builder.py").write_text(
+            "def create_report(title, author, date, format, output_path, include_charts):\n"
+            "    pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="create_report")
+        assert "long parameter list" in out, (
+            f"Expected 'long parameter list' signal; got:\n{out}"
+        )
+
+    def test_long_param_list_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def add(a, b):\n    return a + b\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="add")
+        assert "long parameter list" not in out, (
+            f"'long parameter list' must not appear for 2-param function; got:\n{out}"
+        )
+
+
+# ── S411: Database migration in diff ─────────────────────────────────────────
+
+class TestDbMigrationDiffS411:
+    """S411: Diff containing a migration file emits the signal."""
+
+    def test_db_migration_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "migration_001.py").write_text(
+            "def upgrade():\n    pass\n\n"
+            "def downgrade():\n    pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["migration_001.py"])
+        assert "db migration" in out, (
+            f"Expected 'db migration' signal; got:\n{out}"
+        )
+
+    def test_db_migration_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "views.py").write_text(
+            "def index():\n    return \"hello\"\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["views.py"])
+        assert "db migration" not in out, (
+            f"'db migration' must not appear for views.py; got:\n{out}"
+        )
+
+
+# ── S412: Hotspot with no test coverage ──────────────────────────────────────
+
+class TestUntestedHotspotS412:
+    """S412: Top hotspot file with no corresponding test file emits the signal."""
+
+    def test_untested_hotspot_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text(
+            "def process(x):\n    return x * 2\n"
+        )
+        (tmp_path / "a.py").write_text("from core import process\ndef f(): return process(1)\n")
+        (tmp_path / "b.py").write_text("from core import process\ndef g(): return process(2)\n")
+        (tmp_path / "c.py").write_text("from core import process\ndef h(): return process(3)\n")
+        # No test_core.py
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "untested hotspot" in out, (
+            f"Expected 'untested hotspot' signal; got:\n{out}"
+        )
+
+    def test_untested_hotspot_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text(
+            "def process(x):\n    return x * 2\n"
+        )
+        (tmp_path / "a.py").write_text("from core import process\ndef f(): return process(1)\n")
+        (tmp_path / "b.py").write_text("from core import process\ndef g(): return process(2)\n")
+        (tmp_path / "test_core.py").write_text(
+            "from core import process\n\n"
+            "def test_process():\n    assert process(2) == 4\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "untested hotspot" not in out, (
+            f"'untested hotspot' must not appear when test_core.py exists; got:\n{out}"
+        )
+
+
+# ── S413: Symbol-dense blast ──────────────────────────────────────────────────
+
+class TestSymbolDenseBlastS413:
+    """S413: Blast target with 30+ symbols emits the signal."""
+
+    def test_symbol_dense_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        # Create a file with 35 functions
+        content = "\n".join(f"def fn_{i}(x): return x + {i}" for i in range(35)) + "\n"
+        (tmp_path / "big_utils.py").write_text(content)
+        (tmp_path / "consumer.py").write_text(
+            "from big_utils import fn_0, fn_1\ndef run(): return fn_0(1) + fn_1(2)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="big_utils.py")
+        assert "symbol-dense" in out, (
+            f"Expected 'symbol-dense' signal; got:\n{out}"
+        )
+
+    def test_symbol_dense_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "small.py").write_text(
+            "def alpha(): pass\ndef beta(): pass\ndef gamma(): pass\n"
+        )
+        (tmp_path / "user.py").write_text(
+            "from small import alpha\ndef run(): return alpha()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="small.py")
+        assert "symbol-dense" not in out, (
+            f"'symbol-dense' must not appear for 3-symbol file; got:\n{out}"
+        )
+
+
+# ── S414: Dead converters ─────────────────────────────────────────────────────
+
+class TestDeadConvertersS414:
+    """S414: Unused convert_*/transform_*/map_* functions emit the signal."""
+
+    def test_dead_converters_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "pipeline.py").write_text(
+            "def convert_csv_to_json(data):\n    pass\n\n"
+            "def transform_records(rows):\n    pass\n\n"
+            "def map_fields(obj):\n    pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead converters" in out, (
+            f"Expected 'dead converters' signal; got:\n{out}"
+        )
+
+    def test_dead_converters_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "pipeline.py").write_text(
+            "def convert_csv_to_json(data):\n    return data\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from pipeline import convert_csv_to_json\n\n"
+            "def run(d):\n    return convert_csv_to_json(d)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead converters" not in out, (
+            f"'dead converters' must not appear when convert fn is called; got:\n{out}"
+        )

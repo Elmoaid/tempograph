@@ -1363,6 +1363,29 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — may be bypassed rather than deleted; silent bypass weakens data integrity"
         )
 
+    # S414: Dead converters — convert_*/transform_*/map_* functions with 0 callers.
+    # Dead converter functions indicate data pipeline stages that were abandoned; they may hold
+    # stale business logic that diverges from active converters, causing confusion in future work.
+    _s414_conv_prefixes = (
+        "convert_", "transform_", "map_", "translate_",
+        "serialize_", "format_", "encode_", "decode_",
+    )
+    _s414_dead_converters = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s414_conv_prefixes)
+    ]
+    if len(_s414_dead_converters) >= 2:
+        _conv_names414 = ", ".join(s.name for s in _s414_dead_converters[:3])
+        if len(_s414_dead_converters) > 3:
+            _conv_names414 += f" +{len(_s414_dead_converters) - 3} more"
+        lines.append(
+            f"dead converters: {len(_s414_dead_converters)} unused converter fn(s) ({_conv_names414})"
+            f" — abandoned pipeline stages; stale logic diverges from active converters"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

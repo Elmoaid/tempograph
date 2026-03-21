@@ -1196,6 +1196,21 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — renaming any re-export silently breaks all downstream importers"
         )
 
+    # S413: Symbol-dense blast — blast target file has 30+ symbols (classes, functions, constants).
+    # A file with many symbols is a de facto utility hub; each symbol is a potential blast
+    # propagation point, and the full impact of any change is proportional to total symbol count.
+    _s413_all_syms = [s for s in graph.symbols.values() if s.file_path == file_path]
+    if len(_s413_all_syms) >= 30:
+        _kinds413 = {}
+        for s in _s413_all_syms:
+            _kinds413[s.kind.value] = _kinds413.get(s.kind.value, 0) + 1
+        _top_kind413 = max(_kinds413, key=lambda k: _kinds413[k])
+        lines.append(
+            f"symbol-dense: {file_path.rsplit('/', 1)[-1]} defines {len(_s413_all_syms)} symbols"
+            f" ({_kinds413[_top_kind413]} {_top_kind413}s)"
+            f" — each symbol is a blast propagation point; refactor to split by concern"
+        )
+
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
 

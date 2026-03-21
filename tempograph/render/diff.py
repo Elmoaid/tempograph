@@ -1236,4 +1236,22 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — auth logic errors can escalate privileges; get a second reviewer"
         )
 
+    # S411: Database migration in diff — diff touches a migration file.
+    # Migration files change the database schema; running them is irreversible in production
+    # and must be tested with a database rollback plan.
+    _s411_mig_patterns = (
+        "migration", "migrate", "alembic", "flyway",
+        "liquibase", "schema_change", "db_change",
+    )
+    _s411_mig_files = [
+        f for f in changed_files
+        if any(w in f.lower().replace("-", "_") for w in _s411_mig_patterns)
+    ]
+    if _s411_mig_files:
+        _mig_names411 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s411_mig_files[:2])
+        lines.append(
+            f"db migration: {_mig_names411} in diff"
+            f" — schema changes are irreversible in production; verify rollback plan before deploying"
+        )
+
     return "\n".join(lines)
