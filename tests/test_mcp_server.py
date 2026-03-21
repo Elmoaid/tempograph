@@ -5278,3 +5278,59 @@ class TestOverviewTechDebtMarkers:
         assert "tech debt:" not in out, (
             f"tech debt line must not appear in clean project; got:\n{out}"
         )
+
+
+class TestFocusMethodContainerAnnotation:
+    """S40: Focus mode — 'container: class ClassName (N callers, M methods)' for methods.
+
+    When the seed symbol at depth-0 is a method, show its parent class info
+    so agents can understand the class context without a separate lookup.
+    Functions (non-methods) must NOT get a container line.
+    """
+
+    def test_method_shows_container_annotation(self, tmp_path):
+        """Focused method emits container line with class caller count and method count."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "class Auth:\n"
+            "    def login(self, user): pass\n"
+            "    def logout(self, user): pass\n"
+            "    def refresh(self, token): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from service import Auth\n"
+            "def run():\n"
+            "    a = Auth()\n"
+            "    a.login('bob')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "login")
+
+        assert "container:" in out, (
+            f"Expected 'container:' annotation for method; got:\n{out}"
+        )
+        assert "Auth" in out, (
+            f"Expected parent class name 'Auth' in container line; got:\n{out}"
+        )
+
+    def test_function_has_no_container_annotation(self, tmp_path):
+        """Focused top-level function does NOT get a container line."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "utils.py").write_text(
+            "def compute(x): return x * 2\n"
+            "def helper(x): return x + 1\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from utils import compute\n"
+            "def run(): return compute(5)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "compute")
+
+        assert "container:" not in out, (
+            f"container: must not appear for top-level function; got:\n{out}"
+        )

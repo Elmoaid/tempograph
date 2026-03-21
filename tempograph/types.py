@@ -133,6 +133,7 @@ EXTENSION_TO_LANGUAGE: dict[str, Language] = {
     ".mli": Language.OCAML,
     ".clj": Language.CLOJURE,
     ".cljs": Language.CLOJURE,
+    ".cljc": Language.CLOJURE,
     ".erl": Language.ERLANG,
     ".r": Language.R,
     ".R": Language.R,
