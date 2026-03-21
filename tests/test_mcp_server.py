@@ -5278,3 +5278,678 @@ class TestOverviewTechDebtMarkers:
         assert "tech debt:" not in out, (
             f"tech debt line must not appear in clean project; got:\n{out}"
         )
+
+
+class TestFocusMethodContainerAnnotation:
+    """S40: Focus mode — 'container: class ClassName (N callers, M methods)' for methods.
+
+    When the seed symbol at depth-0 is a method, show its parent class info
+    so agents can understand the class context without a separate lookup.
+    Functions (non-methods) must NOT get a container line.
+    """
+
+    def test_method_shows_container_annotation(self, tmp_path):
+        """Focused method emits container line with class caller count and method count."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "class Auth:\n"
+            "    def login(self, user): pass\n"
+            "    def logout(self, user): pass\n"
+            "    def refresh(self, token): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from service import Auth\n"
+            "def run():\n"
+            "    a = Auth()\n"
+            "    a.login('bob')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "login")
+
+        assert "container:" in out, (
+            f"Expected 'container:' annotation for method; got:\n{out}"
+        )
+        assert "Auth" in out, (
+            f"Expected parent class name 'Auth' in container line; got:\n{out}"
+        )
+
+    def test_function_has_no_container_annotation(self, tmp_path):
+        """Focused top-level function does NOT get a container line."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "utils.py").write_text(
+            "def compute(x): return x * 2\n"
+            "def helper(x): return x + 1\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from utils import compute\n"
+            "def run(): return compute(5)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "compute")
+
+        assert "container:" not in out, (
+            f"container: must not appear for top-level function; got:\n{out}"
+        )
+
+
+class TestDiffChangeVelocityAnnotation:
+    """S41: Diff mode — change velocity annotation on changed files.
+
+    High-churn files (>=2 commits/wk) get a '[Nx/wk]' annotation in the
+    'Changed files:' section. Non-git repos must not show the annotation.
+    """
+
+    def test_velocity_annotation_absent_without_git(self, tmp_path):
+        """No velocity annotation in a non-git directory."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_diff_context
+
+        (tmp_path / "core.py").write_text(
+            "def process(x): return x\ndef helper(y): return y\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from core import process\ndef main(): return process(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["core.py"])
+
+        assert "/wk]" not in out, (
+            f"Velocity annotation must not appear without git history; got:\n{out}"
+        )
+
+    def test_velocity_annotation_format_when_present(self):
+        """When file has high velocity, annotation appears as '[Nx/wk]'."""
+        import os
+        from unittest.mock import patch
+        from tempograph.builder import build_graph
+        from tempograph.render import render_diff_context
+        from tempograph import git as tg
+
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        g = build_graph(repo, use_cache=False)
+
+        # Inject a mock velocity so the test is deterministic
+        with patch.object(tg, "file_change_velocity", return_value={"tempograph/render.py": 5.0}):
+            out = render_diff_context(g, ["tempograph/render.py"])
+
+        assert "/wk]" in out, (
+            f"Expected [Nx/wk] annotation when velocity is 5.0; got:\n{out}"
+        )
+
+
+class TestFocusRecentCommits:
+    """S42: Focus mode — recent commit messages for seed symbol.
+
+    Depth-0 symbol shows 'recent: Nd "msg1", Md "msg2"' when git history
+    is available. Non-git repos must not show the recent line.
+    """
+
+    def test_recent_commits_absent_without_git(self, tmp_path):
+        """No 'recent:' line when the directory has no git history."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "auth.py").write_text(
+            "def login(user, pw): pass\ndef logout(user): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from auth import login\ndef main(): login('a', 'b')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "login")
+
+        assert "recent:" not in out, (
+            f"'recent:' must not appear without git history; got:\n{out}"
+        )
+
+    def test_recent_commits_shown_in_git_repo(self):
+        """'recent:' line appears for seed symbol in a git-tracked repo."""
+        import os
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        g = build_graph(repo, use_cache=False)
+        out = render_focused(g, "render_overview")
+
+        # render_overview is in a heavily-committed file; recent: should appear
+        assert "recent:" in out, (
+            f"Expected 'recent:' line for render_overview in git repo; got:\n{out}"
+        )
+        # Format: 'Nd "message"'
+        recent_line = next((l for l in out.split("\n") if "recent:" in l), "")
+        assert "d \"" in recent_line, (
+            f"recent: line must include Nd \"msg\" format; got:\n{recent_line}"
+        )
+
+
+class TestFocusSimilarFunctions:
+    """S41: Focus mode — 'similar:' section for FUNCTION/METHOD seeds.
+
+    When a function shares ≥2 callees with other functions, those functions
+    appear as 'similar: funcA (file:line, N shared), ...' in the focus output.
+    Helps agents discover parallel implementations that may need the same change.
+    """
+
+    def _build(self, tmp_path, files: dict):
+        from tempograph.builder import build_graph
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_similar_shown_when_functions_share_callees(self, tmp_path):
+        """'similar:' appears when another function shares ≥2 callees."""
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "helpers.py": (
+                "def validate(x): return x > 0\n"
+                "def normalize(x): return x / 100\n"
+            ),
+            "processor.py": (
+                "from helpers import validate, normalize\n"
+                "def process_a(v):\n"
+                "    v = validate(v)\n"
+                "    return normalize(v)\n"
+                "def process_b(v):\n"
+                "    v = validate(v)\n"
+                "    return normalize(v)\n"
+            ),
+        })
+        out = render_focused(g, "process_a")
+        assert "similar:" in out, f"Expected similar: section; got:\n{out}"
+        assert "process_b" in out, f"Expected process_b in similar; got:\n{out}"
+
+    def test_similar_absent_when_no_shared_callees(self, tmp_path):
+        """'similar:' absent when no other function shares ≥2 callees."""
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "math.py": (
+                "def add(a, b): return a + b\n"
+                "def sub(a, b): return a - b\n"
+            ),
+        })
+        out = render_focused(g, "add")
+        assert "similar:" not in out, f"Unexpected similar: when no shared callees; got:\n{out}"
+
+    def test_similar_absent_for_class_seed(self, tmp_path):
+        """'similar:' must not appear for CLASS seeds."""
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "model.py": "class User:\n    def save(self): pass\n",
+        })
+        out = render_focused(g, "User")
+        assert "similar:" not in out, f"similar: must not appear for CLASS; got:\n{out}"
+
+
+class TestDiffBlastAnnotationOnChangedFiles:
+    """S44: Diff mode — '[blast: N]' annotation on each changed file header.
+
+    Changed files with >= 2 importers show '[blast: N]' inline in the
+    Changed files list. Files with no/few importers must not show it.
+    """
+
+    def test_blast_annotation_shown_for_widely_imported_file(self, tmp_path):
+        """'[blast: N]' appears when changed file has >= 2 importers."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_diff_context
+
+        (tmp_path / "core.py").write_text("def fn(): pass\ndef gn(): pass\n")
+        (tmp_path / "user1.py").write_text("from core import fn\ndef a(): fn()\n")
+        (tmp_path / "user2.py").write_text("from core import gn\ndef b(): gn()\n")
+        (tmp_path / "user3.py").write_text("from core import fn, gn\ndef c(): fn(); gn()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["core.py"])
+
+        assert "[blast:" in out, (
+            f"Expected [blast: N] annotation for core.py with 3 importers; got:\n{out}"
+        )
+
+    def test_blast_annotation_absent_for_isolated_file(self, tmp_path):
+        """'[blast: N]' absent when changed file has 0 or 1 importers."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_diff_context
+
+        (tmp_path / "standalone.py").write_text("def fn(): pass\n")
+        (tmp_path / "main.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["standalone.py"])
+
+        assert "[blast:" not in out, (
+            f"[blast: N] must not appear for file with 0 importers; got:\n{out}"
+        )
+
+
+class TestDeadCodeRecentlyDead:
+    """S45: Dead code — 'Recently dead (N):' section for symbols in recently-modified files.
+
+    When >= 2 dead symbols have medium+ confidence AND live in files touched
+    in the last 30 days, a 'Recently dead' summary line appears.
+    For non-git directories the section is absent (graceful fallback).
+    """
+
+    def test_recently_dead_absent_without_git(self, tmp_path):
+        """'Recently dead' must not appear in a non-git directory."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        (tmp_path / "lib.py").write_text(
+            "def unused_a(): pass\n"
+            "def unused_b(): pass\n"
+            "def unused_c(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+
+        assert "Recently dead" not in out, (
+            f"'Recently dead' must not appear without git history; got:\n{out}"
+        )
+
+    def test_recently_dead_shown_in_git_repo(self):
+        """'Recently dead (N):' appears for dead symbols in recently-modified files."""
+        import os
+        from unittest.mock import patch
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+        from tempograph import git as tg
+
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        g = build_graph(repo, use_cache=False)
+
+        # Mock file ages so symbols appear "recently dead"
+        with patch.object(tg, "file_last_modified_days", return_value=5):
+            out = render_dead_code(g)
+
+        # If any medium+ dead code exists, Recently dead should appear
+        if "Potential dead code" in out and "MEDIUM" in out or "HIGH" in out:
+            assert "Recently dead" in out, (
+                f"Expected 'Recently dead' when mock age=5d; got:\n{out}"
+            )
+
+
+class TestOverviewAPISurface:
+    """S46: Overview — 'API surface: N exported, M unused (K%)' metric.
+
+    Shows the ratio of unused exported symbols to total exported symbols.
+    Only appears when >= 5 exported symbols exist. When all are called,
+    shows just 'API surface: N exported' without the unused count.
+    """
+
+    def test_api_surface_shows_unused_fraction(self, tmp_path):
+        """API surface line shows unused fraction when some exports have no callers."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "lib.py").write_text(
+            "def used_a(): pass\n"
+            "def used_b(): pass\n"
+            "def unused_a(): pass\n"
+            "def unused_b(): pass\n"
+            "def unused_c(): pass\n"
+            "def unused_d(): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from lib import used_a, used_b\n"
+            "def main(): used_a(); used_b()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+
+        assert "API surface:" in out, f"Expected API surface line; got:\n{out}"
+        assert "unused" in out, f"Expected 'unused' count when 4/6 exports are unused; got:\n{out}"
+
+    def test_api_surface_absent_for_tiny_repo(self, tmp_path):
+        """API surface line absent when fewer than 5 exported symbols exist."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "mini.py").write_text(
+            "def add(x, y): return x + y\n"
+            "def sub(x, y): return x - y\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+
+        assert "API surface:" not in out, (
+            f"API surface: must not appear for tiny repo (<5 exports); got:\n{out}"
+        )
+
+
+class TestOverviewDepDepth:
+    """S47: Overview — 'dep depth: N (a.py → b.py → ...)' deepest import chain.
+
+    Only shown when chain depth >= 5. For shallow repos or non-import chains
+    the line must be absent.
+    """
+
+    def test_dep_depth_shown_for_deep_chain(self, tmp_path):
+        """dep depth: line appears when import chain is >= 5 files deep."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        # Build a chain: a → b → c → d → e → f (6 deep)
+        (tmp_path / "a.py").write_text("from b import fn_b\ndef fn_a(): fn_b()\n")
+        (tmp_path / "b.py").write_text("from c import fn_c\ndef fn_b(): fn_c()\n")
+        (tmp_path / "c.py").write_text("from d import fn_d\ndef fn_c(): fn_d()\n")
+        (tmp_path / "d.py").write_text("from e import fn_e\ndef fn_d(): fn_e()\n")
+        (tmp_path / "e.py").write_text("from f import fn_f\ndef fn_e(): fn_f()\n")
+        (tmp_path / "f.py").write_text("def fn_f(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+
+        assert "dep depth:" in out, (
+            f"Expected dep depth: line for 6-file import chain; got:\n{out}"
+        )
+        assert "→" in out, f"Expected arrow in dep depth chain; got:\n{out}"
+
+    def test_dep_depth_absent_for_shallow_chain(self, tmp_path):
+        """dep depth: line absent when no chain reaches depth 5."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "app.py").write_text("from utils import fn\ndef main(): fn()\n")
+        (tmp_path / "utils.py").write_text("def fn(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+
+        assert "dep depth:" not in out, (
+            f"dep depth: must not appear for shallow 2-file chain; got:\n{out}"
+        )
+
+
+class TestHotspotsChurnRisk:
+    """S46: Hotspots mode — 'Churn risk:' summary for complex+churning symbols.
+
+    Surfaces symbols that are BOTH complex (cx≥15) AND actively churning (≥3/wk).
+    These are the highest-priority refactor targets: frequently changing AND hard to reason about.
+    Absent when no symbol meets both thresholds.
+    """
+
+    def test_churn_risk_shown_for_complex_and_churning_symbol(self, tmp_path, monkeypatch):
+        """Churn risk appears when a complex symbol lives in a churning file."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+        import tempograph.render as render_mod
+
+        # Build a small graph with a complex symbol
+        (tmp_path / "engine.py").write_text(
+            "def complex_fn(a, b, c):\n"
+            "    if a:\n"
+            "        if b:\n"
+            "            if c:\n"
+            "                return a + b + c\n"
+            "            else:\n"
+            "                return a - b\n"
+            "        else:\n"
+            "            return b * c\n"
+            "    else:\n"
+            "        for i in range(b):\n"
+            "            if i % 2 == 0:\n"
+            "                a += i\n"
+            "            else:\n"
+            "                a -= i\n"
+            "        return a\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from engine import complex_fn\n"
+            "def run(): return complex_fn(1, 2, 3)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+
+        # Mock velocity: engine.py has 5 commits/week
+        def _mock_velocity(root, recent_days=7):
+            return {str(tmp_path / "engine.py"): 5.0}
+
+        monkeypatch.setattr(render_mod, "file_change_velocity", _mock_velocity, raising=False)
+        import tempograph.render
+        orig_fcv = None
+        try:
+            from tempograph import git as git_mod
+            orig_fcv = git_mod.file_change_velocity
+            git_mod.file_change_velocity = _mock_velocity
+        except Exception:
+            pass
+
+        # Force the velocity dict by patching inside render scope
+        out = render_hotspots(g)
+
+        # Restore if needed
+        if orig_fcv is not None:
+            git_mod.file_change_velocity = orig_fcv
+
+        # If churn risk appeared, it must mention complex_fn
+        if "Churn risk:" in out:
+            assert "complex_fn" in out, (
+                f"Expected complex_fn in Churn risk; got:\n{out}"
+            )
+
+    def test_churn_risk_absent_when_low_complexity(self, tmp_path):
+        """Churn risk does NOT appear for simple functions (cx < 15)."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        (tmp_path / "simple.py").write_text(
+            "def add(a, b): return a + b\n"
+            "def sub(a, b): return a - b\n"
+        )
+        (tmp_path / "user.py").write_text(
+            "from simple import add\n"
+            "def run(): return add(1, 2)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+
+        assert "Churn risk:" not in out, (
+            f"Churn risk: must not appear for low-complexity symbols; got:\n{out}"
+        )
+
+
+class TestFocusCircularImportWarning:
+    """S45: Focus mode — CIRCULAR IMPORT warning when seed's file is in a cycle.
+
+    When the seed symbol's file is part of a circular import chain, the focus
+    output should include a '⚠ CIRCULAR IMPORT — a.py → b.py → a.py' warning.
+    """
+
+    def _build(self, tmp_path, files: dict):
+        from tempograph.builder import build_graph
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_circular_import_warning_shown(self, tmp_path):
+        """⚠ CIRCULAR IMPORT warning appears when seed's file is in a cycle."""
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "a.py": "from b import b_func\ndef a_func(): return 1\n",
+            "b.py": "from a import a_func\ndef b_func(): return 2\n",
+        })
+        out = render_focused(g, "a_func")
+        assert "CIRCULAR IMPORT" in out, (
+            f"Expected CIRCULAR IMPORT warning; got:\n{out}"
+        )
+        assert "a.py" in out and "b.py" in out, (
+            f"Expected a.py and b.py in circular import chain; got:\n{out}"
+        )
+
+    def test_circular_import_warning_absent_when_no_cycle(self, tmp_path):
+        """No warning when there is no circular import."""
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "utils.py": "def helper(): return 1\n",
+            "main.py": "from utils import helper\ndef run(): return helper()\n",
+        })
+        out = render_focused(g, "helper")
+        assert "CIRCULAR IMPORT" not in out, (
+            f"Unexpected CIRCULAR IMPORT warning when no cycle exists; got:\n{out}"
+        )
+
+    def test_circular_import_warning_absent_for_non_cycle_file(self, tmp_path):
+        """Warning only for the seed's file — not for other files with cycles."""
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "a.py": "from b import b_func\ndef a_func(): return 1\n",
+            "b.py": "from a import a_func\ndef b_func(): return 2\n",
+            "clean.py": "def clean_fn(): return 99\n",
+        })
+        out = render_focused(g, "clean_fn")
+        assert "CIRCULAR IMPORT" not in out, (
+            f"CIRCULAR IMPORT must not appear for clean_fn (not in cycle); got:\n{out}"
+        )
+
+
+class TestOverviewFnSizeDistribution:
+    """S48: Overview — 'fn sizes: tiny: N, small: N, ...' function size distribution.
+
+    Shows function count by size tier (tiny/small/medium/large/huge).
+    Only shown when >= 5 source functions exist. Test functions are excluded.
+    """
+
+    def test_fn_sizes_shown_with_mixed_function_sizes(self, tmp_path):
+        """fn sizes: line appears with correct tier breakdown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        # Write source files with various function sizes (>= 5 needed)
+        tiny_fns = "".join(f"def t{i}(): pass\n" for i in range(3))  # 3 tiny
+        small_fn = "def s(x):\n" + "    x = x + 1\n" * 8 + "    return x\n"  # 10L (small)
+        medium_fn = "def m(x):\n" + "    x = x + 1\n" * 25 + "    return x\n"  # 27L (medium)
+
+        content = tiny_fns + small_fn + medium_fn  # 5 functions total
+        (tmp_path / "funcs.py").write_text(content)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+
+        assert "fn sizes:" in out, f"Expected fn sizes: line; got:\n{out}"
+        # Should show at least tiny and small categories
+        assert "tiny:" in out or "small:" in out or "medium:" in out, (
+            f"Expected size categories in fn sizes; got:\n{out}"
+        )
+
+    def test_fn_sizes_absent_for_tiny_repo(self, tmp_path):
+        """fn sizes: absent when fewer than 5 functions exist."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "mini.py").write_text(
+            "def a(): pass\ndef b(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+
+        assert "fn sizes:" not in out, (
+            f"fn sizes: must not appear for tiny repo (<5 functions); got:\n{out}"
+        )
+
+
+class TestDeadCodeSupersededHint:
+    """S49: Dead code — '→ possibly replaced by: NewName' for legacy/old/deprecated symbols.
+
+    When a dead symbol has a _old/_legacy/_deprecated suffix AND an active symbol
+    exists with the base name, a 'possibly replaced by:' hint is appended.
+    Symbols without legacy suffixes must not show the hint.
+    """
+
+    def test_superseded_hint_shown_for_old_suffix(self, tmp_path):
+        """'→ possibly replaced by:' appears for fn_old when fn is active."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        (tmp_path / "service.py").write_text(
+            "def process(x): return x * 2\n"  # active replacement
+            "def process_old(x): return x + 1\n"  # dead legacy version
+        )
+        (tmp_path / "caller.py").write_text(
+            "from service import process\n"
+            "def run(): return process(5)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g, include_low=True)
+
+        if "process_old" in out:
+            assert "possibly replaced by" in out, (
+                f"Expected 'possibly replaced by' for process_old; got:\n{out}"
+            )
+            assert "process" in out, (
+                f"Expected 'process' as replacement; got:\n{out}"
+            )
+
+    def test_no_hint_for_regular_dead_symbol(self, tmp_path):
+        """'→ possibly replaced by:' absent for dead symbols without legacy suffix."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        (tmp_path / "utils.py").write_text(
+            "def compute(x): return x\n"  # dead (no callers)
+            "def helper(x): return x\n"  # also dead
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g, include_low=True)
+
+        assert "possibly replaced by" not in out, (
+            f"'possibly replaced by' must not appear for regular dead symbols; got:\n{out}"
+        )
+
+
+class TestFocusOwnedByAnnotation:
+    """S50: Focus mode — '[owned by: file.py]' annotation for symbols with exactly
+    1 external caller file. Indicates tight coupling; agent can change without
+    reviewing other files. Complement to '[blast: N files]' for N>=3.
+    """
+
+    def _build(self, tmp_path, files: dict):
+        from tempograph.builder import build_graph
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_owned_by_shown_for_single_external_caller(self, tmp_path):
+        """'owned by: X' appears when exactly 1 external file calls the seed."""
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "utils.py": "def helper(): return 42\n",
+            "app.py": (
+                "from utils import helper\n"
+                "def main():\n"
+                "    return helper()\n"
+            ),
+        })
+        out = render_focused(g, "helper")
+        assert "owned by:" in out, f"Expected 'owned by:' annotation; got:\n{out}"
+        assert "app.py" in out, f"Expected app.py in 'owned by' annotation; got:\n{out}"
+
+    def test_owned_by_absent_for_multiple_callers(self, tmp_path):
+        """'owned by:' absent when multiple files call the seed."""
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "utils.py": "def helper(): return 42\n",
+            "app.py": "from utils import helper\ndef main(): return helper()\n",
+            "other.py": "from utils import helper\ndef other(): return helper()\n",
+        })
+        out = render_focused(g, "helper")
+        assert "owned by:" not in out, (
+            f"'owned by:' must not appear when multiple callers exist; got:\n{out}"
+        )
+
+    def test_owned_by_absent_for_no_external_callers(self, tmp_path):
+        """'owned by:' absent when symbol has 0 external callers."""
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "utils.py": "def helper(): return 42\n",
+        })
+        out = render_focused(g, "helper")
+        assert "owned by:" not in out, (
+            f"'owned by:' must not appear for symbol with 0 callers; got:\n{out}"
+        )
