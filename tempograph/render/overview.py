@@ -6,6 +6,16 @@ from pathlib import Path
 from ..types import Tempo, EdgeKind, FileInfo, Symbol, SymbolKind
 from ._utils import count_tokens, _is_test_file
 
+
+def _display_path(fp: str, all_fps: list[str]) -> str:
+    """Return basename if unique, else parent/basename to disambiguate (e.g. h1/mod.rs)."""
+    base = fp.rsplit("/", 1)[-1]
+    if sum(1 for p in all_fps if p.rsplit("/", 1)[-1] == base) > 1:
+        parts = fp.rsplit("/", 2)
+        return f"{parts[-2]}/{parts[-1]}" if len(parts) >= 2 else base
+    return base
+
+
 def _find_entry_points(graph: Tempo) -> list[str]:
     """Find actual execution entry points — where the program starts.
     These are what agents need to understand the architecture."""
@@ -203,7 +213,8 @@ def render_overview(graph: Tempo) -> str:
                         _sc_candidates.append((_src_imps, _days_sc, _fp))
             if len(_sc_candidates) >= 2:
                 _sc_candidates.sort(key=lambda x: -x[0])
-                _sc_parts = [f"{fp.rsplit('/', 1)[-1]} ({n} importers, {d}d stable)" for n, d, fp in _sc_candidates[:3]]
+                _sc3_fps = [fp for _, _, fp in _sc_candidates[:3]]
+                _sc_parts = [f"{_display_path(fp, _sc3_fps)} ({n} importers, {d}d stable)" for n, d, fp in _sc_candidates[:3]]
                 lines.append(f"stable core: {', '.join(_sc_parts)}")
         except Exception:
             pass
@@ -290,8 +301,9 @@ def render_overview(graph: Tempo) -> str:
         _min_importers = 3
         _top_imported = [(fp, n) for fp, n in _top_imported if n >= _min_importers]
         if _top_imported:
+            _ti_fps = [fp for fp, _ in _top_imported]
             _ti_parts = [
-                f"{fp.rsplit('/', 1)[-1]} ({n})" for fp, n in _top_imported
+                f"{_display_path(fp, _ti_fps)} ({n})" for fp, n in _top_imported
             ]
             lines.append("")
             lines.append(f"top imported: {', '.join(_ti_parts)}")
@@ -311,8 +323,9 @@ def render_overview(graph: Tempo) -> str:
                     _stable_core.append((_n_imp, _fp, _days_c))
             if _stable_core:
                 _stable_core.sort(key=lambda x: -x[0])
+                _sc_fps = [fp for _, fp, _ in _stable_core[:3]]
                 _sc_parts = [
-                    f"{fp.rsplit('/', 1)[-1]} ({n_imp} importers, {d}d)"
+                    f"{_display_path(fp, _sc_fps)} ({n_imp} importers, {d}d)"
                     for n_imp, fp, d in _stable_core[:3]
                 ]
                 lines.append(f"stable core: {', '.join(_sc_parts)}")
@@ -1115,7 +1128,8 @@ def render_overview(graph: Tempo) -> str:
     )
     _s161_hubs = [(n, fp) for n, fp in _s161_hubs if n >= 10]
     if _s161_hubs:
-        _s161_top3 = [fp.rsplit("/", 1)[-1] for _, fp in _s161_hubs[:3]]
+        _s161_fps = [fp for _, fp in _s161_hubs[:3]]
+        _s161_top3 = [_display_path(fp, _s161_fps) for fp in _s161_fps]
         _s161_str = ", ".join(_s161_top3)
         lines.append(
             f"hub files: {len(_s161_hubs)} files imported by 10+ others ({_s161_str})"

@@ -73,6 +73,36 @@ class TestIsTestFile:
     def test_empty_string(self):
         assert not _is_test_file("")
 
+    def test_go_test_file(self):
+        assert _is_test_file("gin_test.go")
+
+    def test_go_test_file_with_path(self):
+        assert _is_test_file("binding/form_mapping_test.go")
+
+    def test_go_source_not_test(self):
+        assert not _is_test_file("context.go")
+
+    def test_rust_integration_test(self):
+        assert _is_test_file("src/tests/client.rs")
+
+    def test_rust_root_tests_dir(self):
+        assert _is_test_file("tests/server.rs")
+
+    def test_rust_source_not_test(self):
+        assert not _is_test_file("src/client.rs")
+
+    def test_rust_benches_not_test(self):
+        assert not _is_test_file("benches/server.rs")
+
+    def test_java_test_class(self):
+        assert _is_test_file("UserTest.java")
+
+    def test_php_test_class(self):
+        assert _is_test_file("UserTest.php")
+
+    def test_ruby_spec(self):
+        assert _is_test_file("user_spec.rb")
+
 
 # ── count_tokens ──────────────────────────────────────────────────────────────
 
