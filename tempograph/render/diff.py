@@ -327,6 +327,21 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
         if len(_priv_caller_set) >= 3:
             lines.append(f"Private callers: {len(_priv_caller_set)} — internal non-exported callers of changed exports")
 
+    # S127: Max complexity in diff — the highest cyclomatic complexity of any function touched.
+    # Agents need to know if they're modifying a complex function (high test risk).
+    # Only shown when the max complexity in the diff is >= 10 (below that = routine code).
+    _cx_max_sym: "Symbol | None" = None
+    _cx_max_val = 0
+    for _s127 in _all_changed_syms:
+        if _s127.kind.value in ("function", "method") and (_s127.complexity or 0) > _cx_max_val:
+            _cx_max_val = _s127.complexity
+            _cx_max_sym = _s127
+    if _cx_max_sym and _cx_max_val >= 10:
+        lines.append(
+            f"max complexity in diff: cx={_cx_max_val} ({_cx_max_sym.name}"
+            f" in {_cx_max_sym.file_path.rsplit('/', 1)[-1]})"
+        )
+
     # S118: Entry points changed — highlight when the diff touches known entry point files.
     # Entry points (main.py, server.py, __main__.py, app.py, cli.py, index.ts) are highest
     # blast-radius files — changes here ripple to all consumers. Flag them explicitly.

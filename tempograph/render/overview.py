@@ -815,6 +815,24 @@ def render_overview(graph: Tempo) -> str:
         _mean_cx = sum(_all_cx_vals) / len(_all_cx_vals)
         lines.append(f"median complexity: {_median_cx} (mean: {_mean_cx:.1f}, n={len(_all_cx_vals)} fns)")
 
+    # S125: Most complex function — the single non-test function with highest cyclomatic complexity.
+    # Agents refactoring or auditing code need to know the worst-case function by complexity.
+    # Only shown when there are 5+ non-test functions AND max complexity >= 15.
+    if len(_all_cx_vals) >= 5 and _all_cx_vals and _all_cx_vals[-1] >= 15:
+        _cx_max = _all_cx_vals[-1]
+        _cx_leader = max(
+            (sym for sym in graph.symbols.values()
+             if sym.kind.value in ("function", "method") and not _is_test_file(sym.file_path)
+             and sym.complexity >= _cx_max),
+            key=lambda s: s.complexity,
+            default=None,
+        )
+        if _cx_leader:
+            lines.append(
+                f"most complex fn: {_cx_leader.name} (cx={_cx_leader.complexity}"
+                f" in {_cx_leader.file_path.rsplit('/', 1)[-1]})"
+            )
+
     # S105: Mono-callers — exported symbols used by exactly 1 external file.
     # These look like "public API" but are secretly coupled to a single consumer.
     # High count = hidden tight coupling disguised as an open interface.

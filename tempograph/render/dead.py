@@ -42,6 +42,23 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         if _ratio_pct >= 5:
             _dead_ratio_str = f" [{_ratio_pct}% of {_total_non_test_syms} source symbols]"
 
+    # S126: Exported dead ratio — fraction of exported (public API) symbols that are dead.
+    # High ratio = bloated, stale API surface. Even more alarming than overall dead ratio.
+    # Only shown when 5+ total exported non-test symbols exist and ratio >= 20%.
+    _total_exported_src = sum(
+        1 for sym in graph.symbols.values()
+        if sym.exported and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method", "class", "interface")
+    )
+    if _total_exported_src >= 5:
+        _dead_exported = sum(
+            1 for sym, conf in scored
+            if conf >= 40 and sym.exported and sym.kind.value in ("function", "method", "class", "interface")
+        )
+        _exp_dead_pct = int(_dead_exported / _total_exported_src * 100)
+        if _exp_dead_pct >= 20:
+            _dead_ratio_str += f" [exported: {_dead_exported}/{_total_exported_src} public symbols dead ({_exp_dead_pct}%)]"
+
     lines = [f"Potential dead code ({len(dead)} symbols){_removable_header}{_dead_ratio_str}:"]
 
     # Quick wins: top files with the most HIGH confidence dead symbols.
