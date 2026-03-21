@@ -265,6 +265,13 @@ class FileParser(PythonHandlerMixin, JSHandlerMixin, GoHandlerMixin, JavaHandler
                                     method_name = _node_text(method_name_node, self.source)
                                     method_id = f"{self.file_path}::{name}.{method_name}"
                                     method_sig = _node_text(child, self.source).split("\n")[0][:200]
+                                    # Detect private/protected visibility modifiers
+                                    _exported = True
+                                    for mc in child.children:
+                                        if mc.type in ("visibility_modifier", "access_modifier"):
+                                            if _node_text(mc, self.source).lower() in ("private", "protected"):
+                                                _exported = False
+                                            break
                                     method_sym = Symbol(
                                         id=method_id, name=method_name,
                                         qualified_name=f"{name}.{method_name}",
@@ -273,7 +280,7 @@ class FileParser(PythonHandlerMixin, JSHandlerMixin, GoHandlerMixin, JavaHandler
                                         line_start=child.start_point[0] + 1,
                                         line_end=child.end_point[0] + 1,
                                         signature=method_sig, parent_id=sym_id,
-                                        exported=True,
+                                        exported=_exported,
                                         complexity=self._compute_complexity(child),
                                         byte_size=child.end_byte - child.start_byte,
                                     )
