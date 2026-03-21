@@ -2709,5 +2709,16 @@ def _collect_hotspots_signals(
                     f" — large complex function; extract smaller helpers incrementally to reduce risk"
                 )
 
+    # S904: Test hotspot — the top complexity hotspot is a test function.
+    # A complex test is a sign of over-engineered setup; this makes tests brittle and
+    # hard to maintain, increasing the risk that test failures are ignored or bypassed.
+    if scores:
+        _top904 = scores[0][1]
+        if _top904 is not None and _is_test_file(_top904.file_path):
+            out.append(
+                f"\ncomplex test hotspot: {_top904.name} in {_top904.file_path.rsplit('/', 1)[-1]}"
+                f" — top hotspot is a test function; extract fixtures and helpers to reduce test maintenance"
+            )
+
     return out
 
