@@ -2338,6 +2338,30 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         ]
         lines.append(f"Quick wins: {', '.join(_qw_parts)}")
 
+    # Orphan files: files where ALL exported symbols are dead → delete the whole file.
+    # More actionable than quick wins: one `rm` instead of N symbol deletions.
+    _dead_sym_ids = {sym.id for sym, _ in scored}
+    _orphan_files: list[tuple[str, int, int]] = []  # (file_path, sym_count, line_count)
+    for _fp in {sym.file_path for sym, _ in scored}:
+        if _is_test_file(_fp):
+            continue
+        _fi = graph.files.get(_fp)
+        if not _fi:
+            continue
+        _exported = [
+            graph.symbols[sid] for sid in _fi.symbols
+            if sid in graph.symbols and graph.symbols[sid].exported
+        ]
+        if _exported and all(sym.id in _dead_sym_ids for sym in _exported):
+            _orphan_files.append((_fp, len(_exported), sum(sym.line_count for sym in _exported)))
+    if _orphan_files:
+        _orphan_files.sort(key=lambda x: -x[2])
+        _o_parts = [
+            f"{fp.rsplit('/', 1)[-1]} ({n} syms, {lc} lines)"
+            for fp, n, lc in _orphan_files[:3]
+        ]
+        lines.append(f"Orphan files (all-dead): {', '.join(_o_parts)}")
+
     lines.append("")
     total_lines = 0
 

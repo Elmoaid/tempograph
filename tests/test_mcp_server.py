@@ -3953,6 +3953,64 @@ class TestDeadCodeQuickWins:
             assert n_files <= 2, f"Quick wins: must list at most 2 files; got: {qw_line}"
 
 
+class TestDeadCodeOrphanFiles:
+    """S33: Dead code mode — 'Orphan files (all-dead):' summary.
+
+    A file is an orphan when ALL its exported symbols are dead — the whole
+    file can be deleted rather than pruned symbol by symbol.
+    """
+
+    def test_orphan_file_shown_when_all_symbols_dead(self, tmp_path):
+        """Orphan files: line appears for a file with only dead exported symbols."""
+        from unittest.mock import patch
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        # dead.py: two exported symbols, no callers from outside
+        (tmp_path / "dead.py").write_text("def fn_a(): pass\ndef fn_b(): pass\n")
+        # live.py: calls nothing from dead.py but keeps graph non-trivial
+        (tmp_path / "live.py").write_text("def live_fn(): pass\n")
+        # caller.py: calls live_fn so it's not dead
+        (tmp_path / "caller.py").write_text(
+            "from live import live_fn\ndef use(): return live_fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+
+        with patch("tempograph.git.file_last_modified_days", return_value=30):
+            out = render_dead_code(g, include_low=True)
+
+        if "Potential dead code" in out:
+            assert "Orphan files" in out, (
+                f"Orphan files: must appear when all symbols in dead.py are dead; got:\n{out}"
+            )
+            assert "dead.py" in out.split("Orphan files")[1].split("\n")[0]
+
+    def test_orphan_file_omitted_when_some_symbols_live(self, tmp_path):
+        """No 'Orphan files:' line when some symbols in a file are still used."""
+        from unittest.mock import patch
+        from tempograph.builder import build_graph
+        from tempograph.render import render_dead_code
+
+        # mixed.py: fn_used is called externally, fn_dead is not
+        (tmp_path / "mixed.py").write_text("def fn_used(): pass\ndef fn_dead(): pass\n")
+        (tmp_path / "user.py").write_text(
+            "from mixed import fn_used\ndef main(): return fn_used()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+
+        with patch("tempograph.git.file_last_modified_days", return_value=30):
+            out = render_dead_code(g, include_low=True)
+
+        # mixed.py has a live symbol — must not appear as orphan
+        if "Orphan files" in out:
+            orphan_line = next(
+                l for l in out.split("\n") if l.startswith("Orphan files")
+            )
+            assert "mixed.py" not in orphan_line, (
+                f"mixed.py must not be an orphan (has live symbol); got:\n{orphan_line}"
+            )
+
+
 class TestOverviewTestCoverage:
     """S27: Overview shows 'test coverage: N/M source files (P%)' line.
 
