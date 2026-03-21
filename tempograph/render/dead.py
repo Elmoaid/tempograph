@@ -3155,6 +3155,289 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — may be registered background tasks; verify no dynamic registration before removing"
         )
 
+    # S917: Dead callback functions — unused on_/handle_/callback_/cb_ prefixed functions.
+    # Dead callbacks indicate event-driven logic removed from registration; they may still
+    # be referenced in configuration files or event registries outside the graph.
+    _cb_prefixes917 = ("on_", "handle_", "callback_", "cb_")
+    _cb_contains917 = ("callback", "_cb")
+    _dead_cbs917 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and (
+            any(s.name.lower().startswith(p) for p in _cb_prefixes917)
+            or any(kw in s.name.lower() for kw in _cb_contains917)
+        )
+    ]
+    if _dead_cbs917:
+        _cb_names917 = ", ".join(s.name for s in _dead_cbs917[:3])
+        if len(_dead_cbs917) > 3:
+            _cb_names917 += f" +{len(_dead_cbs917) - 3} more"
+        lines.append(
+            f"dead callbacks: {len(_dead_cbs917)} unused callback function(s) ({_cb_names917})"
+            f" — may still be registered in event configs; verify before removing"
+        )
+
+    # S923: Dead formatters — unused format_/render_/display_/to_ prefixed functions.
+    # Dead formatters often indicate removed presentation paths; the business logic
+    # they contained may still be needed for other output formats.
+    _fmt_prefixes923 = ("format_", "render_", "display_", "to_", "fmt_", "stringify_")
+    _dead_fmts923 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().startswith(p) for p in _fmt_prefixes923)
+    ]
+    if _dead_fmts923:
+        _fmt_names923 = ", ".join(s.name for s in _dead_fmts923[:3])
+        if len(_dead_fmts923) > 3:
+            _fmt_names923 += f" +{len(_dead_fmts923) - 3} more"
+        lines.append(
+            f"dead formatters: {len(_dead_fmts923)} unused formatter function(s) ({_fmt_names923})"
+            f" — removed presentation paths; verify the business logic they contained is no longer needed"
+        )
+
+    # S929: Dead data classes — unused classes with no methods (pure data containers).
+    # Data classes with no methods are often replaced by dicts, TypedDicts, or dataclasses;
+    # orphaned ones may indicate a model layer that was refactored without removing old types.
+    _dead_data929 = []
+    for _cls929 in [s for s in dead if s.kind.value == "class" and not _is_test_file(s.file_path)]:
+        _children929 = [
+            s for s in graph.symbols.values()
+            if s.parent_id == _cls929.id and s.kind.value in ("method", "function")
+        ]
+        if not _children929:
+            _dead_data929.append(_cls929)
+    if _dead_data929:
+        _data_names929 = ", ".join(s.name for s in _dead_data929[:3])
+        if len(_dead_data929) > 3:
+            _data_names929 += f" +{len(_dead_data929) - 3} more"
+        lines.append(
+            f"dead data classes: {len(_dead_data929)} unused method-free class(es) ({_data_names929})"
+            f" — no-method classes may be leftover models; consider converting to TypedDict or dataclass"
+        )
+
+    # S935: Dead exception classes — unused custom exception or error classes.
+    # Orphaned exception classes indicate removed error handling paths; the error
+    # conditions they represented may be silently suppressed or propagated differently.
+    _dead_exc935 = [
+        s for s in dead
+        if s.kind.value == "class"
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and (
+            s.name.endswith(("Error", "Exception", "Warning", "Fault", "Failure"))
+            or "Error" in s.name or "Exception" in s.name
+        )
+    ]
+    if _dead_exc935:
+        _exc_names935 = ", ".join(s.name for s in _dead_exc935[:3])
+        if len(_dead_exc935) > 3:
+            _exc_names935 += f" +{len(_dead_exc935) - 3} more"
+        lines.append(
+            f"dead exceptions: {len(_dead_exc935)} unused exception class(es) ({_exc_names935})"
+            f" — orphaned error types; removed error handling paths may be silently suppressing errors"
+        )
+
+    # S941: Dead setup functions — unused configure_/setup_/init_ prefixed functions.
+    # Dead setup functions indicate initialization paths that were removed; if they
+    # registered resources or side effects, those may now be silently skipped.
+    _setup_prefixes941 = ("configure_", "setup_", "init_", "initialize_", "bootstrap_", "register_")
+    _dead_setup941 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().startswith(p) for p in _setup_prefixes941)
+    ]
+    if _dead_setup941:
+        _setup_names941 = ", ".join(s.name for s in _dead_setup941[:3])
+        if len(_dead_setup941) > 3:
+            _setup_names941 += f" +{len(_dead_setup941) - 3} more"
+        lines.append(
+            f"dead setup: {len(_dead_setup941)} unused setup/init function(s) ({_setup_names941})"
+            f" — removed initialization paths may leave resources unregistered or unconfigured"
+        )
+
+    # S947: Dead type guards — unused is_* boolean predicate functions.
+    # Dead type guards often outlive the type annotations or isinstance() calls that replaced them;
+    # verify no dynamic dispatch or conditional code still depends on these predicates.
+    _dead_typeguards947 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and s.name.lower().startswith("is_")
+        and len(s.name) > 3
+    ]
+    if _dead_typeguards947:
+        _tg_names947 = ", ".join(s.name for s in _dead_typeguards947[:3])
+        if len(_dead_typeguards947) > 3:
+            _tg_names947 += f" +{len(_dead_typeguards947) - 3} more"
+        lines.append(
+            f"dead type guards: {len(_dead_typeguards947)} unused is_* predicate(s) ({_tg_names947})"
+            f" — may have been replaced by type annotations; verify no dynamic dispatch still calls them"
+        )
+
+    # S953: Dead serializer functions — unused to_dict/to_json/to_yaml/to_csv/serialize prefixed functions.
+    # Dead serializers indicate output paths that were abandoned; callers may still expect
+    # serialized output but receive None or raise AttributeError silently.
+    _ser_prefixes953 = ("to_dict", "to_json", "to_yaml", "to_csv", "to_xml", "serialize_", "marshal_", "export_")
+    _dead_serializers953 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().startswith(p) for p in _ser_prefixes953)
+    ]
+    if _dead_serializers953:
+        _ser_names953 = ", ".join(s.name for s in _dead_serializers953[:3])
+        if len(_dead_serializers953) > 3:
+            _ser_names953 += f" +{len(_dead_serializers953) - 3} more"
+        lines.append(
+            f"dead serializers: {len(_dead_serializers953)} unused serialization function(s) ({_ser_names953})"
+            f" — abandoned output paths; callers expecting serialized output may silently receive None"
+        )
+
+    # S959: Dead hook functions — unused functions named hook_* or *_hook.
+    # Hook functions are registered with frameworks (lifecycle, plugin, event systems);
+    # dead hooks silently skip the event they were meant to intercept.
+    _dead_hooks959 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and (s.name.lower().startswith("hook_") or s.name.lower().endswith("_hook"))
+    ]
+    if _dead_hooks959:
+        _hook_names959 = ", ".join(s.name for s in _dead_hooks959[:3])
+        if len(_dead_hooks959) > 3:
+            _hook_names959 += f" +{len(_dead_hooks959) - 3} more"
+        lines.append(
+            f"dead hooks: {len(_dead_hooks959)} unused hook function(s) ({_hook_names959})"
+            f" — unregistered hooks silently skip; the event they were meant to intercept now goes unhandled"
+        )
+
+    # S965: Dead scheduled tasks — unused schedule_/cron_/task_/job_ prefixed functions.
+    # Dead scheduled tasks indicate removed automation paths; if they produced side effects
+    # (data cleanup, notifications, reports), those effects now silently no longer happen.
+    _sched_prefixes965 = ("schedule_", "cron_", "task_", "job_", "periodic_", "daily_", "hourly_")
+    _dead_tasks965 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().startswith(p) for p in _sched_prefixes965)
+    ]
+    if _dead_tasks965:
+        _task_names965 = ", ".join(s.name for s in _dead_tasks965[:3])
+        if len(_dead_tasks965) > 3:
+            _task_names965 += f" +{len(_dead_tasks965) - 3} more"
+        lines.append(
+            f"dead tasks: {len(_dead_tasks965)} unused scheduled task(s) ({_task_names965})"
+            f" — removed automation paths; verify any data cleanup or notification side effects are still handled"
+        )
+
+    # S971: Dead converters — unused convert_/transform_/map_/parse_ prefixed functions.
+    # Dead converters indicate data transformation pipelines that were removed or replaced;
+    # if callers now skip conversion steps, data format mismatches may silently corrupt output.
+    _conv_prefixes971 = ("convert_", "transform_", "map_", "parse_", "translate_", "normalize_")
+    _dead_converters971 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().startswith(p) for p in _conv_prefixes971)
+    ]
+    if _dead_converters971:
+        _conv_names971 = ", ".join(s.name for s in _dead_converters971[:3])
+        if len(_dead_converters971) > 3:
+            _conv_names971 += f" +{len(_dead_converters971) - 3} more"
+        lines.append(
+            f"dead converters: {len(_dead_converters971)} unused data transformation function(s) ({_conv_names971})"
+            f" — removed conversion steps may leave callers passing unformatted data silently"
+        )
+
+    # S977: Dead SQL functions — unused sql_/query_/select_/fetch_/insert_/delete_ prefixed functions.
+    # Dead database query functions indicate removed data access paths; if application
+    # logic still attempts to call them, the result is a silent data gap or runtime error.
+    _sql_prefixes977 = ("sql_", "query_", "select_", "fetch_", "insert_", "delete_", "update_", "upsert_")
+    _dead_sql977 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().startswith(p) for p in _sql_prefixes977)
+    ]
+    if _dead_sql977:
+        _sql_names977 = ", ".join(s.name for s in _dead_sql977[:3])
+        if len(_dead_sql977) > 3:
+            _sql_names977 += f" +{len(_dead_sql977) - 3} more"
+        lines.append(
+            f"dead sql: {len(_dead_sql977)} unused database query function(s) ({_sql_names977})"
+            f" — removed data access paths; callers expecting query results may silently get None or raise"
+        )
+
+    # S983: Dead event dispatchers — unused send_/notify_/emit_/dispatch_/publish_/broadcast_ prefixed functions.
+    # Dead event publishers leave subscribers waiting for signals that never arrive;
+    # if consumers block on these events, they may hang, poll, or process stale state.
+    _event_prefixes983 = ("send_", "notify_", "emit_", "dispatch_", "publish_", "broadcast_", "fire_", "trigger_")
+    _dead_events983 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().startswith(p) for p in _event_prefixes983)
+    ]
+    if _dead_events983:
+        _evt_names983 = ", ".join(s.name for s in _dead_events983[:3])
+        if len(_dead_events983) > 3:
+            _evt_names983 += f" +{len(_dead_events983) - 3} more"
+        lines.append(
+            f"dead events: {len(_dead_events983)} unused event dispatch function(s) ({_evt_names983})"
+            f" — removed publishers leave subscribers waiting for signals that never arrive"
+        )
+
+    # S989: Dead validators — unused validate_/check_/verify_/assert_/ensure_/guard_ prefixed functions.
+    # Dead validation functions indicate removed input guards; callers may now pass invalid
+    # data that was previously caught, leading to silent corruption or runtime errors.
+    _val_prefixes989 = ("validate_", "check_", "verify_", "assert_", "ensure_", "guard_", "is_valid_", "must_")
+    _dead_validators989 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().startswith(p) for p in _val_prefixes989)
+    ]
+    if _dead_validators989:
+        _val_names989 = ", ".join(s.name for s in _dead_validators989[:3])
+        if len(_dead_validators989) > 3:
+            _val_names989 += f" +{len(_dead_validators989) - 3} more"
+        lines.append(
+            f"dead validators: {len(_dead_validators989)} unused validation function(s) ({_val_names989})"
+            f" — removed guards may leave callers passing invalid data silently"
+        )
+
+    # S995: Dead formatters — unused format_/render_/display_/present_/fmt_ prefixed functions.
+    # Dead formatter functions indicate removed output transformation pipelines;
+    # callers may receive raw or incorrectly structured data when formatters go missing.
+    _fmt_prefixes995 = ("format_", "fmt_", "render_", "display_", "present_", "show_", "print_", "stringify_")
+    _dead_formatters995 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().startswith(p) for p in _fmt_prefixes995)
+    ]
+    if _dead_formatters995:
+        _fmt_names995 = ", ".join(s.name for s in _dead_formatters995[:3])
+        if len(_dead_formatters995) > 3:
+            _fmt_names995 += f" +{len(_dead_formatters995) - 3} more"
+        lines.append(
+            f"dead formatters: {len(_dead_formatters995)} unused output formatting function(s) ({_fmt_names995})"
+            f" — removed formatters may leave callers receiving raw or incorrectly structured data"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

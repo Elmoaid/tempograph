@@ -4025,6 +4025,248 @@ def _signals_focused_fn_advanced(
                 f" — changes may break all instantiation sites; review default arguments carefully"
             )
 
+    # S912: Dunder method focus — focused symbol is a Python dunder/magic method (not __init__/__new__).
+    # Dunder methods implement Python protocols; changing signatures or removing them
+    # can break built-in operations, comparison operators, and third-party integrations.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim912 = _seed_syms[0]
+        if (
+            _prim912.kind.value in ("function", "method")
+            and _prim912.name.startswith("__") and _prim912.name.endswith("__")
+            and _prim912.name not in ("__init__", "__new__")
+            and not _is_test_file(_prim912.file_path)
+        ):
+            lines.append(
+                f"\ndunder method: {_prim912.name} is a Python protocol method"
+                f" — implements a built-in protocol; changes can break operators and third-party integrations"
+            )
+
+    # S918: Private method focus — focused symbol is a private method (single underscore prefix).
+    # Private methods are implementation details not intended for external use; refactoring them
+    # is lower risk than public methods but may affect subclasses that access them directly.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim918 = _seed_syms[0]
+        if (
+            _prim918.kind.value in ("function", "method")
+            and _prim918.name.startswith("_")
+            and not (_prim918.name.startswith("__") and _prim918.name.endswith("__"))
+            and not _is_test_file(_prim918.file_path)
+        ):
+            lines.append(
+                f"\nprivate method: {_prim918.name} is a private implementation method"
+                f" — intended for internal use only; refactoring is lower risk but may affect subclass overrides"
+            )
+
+    # S924: Name collision — focused symbol's name appears in multiple files.
+    # When the same function name is defined across several modules, changes to one
+    # may create confusion about which definition is being called at a given call site.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim924 = _seed_syms[0]
+        if _prim924.kind.value in ("function", "method") and not _is_test_file(_prim924.file_path):
+            _same_name924 = [
+                s for s in graph.symbols.values()
+                if s.name == _prim924.name
+                and s.id != _prim924.id
+                and s.kind.value in ("function", "method")
+                and not _is_test_file(s.file_path)
+            ]
+            if _same_name924:
+                _files924 = {s.file_path.rsplit("/", 1)[-1] for s in _same_name924}
+                lines.append(
+                    f"\nname collision: {_prim924.name} also defined in {len(_same_name924)} other file(s)"
+                    f" ({', '.join(sorted(_files924)[:3])})"
+                    f" — same name across modules; verify callers import the intended definition"
+                )
+
+    # S930: Large class member — focused method belongs to a class with 10+ methods.
+    # Methods in large classes carry implicit coupling to the class's full state;
+    # changes are higher risk because they interact with more sibling methods.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim930 = _seed_syms[0]
+        if _prim930.kind.value in ("function", "method") and _prim930.parent_id:
+            _siblings930 = [
+                s for s in graph.symbols.values()
+                if s.parent_id == _prim930.parent_id and s.kind.value in ("method", "function")
+            ]
+            if len(_siblings930) >= 10:
+                _cls930 = graph.symbols.get(_prim930.parent_id)
+                _cls_name930 = _cls930.name if _cls930 else "class"
+                lines.append(
+                    f"\nlarge class member: {_prim930.name} is one of {len(_siblings930)} methods in {_cls_name930}"
+                    f" — large class; changes have higher coupling risk; consider extracting a smaller class"
+                )
+
+    # S936: Async method focus — focused symbol is an async/coroutine function.
+    # Async functions have implicit concurrency semantics; changes may introduce
+    # race conditions, missing awaits, or broken cancellation handling.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim936 = _seed_syms[0]
+        if (
+            _prim936.kind.value in ("function", "method")
+            and not _is_test_file(_prim936.file_path)
+            and (_prim936.signature or "").startswith("async ")
+        ):
+            lines.append(
+                f"\nasync method: {_prim936.name} is an async/coroutine function"
+                f" — async semantics require verifying await usage, cancellation handling, and concurrency safety"
+            )
+
+    # S942: Many-parameter function — focused function has 5+ parameters.
+    # High parameter count indicates high coupling to callers; each parameter is a
+    # contract with every call site; adding, removing, or reordering params is risky.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim942 = _seed_syms[0]
+        if _prim942.kind.value in ("function", "method") and not _is_test_file(_prim942.file_path):
+            _sig942 = _prim942.signature or ""
+            _param_str942 = _sig942[_sig942.find("(")+1:_sig942.rfind(")")]
+            _params942 = [
+                p.strip().split("=")[0].strip().split(":")[0].strip()
+                for p in _param_str942.split(",")
+                if p.strip() and p.strip() not in ("self", "cls", "*", "**")
+                and not p.strip().startswith("*")
+            ]
+            if len(_params942) >= 5:
+                lines.append(
+                    f"\nmany parameters: {_prim942.name} takes {len(_params942)} parameters"
+                    f" — high parameter count; each caller must pass all args; signature changes break all call sites"
+                )
+
+    # S948: All-private class — focused class has no public methods (all methods start with _).
+    # An all-private class has no intentional external interface; callers may be accessing
+    # internal methods directly, creating undocumented coupling that's fragile to refactors.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim948 = _seed_syms[0]
+        if _prim948.kind.value == "class" and not _is_test_file(_prim948.file_path):
+            _methods948 = [
+                s for s in graph.symbols.values()
+                if s.parent_id == _prim948.id and s.kind.value in ("method", "function")
+            ]
+            _public_methods948 = [
+                m for m in _methods948
+                if not m.name.startswith("_")
+            ]
+            if _methods948 and not _public_methods948:
+                lines.append(
+                    f"\nall-private class: {_prim948.name} has {len(_methods948)} method(s) but none are public"
+                    f" — no intended external interface; direct access to private methods is fragile coupling"
+                )
+
+    # S954: Generator function focus — the focused symbol name suggests a generator.
+    # Generators are lazy; callers must iterate the return value. Calling next() once, or
+    # wrapping in list(), changes memory and execution profile in subtle ways.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim954 = _seed_syms[0]
+        if _prim954.kind.value == "function" and not _is_test_file(_prim954.file_path):
+            _n954 = _prim954.name.lower()
+            _gen_prefixes954 = ("gen_", "iter_", "generate_", "yield_")
+            _gen_suffixes954 = ("_generator", "_iterator", "_gen", "_iter")
+            if any(_n954.startswith(p) for p in _gen_prefixes954) or any(_n954.endswith(s) for s in _gen_suffixes954):
+                lines.append(
+                    f"\ngenerator focus: {_prim954.name} appears to be a generator"
+                    f" — callers must iterate the return value; consuming as non-iterator will exhaust it silently"
+                )
+
+    # S960: Utility file focus — the focused symbol lives in a utils/helpers/common file.
+    # Utility files aggregate shared helpers with no domain affiliation; changes here
+    # cross-cut multiple features and may introduce regressions in unrelated consumers.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim960 = _seed_syms[0]
+        _util_kws960 = ("utils", "util", "helpers", "helper", "common", "shared", "misc", "tools")
+        _fbase960 = _prim960.file_path.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+        if (
+            _prim960.kind.value in ("function", "method")
+            and not _is_test_file(_prim960.file_path)
+            and any(_fbase960 == kw or _fbase960.startswith(kw + "_") or _fbase960.endswith("_" + kw) for kw in _util_kws960)
+        ):
+            lines.append(
+                f"\nutility file: {_prim960.name} is in a utility/helpers module"
+                f" — utility changes cross-cut features; test all consumer modules, not just obvious callers"
+            )
+
+    # S966: Override candidate — focused method shares its name with a method in another class in the same file.
+    # When multiple classes define the same method name, any change to one may need to be
+    # mirrored in the others to preserve consistent behavior across the class hierarchy.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim966 = _seed_syms[0]
+        if (
+            _prim966.kind.value == "method"
+            and _prim966.parent_id is not None
+            and not _is_test_file(_prim966.file_path)
+        ):
+            _siblings966 = [
+                s for s in graph.symbols.values()
+                if s.kind.value == "method"
+                and s.name == _prim966.name
+                and s.file_path == _prim966.file_path
+                and s.parent_id != _prim966.parent_id
+                and s.parent_id is not None
+            ]
+            if _siblings966:
+                _cls_names966 = ", ".join(
+                    s.qualified_name.rsplit(".", 1)[0] for s in _siblings966[:2]
+                )
+                lines.append(
+                    f"\noverride candidate: {_prim966.name} also defined in {_cls_names966}"
+                    f" — shared method name across classes; changes may need mirroring for consistent behavior"
+                )
+
+    # S972: Orphan symbol — focused symbol has no callers and no callees.
+    # A completely isolated symbol has no connections to the rest of the codebase;
+    # it may be dead code, an unregistered plugin hook, or a symbol never wired up.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim972 = _seed_syms[0]
+        if not _is_test_file(_prim972.file_path) and _prim972.kind.value in ("function", "method"):
+            _callers972 = graph.callers_of(_prim972.id)
+            _callees972 = graph.callees_of(_prim972.id)
+            if not _callers972 and not _callees972:
+                lines.append(
+                    f"\norphan symbol: {_prim972.name} has no callers and no callees"
+                    f" — completely isolated; may be dead code or a missing registration/wire-up"
+                )
+
+    # S978: Single caller — focused symbol is called by exactly one other function.
+    # Single-caller symbols are often internal implementation details; the logic
+    # could be inlined at the call site, reducing indirection and coupling.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim978 = _seed_syms[0]
+        if not _is_test_file(_prim978.file_path) and _prim978.kind.value in ("function", "method"):
+            _callers978 = graph.callers_of(_prim978.id)
+            if len(_callers978) == 1:
+                lines.append(
+                    f"\nsingle caller: {_prim978.name} is only called by {_callers978[0].name}"
+                    f" — consider inlining; all logic changes affect only one call site"
+                )
+
+    # S984: Test-only caller — focused symbol is called only from test files.
+    # A production function reachable only via tests has no production call path;
+    # it may be dead code or needs wiring up to the actual application flow.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim984 = _seed_syms[0]
+        if not _is_test_file(_prim984.file_path) and _prim984.kind.value in ("function", "method"):
+            _all_callers984 = graph.callers_of(_prim984.id)
+            _test_callers984 = [c for c in _all_callers984 if _is_test_file(c.file_path)]
+            _prod_callers984 = [c for c in _all_callers984 if not _is_test_file(c.file_path)]
+            if _test_callers984 and not _prod_callers984:
+                lines.append(
+                    f"\ntest-only caller: {_prim984.name} is called only from test files, never from production code"
+                    f" — may be dead in production or needs wiring up to the application flow"
+                )
+
+    # S990: External-only — focused symbol has callers but all are from different files.
+    # A function never called within its own file is a pure export; its interface
+    # is always visible to external modules and changes always affect other files.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim990 = _seed_syms[0]
+        if not _is_test_file(_prim990.file_path) and _prim990.kind.value in ("function", "method"):
+            _callers990 = graph.callers_of(_prim990.id)
+            _internal990 = [c for c in _callers990 if c.file_path == _prim990.file_path]
+            _external990 = [c for c in _callers990 if c.file_path != _prim990.file_path]
+            if _external990 and not _internal990:
+                lines.append(
+                    f"\nexternal-only: {_prim990.name} has {len(_external990)} caller(s) all from external files"
+                    f" — pure public API; changes always affect other modules, never just this file"
+                )
+
     return lines
 
 

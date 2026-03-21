@@ -2287,6 +2287,174 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — dense file; changes have higher chance of unintended side effects"
         )
 
+    # S914: Test file blast — blast radius requested for a test file.
+    # Requesting blast radius for a test file is unusual; verify the correct target
+    # was specified, or consider whether test infrastructure changes are the true concern.
+    if _is_test_file(_fp589):
+        lines.append(
+            f"test file blast: {_fp589.rsplit('/', 1)[-1]} is a test file"
+            f" — blast radius of test files is typically low; verify this is the intended target"
+        )
+
+    # S920: Cache blast — blast target is a caching or session file.
+    # Cache files are shared state; changes may cause stale data, invalidation bugs,
+    # or session corruption that affects all users concurrently.
+    _cache_kws920 = ("cache", "redis", "memcache", "session", "store", "buffer")
+    _fname920 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if any(kw in _fname920 for kw in _cache_kws920):
+        lines.append(
+            f"cache blast: {_fp589.rsplit('/', 1)[-1]} manages caching or sessions"
+            f" — cache changes affect shared state; verify invalidation logic and concurrent access"
+        )
+
+    # S926: Middleware blast — blast target is a middleware or interceptor file.
+    # Middleware runs on every request; changes here have the widest possible runtime impact
+    # and are harder to test exhaustively than endpoint-scoped changes.
+    _mw_kws926 = ("middleware", "interceptor", "filter", "guard", "hook", "pipeline", "chain")
+    _fname926 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if any(kw in _fname926 for kw in _mw_kws926):
+        lines.append(
+            f"middleware blast: {_fp589.rsplit('/', 1)[-1]} is a middleware or interceptor"
+            f" — runs on every request; changes have maximum runtime impact; test exhaustively"
+        )
+
+    # S932: Utility blast — blast target is a shared utility file.
+    # Utility files are imported by many modules; seemingly minor changes can ripple
+    # through the entire codebase in ways that are hard to anticipate.
+    _util_kws932 = ("util", "helper", "common", "shared", "lib", "base", "mixin")
+    _fname932 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if any(kw in _fname932 for kw in _util_kws932):
+        _callers_of_file932 = {
+            c.file_path for s in graph.symbols.values()
+            if s.file_path == _fp589 or (_fp589 in s.file_path and not _fp589.startswith("/"))
+            for c in graph.callers_of(s.id)
+        }
+        if len(_callers_of_file932) >= 3:
+            lines.append(
+                f"utility blast: {_fp589.rsplit('/', 1)[-1]} is a shared utility file used by {len(_callers_of_file932)} module(s)"
+                f" — minor changes ripple widely; test all consumers before merging"
+            )
+
+    # S938: Loader blast — blast target is a file that loads, parses, or imports data.
+    # Loader files are often called at startup or on first access; errors in them
+    # can prevent the entire application from starting rather than causing isolated failures.
+    _loader_kws938 = ("loader", "load", "parser", "parse", "reader", "reader", "importer", "import_")
+    _fname938 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if any(_fname938 == kw or _fname938.endswith("_" + kw) or _fname938.startswith(kw + "_") for kw in _loader_kws938):
+        lines.append(
+            f"loader blast: {_fp589.rsplit('/', 1)[-1]} loads or parses data at startup"
+            f" — loader errors prevent application start; changes require extra caution and testing"
+        )
+
+    # S944: Widely-imported blast — the blast target is imported by 5+ other source files.
+    # Files with high fan-in are shared infrastructure; any change triggers cascading
+    # re-testing of all consumers, and regressions may surface in unexpected call sites.
+    _file_syms944 = [
+        s for s in graph.symbols.values()
+        if s.file_path == _fp589 or (not _fp589.startswith("/") and _fp589 in s.file_path)
+    ]
+    _importers944 = {
+        c.file_path
+        for s in _file_syms944
+        for c in graph.callers_of(s.id)
+        if not _is_test_file(c.file_path) and c.file_path != _fp589
+    }
+    if len(_importers944) >= 5:
+        lines.append(
+            f"widely-imported blast: {_fp589.rsplit('/', 1)[-1]} is imported by {len(_importers944)} source module(s)"
+            f" — high fan-in; test all consumers after changes; regressions may surface in unexpected call sites"
+        )
+
+    # S950: Context manager blast — blast target is a context manager or context utility file.
+    # Context managers run setup/teardown code on entry and exit; changes may silently affect
+    # resource acquisition, exception handling, or cleanup in all `with` block consumers.
+    _ctx_kws950 = ("context", "ctx", "contextlib", "contextmanager", "scope", "transaction")
+    _fname950 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if any(_fname950 == kw or _fname950.startswith(kw + "_") or _fname950.endswith("_" + kw) for kw in _ctx_kws950):
+        lines.append(
+            f"context manager blast: {_fp589.rsplit('/', 1)[-1]} manages context/scope"
+            f" — changes affect resource acquisition and cleanup in all 'with' block consumers"
+        )
+
+    # S956: Fixture blast — blast target is a shared test fixture file (conftest.py or fixtures.py).
+    # Fixture files are implicitly imported by pytest's collection mechanism; changes here silently
+    # affect every test that shares the same fixture scope without an explicit import statement.
+    _fname956 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    _stem956 = _fname956.rsplit(".", 1)[0]
+    if _fname956 == "conftest.py" or _stem956 in ("fixtures", "conftest") or _stem956.startswith("conftest_"):
+        lines.append(
+            f"fixture blast: {_fp589.rsplit('/', 1)[-1]} is a shared fixture file"
+            f" — pytest auto-imports this; changes silently affect all tests in its scope without explicit import"
+        )
+
+    # S962: Router blast — blast target is a routing/URL dispatch file.
+    # Routers map URLs to handlers; changes here can silently break endpoints by
+    # altering paths, methods, or middleware chains without runtime errors at import time.
+    _router_kws962 = ("router", "routes", "urls", "routing", "endpoints", "paths")
+    _fname962 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if any(_fname962 == kw or _fname962.startswith(kw + "_") or _fname962.endswith("_" + kw) for kw in _router_kws962):
+        lines.append(
+            f"router blast: {_fp589.rsplit('/', 1)[-1]} is a routing file"
+            f" — path/method changes may silently break existing endpoints; verify all routes are tested"
+        )
+
+    # S968: Migration blast — blast target is a database migration file.
+    # Migration files modify production schema; errors can corrupt data or fail deploys
+    # in ways that are often difficult or impossible to reverse safely.
+    _mig_kws968 = ("migration", "migrate", "alembic", "schema", "flyway")
+    _fpath968 = _fp589.replace("\\", "/")
+    _fname968 = _fpath968.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    _in_migrations968 = any(kw in _fpath968.lower() for kw in ("migrations/", "migration/", "alembic/"))
+    if _in_migrations968 or any(_fname968 == kw or _fname968.startswith(kw + "_") for kw in _mig_kws968):
+        lines.append(
+            f"migration blast: {_fp589.rsplit('/', 1)[-1]} is a database migration file"
+            f" — schema changes are often irreversible; require DBA review and tested rollback plan"
+        )
+
+    # S974: Storage blast — blast target is a storage/repository/data access file.
+    # Storage abstractions are used across all business logic layers; changes to the
+    # storage API break callers silently if query shapes, return types, or error behavior change.
+    _store_kws974 = ("store", "storage", "repository", "repo", "dao", "data_access", "persistence")
+    _fname974 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if any(_fname974 == kw or _fname974.startswith(kw + "_") or _fname974.endswith("_" + kw) for kw in _store_kws974):
+        lines.append(
+            f"storage blast: {_fp589.rsplit('/', 1)[-1]} is a data storage abstraction"
+            f" — query shape or return type changes silently break all business logic callers"
+        )
+
+    # S980: Cache blast — blast target is a caching layer file.
+    # Cache abstractions are shared across many call paths; changes to eviction policy,
+    # key format, or TTL silently affect correctness and performance for all cached paths.
+    _cache_kws980 = ("cache", "cached", "caching", "memoize", "memoization", "redis", "memcache", "memcached")
+    _fname980 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if any(_fname980 == kw or _fname980.startswith(kw + "_") or _fname980.endswith("_" + kw) for kw in _cache_kws980):
+        lines.append(
+            f"cache blast: {_fp589.rsplit('/', 1)[-1]} is a caching layer"
+            f" — eviction, key format, or TTL changes silently affect correctness for all cached call paths"
+        )
+
+    # S986: Config blast — blast target is a configuration file.
+    # Config files control runtime behavior; changes propagate implicitly to all consumers
+    # of those config values, often without any traceable or type-safe dependency chain.
+    _config_kws986 = ("config", "configuration", "settings", "env", "environment", "options", "params", "parameters", "defaults", "conf")
+    _fname986 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if any(_fname986 == kw or _fname986.startswith(kw + "_") or _fname986.endswith("_" + kw) for kw in _config_kws986):
+        lines.append(
+            f"config blast: {_fp589.rsplit('/', 1)[-1]} is a configuration file"
+            f" — runtime behavior changes affect all consumers; flag for explicit review before merge"
+        )
+
+    # S992: Schema blast — blast target is a schema/model/entity definition file.
+    # Schema changes affect database migrations, serialization, and all code reading the schema;
+    # even additive changes may require coordinated updates across multiple layers.
+    _schema_kws992 = ("schema", "schemas", "model", "models", "entity", "entities", "types", "typedefs", "datamodel", "domain")
+    _fname992 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if any(_fname992 == kw or _fname992.startswith(kw + "_") or _fname992.endswith("_" + kw) for kw in _schema_kws992):
+        lines.append(
+            f"schema blast: {_fp589.rsplit('/', 1)[-1]} is a schema/model definition"
+            f" — changes require coordinated migration, serialization updates, and consumer validation"
+        )
+
     return "\n".join(lines)
 
 
