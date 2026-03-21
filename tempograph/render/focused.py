@@ -3999,6 +3999,17 @@ def _signals_focused_fn_advanced(
                 f" — file appears deprecated; check if functionality has been migrated before modifying"
             )
 
+    # S900: Property focus — focused symbol is a property or computed getter.
+    # Properties are transparent to callers but may have hidden side effects;
+    # agents should verify no mutation or expensive computation occurs in getter bodies.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim900 = _seed_syms[0]
+        if _prim900.kind.value == "property" and not _is_test_file(_prim900.file_path):
+            lines.append(
+                f"\nproperty: {_prim900.name} is a property"
+                f" — transparent to callers but may hide side effects; verify getter has no mutations"
+            )
+
     return lines
 
 

@@ -3110,6 +3110,32 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — orphaned error handlers may indicate removed error recovery paths"
         )
 
+    # S905: Dead single-method classes — dead class definitions that contain exactly one method.
+    # Single-method classes may be over-engineered; they are candidates for conversion to
+    # plain functions, reducing instantiation overhead and simplifying call sites.
+    _dead_classes905 = [
+        s for s in dead
+        if s.kind.value == "class"
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+    ]
+    _single_method_classes905 = []
+    for _cls905 in _dead_classes905:
+        _methods905 = [
+            s for s in graph.symbols.values()
+            if s.parent_id == _cls905.id and s.kind.value in ("method", "function")
+        ]
+        if len(_methods905) == 1:
+            _single_method_classes905.append(_cls905)
+    if _single_method_classes905:
+        _cls_names905 = ", ".join(s.name for s in _single_method_classes905[:3])
+        if len(_single_method_classes905) > 3:
+            _cls_names905 += f" +{len(_single_method_classes905) - 3} more"
+        lines.append(
+            f"dead thin classes: {len(_single_method_classes905)} dead single-method class(es) ({_cls_names905})"
+            f" — consider converting to plain functions to reduce over-engineering"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

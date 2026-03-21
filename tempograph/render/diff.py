@@ -2495,4 +2495,17 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — directory-scoped change; verify public interface contracts remain intact"
             )
 
+    # S903: Mixed doc/code diff — diff includes both documentation and source code files.
+    # Mixed diffs indicate a doc update was bundled with a code change; agents should
+    # verify that the documentation accurately reflects the accompanying code changes.
+    _doc_exts903 = (".md", ".rst", ".txt", ".adoc")
+    if changed_files:
+        _doc903 = [f for f in changed_files if any(f.lower().endswith(e) for e in _doc_exts903)]
+        _code903 = [f for f in changed_files if not any(f.lower().endswith(e) for e in _doc_exts903)]
+        if _doc903 and _code903:
+            lines.append(
+                f"mixed diff: {len(_doc903)} doc file(s) and {len(_code903)} source file(s) changed together"
+                f" — mixed doc+code diff; verify docs accurately reflect the code changes"
+            )
+
     return "\n".join(lines)
