@@ -1256,7 +1256,15 @@ def _build_symbol_block_lines(
 
         callers = graph.callers_of(sym.id)
         if callers:
-            callers_sorted = sorted(callers, key=_caller_priority)
+            # S118: For depth-0 seeds, exclude test callers from inline 'called by:'.
+            # Test callers are already shown in 'tested:' and 'scenarios:' lines above.
+            # Filtering them reveals production callers immediately, reduces noise.
+            _callers_for_display = (
+                [c for c in callers if not _is_test_file(c.file_path)]
+                if depth == 0
+                else callers
+            )
+            callers_sorted = sorted(_callers_for_display, key=_caller_priority)
             kw_callers = [c for c in callers_sorted if _caller_priority(c) == 0]
             other_callers = [c for c in callers_sorted if _caller_priority(c) != 0]
             hot_other = [c for c in other_callers if c.file_path in graph.hot_files]
@@ -1265,6 +1273,7 @@ def _build_symbol_block_lines(
             shown_other = (hot_other + cold_other)[:max_other]
             shown_callers = kw_callers + shown_other
             shown_count = len(kw_callers) + max_other
+            _total_for_overflow = len(_callers_for_display)
             caller_strs = []
             for c in shown_callers:
                 _cl = (callsite_lines or {}).get((c.id, sym.id), [])
@@ -1278,9 +1287,10 @@ def _build_symbol_block_lines(
                     caller_strs.append(f"{c.qualified_name}{_line_ann} [hot]")
                 else:
                     caller_strs.append(c.qualified_name + _line_ann + _stale_annotation(c.file_path))
-            block_lines.append(f"{indent}  called by: {', '.join(caller_strs)}")
-            if len(callers) > shown_count:
-                block_lines[-1] += f" (+{len(callers) - shown_count} more)"
+            if caller_strs:
+                block_lines.append(f"{indent}  called by: {', '.join(caller_strs)}")
+                if _total_for_overflow > shown_count:
+                    block_lines[-1] += f" (+{_total_for_overflow - shown_count} more)"
         callees = graph.callees_of(sym.id)
         if callees:
             shown = 8 if depth == 0 else 5

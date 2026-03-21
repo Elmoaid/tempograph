@@ -10329,10 +10329,11 @@ class TestHotspotsRecentlyActive:
         (tmp_path / "recent_util.py").write_text("def util_fn():\n    pass\n")
         g = build_graph(str(tmp_path), use_cache=False)
 
-        # Mock recently_modified_files to return the simple files (not in hotspots)
+        # Mock recently_modified_files to return the simple files (not in hotspots).
+        # Use top_n=5 so the 3 simple files fall outside the hotspot list.
         with patch("tempograph.git.recently_modified_files",
                    return_value={"new_service.py", "fresh_module.py", "recent_util.py"}):
-            out = render_hotspots(g)
+            out = render_hotspots(g, top_n=5)
         assert "recently active" in out, (
             f"Expected 'recently active' signal when 3+ files are active but outside hotspots; got:\n{out}"
         )
