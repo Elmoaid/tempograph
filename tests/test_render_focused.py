@@ -123,3 +123,54 @@ class TestFocusCallsiteLines:
 
         assert "[line 45]" in output
         assert "[lines 23, 67]" in output
+
+
+# ── S27: Multi-symbol focus ──────────────────────────────────────────────────
+
+class TestMultiSymbolFocus:
+    def _make_two_symbol_graph(self, tmp_path):
+        auth = Symbol(
+            id="auth.py::authenticate",
+            name="authenticate", qualified_name="authenticate",
+            kind=SymbolKind.FUNCTION, language=Language.PYTHON,
+            file_path="auth.py", line_start=1, line_end=10, exported=True,
+        )
+        logout = Symbol(
+            id="auth.py::logout",
+            name="logout", qualified_name="logout",
+            kind=SymbolKind.FUNCTION, language=Language.PYTHON,
+            file_path="auth.py", line_start=12, line_end=20, exported=True,
+        )
+        return _make_graph(tmp_path, [], [auth, logout])
+
+    def test_pipe_separator_merges_seeds(self, tmp_path):
+        from tempograph.render import render_focused
+        graph = self._make_two_symbol_graph(tmp_path)
+        with patch("tempograph.git.file_last_modified_days", return_value=5):
+            out = render_focused(graph, "authenticate | logout")
+        assert "authenticate" in out
+        assert "logout" in out
+
+    def test_pipe_separator_header(self, tmp_path):
+        from tempograph.render import render_focused
+        graph = self._make_two_symbol_graph(tmp_path)
+        with patch("tempograph.git.file_last_modified_days", return_value=5):
+            out = render_focused(graph, "authenticate | logout")
+        assert "Focus: authenticate | logout" in out
+
+    def test_single_query_unchanged(self, tmp_path):
+        from tempograph.render import render_focused
+        graph = self._make_two_symbol_graph(tmp_path)
+        with patch("tempograph.git.file_last_modified_days", return_value=5):
+            out = render_focused(graph, "authenticate")
+        assert "Focus: authenticate" in out
+        assert "|" not in out.split("\n")[0]
+
+    def test_no_duplicate_seeds(self, tmp_path):
+        """Same symbol queried via two parts → appears only once in output."""
+        from tempograph.render import render_focused
+        graph = self._make_two_symbol_graph(tmp_path)
+        with patch("tempograph.git.file_last_modified_days", return_value=5):
+            out = render_focused(graph, "authenticate | authenticate")
+        # Should appear exactly once as a seed (depth 0), not duplicated
+        assert out.count("● function authenticate") == 1
