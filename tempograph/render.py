@@ -484,6 +484,24 @@ def render_overview(graph: Tempo) -> str:
             f"test debt: {len(_active_exported_fns)} active exports with callers but no tests"
         )
 
+    # S86: Zombie exports — exported functions whose ONLY callers are test files.
+    # These are test-scaffolding APIs that should be made private or deleted.
+    # Only shown when 2+ qualify; single occurrence could be an intentional test helper.
+    _zombie_exports = [
+        sym for sym in graph.symbols.values()
+        if sym.exported
+        and sym.kind.value in ("function", "method")
+        and not _is_test_file(sym.file_path)
+        and graph.callers_of(sym.id)  # must have at least one caller
+        and all(_is_test_file(c.file_path) for c in graph.callers_of(sym.id))
+    ]
+    if len(_zombie_exports) >= 2:
+        _z_names = [s.name for s in _zombie_exports[:4]]
+        _z_str = ", ".join(_z_names)
+        if len(_zombie_exports) > 4:
+            _z_str += f" +{len(_zombie_exports) - 4} more"
+        lines.append(f"zombie exports ({len(_zombie_exports)}): {_z_str} — exported but only called from tests")
+
     # S80: Interface/abstract count — how many pure interface/protocol/abstract-class symbols.
     # Signals codebase abstraction health: 0 interfaces in a 100-class repo = no abstraction layer.
     # Only shown when project has 5+ classes (smaller repos rarely use abstractions).
@@ -1843,6 +1861,23 @@ def _build_symbol_block_lines(
                 block_lines.append(f"{indent}  scenarios: {_sc_str}")
         elif sym.exported:
             block_lines.append(f"{indent}  no tests — exported but never called from a test file")
+    # S85: Caller coverage — what fraction of this symbol's callers have test coverage?
+    # Key safety signal for change risk: 30 callers with only 5 tested = high blast risk.
+    # Only shown for depth-0 functions/methods with 5+ non-test callers.
+    if depth == 0 and sym.kind.value in ("function", "method"):
+        _all_src_callers = [
+            c for c in graph.callers_of(sym.id)
+            if not _is_test_file(c.file_path) and c.file_path != sym.file_path
+        ]
+        if len(_all_src_callers) >= 3:
+            _tested_callers = [
+                c for c in _all_src_callers
+                if any(_is_test_file(t.file_path) for t in graph.callers_of(c.id))
+            ]
+            _cc_pct = int(len(_tested_callers) / len(_all_src_callers) * 100)
+            block_lines.append(
+                f"{indent}  caller coverage: {len(_tested_callers)}/{len(_all_src_callers)} callers tested ({_cc_pct}%)"
+            )
     # Container annotation for methods: show parent class with caller count.
     # Helps agents understand the class context of the focused method.
     if depth == 0 and sym.kind.value == "method" and "::" in sym.id:
@@ -1983,6 +2018,15 @@ def _build_symbol_block_lines(
                     _effects.append("mutates state")
                 if _effects:
                     block_lines.append(f"{indent}  effects: {', '.join(_effects)}")
+                # S85: Throws detection — find explicit `raise` statements in the function body.
+                # Tells agents what exceptions callers must handle; critical for error-path coverage.
+                # Detects `raise ExceptionType`, `raise ExceptionType(...)`, and `raise some_var` patterns.
+                _raise_pat = _re2.compile(r'\braise\s+([A-Za-z_][A-Za-z0-9_]*(?:[.][A-Za-z_][A-Za-z0-9_]*)*)')
+                _exc_names = list(dict.fromkeys(_raise_pat.findall(_body)))  # dedup, preserve order
+                # Filter out noise: re-raises (`raise` alone) and overly common bases
+                _exc_names = [e for e in _exc_names if e not in ("Exception", "BaseException")][:4]
+                if _exc_names:
+                    block_lines.append(f"{indent}  throws: {', '.join(_exc_names)}")
         except Exception:
             pass
 
@@ -2764,6 +2808,37 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
     if len(_src_imps) == 1:
         lines.append(f"Singleton caller: only used by {_src_imps[0].rsplit('/', 1)[-1]} — consider merging")
         lines.append("")
+
+    # S88: Transitive blast — BFS through import graph to count all transitively affected files.
+    # Direct blast shows 1 hop; transitive blast shows full ripple effect across the codebase.
+    # Only shown when transitive count > direct count AND > 5 (otherwise direct already covers it).
+    if importers:
+        _trans_seen: set[str] = {file_path}
+        _trans_queue = list(importers)
+        _trans_depth = 0
+        _trans_max_depth = 0
+        _level_queue = list(importers)
+        while _level_queue and _trans_depth < 8 and len(_trans_seen) < 200:
+            _trans_depth += 1
+            _next_level: list[str] = []
+            for _tf in _level_queue:
+                if _tf in _trans_seen:
+                    continue
+                _trans_seen.add(_tf)
+                for _nxt in graph.importers_of(_tf):
+                    if _nxt not in _trans_seen and _nxt in graph.files and not _is_test_file(_nxt):
+                        _next_level.append(_nxt)
+            if _next_level:
+                _trans_max_depth = _trans_depth
+            _level_queue = _next_level
+        _trans_total = len(_trans_seen) - 1  # exclude the file itself
+        if _trans_total > len(importers) and _trans_total >= 5:
+            _non_test_direct = len([i for i in importers if not _is_test_file(i)])
+            lines.append(
+                f"Transitive blast: {_trans_total} total files affected "
+                f"({_non_test_direct} direct, {_trans_max_depth} levels deep)"
+            )
+            lines.append("")
 
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")

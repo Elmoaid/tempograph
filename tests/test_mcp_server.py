@@ -8407,3 +8407,167 @@ class TestOverviewTestDebt:
         assert "test debt:" not in out, (
             f"'test debt:' must not appear when all exports are tested; got:\n{out}"
         )
+
+
+class TestFocusThrowsAnnotation:
+    """S85: Focus shows 'throws: ExceptionType' when function raises specific exceptions."""
+
+    def test_throws_shown_for_function_with_raises(self, tmp_path):
+        """Function with explicit raise → 'throws:' annotation shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "parser.py").write_text(
+            "def parse(data):\n"
+            "    if data is None:\n"
+            "        raise ValueError('data required')\n"
+            "    if not isinstance(data, str):\n"
+            "        raise TypeError('expected str')\n"
+            "    return data\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "parse")
+        assert "throws:" in out, (
+            f"Expected 'throws:' annotation for function with raises; got:\n{out}"
+        )
+        assert "ValueError" in out or "TypeError" in out, (
+            f"Expected exception type in throws annotation; got:\n{out}"
+        )
+
+    def test_throws_absent_when_no_raises(self, tmp_path):
+        """Function with no raise → no 'throws:' annotation."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "utils.py").write_text(
+            "def add(a, b):\n    return a + b\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "add")
+        assert "throws:" not in out, (
+            f"'throws:' must not appear for function without raises; got:\n{out}"
+        )
+
+
+class TestOverviewZombieExports:
+    """S86: Overview shows 'zombie exports:' for exported functions only called from tests."""
+
+    def test_zombie_exports_shown_when_two_test_only_apis(self, tmp_path):
+        """2 exported functions called only by tests → 'zombie exports:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "helpers.py").write_text(
+            "def build_fixture(): return {}\n"
+            "def make_mock_user(): return {'id': 1}\n"
+        )
+        (tmp_path / "test_helpers.py").write_text(
+            "from helpers import build_fixture, make_mock_user\n"
+            "def test_build(): assert build_fixture() == {}\n"
+            "def test_user(): assert make_mock_user()['id'] == 1\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "zombie exports" in out, (
+            f"Expected 'zombie exports' when 2 test-only exported fns; got:\n{out}"
+        )
+
+    def test_zombie_exports_absent_when_production_callers_exist(self, tmp_path):
+        """Exported function called by both test and source → no zombie flag."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "api.py").write_text("def process(x): return x\n")
+        (tmp_path / "main.py").write_text(
+            "from api import process\ndef run(): return process(1)\n"
+        )
+        (tmp_path / "test_api.py").write_text(
+            "from api import process\ndef test_process(): assert process(1) == 1\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "zombie exports" not in out, (
+            f"'zombie exports' must not appear when production callers exist; got:\n{out}"
+        )
+
+
+class TestBlastTransitiveDepth:
+    """S88: Blast mode shows 'Transitive blast: N total files' when blast reaches many files."""
+
+    def test_transitive_blast_shown_for_deep_chain(self, tmp_path):
+        """Chain of imports: a → b → c → d → e → f → g → target → 'Transitive blast:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        # Build a deep chain: target.py imported by a1..a5, each imported by b1..b5
+        (tmp_path / "target.py").write_text("def core(): pass\n")
+        for i in range(5):
+            (tmp_path / f"mid_{i}.py").write_text(f"from target import core\ndef fn_{i}(): return core()\n")
+        for i in range(5):
+            (tmp_path / f"top_{i}.py").write_text(
+                f"from mid_{i} import fn_{i}\ndef outer_{i}(): return fn_{i}()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "target.py")
+        assert "Transitive blast:" in out, (
+            f"Expected 'Transitive blast:' for deep import chain; got:\n{out}"
+        )
+        assert "total files" in out, f"Expected 'total files' in transitive blast line; got:\n{out}"
+
+    def test_transitive_blast_absent_for_isolated_file(self, tmp_path):
+        """File with no importers → no 'Transitive blast:' line."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        (tmp_path / "standalone.py").write_text("def fn(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "standalone.py")
+        assert "Transitive blast:" not in out, (
+            f"'Transitive blast:' must not appear for isolated file; got:\n{out}"
+        )
+
+
+class TestFocusCallerCoverage:
+    """S85: Focus depth-0 — 'caller coverage: M/N callers tested (X%)'.
+
+    Shows what fraction of the symbol's production callers themselves have test coverage.
+    Absent when there are fewer than 3 non-test callers.
+    """
+
+    def test_caller_coverage_shown_for_widely_called_function(self, tmp_path):
+        """Function with 4 callers, 2 of which are tested -> coverage shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        files = {
+            "core.py": "def process(x): return x\n",
+            "a.py": "from core import process\ndef a(): return process(1)\n",
+            "b.py": "from core import process\ndef b(): return process(2)\n",
+            "c.py": "from core import process\ndef c(): return process(3)\n",
+            "test_a.py": "from a import a\ndef test_a(): assert a() == 1\n",
+        }
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process")
+        assert "caller coverage:" in out, (
+            f"Expected 'caller coverage:' for function with 3 callers; got:\n{out}"
+        )
+
+    def test_caller_coverage_absent_for_few_callers(self, tmp_path):
+        """Function with only 2 non-test callers -> no caller coverage shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        files = {
+            "core.py": "def process(x): return x\n",
+            "a.py": "from core import process\ndef a(): return process(1)\n",
+            "b.py": "from core import process\ndef b(): return process(2)\n",
+        }
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process")
+        assert "caller coverage:" not in out, (
+            f"'caller coverage:' must not appear for function with only 2 callers; got:\n{out}"
+        )
