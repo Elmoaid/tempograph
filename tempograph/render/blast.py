@@ -1992,6 +1992,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                 f" {len(_test_importers752)} test files — changes here break tests silently; review all usages"
             )
 
+    # S758: Router file blast — the blast target is a routing/URL dispatcher file.
+    # Router files wire URL paths to handlers; changing them affects which code runs
+    # for any given request path and may silently break API consumers.
+    _stem758 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].replace(".py", "").lower()
+    _router_kws758 = ("router", "routes", "routing", "urls", "url_conf", "endpoint", "endpoints")
+    if any(kw in _stem758 for kw in _router_kws758):
+        lines.append(
+            f"router file blast: {_fp589.rsplit('/', 1)[-1]} is a routing/URL file"
+            f" — changes here affect which handlers run per request; test all affected routes"
+        )
+
     return "\n".join(lines)
 
 
