@@ -299,3 +299,54 @@ class TestDependencyLayers:
         result = g.dependency_layers()
         # Should not raise; cycles get dumped into last layer
         assert isinstance(result, list)
+
+
+# ── renderers_of ──────────────────────────────────────────────────────────────
+
+class TestRenderersOf:
+    def test_unknown_id_returns_empty(self, tmp_path):
+        g = _build(tmp_path, {"a.py": "def fn(): pass\n"})
+        assert g.renderers_of("nonexistent::id") == []
+
+    def test_returns_list(self, tmp_path):
+        g = _build(tmp_path, {"a.py": "def fn(): pass\n"})
+        fn = next(s for s in g.symbols.values() if s.name == "fn")
+        result = g.renderers_of(fn.id)
+        assert isinstance(result, list)
+
+
+# ── find_dead_code ────────────────────────────────────────────────────────────
+
+class TestFindDeadCode:
+    def test_returns_list(self, tmp_path):
+        g = _build(tmp_path, {"mod.py": "def fn(): pass\n"})
+        result = g.find_dead_code()
+        assert isinstance(result, list)
+
+    def test_unused_exported_function_detected(self, tmp_path):
+        g = _build(tmp_path, {"mod.py": "def orphan(): pass\n"})
+        result = g.find_dead_code()
+        assert any(s.name == "orphan" for s in result)
+
+    def test_called_function_not_dead(self, tmp_path):
+        g = _build(tmp_path, {
+            "lib.py": "def used(): pass\n",
+            "app.py": "from lib import used\ndef run(): used()\n",
+        })
+        dead = g.find_dead_code()
+        # "used" is called cross-file — should not be in dead list
+        assert not any(s.name == "used" for s in dead)
+
+    def test_main_not_flagged(self, tmp_path):
+        g = _build(tmp_path, {"app.py": "def main(): pass\n"})
+        dead = g.find_dead_code()
+        assert not any(s.name == "main" for s in dead)
+
+    def test_result_sorted_by_file(self, tmp_path):
+        g = _build(tmp_path, {
+            "a.py": "def orphan_a(): pass\n",
+            "b.py": "def orphan_b(): pass\n",
+        })
+        dead = g.find_dead_code()
+        file_paths = [s.file_path for s in dead]
+        assert file_paths == sorted(file_paths)

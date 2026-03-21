@@ -16,6 +16,11 @@ from tempograph.git import (
     current_branch,
     recently_modified_files,
     file_commit_counts,
+    changed_files_branch,
+    cochange_matrix_recency,
+    file_change_velocity,
+    recent_file_commits,
+    cochange_pairs,
 )
 
 
@@ -131,3 +136,114 @@ class TestFileCommitCounts:
         # tempograph/parser.py is the most-changed file
         assert "tempograph/parser.py" in result
         assert result["tempograph/parser.py"] > 0
+
+
+# ── changed_files_branch ──────────────────────────────────────────────────────
+
+class TestChangedFilesBranch:
+    def test_returns_list(self):
+        result = changed_files_branch(TEMPOGRAPH_ROOT)
+        assert isinstance(result, list)
+
+    def test_non_git_dir_returns_empty(self, tmp_path):
+        result = changed_files_branch(str(tmp_path))
+        assert result == []
+
+    def test_all_items_are_strings(self):
+        result = changed_files_branch(TEMPOGRAPH_ROOT)
+        assert all(isinstance(f, str) for f in result)
+
+
+# ── cochange_matrix_recency ───────────────────────────────────────────────────
+
+class TestCochangeMatrixRecency:
+    def test_returns_dict(self):
+        result = cochange_matrix_recency(TEMPOGRAPH_ROOT)
+        assert isinstance(result, dict)
+
+    def test_values_are_lists_of_tuples(self):
+        result = cochange_matrix_recency(TEMPOGRAPH_ROOT, n_commits=50)
+        for k, v in result.items():
+            assert isinstance(k, str)
+            assert isinstance(v, list)
+            for item in v:
+                assert len(item) == 3  # (file, frequency, recency_score)
+
+    def test_non_git_dir_returns_empty(self, tmp_path):
+        result = cochange_matrix_recency(str(tmp_path))
+        assert result == {}
+
+
+# ── file_change_velocity ──────────────────────────────────────────────────────
+
+class TestFileChangeVelocity:
+    def test_returns_dict(self):
+        result = file_change_velocity(TEMPOGRAPH_ROOT)
+        assert isinstance(result, dict)
+
+    def test_values_are_floats(self):
+        result = file_change_velocity(TEMPOGRAPH_ROOT, recent_days=30)
+        assert all(isinstance(v, float) for v in result.values())
+
+    def test_active_file_has_positive_velocity(self):
+        result = file_change_velocity(TEMPOGRAPH_ROOT, recent_days=90)
+        # parser.py is frequently changed — should appear with positive velocity
+        if result:
+            assert all(v > 0 for v in result.values())
+
+    def test_non_git_dir_returns_empty(self, tmp_path):
+        result = file_change_velocity(str(tmp_path))
+        assert result == {}
+
+
+# ── recent_file_commits ───────────────────────────────────────────────────────
+
+class TestRecentFileCommits:
+    def test_returns_list(self):
+        result = recent_file_commits(TEMPOGRAPH_ROOT, "tempograph/parser.py")
+        assert isinstance(result, list)
+
+    def test_entries_have_expected_keys(self):
+        result = recent_file_commits(TEMPOGRAPH_ROOT, "tempograph/parser.py", n=3)
+        for entry in result:
+            assert "days_ago" in entry
+            assert "message" in entry
+
+    def test_days_ago_is_non_negative(self):
+        result = recent_file_commits(TEMPOGRAPH_ROOT, "tempograph/parser.py", n=3)
+        assert all(entry["days_ago"] >= 0 for entry in result)
+
+    def test_unknown_file_returns_empty(self):
+        result = recent_file_commits(TEMPOGRAPH_ROOT, "nonexistent_xyz.py")
+        assert result == []
+
+    def test_respects_n_limit(self):
+        result = recent_file_commits(TEMPOGRAPH_ROOT, "tempograph/parser.py", n=2)
+        assert len(result) <= 2
+
+
+# ── cochange_pairs ────────────────────────────────────────────────────────────
+
+class TestCochangePairs:
+    def test_returns_list(self):
+        result = cochange_pairs(TEMPOGRAPH_ROOT, "tempograph/parser.py")
+        assert isinstance(result, list)
+
+    def test_entries_have_path_and_count(self):
+        result = cochange_pairs(TEMPOGRAPH_ROOT, "tempograph/parser.py", n=5, min_count=1)
+        for entry in result:
+            assert "path" in entry
+            assert "count" in entry
+            assert isinstance(entry["count"], int)
+
+    def test_excludes_input_file_itself(self):
+        result = cochange_pairs(TEMPOGRAPH_ROOT, "tempograph/parser.py", min_count=1)
+        assert not any(e["path"] == "tempograph/parser.py" for e in result)
+
+    def test_non_git_dir_returns_empty(self, tmp_path):
+        result = cochange_pairs(str(tmp_path), "some/file.py")
+        assert result == []
+
+    def test_respects_n_limit(self):
+        result = cochange_pairs(TEMPOGRAPH_ROOT, "tempograph/parser.py", n=3, min_count=1)
+        assert len(result) <= 3
