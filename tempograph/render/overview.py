@@ -1118,6 +1118,26 @@ def render_overview(graph: Tempo) -> str:
             f" — changes here have wide blast radius"
         )
 
+    # S197: Constant explosion — high number of named constants/variables across source files.
+    # Many constants may indicate magic-number parameterization or config sprawl.
+    # Only shown when >= 20 non-test constant/variable symbols exist.
+    _s197_consts = [
+        s for s in graph.symbols.values()
+        if not _is_test_file(s.file_path)
+        and s.kind.value in ("constant", "variable")
+    ]
+    if len(_s197_consts) >= 20:
+        _top_const_files = sorted(
+            set(s.file_path for s in _s197_consts), key=lambda fp: -sum(
+                1 for s in _s197_consts if s.file_path == fp
+            )
+        )[:2]
+        _cf_str = ", ".join(fp.rsplit("/", 1)[-1] for fp in _top_const_files)
+        lines.append(
+            f"constant explosion: {len(_s197_consts)} named constants/variables"
+            f" — consider consolidating into config module ({_cf_str} heaviest)"
+        )
+
     # S191: API-only files — source files where every tracked symbol is exported.
     # Files where all symbols are public = pure API surface; any change risks breaking callers.
     # Only shown when 2+ non-trivial source files (>= 3 symbols) are fully exported.

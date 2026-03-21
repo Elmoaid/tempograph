@@ -353,6 +353,28 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             _dc_str += f" +{len(_dead_consts) - 3} more"
         lines.append(f"dead constants: {len(_dead_consts)} unused constants/variables ({_dc_str})")
 
+    # S202: Dead error handlers — error-handling functions that are dead.
+    # Dead error handlers leave users without proper error recovery paths.
+    # Only shown when 1+ dead error handler function found (single is alarming enough).
+    _s202_error_patterns = ("handle_", "on_error", "catch_", "except_", "error_handler")
+    _s202_dead_handlers = [
+        sym for sym, conf in scored
+        if conf >= 40
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.startswith(p) or sym.name.endswith("_error") or "error_handler" in sym.name
+                for p in _s202_error_patterns)
+    ]
+    if len(_s202_dead_handlers) >= 1:
+        _eh_names = [s.name for s in _s202_dead_handlers[:3]]
+        _eh_str = ", ".join(_eh_names)
+        if len(_s202_dead_handlers) > 3:
+            _eh_str += f" +{len(_s202_dead_handlers) - 3} more"
+        lines.append(
+            f"dead error handlers: {len(_s202_dead_handlers)} unused error handler(s) ({_eh_str})"
+            f" — missing error recovery"
+        )
+
     # S196: Dead fixtures — setup_*/teardown_* functions that are dead.
     # Test fixture functions with 0 callers are often orphaned test infrastructure.
     # Only shown when 2+ such dead fixture functions found.

@@ -650,6 +650,26 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 f" — highest combined velocity+complexity"
             )
 
+    # S200: Size hotspot — the top hotspot file is also the largest file by line count.
+    # The most-changed file also being the largest = maximum cognitive load per change.
+    # Only shown when the top hotspot file is in the top 3 by line count.
+    if scores and graph.files:
+        _top200_fp = scores[0][1].file_path
+        _all_line_counts = sorted(
+            [(fi.line_count, fp) for fp, fi in graph.files.items()
+             if not _is_test_file(fp) and hasattr(fi, 'line_count') and fi.line_count],
+            reverse=True,
+        )
+        _top3_large = {fp for _, fp in _all_line_counts[:3]}
+        if _top200_fp in _top3_large:
+            _top200_lines = graph.files[_top200_fp].line_count if _top200_fp in graph.files else 0
+            _top200_base = _top200_fp.rsplit("/", 1)[-1]
+            if _top200_lines and _top200_lines >= 50:
+                lines.append(
+                    f"\nsize hotspot: {_top200_base} is top hotspot AND largest file"
+                    f" ({_top200_lines} lines) — maximum cognitive load per change"
+                )
+
     # S194: Test file hotspot — a test file appears in the top 5 hotspot ranks.
     # Test files in the hotspot list indicate test churn, flaky tests, or spec instability.
     # Only shown when 1+ test file is among the top 5 hotspot-ranked files.

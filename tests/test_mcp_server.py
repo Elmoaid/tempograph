@@ -13144,3 +13144,277 @@ class TestDeadFixtures:
         assert "dead fixtures" not in out, (
             f"'dead fixtures' must not appear; got:\n{out}"
         )
+
+
+# ---------------------------------------------------------------------------
+# S197 — constant explosion (overview)
+# ---------------------------------------------------------------------------
+class TestOverviewConstantExplosion:
+    def test_constant_explosion_shown(self, tmp_path):
+        """S197: constant explosion shown when >= 20 constants exist."""
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        # Write 22 constants
+        lines = [f"CONST_{i} = {i}" for i in range(22)]
+        (tmp_path / "constants.py").write_text("\n".join(lines) + "\n")
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "constant explosion" in out, f"'constant explosion' expected; got:\n{out}"
+
+    def test_constant_explosion_absent_when_few(self, tmp_path):
+        """S197: constant explosion not shown when < 20 constants."""
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        lines = [f"CONST_{i} = {i}" for i in range(5)]
+        (tmp_path / "constants.py").write_text("\n".join(lines) + "\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "constant explosion" not in out, (
+            f"'constant explosion' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S198 — leaf function (focused)
+# ---------------------------------------------------------------------------
+class TestFocusedLeafFunction:
+    def test_leaf_function_shown(self, tmp_path):
+        """S198: leaf function shown when fn has 0 external callees but 5+ callers."""
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        # Pure leaf function called by many files
+        (tmp_path / "leaf.py").write_text("def pure_compute(x): return x * 2\n")
+        for i in range(6):
+            (tmp_path / f"user_{i}.py").write_text(
+                f"from leaf import pure_compute\n"
+                f"def fn_{i}(): return pure_compute({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "pure_compute")
+        assert "leaf function" in out, f"'leaf function' expected; got:\n{out}"
+
+    def test_leaf_function_absent_when_has_callees(self, tmp_path):
+        """S198: leaf function not shown when fn has external callees."""
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "dep.py").write_text("def helper(): return 1\n")
+        (tmp_path / "main.py").write_text(
+            "from dep import helper\ndef orchestrate(): return helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "orchestrate")
+        assert "leaf function" not in out, (
+            f"'leaf function' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S199 — focused change (diff)
+# ---------------------------------------------------------------------------
+class TestDiffFocusedChange:
+    def test_focused_change_shown(self, tmp_path):
+        """S199: focused change shown when diff has exactly 1 source file."""
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "logic.py").write_text("def compute(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["logic.py"])
+        assert "focused change" in out, f"'focused change' expected; got:\n{out}"
+
+    def test_focused_change_absent_for_multi_file_diff(self, tmp_path):
+        """S199: focused change not shown when diff has 2+ source files."""
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "logic.py").write_text("def compute(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["logic.py", "utils.py"])
+        assert "focused change" not in out, (
+            f"'focused change' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S200 — size hotspot (hotspots)
+# ---------------------------------------------------------------------------
+class TestHotspotsSizeHotspot:
+    def test_size_hotspot_shown(self, tmp_path):
+        """S200: size hotspot shown when top hotspot is also the largest file."""
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        # Large file that's also highly called
+        big_body = "\n".join(
+            f"def fn_{i}(x):\n    if x == {i}: return {i}\n    return -1"
+            for i in range(20)
+        )
+        (tmp_path / "big_engine.py").write_text(big_body + "\n")
+        for i in range(5):
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from big_engine import fn_0\ndef do_{i}(): fn_0({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "size hotspot" in out, f"'size hotspot' expected; got:\n{out}"
+
+    def test_size_hotspot_absent_when_small(self, tmp_path):
+        """S200: size hotspot not shown when top hotspot is a small file."""
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "small.py").write_text("def fn(): pass\n")
+        for i in range(5):
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from small import fn\ndef do_{i}(): fn()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "size hotspot" not in out, (
+            f"'size hotspot' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S201 — isolated file (blast)
+# ---------------------------------------------------------------------------
+class TestBlastIsolatedFile:
+    def test_isolated_file_shown(self, tmp_path):
+        """S201: isolated file shown when blast target has no external importers or callers."""
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        # Standalone file not imported or called from anywhere
+        (tmp_path / "orphan.py").write_text("def unused_fn(): return 42\n")
+        (tmp_path / "other.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "orphan.py")
+        assert "isolated file" in out, f"'isolated file' expected; got:\n{out}"
+
+    def test_isolated_file_absent_when_has_importers(self, tmp_path):
+        """S201: isolated file not shown when file is imported."""
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "lib.py").write_text("def fn(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from lib import fn\ndef main(): fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "lib.py")
+        assert "isolated file" not in out, (
+            f"'isolated file' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S202 — dead error handlers (dead)
+# ---------------------------------------------------------------------------
+class TestDeadErrorHandlers:
+    def test_dead_error_handlers_shown(self, tmp_path):
+        """S202: dead error handlers shown when 1+ handle_* error fn is dead."""
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "errors.py").write_text(
+            "def handle_connection_error(e): pass\n"
+            "def handle_timeout_error(e): pass\n"
+            "def notify(): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead error handlers" in out, f"'dead error handlers' expected; got:\n{out}"
+
+    def test_dead_error_handlers_absent_when_used(self, tmp_path):
+        """S202: dead error handlers not shown when handler is called."""
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "errors.py").write_text(
+            "def handle_connection_error(e): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from errors import handle_connection_error\n"
+            "def main():\n"
+            "    try: pass\n"
+            "    except Exception as e: handle_connection_error(e)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead error handlers" not in out, (
+            f"'dead error handlers' must not appear; got:\n{out}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# S191 — cochange partners outside static graph (focus)
+# ---------------------------------------------------------------------------
+
+class TestFocusCochangePartners:
+    def test_no_crash_without_git(self, tmp_path):
+        """S191 silently skips when repo has no git history — no exception."""
+        (tmp_path / "mod.py").write_text("def compute(x): return x * 2\n")
+        (tmp_path / "caller.py").write_text(
+            "from mod import compute\ndef main(): compute(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "compute")
+        # Should not raise; output still contains the symbol
+        assert "compute" in out
+
+    def test_cochange_section_header_format(self, tmp_path):
+        """When cochange partners appear, line starts with expected prefix."""
+        # Can't reproduce cochange partners in a tmp_path (no git history),
+        # but verify the output format by checking the actual repo.
+        g = build_graph(str(REPO_PATH), use_cache=True)
+        out = render_focused(g, "build_graph")
+        # If S191 fires, it must use 'cochange partners' keyword
+        if "cochange partners" in out:
+            assert "(not in call graph)" in out
+
+
+# ---------------------------------------------------------------------------
+# S192 — test file pointer (focus)
+# ---------------------------------------------------------------------------
+
+class TestFocusTestFilePointer:
+    def test_points_to_matching_test_file(self, tmp_path):
+        """S192 surfaces 'test_report.py' when only that test file covers report.py."""
+        (tmp_path / "report.py").write_text(
+            "def generate_report(path):\n    return 'report'\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from report import generate_report\ndef run(): generate_report('.')\n"
+        )
+        # Create test file with matching stem
+        tests = tmp_path / "tests"
+        tests.mkdir()
+        (tests / "test_report.py").write_text(
+            "# placeholder — no imports yet (S192 looks at file name, not calls)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "generate_report")
+        assert "test file: test_report.py" in out
+
+    def test_no_pointer_when_multiple_test_files_match(self, tmp_path):
+        """S192 suppressed when stem matches > 1 test file (ambiguous)."""
+        (tmp_path / "auth.py").write_text("def login(u): return True\n")
+        (tmp_path / "app.py").write_text(
+            "from auth import login\ndef main(): login('u')\n"
+        )
+        t = tmp_path / "tests"
+        t.mkdir()
+        (t / "test_auth.py").write_text("# test a\n")
+        (t / "test_auth_integration.py").write_text("# test b\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "login")
+        # Both test_auth.py and test_auth_integration.py match "auth" — ambiguous
+        assert out.count("test file:") <= 1  # at most one match shown

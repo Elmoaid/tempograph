@@ -1743,6 +1743,23 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
             if _inh_depth >= 3:
                 lines.append(f"\ninheritance depth: {_inh_depth} levels — deep hierarchy, high base-class coupling")
 
+    # S198: Leaf function — the focused symbol calls nothing externally but has many callers.
+    # Zero outgoing dependencies = very stable; many callers = widely relied upon. Positive signal.
+    # Only shown when seed has 0 external callees AND >= 5 total callers.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim198 = _seed_syms[0]
+        if _prim198.kind.value in ("function", "method"):
+            _ext_callees198 = [
+                c for c in graph.callees_of(_prim198.id)
+                if c.file_path != _prim198.file_path
+            ]
+            _caller_count198 = len(graph.callers_of(_prim198.id))
+            if len(_ext_callees198) == 0 and _caller_count198 >= 5:
+                lines.append(
+                    f"\nleaf function: {_prim198.name} has {_caller_count198} callers"
+                    f" and 0 external callees — stable leaf, safe to refactor internals"
+                )
+
     # S192: Callee complexity — the focused symbol's external callees have high average complexity.
     # Calling into complex functions means cognitive load is high even for simple-looking fns.
     # Only shown when avg complexity of external callees >= 5 and 3+ external callees with cx data.

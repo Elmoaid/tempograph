@@ -400,6 +400,16 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             _s160_str += f" +{len(_s160_new_syms) - 3} more"
         lines.append(f"new symbols: {len(_s160_new_syms)} exported fns/classes with 0 callers ({_s160_str})")
 
+    # S199: Focused change — the diff touches only 1 source file (clean, low-risk commit).
+    # Single-file diffs have minimal blast radius; they're easy to review, revert, and bisect.
+    # Only shown when exactly 1 non-test source file is in the diff.
+    _s199_src_files = [fp for fp in normalized if not _is_test_file(fp)]
+    if len(_s199_src_files) == 1:
+        lines.append(
+            f"focused change: only {_s199_src_files[0].rsplit('/', 1)[-1]} modified"
+            f" — minimal blast radius, easy to review and revert"
+        )
+
     # S193: Migration file — diff includes a database migration or schema file.
     # Schema changes affect data integrity; they require extra care and often need backfill work.
     # Only shown when 1+ migration-style file is in the diff.

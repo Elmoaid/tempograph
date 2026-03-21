@@ -436,6 +436,23 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                 f" — package entry point, changes affect all importers"
             )
 
+    # S201: Isolated file — blast target has 0 external importers and 0 external callers.
+    # A file with no incoming dependencies is safe to modify or delete without coordination.
+    # Only shown when file has neither external importers nor symbols with external callers.
+    _s201_importers = [
+        i for i in graph.importers_of(file_path)
+        if i in graph.files and i != file_path
+    ]
+    _s201_has_ext_callers = any(
+        any(c.file_path != file_path for c in graph.callers_of(s.id))
+        for s in symbols
+    )
+    if not _s201_importers and not _s201_has_ext_callers:
+        lines.append(
+            f"isolated file: no external importers or callers"
+            f" — safe to modify or delete without coordination"
+        )
+
     # S195: Blast fan-out — blast target's symbols call into 5+ distinct external files.
     # High outgoing call fan-out = the file reaches widely; changes ripple in multiple directions.
     # Only shown when symbols in blast target call into 5+ distinct non-target files.
