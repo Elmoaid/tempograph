@@ -75,6 +75,17 @@ class TestConventionalCommit:
         kws = _extract_cl_keywords("Merge branch '2.2.x'")
         assert kws == []
 
+    def test_feature_branch_merge_extracts_keywords(self):
+        """Merge branch 'feature/add-redis-caching' should extract branch keywords."""
+        kws = _extract_cl_keywords("Merge branch 'feature/add-redis-caching' into main")
+        assert any("redis" in k.lower() or "caching" in k.lower() for k in kws), \
+            f"Expected redis/caching keywords, got {kws}"
+
+    def test_fix_branch_merge_extracts_keywords(self):
+        """Merge branch 'fix/handle-none-response' should extract keywords."""
+        kws = _extract_cl_keywords("Merge branch 'fix/handle-none-response' of https://github.com/x/y")
+        assert len(kws) > 0, f"Expected keywords from fix branch, got []"
+
 
 # ── Backtick identifiers ──────────────────────────────────────────────────────
 
