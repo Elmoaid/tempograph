@@ -2134,6 +2134,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — package public surface; all importers of this package are in blast radius"
         )
 
+    # S836: Large file blast — blast target source file exceeds 500 lines.
+    # Large source files have many symbols; blast radius analysis may undercount
+    # indirect effects from symbols not individually tracked in the call graph.
+    if _fp589 in graph.files:
+        _lc836 = graph.files[_fp589].line_count
+        if _lc836 >= 500:
+            lines.append(
+                f"large file blast: {_fp589.rsplit('/', 1)[-1]} is {_lc836:,} lines"
+                f" — large source file; blast analysis may undercount indirect symbol effects"
+            )
+
     return "\n".join(lines)
 
 

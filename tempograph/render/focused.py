@@ -3816,6 +3816,18 @@ def _signals_focused_fn_advanced(
                 f" — overly specific name; callers become verbose and renaming is error-prone"
             )
 
+    # S834: Deep path focus — focused symbol lives 4+ directories deep in the file tree.
+    # Deeply nested symbols indicate complex module hierarchies; navigating to them
+    # requires understanding multiple package levels, increasing onboarding friction.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim834 = _seed_syms[0]
+        _depth834 = len(_prim834.file_path.replace("\\", "/").split("/")) - 1
+        if _depth834 >= 4 and not _is_test_file(_prim834.file_path):
+            lines.append(
+                f"\ndeep path: {_prim834.name} is {_depth834} levels deep in the directory tree"
+                f" — deeply nested symbol; difficult to discover and increases import path verbosity"
+            )
+
     return lines
 
 

@@ -634,6 +634,17 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — value-only change; verify all consumers behave correctly with new values"
             )
 
+    # S837: Multi-package diff — changed files span 2+ top-level packages.
+    # Diffs that cross package boundaries increase integration risk; each package
+    # may have independent release cadences, owners, or deployment constraints.
+    if changed_files:
+        _pkgs837 = {f.replace("\\", "/").split("/")[0] for f in changed_files if "/" in f}
+        if len(_pkgs837) >= 2:
+            lines.append(
+                f"multi-package diff: changes span {len(_pkgs837)} top-level packages ({', '.join(sorted(_pkgs837)[:3])})"
+                f" — cross-package change; coordinate release timing and verify interface contracts"
+            )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 

@@ -2884,6 +2884,24 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — removed user-facing commands; verify help text and routing are updated"
         )
 
+    # S839: Dead protocol classes — unused classes ending with Protocol.
+    # Protocol classes define structural typing contracts (PEP 544); dead protocols
+    # indicate abandoned interface contracts that no concrete class is checked against.
+    _dead_proto839 = [
+        s for s in dead
+        if s.kind.value == "class"
+        and s.name.endswith("Protocol")
+        and not _is_test_file(s.file_path)
+    ]
+    if _dead_proto839:
+        _proto_names839 = ", ".join(s.name for s in _dead_proto839[:3])
+        if len(_dead_proto839) > 3:
+            _proto_names839 += f" +{len(_dead_proto839) - 3} more"
+        lines.append(
+            f"dead protocol classes: {len(_dead_proto839)} unused Protocol class(es) ({_proto_names839})"
+            f" — abandoned interface contracts; verify no concrete class is checked against them"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

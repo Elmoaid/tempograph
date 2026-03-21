@@ -2553,5 +2553,19 @@ def _collect_hotspots_signals(
                     f" — hotspot score may be inflated by intra-module calls; external impact is narrower"
                 )
 
+    # S838: Hotspot with no tests — top hotspot function has zero test-file callers.
+    # High-call-count functions with no test coverage are high-risk refactoring targets;
+    # any behavioral change will be invisible to the test suite.
+    if scores:
+        _top838 = scores[0][1]
+        if _top838 is not None and not _is_test_file(_top838.file_path):
+            _callers838 = graph.callers_of(_top838.id)
+            _test_callers838 = [c for c in _callers838 if _is_test_file(c.file_path)]
+            if _callers838 and not _test_callers838:
+                out.append(
+                    f"\nhotspot no tests: {_top838.name} has {len(_callers838)} callers but zero test coverage"
+                    f" — top hotspot is untested; behavioral changes will not be caught by tests"
+                )
+
     return out
 

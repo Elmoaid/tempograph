@@ -18273,7 +18273,7 @@ class TestHotspotsCrossModule:
         for module in ("api", "workers", "tasks"):
             d = tmp_path / module
             d.mkdir()
-            (d / "__init__.py").write_text("")
+            (d / "__init__.py").write_text("def placeholder(): pass\n")
             (d / "handler.py").write_text(
                 f"from core import process\ndef handle(x): return process(x)\n"
             )
@@ -39733,3 +39733,230 @@ class TestDeadCliCommandsS833:
         assert "dead CLI commands" not in out, (
             f"'dead CLI commands' must not appear when CLI fn is called; got:\n{out}"
         )
+
+
+# ---------------------------------------------------------------------------
+# S834 – S839
+# ---------------------------------------------------------------------------
+
+# ── S834: Deep path focus ─────────────────────────────────────────────────────
+
+class TestDeepPathFocusS834:
+    """S834: Focused symbol 4+ levels deep emits deep-path signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        # Create 4-level-deep path: myapp/core/models/detail/module.py
+        deep = tmp_path / "myapp" / "core" / "models" / "detail"
+        deep.mkdir(parents=True)
+        for d in (tmp_path / "myapp", tmp_path / "myapp" / "core",
+                  tmp_path / "myapp" / "core" / "models", deep):
+            (d / "__init__.py").write_text("def _p(): pass\n")
+        (deep / "module.py").write_text("def deep_fn(x): return x\n")
+        (tmp_path / "app.py").write_text(
+            "from myapp.core.models.detail.module import deep_fn\n"
+            "def run(x): deep_fn(x)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "deep_fn")
+        assert "deep path" in out, (
+            f"Expected 'deep path' for symbol 4+ levels deep; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def helper(x): return x\n")
+        (tmp_path / "app.py").write_text("from utils import helper\ndef run(x): helper(x)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper")
+        assert "deep path" not in out, (
+            f"'deep path' must not appear for top-level file symbol; got:\n{out}"
+        )
+
+
+# ── S835: Deep nesting ────────────────────────────────────────────────────────
+
+class TestDeepNestingS835:
+    """S835: Average file path depth 3+ levels emits deep-nesting signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # 4 files each at depth 3: myapp/core/models/mod_i.py
+        base = tmp_path / "myapp" / "core" / "models"
+        base.mkdir(parents=True)
+        for d in (tmp_path / "myapp", tmp_path / "myapp" / "core", base):
+            (d / "__init__.py").write_text("def placeholder(): pass\n")
+        for i in range(4):
+            (base / f"mod_{i}.py").write_text(f"def func_{i}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "deep nesting" in out, (
+            f"Expected 'deep nesting' for files 3+ levels deep; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        for i in range(4):
+            (tmp_path / f"module_{i}.py").write_text(f"def func_{i}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "deep nesting" not in out, (
+            f"'deep nesting' must not appear for root-level files; got:\n{out}"
+        )
+
+
+# ── S836: Large file blast ────────────────────────────────────────────────────
+
+class TestLargeFileBlastS836:
+    """S836: Blast target is 500+ lines emits large-file-blast signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        # 520-line file
+        (tmp_path / "big.py").write_text(
+            "def process(x): return x\n" + "# padding\n" * 519
+        )
+        (tmp_path / "app.py").write_text("from big import process\ndef run(x): process(x)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "big.py")
+        assert "large file blast" in out, (
+            f"Expected 'large file blast' for 520-line blast target; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "small.py").write_text("def helper(): pass\n")
+        (tmp_path / "app.py").write_text("from small import helper\ndef run(): helper()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "small.py")
+        assert "large file blast" not in out, (
+            f"'large file blast' must not appear for small blast target; got:\n{out}"
+        )
+
+
+# ── S837: Type file in diff ───────────────────────────────────────────────────
+
+class TestMultiPackageDiffS837:
+    """S837: Diff spanning 2+ top-level packages emits multi-package-diff signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        for d in ("web", "api"):
+            dp = tmp_path / d
+            dp.mkdir()
+            (dp / "module.py").write_text(f"def run_{d}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["web/module.py", "api/module.py"])
+        assert "multi-package diff" in out, (
+            f"Expected 'multi-package diff' for changes in 2 top-level packages; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        dp = tmp_path / "myapp"
+        dp.mkdir()
+        (dp / "a.py").write_text("def alpha(): pass\n")
+        (dp / "b.py").write_text("def beta(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["myapp/a.py", "myapp/b.py"])
+        assert "multi-package diff" not in out, (
+            f"'multi-package diff' must not appear when changes are in a single package; got:\n{out}"
+        )
+
+
+# ── S838: Constructor hotspot ─────────────────────────────────────────────────
+
+class TestHotspotNoTestsS838:
+    """S838: Top hotspot with zero test callers emits hotspot-no-tests signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def process(x): return x\n")
+        for i in range(6):
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from core import process\ndef run_{i}(): process({i})\n"
+            )
+        # No test files — process has callers but zero test coverage
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "hotspot no tests" in out, (
+            f"Expected 'hotspot no tests' for top hotspot with no test callers; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def compute(x): return x\n")
+        for i in range(4):
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from core import compute\ndef run_{i}(): compute({i})\n"
+            )
+        (tmp_path / "test_core.py").write_text(
+            "from core import compute\ndef test_it(): assert compute(1) == 1\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "hotspot no tests" not in out, (
+            f"'hotspot no tests' must not appear when top hotspot has test callers; got:\n{out}"
+        )
+
+
+# ── S839: Dead protocol classes ───────────────────────────────────────────────
+
+class TestDeadProtocolClassesS839:
+    """S839: Unused Protocol classes emits dead-protocol-classes signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "contracts.py").write_text(
+            "class StorageProtocol:\n    def save(self, data): ...\n"
+            "class LoggerProtocol:\n    def log(self, msg): ...\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead protocol classes" in out, (
+            f"Expected 'dead protocol classes' for unused Protocol classes; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "contracts.py").write_text(
+            "class StorageProtocol:\n    def save(self, data): ...\n"
+        )
+        (tmp_path / "impl.py").write_text(
+            "from contracts import StorageProtocol\n"
+            "class FileStorage(StorageProtocol):\n    def save(self, data): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from impl import FileStorage\ndef run(): FileStorage().save('x')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead protocol classes" not in out, (
+            f"'dead protocol classes' must not appear when Protocol is subclassed and used; got:\n{out}"
+        )
+
