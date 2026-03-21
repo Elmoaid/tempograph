@@ -138,7 +138,28 @@ def render_overview(graph: Tempo) -> str:
             lines.append("")
             lines.append(f"recently active: {_act_str}")
     except Exception:
-        pass
+        _commit_counts = {}
+
+    # High-risk files: high-churn source files with no matching test file.
+    # Actively changing code with no test coverage — most likely to introduce regressions.
+    # Only shown when test files exist (otherwise the whole project lacks tests).
+    _test_fps_for_risk = {fp for fp in graph.files if _is_test_file(fp)}
+    if _commit_counts and _test_fps_for_risk:
+        _high_risk = sorted(
+            [
+                (fp, c) for fp, c in _commit_counts.items()
+                if fp in graph.files
+                and not _is_test_file(fp)
+                and c >= 5
+                and graph.files[fp].symbols
+                and Path(fp).suffix in _SRC_EXTS
+                and not any(fp.rsplit("/", 1)[-1].rsplit(".", 1)[0] in t for t in _test_fps_for_risk)
+            ],
+            key=lambda x: -x[1],
+        )
+        if _high_risk:
+            _hr_parts = [f"{fp.rsplit('/', 1)[-1]} ({c})" for fp, c in _high_risk[:3]]
+            lines.append(f"high risk (no tests): {', '.join(_hr_parts)}")
 
     # Hot symbols: top 3 source functions by unique cross-file caller files.
     # Helps agents immediately identify the highest-traffic API surfaces.
@@ -811,7 +832,7 @@ def _render_cochange_section(graph, seed_file_paths: list[str]) -> str:
 
 
 def _render_all_callers_section(
-    graph, seeds: list, callsite_lines: dict, token_count: int, max_tokens: int
+    graph, seeds: list, callsite_lines: dict, token_count: int = 0, max_tokens: int = 0
 ) -> str:
     """Complete callers section — all callers of seed symbols, grouped by file.
 
@@ -819,8 +840,6 @@ def _render_all_callers_section(
     Useful for rename/refactor impact: agents see every call site at once.
     Test callers are excluded (already shown in Tests section).
     Triggered when total source callers >= 2. Capped at 5 files / 3 names each."""
-    if token_count > max_tokens - 60:
-        return ""
 
     # Collect all source (non-test) callers across all seeds
     by_file: dict[str, list[tuple[str, str, int]]] = {}  # file → [(caller_name, caller_id, seed_id)]
@@ -1098,7 +1117,14 @@ def _build_symbol_block_lines(
     indent = "  " * depth if depth > 0 else ""
     prefix = ["●", "  →", "    ·", "      "][min(depth, 3)]
     loc = f"{sym.file_path}:{sym.line_start}-{sym.line_end}"
-    block_lines = [f"{prefix} {sym.kind.value} {sym.qualified_name} — {loc}{orbit_note}"]
+    # Blast annotation for depth-0 seed: number of unique files that call this symbol.
+    # Gives agents immediate risk context — "[blast: 7 files]" = 7 files need review.
+    _blast_ann = ""
+    if depth == 0:
+        _blast_files = {c.file_path for c in graph.callers_of(sym.id) if c.file_path != sym.file_path}
+        if len(_blast_files) >= 3:
+            _blast_ann = f" [blast: {len(_blast_files)} files]"
+    block_lines = [f"{prefix} {sym.kind.value} {sym.qualified_name}{_blast_ann} — {loc}{orbit_note}"]
     if sym.signature and depth < 2:
         block_lines.append(f"{indent}  sig: {sym.signature[:150]}")
     if sym.doc and depth == 0:
@@ -1344,21 +1370,21 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
         elif _has_source_callers:
             lines.append("\nTests: none")
 
+    # All callers: complete caller list grouped by file (for rename/refactor impact).
+    _seed_syms = [sym for sym, d in ordered if d == 0]
+    callers_section = _render_all_callers_section(graph, _seed_syms, _callsite_lines, token_count, max_tokens)
+    if callers_section:
+        lines.append(callers_section)
+
     # Outgoing dependency files: what files do the seed symbols depend on?
     dep_section = _render_dependency_files_section(graph, ordered, seen_files, token_count, max_tokens)
     if dep_section:
         lines.append(dep_section)
 
     # Hot callers: callers of seed symbols that live in recently-modified files.
-    _seed_syms = [sym for sym, d in ordered if d == 0]
     hot_section = _render_hot_callers_section(graph, _seed_syms, token_count, max_tokens)
     if hot_section:
         lines.append(hot_section)
-
-    # All callers: complete caller list grouped by file (for rename/refactor impact).
-    callers_section = _render_all_callers_section(graph, _seed_syms, _callsite_lines, token_count, max_tokens)
-    if callers_section:
-        lines.append(callers_section)
 
     return "\n".join(lines)
 
