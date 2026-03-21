@@ -4111,6 +4111,26 @@ def _signals_focused_fn_advanced(
                 f" — async semantics require verifying await usage, cancellation handling, and concurrency safety"
             )
 
+    # S942: Many-parameter function — focused function has 5+ parameters.
+    # High parameter count indicates high coupling to callers; each parameter is a
+    # contract with every call site; adding, removing, or reordering params is risky.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim942 = _seed_syms[0]
+        if _prim942.kind.value in ("function", "method") and not _is_test_file(_prim942.file_path):
+            _sig942 = _prim942.signature or ""
+            _param_str942 = _sig942[_sig942.find("(")+1:_sig942.rfind(")")]
+            _params942 = [
+                p.strip().split("=")[0].strip().split(":")[0].strip()
+                for p in _param_str942.split(",")
+                if p.strip() and p.strip() not in ("self", "cls", "*", "**")
+                and not p.strip().startswith("*")
+            ]
+            if len(_params942) >= 5:
+                lines.append(
+                    f"\nmany parameters: {_prim942.name} takes {len(_params942)} parameters"
+                    f" — high parameter count; each caller must pass all args; signature changes break all call sites"
+                )
+
     return lines
 
 

@@ -2604,4 +2604,29 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — interface changes ripple to all implementors; verify all implementors are updated"
             )
 
+    # S945: Widely-imported file in diff — a changed file is imported by 5+ other source files.
+    # When a hub file changes, every consumer is a potential regression site;
+    # the blast radius of this diff is likely larger than the file count suggests.
+    if normalized:
+        for _chf945 in normalized:
+            if _is_test_file(_chf945):
+                continue
+            _file_syms945 = [
+                s for s in graph.symbols.values()
+                if s.file_path == _chf945
+                or (not _chf945.startswith("/") and _chf945 in s.file_path)
+            ]
+            _importers945 = {
+                c.file_path
+                for s in _file_syms945
+                for c in graph.callers_of(s.id)
+                if not _is_test_file(c.file_path) and c.file_path != _chf945
+            }
+            if len(_importers945) >= 5:
+                lines.append(
+                    f"widely-imported change: {_chf945.rsplit('/', 1)[-1]} is imported by {len(_importers945)} source module(s)"
+                    f" — high fan-in file changed; blast radius wider than file count suggests"
+                )
+                break  # only report once
+
     return "\n".join(lines)

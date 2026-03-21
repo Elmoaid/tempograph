@@ -44077,3 +44077,193 @@ class TestDeadSetupFunctionsS941:
         assert "dead setup" not in out, (
             f"'dead setup' must not appear when setup function is called; got:\n{out}"
         )
+
+
+class TestManyParametersS942:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "def create_user(name, email, age, role, country, phone):\n"
+            "    return {'name': name, 'email': email}\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "create_user")
+        assert "many parameters" in out, (
+            f"'many parameters' expected for 6-param function; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "service.py").write_text(
+            "def add(a, b): return a + b\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "add")
+        assert "many parameters" not in out, (
+            f"'many parameters' must not appear for 2-param function; got:\n{out}"
+        )
+
+
+class TestFunctionOnlyCodebaseS943:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "utils.py").write_text(
+            "def add(a, b): return a + b\n"
+            "def sub(a, b): return a - b\n"
+            "def mul(a, b): return a * b\n"
+            "def div(a, b): return a / b\n"
+            "def mod(a, b): return a % b\n"
+            "def power(a, b): return a ** b\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "function-only" in out, (
+            f"'function-only' expected for purely procedural codebase; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "service.py").write_text(
+            "class Calculator:\n"
+            "    def add(self, a, b): return a + b\n"
+            "    def sub(self, a, b): return a - b\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "function-only" not in out, (
+            f"'function-only' must not appear when class methods exist; got:\n{out}"
+        )
+
+
+class TestWidelyImportedBlastS944:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "core.py").write_text("def shared(): pass\n")
+        for i in range(6):
+            (tmp_path / f"module_{i}.py").write_text(
+                f"from core import shared\ndef fn_{i}(): shared()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "core.py")
+        assert "widely-imported blast" in out, (
+            f"'widely-imported blast' expected for file imported by 6 modules; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "service.py").write_text("def process(): pass\n")
+        (tmp_path / "app.py").write_text("from service import process\ndef run(): process()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "service.py")
+        assert "widely-imported blast" not in out, (
+            f"'widely-imported blast' must not appear for file with few importers; got:\n{out}"
+        )
+
+
+class TestWidelyImportedChangeS945:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "core.py").write_text("def shared(): pass\n")
+        for i in range(6):
+            (tmp_path / f"module_{i}.py").write_text(
+                f"from core import shared\ndef fn_{i}(): shared()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["core.py"])
+        assert "widely-imported change" in out, (
+            f"'widely-imported change' expected for file imported by 6 modules; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "service.py").write_text("def process(): pass\n")
+        (tmp_path / "app.py").write_text("from service import process\ndef run(): process()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["service.py"])
+        assert "widely-imported change" not in out, (
+            f"'widely-imported change' must not appear for file with few importers; got:\n{out}"
+        )
+
+
+class TestOversizedHotspotS946:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "engine.py").write_text(
+            "def huge_fn():\n"
+            + "    x = 0\n" * 105
+            + "    return x\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "oversized hotspot" in out, (
+            f"'oversized hotspot' expected for 100+ line function; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "engine.py").write_text(
+            "def medium_fn():\n"
+            + "    x = 0\n" * 40
+            + "    return x\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "oversized hotspot" not in out, (
+            f"'oversized hotspot' must not appear for 41-line function; got:\n{out}"
+        )
+
+
+class TestDeadTypeGuardsS947:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "validators.py").write_text(
+            "def is_valid_email(s): return '@' in s\n"
+            "def is_numeric(s): return s.isdigit()\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead type guards" in out, (
+            f"'dead type guards' expected for unused is_* functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "validators.py").write_text(
+            "def is_valid_email(s): return '@' in s\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from validators import is_valid_email\n"
+            "def run(email): return is_valid_email(email)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead type guards" not in out, (
+            f"'dead type guards' must not appear when is_* function is called; got:\n{out}"
+        )
+
+

@@ -3261,6 +3261,26 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — removed initialization paths may leave resources unregistered or unconfigured"
         )
 
+    # S947: Dead type guards — unused is_* boolean predicate functions.
+    # Dead type guards often outlive the type annotations or isinstance() calls that replaced them;
+    # verify no dynamic dispatch or conditional code still depends on these predicates.
+    _dead_typeguards947 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and s.name.lower().startswith("is_")
+        and len(s.name) > 3
+    ]
+    if _dead_typeguards947:
+        _tg_names947 = ", ".join(s.name for s in _dead_typeguards947[:3])
+        if len(_dead_typeguards947) > 3:
+            _tg_names947 += f" +{len(_dead_typeguards947) - 3} more"
+        lines.append(
+            f"dead type guards: {len(_dead_typeguards947)} unused is_* predicate(s) ({_tg_names947})"
+            f" — may have been replaced by type annotations; verify no dynamic dispatch still calls them"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

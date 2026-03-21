@@ -2802,5 +2802,17 @@ def _collect_hotspots_signals(
                     f" — deprecated file; changes here risk introducing debt into code scheduled for removal"
                 )
 
+    # S946: Oversized hotspot — the top hotspot spans 100+ lines of code.
+    # A function exceeding 100 lines typically contains multiple responsibilities;
+    # its length alone makes it a high-risk change target regardless of complexity score.
+    if scores:
+        _top946 = scores[0][1]
+        if _top946 is not None and not _is_test_file(_top946.file_path):
+            if _top946.line_count >= 100:
+                out.append(
+                    f"\noversized hotspot: {_top946.name} spans {_top946.line_count} lines"
+                    f" — exceeds 100 lines; likely contains multiple responsibilities; refactor before extending"
+                )
+
     return out
 

@@ -3426,6 +3426,26 @@ def _signals_async_oop(
             f" — may indicate magic values in code; consider extracting thresholds and config into constants"
         )
 
+    # S943: Function-only codebase — all source symbols are top-level functions; no class methods.
+    # A codebase with no class methods is fully procedural; agents should avoid suggesting
+    # OOP refactors unless there's clear evidence of state that needs encapsulation.
+    _all_methods943 = [
+        s for s in graph.symbols.values()
+        if s.kind.value == "method"
+        and not _is_test_file(s.file_path)
+    ]
+    _all_fns943 = [
+        s for s in graph.symbols.values()
+        if s.kind.value == "function"
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+    ]
+    if len(_all_fns943) >= 5 and not _all_methods943:
+        lines.append(
+            f"function-only: {len(_all_fns943)} top-level functions, 0 class methods"
+            f" — fully procedural codebase; avoid OOP refactor suggestions without clear encapsulation need"
+        )
+
     return lines
 
 

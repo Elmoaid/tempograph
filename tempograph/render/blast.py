@@ -2346,6 +2346,25 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — loader errors prevent application start; changes require extra caution and testing"
         )
 
+    # S944: Widely-imported blast — the blast target is imported by 5+ other source files.
+    # Files with high fan-in are shared infrastructure; any change triggers cascading
+    # re-testing of all consumers, and regressions may surface in unexpected call sites.
+    _file_syms944 = [
+        s for s in graph.symbols.values()
+        if s.file_path == _fp589 or (not _fp589.startswith("/") and _fp589 in s.file_path)
+    ]
+    _importers944 = {
+        c.file_path
+        for s in _file_syms944
+        for c in graph.callers_of(s.id)
+        if not _is_test_file(c.file_path) and c.file_path != _fp589
+    }
+    if len(_importers944) >= 5:
+        lines.append(
+            f"widely-imported blast: {_fp589.rsplit('/', 1)[-1]} is imported by {len(_importers944)} source module(s)"
+            f" — high fan-in; test all consumers after changes; regressions may surface in unexpected call sites"
+        )
+
     return "\n".join(lines)
 
 
