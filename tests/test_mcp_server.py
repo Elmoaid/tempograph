@@ -5334,3 +5334,48 @@ class TestFocusMethodContainerAnnotation:
         assert "container:" not in out, (
             f"container: must not appear for top-level function; got:\n{out}"
         )
+
+
+class TestDiffChangeVelocityAnnotation:
+    """S41: Diff mode — change velocity annotation on changed files.
+
+    High-churn files (>=2 commits/wk) get a '[Nx/wk]' annotation in the
+    'Changed files:' section. Non-git repos must not show the annotation.
+    """
+
+    def test_velocity_annotation_absent_without_git(self, tmp_path):
+        """No velocity annotation in a non-git directory."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_diff_context
+
+        (tmp_path / "core.py").write_text(
+            "def process(x): return x\ndef helper(y): return y\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from core import process\ndef main(): return process(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["core.py"])
+
+        assert "/wk]" not in out, (
+            f"Velocity annotation must not appear without git history; got:\n{out}"
+        )
+
+    def test_velocity_annotation_format_when_present(self):
+        """When file has high velocity, annotation appears as '[Nx/wk]'."""
+        import os
+        from unittest.mock import patch
+        from tempograph.builder import build_graph
+        from tempograph.render import render_diff_context
+        from tempograph import git as tg
+
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        g = build_graph(repo, use_cache=False)
+
+        # Inject a mock velocity so the test is deterministic
+        with patch.object(tg, "file_change_velocity", return_value={"tempograph/render.py": 5.0}):
+            out = render_diff_context(g, ["tempograph/render.py"])
+
+        assert "/wk]" in out, (
+            f"Expected [Nx/wk] annotation when velocity is 5.0; got:\n{out}"
+        )
