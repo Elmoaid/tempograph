@@ -1287,6 +1287,49 @@ class TestFocusStalenessAnnotations:
 
 
 # ---------------------------------------------------------------------------
+# Focus mode — recent file commits summary (Task O)
+# ---------------------------------------------------------------------------
+
+class TestFocusRecentCommits:
+    """Verify that focus output includes a 'Recent changes:' section for the primary file."""
+
+    def _build_simple_repo(self, tmp_path):
+        (tmp_path / "mod.py").write_text("def my_func():\n    pass\n")
+        from tempograph.builder import build_graph
+        return build_graph(str(tmp_path), use_config=False)
+
+    def test_recent_commits_section_appears(self, tmp_path):
+        """recent_file_commits returns 2 commits → 'Recent changes:' section present."""
+        from unittest.mock import patch
+        from tempograph.render import render_focused
+
+        g = self._build_simple_repo(tmp_path)
+        fake_commits = [
+            {"days_ago": 3, "message": "add staleness annotations for callers"},
+            {"days_ago": 10, "message": "initial implementation"},
+        ]
+
+        with patch("tempograph.git.recent_file_commits", return_value=fake_commits):
+            output = render_focused(g, "my_func")
+
+        assert "Recent changes (mod.py):" in output
+        assert "3d ago: add staleness annotations for callers" in output
+        assert "10d ago: initial implementation" in output
+
+    def test_no_recent_commits_section_when_empty(self, tmp_path):
+        """recent_file_commits returns [] → no 'Recent changes:' section (no noise)."""
+        from unittest.mock import patch
+        from tempograph.render import render_focused
+
+        g = self._build_simple_repo(tmp_path)
+
+        with patch("tempograph.git.recent_file_commits", return_value=[]):
+            output = render_focused(g, "my_func")
+
+        assert "Recent changes" not in output
+
+
+# ---------------------------------------------------------------------------
 # CommonJS export detection
 # ---------------------------------------------------------------------------
 

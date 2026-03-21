@@ -101,8 +101,8 @@ export function ArgsInput({
         onClick={onRun}
         disabled={modeRunning}
         style={{ padding: "4px 10px" }}
-        title="Run (⌘R)"
-        aria-label={modeRunning ? "Running…" : "Run mode (⌘R)"}
+        title="Run (⌘↵)"
+        aria-label={modeRunning ? "Running…" : "Run mode (⌘↵)"}
       >
         <Play size={11} aria-hidden="true" /> {modeRunning ? "..." : "Run"}
       </button>
