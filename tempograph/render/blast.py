@@ -1000,6 +1000,22 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — changes here cascade through all dependent tests; run full test suite"
         )
 
+    # S365: Middleware blast — blast target is a middleware/interceptor/decorator file.
+    # Middleware wraps every request or operation in the stack; changes to it affect all
+    # code paths simultaneously, including ones that have no tests exercising that path.
+    _fp365 = file_path.lower()
+    _mw_patterns365 = (
+        "middleware", "interceptor", "decorator", "wrapper", "filter",
+        "hook", "plugin", "mixin",
+    )
+    _is_middleware365 = any(p in _fp365 for p in _mw_patterns365) and not _is_test_file(file_path)
+    if _is_middleware365 and importers:
+        lines.append(
+            f"middleware blast: {file_path.rsplit('/', 1)[-1]} is a middleware/interceptor"
+            f" used by {len(importers)} files"
+            f" — wraps all code paths; changes affect every caller simultaneously"
+        )
+
     # S359: Entrypoint blast — blast target is the application's main entry point.
     # Entrypoints wire together all subsystems; changes to them affect startup behavior,
     # argument parsing, and initialization order — subtle bugs that are hard to catch in unit tests.

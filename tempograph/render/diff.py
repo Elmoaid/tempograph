@@ -1052,6 +1052,19 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — profile before and after; cache TTL/key changes can cause latency spikes"
         )
 
+    # S363: Test-only diff — all changed files are test files (no source touched).
+    # A diff that only touches tests but no source may indicate:
+    # - Snapshots/fixtures were updated without verifying the underlying behavior
+    # - Tests were written for code that doesn't exist yet (TDD) — flag for reviewers.
+    if changed_files:
+        _s363_test_changed = [f for f in changed_files if _is_test_file(f)]
+        _s363_src_changed = [f for f in changed_files if not _is_test_file(f)]
+        if _s363_test_changed and not _s363_src_changed:
+            lines.append(
+                f"test-only diff: {len(_s363_test_changed)} test file(s) changed, 0 source files"
+                f" — no source modified; verify tests reflect actual behavior, not just updated snapshots"
+            )
+
     # S357: I18n/locale diff — diff touches internationalization or locale files.
     # Locale file changes affect user-visible strings across all language builds;
     # missing translations in one locale can cause blank labels or broken UI in that region.

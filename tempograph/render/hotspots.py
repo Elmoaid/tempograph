@@ -1244,6 +1244,23 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 f" — package interface is unstable; every importer of the package is affected"
             )
 
+    # S364: Test support hotspot — top hotspot is a shared test helper/fixture/factory file.
+    # High-churn test support files are themselves a testing risk; if conftest/factories
+    # change frequently, dependent tests may break for reasons unrelated to the code under test.
+    if scores:
+        _top364 = scores[0][1]
+        _fp364 = _top364.file_path.lower()
+        _test_support364 = (
+            "conftest", "fixtures", "factories", "test_helpers", "test_utils",
+            "testing", "test_support", "mock_",
+        )
+        _is_support364 = any(p in _fp364 for p in _test_support364) or _is_test_file(_top364.file_path)
+        if _is_support364:
+            lines.append(
+                f"\ntest support hotspot: {_top364.file_path.rsplit('/', 1)[-1]}"
+                f" — high-churn test support; frequent changes break tests for unrelated reasons"
+            )
+
     # S358: Generated-file hotspot — top hotspot lives in a generated/auto-generated file.
     # Generated files should not be edited directly; if they are a hotspot, the generator
     # or its configuration is the actual source of churn, not the generated file.

@@ -1642,6 +1642,43 @@ def _signals_structure(
             )
 
 
+    # S361: Framework detection — codebase uses a recognized web/app framework.
+    # Knowing the framework informs code review expectations: Django has signals, Flask has
+    # blueprints, FastAPI has dependency injection — each with their own change-impact patterns.
+    _s361_framework_patterns: list[tuple[str, str]] = [
+        ("django", "Django"),
+        ("flask", "Flask"),
+        ("fastapi", "FastAPI"),
+        ("rails", "Rails"),
+        ("spring", "Spring"),
+        ("express", "Express"),
+        ("nextjs", "Next.js"),
+        ("nuxt", "Nuxt"),
+        ("laravel", "Laravel"),
+    ]
+    _s361_detected: list[str] = []
+    for _fp361, _fi361 in graph.files.items():
+        if _is_test_file(_fp361):
+            continue
+        _base361 = _fp361.lower()
+        for _pat361, _label361 in _s361_framework_patterns:
+            if _pat361 in _base361 and _label361 not in _s361_detected:
+                _s361_detected.append(_label361)
+    if not _s361_detected:
+        # Check import edges for framework names
+        for _e361 in graph.edges:
+            if _e361.kind.value == "imports":
+                _tid361 = _e361.target_id.lower()
+                for _pat361, _label361 in _s361_framework_patterns:
+                    if _pat361 in _tid361 and _label361 not in _s361_detected:
+                        _s361_detected.append(_label361)
+    if _s361_detected:
+        _fw_str361 = ", ".join(_s361_detected[:3])
+        lines.append(
+            f"framework: {_fw_str361} detected"
+            f" — framework conventions shape change impact; review framework-specific patterns"
+        )
+
     # S355: Test-only codebase — no source files found outside of test files.
     # A repo with only test files and no source is likely a test-only slice or
     # a misconfigured project; signals that the tempograph graph may be incomplete.
