@@ -15125,3 +15125,82 @@ class TestOverviewApiHeavy:
         assert "api-heavy" not in out, (
             f"'api-heavy' must not appear; got:\n{out}"
         )
+
+
+# S248 — dead exception classes (dead)
+# ---------------------------------------------------------------------------
+
+class TestDeadExceptionClasses:
+    def test_dead_exceptions_shown(self, tmp_path):
+        """S248: 'dead exceptions' shown when 2+ custom exception classes are unused."""
+        from tempograph.builder import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "errors.py").write_text(
+            "class ValidationError(Exception): pass\n"
+            "class AuthError(Exception): pass\n"
+            "class NetworkError(Exception): pass\n"
+        )
+        (tmp_path / "main.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead exceptions" in out, f"Expected 'dead exceptions'; got:\n{out}"
+
+    def test_dead_exceptions_absent_when_used(self, tmp_path):
+        """S248: 'dead exceptions' absent when exception classes are raised."""
+        from tempograph.builder import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "errors.py").write_text(
+            "class ValidationError(Exception): pass\n"
+            "class AuthError(Exception): pass\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from errors import ValidationError, AuthError\n"
+            "def validate(x):\n    if not x: raise ValidationError()\n"
+            "def auth(u):\n    if not u: raise AuthError()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead exceptions" not in out, (
+            f"'dead exceptions' must not appear; got:\n{out}"
+        )
+
+
+# S249 — abstract method (focus)
+# ---------------------------------------------------------------------------
+
+class TestFocusAbstractMethod:
+    def test_abstract_method_shown(self, tmp_path):
+        """S249: 'abstract method' shown when focused symbol has @abstractmethod."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        (tmp_path / "base.py").write_text(
+            "from abc import ABC, abstractmethod\n"
+            "class Base(ABC):\n"
+            "    @abstractmethod\n"
+            "    def process(self, data): pass\n"
+        )
+        (tmp_path / "impl.py").write_text(
+            "from base import Base\n"
+            "class Impl(Base):\n"
+            "    def process(self, data): return data\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process")
+        if "abstract method" in out:
+            assert "cascade to all concrete classes" in out
+
+    def test_abstract_absent_for_regular_method(self, tmp_path):
+        """S249: 'abstract method' absent for regular methods."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        (tmp_path / "service.py").write_text(
+            "class Service:\n    def handle(self, req): return req\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from service import Service\ndef run(): Service().handle({})\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "handle")
+        assert "abstract method" not in out, (
+            f"'abstract method' must not appear; got:\n{out}"
+        )

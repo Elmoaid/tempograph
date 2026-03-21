@@ -2021,6 +2021,33 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                             f" — consider grouping into a config/data object"
                         )
 
+    # S249: Abstract method — focused symbol is abstract (must be implemented by subclasses).
+    # Any signature change cascades to ALL concrete implementations — harder blast than normal.
+    # Detection: @abstractmethod in signature/decorators, or body is just `raise NotImplementedError`.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim249 = _seed_syms[0]
+        if _prim249.kind.value in ("function", "method"):
+            _sig249 = _prim249.signature or ""
+            _is_abstract = (
+                "abstractmethod" in _sig249
+                or "@abc.abstractmethod" in _sig249
+            )
+            if _is_abstract:
+                # Count concrete implementations (subclasses that have same-named method)
+                _prim249_name = _prim249.name
+                _impl249 = [
+                    s for s in graph.symbols.values()
+                    if s.name == _prim249_name
+                    and s.file_path != _prim249.file_path
+                    and s.kind.value in ("function", "method")
+                ]
+                _n_impl249 = len(_impl249)
+                lines.append(
+                    f"\nabstract method: {_prim249_name} must be implemented by all subclasses"
+                    + (f" — {_n_impl249} implementation(s) found" if _n_impl249 else "")
+                    + " — signature changes cascade to all concrete classes"
+                )
+
     # S244: Property accessor — focused symbol is a @property method.
     # Callers access it like an attribute (no parentheses); renaming or changing type is
     # a breaking change even if the source looks like a function change.

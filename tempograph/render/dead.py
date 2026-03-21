@@ -726,6 +726,28 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — removed feature configurations not yet cleaned up"
         )
 
+    # S248: Dead exception classes — custom exception classes with 0 raise/except sites.
+    # Dead exception classes bloat the exception hierarchy; unused errors may signal
+    # removed features whose error paths were never cleaned up.
+    # Only shown when 2+ dead exception classes found (conf >= 40).
+    _s248_exc_indicators = ("error", "exception", "err", "exc", "fault", "failure")
+    _s248_dead_exc = [
+        sym for sym, conf in scored
+        if conf >= 40
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value == "class"
+        and any(sym.name.lower().endswith(ind) for ind in _s248_exc_indicators)
+    ]
+    if len(_s248_dead_exc) >= 2:
+        _exc_names = [s.name for s in _s248_dead_exc[:3]]
+        _exc_str = ", ".join(_exc_names)
+        if len(_s248_dead_exc) > 3:
+            _exc_str += f" +{len(_s248_dead_exc) - 3} more"
+        lines.append(
+            f"dead exceptions: {len(_s248_dead_exc)} unused exception class(es) ({_exc_str})"
+            f" — removed error paths not yet cleaned up"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
