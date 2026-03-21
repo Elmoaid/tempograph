@@ -24287,3 +24287,284 @@ class TestDeadClassMethodsS499:
         assert "dead class methods" not in out, (
             f"'dead class methods' must not appear when classmethods are used; got:\n{out}"
         )
+
+
+# ── S500: Deep nesting overview ───────────────────────────────────────────────
+
+class TestRecursiveFunctionFocusedS500:
+    """S500: Focused function with a self-call emits the recursive signal."""
+
+    def test_recursive_function_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "algo.py").write_text(
+            "def factorial(n):\n"
+            "    if n <= 1:\n"
+            "        return 1\n"
+            "    return n * factorial(n - 1)\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from algo import factorial\ndef run(): return factorial(5)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="factorial")
+        assert "recursive" in out, (
+            f"Expected 'recursive' signal for factorial; got:\n{out}"
+        )
+
+    def test_recursive_function_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def add(a, b): return a + b\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from utils import add\ndef run(): return add(1, 2)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="add")
+        assert "recursive" not in out, (
+            f"'recursive' must not appear for non-recursive fn; got:\n{out}"
+        )
+
+
+# ── S506: Deep nesting overview ───────────────────────────────────────────────
+
+class TestDeepNestingOverviewS506:
+    """S506: Source files 3+ dirs deep emit deep nesting signal."""
+
+    def test_deep_nesting_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # Use "myapp" not "pkg" (pkg is in DEFAULT_IGNORE_DIRS)
+        deep_dir = tmp_path / "myapp" / "sub" / "core"
+        deep_dir.mkdir(parents=True)
+        (deep_dir / "engine.py").write_text("def run(): return 1\n")
+        (tmp_path / "main.py").write_text(
+            "def start(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "deep nesting" in out, (
+            f"Expected 'deep nesting' for 3-level deep files; got:\n{out}"
+        )
+
+    def test_deep_nesting_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def helper(): return 1\n")
+        (tmp_path / "main.py").write_text("from utils import helper\ndef run(): helper()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "deep nesting" not in out, (
+            f"'deep nesting' must not appear for flat files; got:\n{out}"
+        )
+
+
+# ── S501: Pure function focused ───────────────────────────────────────────────
+
+class TestPureFunctionFocusedS501:
+    """S501: A top-level function with no outbound calls and callers emits pure function signal."""
+
+    def test_pure_function_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "math_utils.py").write_text(
+            "def add(a, b):\n    return a + b\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from math_utils import add\ndef run(): return add(1, 2)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="add")
+        assert "pure function" in out, (
+            f"Expected 'pure function' for add() with no callees; got:\n{out}"
+        )
+
+    def test_pure_function_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def helper(x):\n    return x\n"
+            "def process(data):\n    return helper(data)\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from utils import process\ndef run(): return process(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="process")
+        assert "pure function" not in out, (
+            f"'pure function' must not appear for function with callees; got:\n{out}"
+        )
+
+
+# ── S502: Public API change diff ──────────────────────────────────────────────
+
+class TestPublicAPIChangeDiffS502:
+    """S502: Diff touching an api-named file emits public API change signal."""
+
+    def test_public_api_change_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "api.py").write_text(
+            "def get_users(): return []\n"
+            "def create_user(name): return {'name': name}\n"
+        )
+        (tmp_path / "service.py").write_text(
+            "from api import get_users\ndef serve(): return get_users()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["api.py"])
+        assert "public API change" in out, (
+            f"Expected 'public API change' for api.py; got:\n{out}"
+        )
+
+    def test_public_api_change_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def helper(x): return x\n")
+        (tmp_path / "main.py").write_text(
+            "from utils import helper\ndef run(): return helper(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["utils.py"])
+        assert "public API change" not in out, (
+            f"'public API change' must not appear for non-api file; got:\n{out}"
+        )
+
+
+# ── S503: Exception class hotspot ────────────────────────────────────────────
+
+class TestExceptionClassHotspotS503:
+    """S503: Top hotspot is an Error/Exception class with 3+ callers emits the signal."""
+
+    def test_exception_hotspot_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "errors.py").write_text(
+            "class ValidationError(Exception):\n    pass\n"
+        )
+        callers = "\n".join(
+            f"from errors import ValidationError\n"
+            f"def validate_{i}(): raise ValidationError('err')\n"
+            for i in range(4)
+        )
+        (tmp_path / "validators.py").write_text(callers)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "exception hotspot" in out, (
+            f"Expected 'exception hotspot' for ValidationError; got:\n{out}"
+        )
+
+    def test_exception_hotspot_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def compute(x): return x * 2\n"
+        )
+        callers = "\n".join(
+            f"from utils import compute\ndef caller_{i}(): compute({i})\n"
+            for i in range(4)
+        )
+        (tmp_path / "callers.py").write_text(callers)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "exception hotspot" not in out, (
+            f"'exception hotspot' must not appear for non-exception hotspot; got:\n{out}"
+        )
+
+
+# ── S504: Leaf file blast ─────────────────────────────────────────────────────
+
+class TestLeafFileBlastS504:
+    """S504: Blast target with imports but no importers emits leaf file signal when callers exist."""
+
+    def test_leaf_file_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "shared.py").write_text("def helper(): return 1\n")
+        (tmp_path / "app.py").write_text(
+            "from shared import helper\ndef run(): return helper()\n"
+        )
+        # script.py calls run() directly (not importing the module)
+        (tmp_path / "script.py").write_text(
+            "from app import run\nresult = run()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        # Give script.py as the "blast subject" for app.py by checking from app.py's perspective
+        # Alternatively blast script.py which imports app but has no importers
+        out = render_blast_radius(g, file_path="script.py")
+        assert "leaf file blast" in out, (
+            f"Expected 'leaf file blast' for script.py (no importers, has caller); got:\n{out}"
+        )
+
+    def test_leaf_file_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "shared.py").write_text("def helper(): return 1\n")
+        (tmp_path / "app.py").write_text(
+            "from shared import helper\ndef run(): return helper()\n"
+        )
+        (tmp_path / "loader.py").write_text(
+            "from app import run\ndef load(): run()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="app.py")
+        assert "leaf file blast" not in out, (
+            f"'leaf file blast' must not appear when app.py has an importer; got:\n{out}"
+        )
+
+
+# ── S505: Dead property methods dead ─────────────────────────────────────────
+
+class TestDeadPropertyMethodsS505:
+    """S505: 2+ unused getter-style methods emit dead property methods signal."""
+
+    def test_dead_property_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "model.py").write_text(
+            "class Config:\n"
+            "    def __init__(self): self._x = 0\n"
+            "    def get_value(self): return self._x\n"
+            "    def get_name(self): return 'cfg'\n"
+            "    def is_enabled(self): return True\n"
+        )
+        (tmp_path / "main.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead property methods" in out, (
+            f"Expected 'dead property methods' for unused getters; got:\n{out}"
+        )
+
+    def test_dead_property_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "model.py").write_text(
+            "class Config:\n"
+            "    def __init__(self): self._x = 0\n"
+            "    def get_value(self): return self._x\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from model import Config\n"
+            "def run(): Config().get_value()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead property methods" not in out, (
+            f"'dead property methods' must not appear when getter is called; got:\n{out}"
+        )

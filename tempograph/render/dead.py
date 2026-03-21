@@ -1697,22 +1697,21 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
     _s499_dunder_skip = {"__init__", "__str__", "__repr__", "__enter__", "__exit__", "__new__"}
     _s499_dead_class_methods = []
     for _sym499 in graph.symbols.values():
+        # Parser assigns kind="function" to @classmethod/@staticmethod (not "method")
+        # and requires a parent class to distinguish from top-level functions.
         if (
             not _is_test_file(_sym499.file_path)
-            and _sym499.kind.value in ("function", "method")
+            and _sym499.kind.value == "function"
             and _sym499.name not in _s499_dunder_skip
-            and _sym499.signature
+            and _sym499.parent_id
+            and _sym499.parent_id in graph.symbols
+            and graph.symbols[_sym499.parent_id].kind.value == "class"
         ):
-            # Detect classmethod: first param after ( is 'cls'
-            _sig499 = _sym499.signature
-            _params499_raw = _sig499.split("(", 1)[-1].split(")", 1)[0] if "(" in _sig499 else ""
-            _first_param499 = _params499_raw.split(",")[0].strip().split(":")[0].strip()
-            if _first_param499 == "cls":
-                _callers499 = [
-                    e for e in graph.edges if e.kind.value == "calls" and e.target_id == _sym499.id
-                ]
-                if not _callers499 and not graph.importers_of(_sym499.file_path):
-                    _s499_dead_class_methods.append(_sym499)
+            _callers499 = [
+                e for e in graph.edges if e.kind.value == "calls" and e.target_id == _sym499.id
+            ]
+            if not _callers499 and not graph.importers_of(_sym499.file_path):
+                _s499_dead_class_methods.append(_sym499)
     if len(_s499_dead_class_methods) >= 2:
         _cm_names499 = ", ".join(s.name for s in _s499_dead_class_methods[:3])
         if len(_s499_dead_class_methods) > 3:
@@ -1720,6 +1719,29 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         lines.append(
             f"dead class methods: {len(_s499_dead_class_methods)} unused @classmethod/@staticmethod"
             f" ({_cm_names499}) — may be abandoned utilities; verify intent before deleting"
+        )
+
+    # S505: Dead property methods — @property methods with 0 callers.
+    # Dead properties often represent stale getters from a refactored data model;
+    # they block renaming the underlying attribute because any future reader may touch them.
+    _s505_prop_prefixes = ("get_", "is_", "has_", "can_", "should_", "needs_")
+    _raw_callers505 = getattr(graph, "_callers", {})
+    _s505_dead_props = [
+        sym for sym in graph.symbols.values()
+        if not _is_test_file(sym.file_path)
+        and sym.kind.value == "method"
+        and not graph.callers_of(sym.id)
+        and not _raw_callers505.get(sym.id)
+        and not graph.importers_of(sym.file_path)
+        and any(sym.name.lower().startswith(p) for p in _s505_prop_prefixes)
+    ]
+    if len(_s505_dead_props) >= 2:
+        _p_names505 = ", ".join(s.name for s in _s505_dead_props[:3])
+        if len(_s505_dead_props) > 3:
+            _p_names505 += f" +{len(_s505_dead_props) - 3} more"
+        lines.append(
+            f"dead property methods: {len(_s505_dead_props)} unused getter-style method(s) ({_p_names505})"
+            f" — stale getters block attribute renames; remove before refactoring the data model"
         )
 
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
