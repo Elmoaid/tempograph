@@ -617,6 +617,23 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — schema changes are irreversible in production; coordinate with DBA team"
         )
 
+    # S831: Constants-only diff — all changed files contain only constants/variables.
+    # Diffs that only change constant values are high-risk despite small LOC;
+    # value changes propagate silently to all code paths that reference them.
+    if changed_files:
+        _const_files831 = []
+        for f831 in changed_files:
+            fi831 = graph.files.get(f831)
+            if fi831:
+                _syms831 = [graph.symbols[sid] for sid in fi831.symbols if sid in graph.symbols]
+                if _syms831 and all(s.kind.value in ("constant", "variable") for s in _syms831):
+                    _const_files831.append(f831)
+        if _const_files831 and len(_const_files831) == len([f for f in changed_files if f in graph.files]):
+            lines.append(
+                f"constants-only diff: all {len(_const_files831)} changed source file(s) contain only constants"
+                f" — value-only change; verify all consumers behave correctly with new values"
+            )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 

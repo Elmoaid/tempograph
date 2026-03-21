@@ -39519,3 +39519,217 @@ class TestDeadMigrationFunctionsS827:
         assert "dead migration functions" not in out, (
             f"'dead migration functions' must not appear when migration fn is called; got:\n{out}"
         )
+
+
+# ---------------------------------------------------------------------------
+# S828 – S833
+# ---------------------------------------------------------------------------
+
+# ── S828: Long symbol name focus ──────────────────────────────────────────────
+
+class TestLongSymbolNameFocusS828:
+    """S828: Focused symbol with 30+ char name emits long-symbol-name signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        # Function name is 32 characters
+        (tmp_path / "api.py").write_text(
+            "def get_user_by_email_and_tenant_id(email, tenant): return None\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from api import get_user_by_email_and_tenant_id\n"
+            "def run(e, t): get_user_by_email_and_tenant_id(e, t)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "get_user_by_email_and_tenant_id")
+        assert "long symbol name" in out, (
+            f"Expected 'long symbol name' for 32-char function name; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def process(x): return x\n")
+        (tmp_path / "app.py").write_text("from utils import process\ndef run(x): process(x)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process")
+        assert "long symbol name" not in out, (
+            f"'long symbol name' must not appear for short function name; got:\n{out}"
+        )
+
+
+# ── S829: No module constants ─────────────────────────────────────────────────
+
+class TestNoModuleConstantsS829:
+    """S829: 5+ functions but zero named constants emits no-module-constants signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # 6 functions, no constants
+        for i in range(6):
+            (tmp_path / f"func_{i}.py").write_text(f"def compute_{i}(x): return x * {i+1}\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no module constants" in out, (
+            f"Expected 'no module constants' for 6 functions with no constants; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # Functions WITH constants
+        (tmp_path / "config.py").write_text("MAX_SIZE = 100\nDEFAULT_TIMEOUT = 30\n")
+        for i in range(3):
+            (tmp_path / f"worker_{i}.py").write_text(
+                f"from config import MAX_SIZE\ndef run_{i}(): return MAX_SIZE\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no module constants" not in out, (
+            f"'no module constants' must not appear when constants exist; got:\n{out}"
+        )
+
+
+# ── S830: Init file blast ─────────────────────────────────────────────────────
+
+class TestInitFileBlastS830:
+    """S830: Blast target is __init__.py emits init-file-blast signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        pkg = tmp_path / "mypkg"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("from .core import main\n")
+        (pkg / "core.py").write_text("def main(): pass\n")
+        (tmp_path / "app.py").write_text("from mypkg import main\ndef run(): main()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "mypkg/__init__.py")
+        assert "init file blast" in out, (
+            f"Expected 'init file blast' when blast target is __init__.py; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        (tmp_path / "app.py").write_text("from utils import helper\ndef run(): helper()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "utils.py")
+        assert "init file blast" not in out, (
+            f"'init file blast' must not appear for non-__init__ blast target; got:\n{out}"
+        )
+
+
+# ── S831: Constants-only diff ─────────────────────────────────────────────────
+
+class TestConstantsOnlyDiffS831:
+    """S831: All changed files contain only constants emits constants-only-diff signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "limits.py").write_text("MAX_RETRIES = 3\nTIMEOUT = 30\n")
+        (tmp_path / "app.py").write_text(
+            "from limits import MAX_RETRIES\ndef run(): return MAX_RETRIES\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["limits.py"])
+        assert "constants-only diff" in out, (
+            f"Expected 'constants-only diff' when only constants file changed; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "service.py").write_text("def process(x): return x\n")
+        (tmp_path / "app.py").write_text("from service import process\ndef run(x): process(x)\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["service.py"])
+        assert "constants-only diff" not in out, (
+            f"'constants-only diff' must not appear when functions are changed; got:\n{out}"
+        )
+
+
+# ── S832: Single-file hotspot callers ────────────────────────────────────────
+
+class TestSingleFileHotspotCallersS832:
+    """S832: Top hotspot has 3+ callers but all from one file emits single-file-hotspot-callers signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def util(x): return x\n")
+        # All callers in one file
+        calls = "\n".join(
+            f"from utils import util\ndef caller_{i}(x): util(x)\n" for i in range(4)
+        )
+        (tmp_path / "consumer.py").write_text(calls)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "single-file hotspot callers" in out, (
+            f"Expected 'single-file hotspot callers' for hotspot with all callers in one file; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "shared.py").write_text("def shared(x): return x\n")
+        for i in range(4):
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from shared import shared\ndef use_{i}(): shared({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "single-file hotspot callers" not in out, (
+            f"'single-file hotspot callers' must not appear when callers span multiple files; got:\n{out}"
+        )
+
+
+# ── S833: Dead CLI commands ───────────────────────────────────────────────────
+
+class TestDeadCliCommandsS833:
+    """S833: Unused functions in CLI/commands files emits dead-CLI-commands signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "cli.py").write_text(
+            "def deploy(): pass\ndef rollback(): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead CLI commands" in out, (
+            f"Expected 'dead CLI commands' for unused fns in cli.py; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "cli.py").write_text("def deploy(): pass\n")
+        (tmp_path / "runner.py").write_text(
+            "from cli import deploy\ndef main(): deploy()\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from runner import main\nif __name__ == '__main__': main()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead CLI commands" not in out, (
+            f"'dead CLI commands' must not appear when CLI fn is called; got:\n{out}"
+        )

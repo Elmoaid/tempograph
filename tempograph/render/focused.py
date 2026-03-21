@@ -3805,6 +3805,17 @@ def _signals_focused_fn_advanced(
                         f" — large module accumulating responsibilities; consider splitting"
                     )
 
+    # S828: Long name focus — focused symbol has an unusually long name (30+ chars).
+    # Very long names often indicate over-specific responsibilities or naming by accident;
+    # they make callers verbose and are harder to refactor consistently.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim828 = _seed_syms[0]
+        if len(_prim828.name) >= 30 and not _is_test_file(_prim828.file_path):
+            lines.append(
+                f"\nlong symbol name: {_prim828.name} has {len(_prim828.name)} characters"
+                f" — overly specific name; callers become verbose and renaming is error-prone"
+            )
+
     return lines
 
 
