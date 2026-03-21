@@ -3069,6 +3069,25 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — may still be registered in framework config; verify before deleting"
         )
 
+    # S893: Dead exported symbols — unused functions or classes that are part of the public API.
+    # Exported dead symbols may be consumed by external callers not visible in this graph;
+    # removing them without checking downstream consumers can break public API contracts.
+    _dead_exported893 = [
+        s for s in dead
+        if s.exported
+        and s.kind.value in ("function", "class")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+    ]
+    if _dead_exported893:
+        _exp_names893 = ", ".join(s.name for s in _dead_exported893[:3])
+        if len(_dead_exported893) > 3:
+            _exp_names893 += f" +{len(_dead_exported893) - 3} more"
+        lines.append(
+            f"dead exports: {len(_dead_exported893)} unused exported symbol(s) ({_exp_names893})"
+            f" — public API symbols with no internal callers; check external consumers before removing"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

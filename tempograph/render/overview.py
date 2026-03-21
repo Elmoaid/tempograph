@@ -3286,6 +3286,24 @@ def _signals_async_oop(
             f" — untested codebase; changes carry higher risk of undetected regressions"
         )
 
+    # S889: High fan-in file — one file is imported by 5+ other source files.
+    # Files with high fan-in are critical infrastructure; any change triggers a
+    # large blast radius across the dependency tree of importing modules.
+    _fan_in889: dict[str, int] = {}
+    for fp889 in graph.files:
+        if not _is_test_file(fp889):
+            importers889 = graph.importers_of(fp889)
+            count889 = sum(1 for i in importers889 if not _is_test_file(i))
+            if count889 > 0:
+                _fan_in889[fp889] = count889
+    if _fan_in889:
+        _top_fp889, _top_in889 = max(_fan_in889.items(), key=lambda x: x[1])
+        if _top_in889 >= 5:
+            lines.append(
+                f"high fan-in: {_top_fp889.rsplit('/', 1)[-1]} imported by {_top_in889} files"
+                f" — critical infrastructure; changes here have wide blast radius"
+            )
+
     return lines
 
 

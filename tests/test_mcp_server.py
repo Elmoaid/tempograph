@@ -42079,3 +42079,228 @@ class TestDeadMiddlewareS887:
         assert "dead middleware" not in out, (
             f"'dead middleware' must not appear when before_request is called; got:\n{out}"
         )
+
+
+# ── S888–S893 ──────────────────────────────────────────────────────────────────
+
+# ── S888: Multi-caller focus ──────────────────────────────────────────────────
+
+class TestMultiCallerFocusS888:
+    """S888: Focused function called from 3+ distinct files emits multi-caller signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "core.py").write_text("def shared_util(x): return x\n")
+        for i in range(3):
+            (tmp_path / f"service_{i}.py").write_text(
+                "from core import shared_util\n"
+                f"def run_{i}(): shared_util({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "shared_util")
+        assert "multi-caller" in out, (
+            f"'multi-caller' expected for function called from 3+ files; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "core.py").write_text("def local_util(x): return x\n")
+        (tmp_path / "service.py").write_text(
+            "from core import local_util\ndef run(): local_util(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "local_util")
+        assert "multi-caller" not in out, (
+            f"'multi-caller' must not appear when function called from < 3 files; got:\n{out}"
+        )
+
+
+# ── S889: High fan-in file ────────────────────────────────────────────────────
+
+class TestHighFanInS889:
+    """S889: One file imported by 5+ source files emits high fan-in signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "shared.py").write_text("def helper(): pass\n")
+        for i in range(5):
+            (tmp_path / f"module_{i}.py").write_text(
+                "from shared import helper\n"
+                f"def fn_{i}(): helper()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "high fan-in" in out, (
+            f"'high fan-in' expected when file imported by 5+ files; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "shared.py").write_text("def helper(): pass\n")
+        for i in range(3):
+            (tmp_path / f"module_{i}.py").write_text(
+                "from shared import helper\n"
+                f"def fn_{i}(): helper()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "high fan-in" not in out, (
+            f"'high fan-in' must not appear when file imported by < 5 files; got:\n{out}"
+        )
+
+
+# ── S890: Database file blast ─────────────────────────────────────────────────
+
+class TestDatabaseBlastS890:
+    """S890: Blast target filename contains 'db'/'model'/'repository' emits database-blast signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "user_repository.py").write_text(
+            "def find_user(uid): return {}\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from user_repository import find_user\n"
+            "def run(): find_user(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "user_repository.py")
+        assert "database blast" in out, (
+            f"'database blast' expected for repository-named file; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "user_service.py").write_text(
+            "def get_user(uid): return {}\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from user_service import get_user\ndef run(): get_user(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "user_service.py")
+        assert "database blast" not in out, (
+            f"'database blast' must not appear for non-database file; got:\n{out}"
+        )
+
+
+# ── S891: New files in diff ───────────────────────────────────────────────────
+
+class TestNewFilesInDiffS891:
+    """S891: Changed files not found in graph emits new-files signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "existing.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["existing.py", "brand_new_feature.py"])
+        assert "new files" in out, (
+            f"'new files' expected when changed file not in graph; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "existing.py").write_text("def helper(): pass\n")
+        (tmp_path / "other.py").write_text(
+            "from existing import helper\ndef run(): helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["existing.py", "other.py"])
+        assert "new files" not in out, (
+            f"'new files' must not appear when all changed files are in graph; got:\n{out}"
+        )
+
+
+# ── S892: Hotspot cluster ────────────────────────────────────────────────────
+
+class TestHotspotClusterS892:
+    """S892: 3+ top-10 hotspots in same file emits hotspot-cluster signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "big_module.py").write_text(
+            "def alpha(a, b, c, d):\n    for i in range(10):\n        if a: b = c * d\n    return a\n"
+            "def beta(x, y, z, w):\n    for i in range(10):\n        if x: y = z * w\n    return x\n"
+            "def gamma(p, q, r, s):\n    for i in range(10):\n        if p: q = r * s\n    return p\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from big_module import alpha, beta, gamma\n"
+            "def run(): alpha(1,2,3,4); beta(1,2,3,4); gamma(1,2,3,4)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "hotspot cluster" in out, (
+            f"'hotspot cluster' expected when 3+ hotspots in same file; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        for i in range(3):
+            (tmp_path / f"module_{i}.py").write_text(
+                f"def fn_{i}(a, b):\n    if a: return b\n    return a\n"
+            )
+        (tmp_path / "app.py").write_text(
+            "from module_0 import fn_0\nfrom module_1 import fn_1\nfrom module_2 import fn_2\n"
+            "def run(): fn_0(1,2); fn_1(1,2); fn_2(1,2)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "hotspot cluster" not in out, (
+            f"'hotspot cluster' must not appear when hotspots spread across files; got:\n{out}"
+        )
+
+
+# ── S893: Dead exported symbols ───────────────────────────────────────────────
+
+class TestDeadExportedS893:
+    """S893: Unused exported functions/classes emits dead-exports signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "api.py").write_text(
+            "def public_fn(): return {}\n"
+            "def another_public(): return []\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead exports" in out, (
+            f"'dead exports' expected for unused exported functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        # Use _run (private) so public_fn has a caller but no dead exports exist
+        (tmp_path / "api.py").write_text("def public_fn(): return {}\n")
+        (tmp_path / "app.py").write_text(
+            "from api import public_fn\ndef _run(): public_fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead exports" not in out, (
+            f"'dead exports' must not appear when exported function is used; got:\n{out}"
+        )
