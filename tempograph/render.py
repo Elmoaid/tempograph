@@ -810,6 +810,71 @@ def _render_cochange_section(graph, seed_file_paths: list[str]) -> str:
     return ""
 
 
+def _render_all_callers_section(
+    graph, seeds: list, callsite_lines: dict, token_count: int, max_tokens: int
+) -> str:
+    """Complete callers section — all callers of seed symbols, grouped by file.
+
+    Shows which source files call the seed symbol and where (line numbers).
+    Useful for rename/refactor impact: agents see every call site at once.
+    Test callers are excluded (already shown in Tests section).
+    Triggered when total source callers >= 2. Capped at 5 files / 3 names each."""
+    if token_count > max_tokens - 60:
+        return ""
+
+    # Collect all source (non-test) callers across all seeds
+    by_file: dict[str, list[tuple[str, str, int]]] = {}  # file → [(caller_name, caller_id, seed_id)]
+    for seed in seeds:
+        for caller in graph.callers_of(seed.id):
+            if _is_test_file(caller.file_path):
+                continue
+            entry = (caller.name, caller.id, seed.id)
+            by_file.setdefault(caller.file_path, []).append(entry)
+
+    if not by_file:
+        return ""
+
+    total = sum(len(v) for v in by_file.values())
+    if total < 2:
+        return ""
+
+    # Sort files by number of callers (most first), take top 5
+    sorted_files = sorted(by_file.items(), key=lambda kv: -len(kv[1]))
+    n_files_total = len(sorted_files)
+    shown_files = sorted_files[:5]
+    hidden_files = n_files_total - len(shown_files)
+
+    parts = [f"\nCallers ({total} in {n_files_total} file{'s' if n_files_total != 1 else ''}):"]
+    for fp, entries in shown_files:
+        # De-duplicate by caller name, preserve order
+        seen_names: set[str] = set()
+        unique: list[tuple[str, str, str]] = []
+        for name, cid, sid in entries:
+            if name not in seen_names:
+                seen_names.add(name)
+                unique.append((name, cid, sid))
+
+        shown = unique[:3]
+        overflow = len(unique) - len(shown)
+
+        caller_strs = []
+        for name, cid, sid in shown:
+            lines_list = callsite_lines.get((cid, sid), [])
+            if lines_list:
+                loc = f"[line {lines_list[0]}]" if len(lines_list) == 1 else f"[lines {', '.join(str(l) for l in lines_list[:2])}]"
+                caller_strs.append(f"{name} {loc}")
+            else:
+                caller_strs.append(name)
+
+        suffix = f", +{overflow} more" if overflow else ""
+        parts.append(f"  {fp}: {', '.join(caller_strs)}{suffix}")
+
+    if hidden_files:
+        parts.append(f"  ... and {hidden_files} more file{'s' if hidden_files != 1 else ''}")
+
+    return "\n".join(parts)
+
+
 def _render_hot_callers_section(
     graph, seeds: list, token_count: int, max_tokens: int
 ) -> str:
@@ -1121,10 +1186,31 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     to build a connected subgraph relevant to the query.
 
     For monolith files (>1000 lines), adds intra-file neighborhood context
-    and biases BFS toward cross-file edges to avoid getting trapped in one file."""
-    seeds, seed_files, query_tokens = _collect_seeds(graph, query)
-    if not seeds:
-        return _suggest_alternatives(graph, query) or f"No symbols matching '{query}'"
+    and biases BFS toward cross-file edges to avoid getting trapped in one file.
+
+    Supports multi-symbol focus via '|' separator: "authMiddleware | loginHandler"
+    merges seeds from each query and runs a single combined BFS."""
+    # Multi-symbol: split on '|', collect seeds for each query, merge results.
+    _parts = [p.strip() for p in query.split("|") if p.strip()] if "|" in query else [query]
+    if len(_parts) > 1:
+        _seen_seed_ids: set[str] = set()
+        seeds: list[Symbol] = []
+        seed_files: set[str] = set()
+        query_tokens: list[str] = []
+        for _part in _parts:
+            _s, _sf, _qt = _collect_seeds(graph, _part)
+            for _sym in _s:
+                if _sym.id not in _seen_seed_ids:
+                    seeds.append(_sym)
+                    _seen_seed_ids.add(_sym.id)
+            seed_files |= _sf
+            query_tokens.extend(t for t in _qt if t not in query_tokens)
+        if not seeds:
+            return _suggest_alternatives(graph, query) or f"No symbols matching '{query}'"
+    else:
+        seeds, seed_files, query_tokens = _collect_seeds(graph, query)
+        if not seeds:
+            return _suggest_alternatives(graph, query) or f"No symbols matching '{query}'"
 
     # Orbit-BFS seeding: inject symbols from git-coupled files as depth-1 seeds.
     # Call graph misses test files (they call INTO src, not tracked as callers).
@@ -1163,7 +1249,7 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
             ordered, seen_ids = _ext_ordered, _ext_seen
             _depth_extended = True
 
-    _focus_header = f"Focus: {query}"
+    _focus_header = f"Focus: {' | '.join(_parts)}" if len(_parts) > 1 else f"Focus: {query}"
     if _depth_extended:
         _focus_header += f"  [depth +1 — sparse ({len(ordered)} nodes)]"
     lines = [_focus_header, ""]
@@ -1268,6 +1354,11 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     hot_section = _render_hot_callers_section(graph, _seed_syms, token_count, max_tokens)
     if hot_section:
         lines.append(hot_section)
+
+    # All callers: complete caller list grouped by file (for rename/refactor impact).
+    callers_section = _render_all_callers_section(graph, _seed_syms, _callsite_lines, token_count, max_tokens)
+    if callers_section:
+        lines.append(callers_section)
 
     return "\n".join(lines)
 
@@ -1917,6 +2008,21 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 warnings.append(f"blast: {bc} files depend{breakdown} — changes need broad review")
         if warnings:
             lines.append(f"    → {'; '.join(warnings)}")
+
+    # File concentration: which files dominate the hotspot list.
+    # If one file has 5+ hotspots, agents should read it first — it's the bottleneck.
+    if len(scores) >= 5:
+        _file_counts: dict[str, int] = {}
+        for _, sym in scores[:top_n]:
+            _file_counts[sym.file_path] = _file_counts.get(sym.file_path, 0) + 1
+        _top_conc = sorted(_file_counts.items(), key=lambda x: -x[1])[:2]
+        _conc_parts = [
+            f"{fp.rsplit('/', 1)[-1]} ({n}/{min(len(scores), top_n)})"
+            for fp, n in _top_conc if n >= 3
+        ]
+        if _conc_parts:
+            lines.append("")
+            lines.append(f"Hotspot concentration: {', '.join(_conc_parts)}")
 
     return "\n".join(lines)
 

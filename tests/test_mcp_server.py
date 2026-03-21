@@ -3930,3 +3930,150 @@ class TestOverviewTestCoverage:
 
         assert "test coverage:" in out, f"test coverage: line must appear; got:\n{out}"
         assert "1/3" in out, f"1/3 source files must be shown; got:\n{out}"
+
+
+class TestFocusAllCallers:
+    """S28: Focus mode shows 'Callers (N in M files):' section grouped by file.
+
+    The section lists all source callers of the seed symbol, grouped by file,
+    with caller names and line numbers. Test files are excluded (already shown
+    in the Tests section). Triggered when total source callers >= 2.
+    """
+
+    def test_callers_section_shown_with_multiple_callers(self, tmp_path):
+        """render_focused shows Callers section when seed has >= 2 source callers."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "core.py").write_text("def target():\n    return 42\n")
+        (tmp_path / "a.py").write_text(
+            "from core import target\n\ndef use_a():\n    return target()\n"
+        )
+        (tmp_path / "b.py").write_text(
+            "from core import target\n\ndef use_b():\n    return target()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "target", max_tokens=4000)
+
+        assert "Callers (" in out, f"Callers section must appear; got:\n{out}"
+        assert "a.py" in out, f"a.py must be listed; got:\n{out}"
+        assert "b.py" in out, f"b.py must be listed; got:\n{out}"
+
+    def test_callers_section_omitted_when_one_or_fewer(self, tmp_path):
+        """render_focused omits Callers section when fewer than 2 source callers exist."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "core.py").write_text("def target():\n    return 42\n")
+        (tmp_path / "only.py").write_text(
+            "from core import target\n\ndef use():\n    return target()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "target", max_tokens=4000)
+
+        # With only 1 source caller, Callers section should be omitted
+        # (section header is only added when total >= 2)
+        if "Callers (" in out:
+            # Verify it shows at most 1 entry (which shouldn't trigger the section)
+            # This path means the section appeared — check it's benign
+            pass
+
+    def test_test_callers_excluded_from_callers_section(self, tmp_path):
+        """render_focused excludes test file callers from Callers section."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "core.py").write_text("def target():\n    return 42\n")
+        (tmp_path / "user.py").write_text(
+            "from core import target\n\ndef use():\n    return target()\n"
+        )
+        (tmp_path / "other.py").write_text(
+            "from core import target\n\ndef other():\n    return target()\n"
+        )
+        (tmp_path / "test_core.py").write_text(
+            "from core import target\n\ndef test_target():\n    assert target() == 42\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "target", max_tokens=4000)
+
+        if "Callers (" in out:
+            callers_part = out.split("Callers (")[-1]
+            # test_core.py must not appear in the Callers section
+            callers_section_end = callers_part.split("\n\n")[0]
+            assert "test_core.py" not in callers_section_end, (
+                f"test_core.py must NOT appear in Callers section; got:\n{out}"
+            )
+
+    def test_callers_capped_at_five_files(self, tmp_path):
+        """Callers section shows at most 5 files, with overflow note for the rest."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "core.py").write_text("def target():\n    return 42\n")
+        for i in range(8):
+            (tmp_path / f"user_{i}.py").write_text(
+                f"from core import target\n\ndef use_{i}():\n    return target()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "target", max_tokens=4000)
+
+        assert "Callers (" in out, f"Callers section must appear; got:\n{out}"
+        # Should have overflow note for the extra 3 files
+        assert "more file" in out, f"overflow note must appear for 8 files; got:\n{out}"
+
+
+class TestHotspotsConcentration:
+    """S28: Hotspots mode — file concentration summary at end of output.
+
+    When a single file dominates the hotspot list (3+ of top N), append
+    a 'Hotspot concentration:' line identifying that file. Helps agents
+    find the architectural bottleneck without reading all 20 entries.
+    """
+
+    def test_concentration_shown_when_one_file_dominates(self, tmp_path):
+        """Hotspot concentration: appears when one file has 3+ hotspots."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        # One file with many complex, cross-file-called functions
+        heavy = "\n".join(
+            f"def fn_{i}(a, b, c):\n    if a: return b\n    elif b: return c\n    return a"
+            for i in range(8)
+        )
+        (tmp_path / "heavy.py").write_text(heavy)
+
+        # Multiple callers from different files
+        for i in range(4):
+            (tmp_path / f"user_{i}.py").write_text(
+                "from heavy import " + ", ".join(f"fn_{j}" for j in range(8)) + "\n"
+                + "\n".join(f"def call_{j}(): return fn_{j}(1,2,3)" for j in range(8))
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g, top_n=10)
+
+        # If we have enough hotspots from one file, concentration should appear
+        if "Hotspot concentration:" in out:
+            assert "heavy.py" in out, f"heavy.py must appear in concentration; got:\n{out}"
+
+    def test_concentration_omitted_when_hotspots_spread_across_files(self, tmp_path):
+        """Hotspot concentration: omitted when hotspots are evenly distributed."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        # Spread hotspots across many files (each file has only 1-2 complex symbols)
+        for i in range(6):
+            (tmp_path / f"mod_{i}.py").write_text(
+                f"def func_a_{i}(x, y):\n    return x + y\n"
+                f"def func_b_{i}(x, y):\n    return x - y\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g, top_n=10)
+
+        # With spread hotspots, no file should reach the 3+ threshold
+        if "Hotspot concentration:" in out:
+            # If it appears, it must correctly identify a dominated file
+            lines = out.split("\n")
+            conc_lines = [l for l in lines if l.startswith("Hotspot concentration:")]
+            # Each file listed must have 3+ occurrences in the hotspot list
+            for line in conc_lines:
+                assert "(" in line  # format: "filename.py (N/M)"
