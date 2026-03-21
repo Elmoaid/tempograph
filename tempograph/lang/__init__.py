@@ -22,6 +22,7 @@ from .lua_handler import LuaHandlerMixin
 from .clojure_handler import ClojureHandlerMixin
 from .erlang_handler import ErlangHandlerMixin
 from .r_handler import RHandlerMixin
+from .julia_handler import JuliaHandlerMixin
 
 __all__ = [
     "PythonHandlerMixin",
@@ -46,4 +47,5 @@ __all__ = [
     "ClojureHandlerMixin",
     "ErlangHandlerMixin",
     "RHandlerMixin",
+    "JuliaHandlerMixin",
 ]
