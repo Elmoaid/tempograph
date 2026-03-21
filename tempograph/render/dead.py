@@ -2488,6 +2488,25 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — abandoned async workflow or incomplete async migration"
         )
 
+    # S731: Dead migration functions — unused functions with migration-related names.
+    # Migration functions (migrate, upgrade, downgrade) that are never called indicate
+    # abandoned schema migrations, version upgrade paths, or skipped data transformations.
+    _mig_kws731 = ("migrate", "upgrade", "downgrade", "rollback", "rollforward")
+    _dead_migs731 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and any(kw in s.name.lower() for kw in _mig_kws731)
+    ]
+    if _dead_migs731:
+        _mig_names731 = ", ".join(s.name for s in _dead_migs731[:3])
+        if len(_dead_migs731) > 3:
+            _mig_names731 += f" +{len(_dead_migs731) - 3} more"
+        lines.append(
+            f"dead migration functions: {len(_dead_migs731)} unused migration function(s) ({_mig_names731})"
+            f" — abandoned migration or skipped upgrade path"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

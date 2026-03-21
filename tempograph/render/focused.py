@@ -3505,6 +3505,27 @@ def _signals_focused_fn_advanced(
                     f" — this symbol may be on a removal path; check if it should be migrated"
                 )
 
+    # S726: Multiple inheritance — the focused class inherits from 2 or more base classes.
+    # Multiple inheritance creates complex MRO chains and is a common source of subtle bugs;
+    # method resolution order surprises are hard to debug and test.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim726 = _seed_syms[0]
+        if (
+            _prim726.kind.value == "class"
+            and not _is_test_file(_prim726.file_path)
+            and _prim726.signature is not None
+        ):
+            _sig726 = _prim726.signature
+            _paren_start726 = _sig726.find("(")
+            _paren_end726 = _sig726.find(")")
+            if _paren_start726 != -1 and _paren_end726 != -1:
+                _bases726 = _sig726[_paren_start726 + 1:_paren_end726].strip()
+                if _bases726.count(",") >= 1:
+                    lines.append(
+                        f"\nmultiple inheritance: {_prim726.name} inherits from multiple base classes"
+                        f" ({_bases726}) — complex MRO; verify method resolution order is intentional"
+                    )
+
     return lines
 
 

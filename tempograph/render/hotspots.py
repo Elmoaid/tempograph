@@ -2269,5 +2269,19 @@ def _collect_hotspots_signals(
                 f" ({len(_callers724)} callers) — public API re-export under high load; breaking change risk"
             )
 
+    # S730: Hotspot with no test callers — the top hotspot has callers but none are test files.
+    # A heavily-called hotspot with no test coverage is a high-risk symbol; changes to it have
+    # large blast radius with no safety net to catch regressions.
+    if scores and scores[0]:
+        _top730 = scores[0][1]
+        if _top730 is not None and not _is_test_file(_top730.file_path):
+            _callers730 = graph.callers_of(_top730.id)
+            _test_callers730 = [c for c in _callers730 if _is_test_file(c.file_path)]
+            if _callers730 and not _test_callers730:
+                out.append(
+                    f"\nno test coverage: {_top730.name} is a top hotspot ({len(_callers730)} callers)"
+                    f" with no direct test callers — high blast radius, low safety net; add tests"
+                )
+
     return out
 

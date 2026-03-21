@@ -1703,7 +1703,7 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
     if _fp_base626 in _util_names626:
         _importer_count626 = len([fp for fp in importers if not _is_test_file(fp)])
         lines.append(
-            f"utility module blast: {_fp589.rsplit('/', 1)[-1]} is a shared utility file"
+            f"utility file blast: {_fp589.rsplit('/', 1)[-1]} is a shared utility file"
             f" with {_importer_count626} non-test importer(s)"
             f" — utility modules accumulate mixed concerns; consider splitting by domain"
         )
@@ -1935,6 +1935,15 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
         lines.append(
             f"utility file blast: {_fp589.rsplit('/', 1)[-1]} has a utility-style name"
             f" — widely imported by convention; expect broad blast radius"
+        )
+
+    # S728: Package init blast — the blast target is a __init__.py file.
+    # Package init files aggregate and re-export symbols; every consumer of the package
+    # depends on __init__, so changes here have package-wide blast radius.
+    if _fp589.replace("\\", "/").rsplit("/", 1)[-1] == "__init__.py":
+        lines.append(
+            f"package init blast: {_fp589} is a package __init__.py"
+            f" — all package consumers depend on this; changes affect the entire public API"
         )
 
     return "\n".join(lines)

@@ -2862,6 +2862,20 @@ def _signals_async_oop(
             f" — library-style repo or entry point uses non-standard naming"
         )
 
+    # S727: Single-file repo — the entire codebase is in one non-test source file.
+    # All logic in one file makes every change touch the same place, prevents parallel
+    # development, and makes testing harder; time to split into modules.
+    _src_files727 = [
+        fp for fp in graph.files
+        if not _is_test_file(fp) and fp.endswith(".py")
+    ]
+    if len(_src_files727) == 1:
+        _sole727 = _src_files727[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"single-file repo: entire codebase is in {_sole727}"
+            f" — all logic in one file; consider splitting into modules as complexity grows"
+        )
+
     return lines
 
 

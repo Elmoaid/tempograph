@@ -370,6 +370,17 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — verify that all consumers are compatible with updated values"
         )
 
+    # S729: Mixed test and source diff — diff contains both test files and non-test source files.
+    # Healthy pattern: tests are updated alongside the source they cover.
+    # Signal is informational — verify tests cover all code paths changed in source.
+    _diff_tests729 = [f for f in changed_files if _is_test_file(f)]
+    _diff_src729 = [f for f in changed_files if not _is_test_file(f)]
+    if _diff_tests729 and _diff_src729:
+        lines.append(
+            f"mixed diff: {len(_diff_src729)} source and {len(_diff_tests729)} test file(s) changed"
+            f" — verify test coverage matches all changed source paths"
+        )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 

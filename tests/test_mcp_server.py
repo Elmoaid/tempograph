@@ -29714,8 +29714,8 @@ class TestUtilityModuleBlastS626:
         )
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_blast_radius(g, "utils.py")
-        assert "utility module blast" in out, (
-            f"Expected 'utility module blast' for utils.py blast target; got:\n{out}"
+        assert "utility file blast" in out, (
+            f"Expected 'utility file blast' for utils.py blast target; got:\n{out}"
         )
 
     def test_utility_module_absent(self, tmp_path):
@@ -29728,8 +29728,8 @@ class TestUtilityModuleBlastS626:
         )
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_blast_radius(g, "engine.py")
-        assert "utility module blast" not in out, (
-            f"'utility module blast' must not appear for non-utility named file; got:\n{out}"
+        assert "utility file blast" not in out, (
+            f"'utility file blast' must not appear for non-utility named file; got:\n{out}"
         )
 
 
@@ -32407,10 +32407,10 @@ class TestMultiFileDiffS687:
 
 # ── S688: Solo file hotspot ────────────────────────────────────────────────────
 
-class TestSoloFileHotspotS688:
-    """S688: Top hotspot is the only symbol in its file → solo-file-hotspot signal."""
+class TestSingleSymbolHotspotS688a:
+    """S688: Top hotspot is the only symbol in its file → single-symbol-hotspot signal."""
 
-    def test_solo_file_shown(self, tmp_path):
+    def test_single_symbol_shown(self, tmp_path):
         from tempograph.render.hotspots import render_hotspots
         from tempograph.builder import build_graph
 
@@ -32422,11 +32422,11 @@ class TestSoloFileHotspotS688:
             )
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_hotspots(g)
-        assert "solo file hotspot" in out, (
-            f"Expected 'solo file hotspot' for single-symbol hotspot file; got:\n{out}"
+        assert "single-symbol hotspot" in out, (
+            f"Expected 'single-symbol hotspot' for single-symbol hotspot file; got:\n{out}"
         )
 
-    def test_solo_file_absent(self, tmp_path):
+    def test_single_symbol_absent(self, tmp_path):
         from tempograph.render.hotspots import render_hotspots
         from tempograph.builder import build_graph
 
@@ -32441,8 +32441,8 @@ class TestSoloFileHotspotS688:
             )
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_hotspots(g)
-        assert "solo file hotspot" not in out, (
-            f"'solo file hotspot' must not appear when file has multiple symbols; got:\n{out}"
+        assert "single-symbol hotspot" not in out, (
+            f"'single-symbol hotspot' must not appear when file has multiple symbols; got:\n{out}"
         )
 
 
@@ -32631,10 +32631,10 @@ class TestMultiFileDiffS687b:
 
 # ── S688: Solo file hotspot ───────────────────────────────────────────────────
 
-class TestSoloFileHotspotS688:
-    """S688: Top hotspot is the only non-test symbol in its file emits solo-file-hotspot signal."""
+class TestSingleSymbolHotspotS688b:
+    """S688: Top hotspot is the only non-test symbol in its file emits single-symbol-hotspot signal."""
 
-    def test_solo_file_hotspot_shown(self, tmp_path):
+    def test_single_symbol_hotspot_shown(self, tmp_path):
         from tempograph.render.hotspots import render_hotspots
         from tempograph.builder import build_graph
 
@@ -32646,11 +32646,11 @@ class TestSoloFileHotspotS688:
             )
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_hotspots(g)
-        assert "solo file hotspot" in out, (
-            f"Expected 'solo file hotspot' for single-symbol file as top hotspot; got:\n{out}"
+        assert "single-symbol hotspot" in out, (
+            f"Expected 'single-symbol hotspot' for single-symbol file as top hotspot; got:\n{out}"
         )
 
-    def test_solo_file_hotspot_absent(self, tmp_path):
+    def test_single_symbol_hotspot_absent(self, tmp_path):
         from tempograph.render.hotspots import render_hotspots
         from tempograph.builder import build_graph
 
@@ -32665,8 +32665,8 @@ class TestSoloFileHotspotS688:
             )
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_hotspots(g)
-        assert "solo file hotspot" not in out, (
-            f"'solo file hotspot' must not appear when file has multiple symbols; got:\n{out}"
+        assert "single-symbol hotspot" not in out, (
+            f"'single-symbol hotspot' must not appear when file has multiple symbols; got:\n{out}"
         )
 
 
