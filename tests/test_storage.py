@@ -146,6 +146,42 @@ class TestGraphDB:
         assert symbols["main.py::my_func"].kind == SymbolKind.FUNCTION
         assert symbols["main.py::my_method"].kind == SymbolKind.METHOD
 
+    def test_save_and_load_indexes_roundtrip(self, db):
+        indexes = {
+            'callers': {'a::fn': ['b::caller']},
+            'callees': {'b::caller': ['a::fn']},
+            'children': {},
+            'importers': {},
+            'renderers': {},
+            'subtypes': {},
+        }
+        db.save_indexes(indexes, edge_count=5)
+        result = db.load_indexes(edge_count=5)
+        assert result is not None
+        assert result['callers'] == {'a::fn': ['b::caller']}
+        assert result['callees'] == {'b::caller': ['a::fn']}
+
+    def test_load_indexes_returns_none_on_stale_edge_count(self, db):
+        indexes = {'callers': {}, 'callees': {}, 'children': {},
+                   'importers': {}, 'renderers': {}, 'subtypes': {}}
+        db.save_indexes(indexes, edge_count=10)
+        result = db.load_indexes(edge_count=99)  # different count
+        assert result is None
+
+    def test_load_indexes_returns_none_when_missing(self, db):
+        result = db.load_indexes(edge_count=0)
+        assert result is None
+
+    def test_save_indexes_overwrites_previous(self, db):
+        indexes_v1 = {'callers': {'x': ['y']}, 'callees': {}, 'children': {},
+                      'importers': {}, 'renderers': {}, 'subtypes': {}}
+        indexes_v2 = {'callers': {'a': ['b']}, 'callees': {}, 'children': {},
+                      'importers': {}, 'renderers': {}, 'subtypes': {}}
+        db.save_indexes(indexes_v1, edge_count=1)
+        db.save_indexes(indexes_v2, edge_count=1)
+        result = db.load_indexes(edge_count=1)
+        assert result['callers'] == {'a': ['b']}
+
 
 class TestVectorSearch:
     def test_init_vectors(self, db):
