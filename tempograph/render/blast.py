@@ -1441,6 +1441,19 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — changes to __init__.py re-exports propagate to all consumers; review every import"
         )
 
+    # S504: Leaf file blast — blast target imports from others but nothing imports it.
+    # Leaf files are the farthest point in the dependency chain; their changes cannot
+    # propagate via imports, but any change still requires local testing of all symbols.
+    _s504_outbound = {
+        e.target_id for e in graph.edges
+        if e.kind.value == "imports" and e.source_id == file_path and e.target_id != file_path
+    }
+    if _s504_outbound and not importers:
+        lines.append(
+            f"leaf file blast: {file_path.rsplit('/', 1)[-1]} imports {len(_s504_outbound)} file(s) but has no importers"
+            f" — blast radius is fully contained; changes are safe from propagation but test locally"
+        )
+
     return "\n".join(lines)
 
 

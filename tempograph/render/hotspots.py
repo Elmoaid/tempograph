@@ -1674,5 +1674,20 @@ def _collect_hotspots_signals(
                     f" — changes must satisfy both internal callers and the external API contract"
                 )
 
+    # S503: Exception class hotspot — the top hotspot is an exception/error class definition.
+    # Exception classes used widely define the error taxonomy; changing hierarchy, message format,
+    # or base class breaks all `except` clauses and error-handling code across consumers.
+    if scores:
+        _top503 = scores[0][1]
+        if not _is_test_file(_top503.file_path) and _top503.kind.value == "class":
+            _exc_keywords503 = ("error", "exception", "fault", "failure", "abort")
+            if any(kw in _top503.name.lower() for kw in _exc_keywords503):
+                _callers503 = graph.callers_of(_top503.id)
+                if len(_callers503) >= 3:
+                    out.append(
+                        f"\nexception hotspot: {_top503.name} is an exception class with {len(_callers503)} caller(s)"
+                        f" — changing the hierarchy or message format breaks all except-handlers"
+                    )
+
     return out
 
