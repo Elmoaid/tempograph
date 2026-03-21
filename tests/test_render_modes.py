@@ -11,6 +11,8 @@ from tempograph.render import (
     render_dependencies,
     render_architecture,
     render_skills,
+    render_lookup,
+    _extract_name_from_question,
 )
 from tempograph.git import is_git_repo
 
@@ -362,3 +364,67 @@ class TestIsGitRepo:
         import os
         repo = os.path.dirname(os.path.dirname(__file__))
         assert is_git_repo(repo) is True
+
+
+# ── _extract_name_from_question ───────────────────────────────────────────────
+
+class TestExtractNameFromQuestion:
+    def test_strips_where_is_prefix(self):
+        assert _extract_name_from_question("where is FileParser") == "FileParser"
+
+    def test_strips_find_prefix(self):
+        assert _extract_name_from_question("find build_graph") == "build_graph"
+
+    def test_strips_what_calls_prefix(self):
+        result = _extract_name_from_question("what calls render_overview")
+        assert "render_overview" in result
+
+    def test_strips_trailing_question_mark(self):
+        result = _extract_name_from_question("where is Symbol defined?")
+        assert "?" not in result
+
+    def test_strips_articles(self):
+        result = _extract_name_from_question("find the FileParser class")
+        assert result == "FileParser"
+
+    def test_bare_name_unchanged(self):
+        assert _extract_name_from_question("FileParser") == "FileParser"
+
+    def test_strips_quotes(self):
+        result = _extract_name_from_question("find 'Symbol'")
+        assert result == "Symbol"
+
+
+# ── render_lookup ─────────────────────────────────────────────────────────────
+
+class TestRenderLookup:
+    def test_returns_str(self, tmp_path):
+        g = _build(tmp_path, {"mod.py": "def greet(): pass\n"})
+        out = render_lookup(g, "where is greet")
+        assert isinstance(out, str)
+
+    def test_finds_known_symbol(self, tmp_path):
+        g = _build(tmp_path, {"mod.py": "def greet(): pass\n"})
+        out = render_lookup(g, "where is greet")
+        assert "greet" in out
+
+    def test_unknown_symbol_returns_not_found(self, tmp_path):
+        g = _build(tmp_path, {"mod.py": "def fn(): pass\n"})
+        out = render_lookup(g, "where is nonexistent_xyz_abc")
+        assert "not found" in out.lower() or "no match" in out.lower() or isinstance(out, str)
+
+    def test_what_calls_question(self, tmp_path):
+        g = _build(tmp_path, {
+            "lib.py": "def target(): pass\n",
+            "app.py": "from lib import target\ndef run(): target()\n",
+        })
+        out = render_lookup(g, "what calls target")
+        assert isinstance(out, str) and len(out) > 0
+
+    def test_what_imports_question(self, tmp_path):
+        g = _build(tmp_path, {
+            "utils.py": "def helper(): pass\n",
+            "main.py": "from utils import helper\n",
+        })
+        out = render_lookup(g, "what imports utils.py")
+        assert isinstance(out, str)
