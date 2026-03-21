@@ -650,6 +650,27 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 f" — highest combined velocity+complexity"
             )
 
+    # S194: Test file hotspot — a test file appears in the top 5 hotspot ranks.
+    # Test files in the hotspot list indicate test churn, flaky tests, or spec instability.
+    # Only shown when 1+ test file is among the top 5 hotspot-ranked files.
+    if scores:
+        _top5_test_files194 = [
+            sym.file_path for _, sym in scores[:5]
+            if _is_test_file(sym.file_path)
+        ]
+        # Deduplicate
+        _seen194: set[str] = set()
+        _unique_test_fps194 = [
+            fp for fp in _top5_test_files194
+            if not (fp in _seen194 or _seen194.add(fp))  # type: ignore[func-returns-value]
+        ]
+        if _unique_test_fps194:
+            _t194_name = _unique_test_fps194[0].rsplit("/", 1)[-1]
+            lines.append(
+                f"\ntest file hotspot: {_t194_name} in top 5 hotspots — test churn"
+                f" may indicate flaky tests or rapidly-changing spec"
+            )
+
     # S188: Avg complexity of top hotspot — the top hotspot file's functions are complex on average.
     # Complex-on-average files have high maintenance cost beyond any single function.
     # Only shown when avg complexity of fns in top hotspot file >= 8.

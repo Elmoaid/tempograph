@@ -436,6 +436,24 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                 f" — package entry point, changes affect all importers"
             )
 
+    # S195: Blast fan-out — blast target's symbols call into 5+ distinct external files.
+    # High outgoing call fan-out = the file reaches widely; changes ripple in multiple directions.
+    # Only shown when symbols in blast target call into 5+ distinct non-target files.
+    _s195_callee_files: set[str] = set()
+    for _sym195 in symbols:
+        for _callee195 in graph.callees_of(_sym195.id):
+            if _callee195.file_path != file_path and not _is_test_file(_callee195.file_path):
+                _s195_callee_files.add(_callee195.file_path)
+    if len(_s195_callee_files) >= 5:
+        _fan_names = [fp.rsplit("/", 1)[-1] for fp in sorted(_s195_callee_files)[:3]]
+        _fan_str = ", ".join(_fan_names)
+        if len(_s195_callee_files) > 3:
+            _fan_str += f" +{len(_s195_callee_files) - 3} more"
+        lines.append(
+            f"blast fan-out: calls into {len(_s195_callee_files)} external files"
+            f" ({_fan_str}) — wide outgoing dependency, changes may cascade"
+        )
+
     # S189: Sibling files — other source files sharing the same directory as the blast target.
     # Co-located files are often tightly coupled and may need coordinated updates.
     # Only shown when 2+ sibling source files exist in the same directory.

@@ -400,6 +400,25 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             _s160_str += f" +{len(_s160_new_syms) - 3} more"
         lines.append(f"new symbols: {len(_s160_new_syms)} exported fns/classes with 0 callers ({_s160_str})")
 
+    # S193: Migration file — diff includes a database migration or schema file.
+    # Schema changes affect data integrity; they require extra care and often need backfill work.
+    # Only shown when 1+ migration-style file is in the diff.
+    _s193_migration_patterns = {"migration", "migrate", "schema", "alembic", "flyway"}
+    _s193_migration_files = [
+        fp for fp in normalized
+        if not _is_test_file(fp)
+        and (
+            any(p in fp.lower() for p in _s193_migration_patterns)
+            or fp.endswith(".sql")
+        )
+    ]
+    if _s193_migration_files:
+        _s193_str = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s193_migration_files[:3])
+        lines.append(
+            f"migration change: {_s193_str}"
+            f" — database/schema file modified, coordinate with data team"
+        )
+
     # S187: Contract risk — the diff changes an exported symbol with 5+ external callers.
     # Changing a widely-called exported symbol is a potential breaking change for all callers.
     # Only shown when 1+ such high-caller exported symbol is in the changed files.
