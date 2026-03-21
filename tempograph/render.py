@@ -215,6 +215,25 @@ def render_overview(graph: Tempo) -> str:
         _test_pct = int(_covered / len(_src_fps) * 100)
         lines.append(f"test coverage: {_covered}/{len(_src_fps)} source files ({_test_pct}%)")
 
+    # API surface health: exported symbols with 0 cross-file callers = potentially dead API.
+    # Quick fraction for agents: "35% of exports unused → dead code problem worth investigating."
+    # Only shown when >= 5 exported non-test symbols exist (avoids noise on tiny repos).
+    _exported_src = [
+        sym for sym in graph.symbols.values()
+        if sym.exported and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method", "class", "interface", "variable", "constant")
+    ]
+    if len(_exported_src) >= 5:
+        _unused_exp = [
+            sym for sym in _exported_src
+            if not any(c.file_path != sym.file_path for c in graph.callers_of(sym.id))
+        ]
+        _unused_pct = int(len(_unused_exp) / len(_exported_src) * 100)
+        _ap_line = f"API surface: {len(_exported_src)} exported"
+        if _unused_exp:
+            _ap_line += f", {len(_unused_exp)} unused ({_unused_pct}%)"
+        lines.append(_ap_line)
+
     # Potentially unused modules: source files with 0 source importers AND no test coverage.
     # Flags entire floating modules that nothing depends on and nothing tests — either dead
     # features or undiscovered entry points agents should investigate.
