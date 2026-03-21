@@ -1452,7 +1452,11 @@ def _build_symbol_block_lines(
             # Similar functions: other functions sharing ≥2 callees with this seed.
             # Helps agents find related implementations that may need parallel changes.
             if sym.kind in (SymbolKind.FUNCTION, SymbolKind.METHOD):
-                _seed_callees = set(graph._callees.get(sym.id, []))
+                # Exclude class/type constructors — ubiquitous and create false positives
+                _seed_callees = {
+                    cid for cid in graph._callees.get(sym.id, [])
+                    if cid in graph.symbols and graph.symbols[cid].kind.value not in ("class", "type_alias", "enum")
+                }
                 if len(_seed_callees) >= 2:
                     _overlap: dict[str, int] = {}
                     for _callee_id in _seed_callees:
@@ -1963,6 +1967,18 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             )
             _pct = int(_tested / len(_src_importers) * 100)
             lines.append(f"  refactor safety: {_tested}/{len(_src_importers)} caller files tested ({_pct}%)")
+        # S51: recently active callers — importers modified in last 30 days
+        if _src_importers and graph.root:
+            try:
+                from .git import file_last_modified_days as _fld  # noqa: PLC0415
+                _recent = [(imp, _fld(graph.root, imp)) for imp in _src_importers]
+                _recent = [(imp, d) for imp, d in _recent if d is not None and d <= 30]
+                if len(_recent) >= 2:
+                    _recent.sort(key=lambda x: x[1])
+                    _rec_parts = [f"{imp.rsplit('/', 1)[-1]} ({d}d ago)" for imp, d in _recent[:3]]
+                    lines.append(f"  recently active: {', '.join(_rec_parts)}")
+            except Exception:
+                pass
         lines.append("")
 
     # Symbols in this file that are called externally
