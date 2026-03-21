@@ -577,8 +577,6 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — narrow dependency, check that consumer before modifying"
         )
 
-<<<<<<< HEAD
-=======
     # S217: Entry point blast — the blast target is an application entry point.
     # Entry points (main.py, app.py, index.js, cli.py) are widely invoked; changing them
     # affects startup, CLI behavior, or the entire request path.
@@ -846,7 +844,6 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                 f" — may be dead code, an unwired module, or a standalone entry point"
             )
 
->>>>>>> agent/creative/diff-untested-symbols
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
 
