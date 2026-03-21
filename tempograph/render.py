@@ -3761,6 +3761,21 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             lines.append("")
             lines.append(f"Danger zone: {', '.join(_dz_parts)} — high churn + complexity")
 
+    # S97: High fan-out — functions calling 8+ distinct functions.
+    # High callee count = coordination hubs: changing any callee can affect this function.
+    # Shows top 3 sorted by callee count. Only source functions (no test helpers).
+    _high_fanout = [
+        (len(graph.callees_of(sym.id)), sym)
+        for _, sym in scores[:top_n]
+        if sym.kind.value in ("function", "method") and not _is_test_file(sym.file_path)
+        and len(graph.callees_of(sym.id)) >= 8
+    ]
+    if len(_high_fanout) >= 1:
+        _high_fanout.sort(key=lambda x: -x[0])
+        _hf_parts = [f"{sym.name} ({n} callees)" for n, sym in _high_fanout[:3]]
+        lines.append("")
+        lines.append(f"High fan-out: {', '.join(_hf_parts)} — calls many functions")
+
     # S96: Outlier complexity — functions with cx >= 2× codebase average AND cx >= 10.
     # Average complexity anchors the signal: a cx:10 fn in a cx:2-avg codebase is notable;
     # same fn in a cx:8-avg codebase is normal. Requires >= 10 source functions for valid avg.

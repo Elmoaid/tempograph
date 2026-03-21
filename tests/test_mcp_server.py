@@ -9263,3 +9263,47 @@ class TestHotspotsOutlierComplexity:
         assert "Outlier complexity:" not in out, (
             f"'Outlier complexity:' must not appear when complexity is uniform; got:\n{out}"
         )
+
+
+class TestHotspotsHighFanOut:
+    """S97: Hotspots 'High fan-out:' for functions calling 8+ other functions."""
+
+    def test_high_fanout_shown_for_function_with_many_callees(self, tmp_path):
+        """Function calling 9 other functions → 'High fan-out:' appears."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        # Build 9 simple utility functions
+        for i in range(9):
+            (tmp_path / f"util_{i}.py").write_text(f"def util_fn_{i}(): return {i}\n")
+        # Build a coordinator that calls all of them
+        imports = "\n".join(f"from util_{i} import util_fn_{i}" for i in range(9))
+        calls = "\n    ".join(f"util_fn_{i}()" for i in range(9))
+        (tmp_path / "coordinator.py").write_text(
+            f"{imports}\ndef coordinate():\n    {calls}\n    return True\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "High fan-out:" in out, (
+            f"Expected 'High fan-out:' for function with 9 callees; got:\n{out}"
+        )
+        assert "coordinate" in out, f"Expected 'coordinate' in fan-out output; got:\n{out}"
+
+    def test_high_fanout_absent_for_low_callee_functions(self, tmp_path):
+        """Function with only 3 callees → no 'High fan-out:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        for i in range(3):
+            (tmp_path / f"util_{i}.py").write_text(f"def util_fn_{i}(): return {i}\n")
+        (tmp_path / "simple.py").write_text(
+            "from util_0 import util_fn_0\n"
+            "from util_1 import util_fn_1\n"
+            "from util_2 import util_fn_2\n"
+            "def do_work(): return util_fn_0() + util_fn_1() + util_fn_2()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "High fan-out:" not in out, (
+            f"'High fan-out:' must not appear for function with 3 callees; got:\n{out}"
+        )
