@@ -2733,5 +2733,18 @@ def _collect_hotspots_signals(
                     f" — extreme complexity concentration; highest-risk file in the codebase"
                 )
 
+    # S916: Single-caller hotspot — the top hotspot is called from exactly one place.
+    # A high-complexity function with only one caller may be an over-engineered extraction;
+    # consider inlining it to reduce the cognitive overhead of tracking two function bodies.
+    if scores:
+        _top916 = scores[0][1]
+        if _top916 is not None and not _is_test_file(_top916.file_path):
+            _callers916 = graph.callers_of(_top916.id)
+            if len(_callers916) == 1:
+                out.append(
+                    f"\nsingle-caller hotspot: {_top916.name} is complex but called from only 1 place"
+                    f" — consider inlining to reduce indirection overhead"
+                )
+
     return out
 

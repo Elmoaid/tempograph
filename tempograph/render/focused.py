@@ -4025,6 +4025,22 @@ def _signals_focused_fn_advanced(
                 f" — changes may break all instantiation sites; review default arguments carefully"
             )
 
+    # S912: Dunder method focus — focused symbol is a Python dunder/magic method (not __init__/__new__).
+    # Dunder methods implement Python protocols; changing signatures or removing them
+    # can break built-in operations, comparison operators, and third-party integrations.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim912 = _seed_syms[0]
+        if (
+            _prim912.kind.value in ("function", "method")
+            and _prim912.name.startswith("__") and _prim912.name.endswith("__")
+            and _prim912.name not in ("__init__", "__new__")
+            and not _is_test_file(_prim912.file_path)
+        ):
+            lines.append(
+                f"\ndunder method: {_prim912.name} is a Python protocol method"
+                f" — implements a built-in protocol; changes can break operators and third-party integrations"
+            )
+
     return lines
 
 

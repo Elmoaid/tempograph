@@ -2287,6 +2287,15 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — dense file; changes have higher chance of unintended side effects"
         )
 
+    # S914: Test file blast — blast radius requested for a test file.
+    # Requesting blast radius for a test file is unusual; verify the correct target
+    # was specified, or consider whether test infrastructure changes are the true concern.
+    if _is_test_file(_fp589):
+        lines.append(
+            f"test file blast: {_fp589.rsplit('/', 1)[-1]} is a test file"
+            f" — blast radius of test files is typically low; verify this is the intended target"
+        )
+
     return "\n".join(lines)
 
 
