@@ -2376,6 +2376,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — changes affect resource acquisition and cleanup in all 'with' block consumers"
         )
 
+    # S956: Fixture blast — blast target is a shared test fixture file (conftest.py or fixtures.py).
+    # Fixture files are implicitly imported by pytest's collection mechanism; changes here silently
+    # affect every test that shares the same fixture scope without an explicit import statement.
+    _fname956 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    _stem956 = _fname956.rsplit(".", 1)[0]
+    if _fname956 == "conftest.py" or _stem956 in ("fixtures", "conftest") or _stem956.startswith("conftest_"):
+        lines.append(
+            f"fixture blast: {_fp589.rsplit('/', 1)[-1]} is a shared fixture file"
+            f" — pytest auto-imports this; changes silently affect all tests in its scope without explicit import"
+        )
+
     return "\n".join(lines)
 
 

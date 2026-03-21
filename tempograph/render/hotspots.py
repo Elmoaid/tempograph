@@ -2827,5 +2827,18 @@ def _collect_hotspots_signals(
                     f" — reads/writes instance state; changes may have broader impact than the signature suggests"
                 )
 
+    # S958: Init file hotspot — the top hotspot is defined in __init__.py.
+    # __init__.py symbols are part of the package's public API surface; every consumer of the
+    # package imports this file implicitly, so changes here have the broadest possible blast radius.
+    if scores:
+        _top958 = scores[0][1]
+        if _top958 is not None and not _is_test_file(_top958.file_path):
+            _fp958 = _top958.file_path.replace("\\", "/")
+            if _fp958.endswith("/__init__.py") or _fp958 == "__init__.py":
+                out.append(
+                    f"\ninit hotspot: {_top958.name} is in __init__.py"
+                    f" — package-level symbol; changes alter the import surface and affect all package consumers"
+                )
+
     return out
 

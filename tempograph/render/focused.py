@@ -4151,6 +4151,21 @@ def _signals_focused_fn_advanced(
                     f" — no intended external interface; direct access to private methods is fragile coupling"
                 )
 
+    # S954: Generator function focus — the focused symbol name suggests a generator.
+    # Generators are lazy; callers must iterate the return value. Calling next() once, or
+    # wrapping in list(), changes memory and execution profile in subtle ways.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim954 = _seed_syms[0]
+        if _prim954.kind.value == "function" and not _is_test_file(_prim954.file_path):
+            _n954 = _prim954.name.lower()
+            _gen_prefixes954 = ("gen_", "iter_", "generate_", "yield_")
+            _gen_suffixes954 = ("_generator", "_iterator", "_gen", "_iter")
+            if any(_n954.startswith(p) for p in _gen_prefixes954) or any(_n954.endswith(s) for s in _gen_suffixes954):
+                lines.append(
+                    f"\ngenerator focus: {_prim954.name} appears to be a generator"
+                    f" — callers must iterate the return value; consuming as non-iterator will exhaust it silently"
+                )
+
     return lines
 
 

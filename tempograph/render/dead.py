@@ -3300,6 +3300,24 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — abandoned output paths; callers expecting serialized output may silently receive None"
         )
 
+    # S959: Dead hook functions — unused functions named hook_* or *_hook.
+    # Hook functions are registered with frameworks (lifecycle, plugin, event systems);
+    # dead hooks silently skip the event they were meant to intercept.
+    _dead_hooks959 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and (s.name.lower().startswith("hook_") or s.name.lower().endswith("_hook"))
+    ]
+    if _dead_hooks959:
+        _hook_names959 = ", ".join(s.name for s in _dead_hooks959[:3])
+        if len(_dead_hooks959) > 3:
+            _hook_names959 += f" +{len(_dead_hooks959) - 3} more"
+        lines.append(
+            f"dead hooks: {len(_dead_hooks959)} unused hook function(s) ({_hook_names959})"
+            f" — unregistered hooks silently skip; the event they were meant to intercept now goes unhandled"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

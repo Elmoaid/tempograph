@@ -3463,6 +3463,25 @@ def _signals_async_oop(
                 f" — internal-only codebase; adding exports should be intentional to avoid accidental APIs"
             )
 
+    # S955: Mega function — any source function exceeds 200 lines.
+    # A function this large almost always mixes concerns; adding features risks subtle breakage
+    # in unrelated logic buried in the same body.
+    _mega955 = None
+    for _s955 in graph.symbols.values():
+        if (
+            _s955.kind.value == "function"
+            and _s955.parent_id is None
+            and not _is_test_file(_s955.file_path)
+            and _s955.line_count >= 200
+        ):
+            if _mega955 is None or _s955.line_count > _mega955.line_count:
+                _mega955 = _s955
+    if _mega955 is not None:
+        lines.append(
+            f"mega function: {_mega955.name} spans {_mega955.line_count} lines"
+            f" — exceeds 200-line threshold; candidate for mandatory decomposition before any new additions"
+        )
+
     return lines
 
 

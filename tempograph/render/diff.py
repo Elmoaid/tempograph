@@ -2650,4 +2650,19 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — multi-language change requires reviewers proficient in each; verify interface/serialization alignment"
             )
 
+    # S957: Multi-directory diff — changed files span 3+ distinct parent directories.
+    # Cross-subsystem changes require coordination across multiple owners and increase
+    # the chance that a merge lands in one subsystem without the paired change in another.
+    if changed_files and len(changed_files) >= 3:
+        _dirs957: set[str] = set()
+        for _f957 in changed_files:
+            _normalized957 = _f957.replace("\\", "/")
+            _parent957 = _normalized957.rsplit("/", 1)[0] if "/" in _normalized957 else "."
+            _dirs957.add(_parent957)
+        if len(_dirs957) >= 3:
+            lines.append(
+                f"multi-dir diff: changed files span {len(_dirs957)} directories"
+                f" — cross-subsystem change; verify all owners have reviewed their portion"
+            )
+
     return "\n".join(lines)
