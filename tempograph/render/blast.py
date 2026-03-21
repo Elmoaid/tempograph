@@ -1396,6 +1396,23 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — removing it requires coordinated changes on both sides of the boundary"
         )
 
+    # S484: Data model blast — blast target defines dataclasses, NamedTuples, or TypedDicts.
+    # Data model files are imported everywhere for type annotations and destructuring;
+    # renaming a field or changing its type breaks all downstream consumers silently.
+    _s484_model_markers = ("dataclass", "NamedTuple", "TypedDict", "dataclasses")
+    _s484_file_imports = next(
+        (fi.imports for fp, fi in graph.files.items() if fp == file_path), []
+    ) or []
+    _s484_is_model = any(
+        any(m in imp for m in _s484_model_markers) for imp in _s484_file_imports
+    )
+    if _s484_is_model and importers:
+        lines.append(
+            f"data model blast: {file_path.rsplit('/', 1)[-1]} defines typed data models"
+            f" imported by {len(importers)} file(s)"
+            f" — field renames or type changes silently break all consumers; update together"
+        )
+
     return "\n".join(lines)
 
 

@@ -23335,6 +23335,270 @@ class TestGeneratorFunctionFocusedS475:
         )
 
 
+# ── S482: Mixin class method focused ─────────────────────────────────────────
+
+class TestMixinClassMethodFocusedS482:
+    """S482: Method in a Mixin class emits the signal."""
+
+    def test_mixin_method_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "mixins.py").write_text(
+            "class LoggingMixin:\n"
+            "    def log_event(self, msg):\n"
+            "        print(msg)\n"
+        )
+        (tmp_path / "service.py").write_text(
+            "from mixins import LoggingMixin\n"
+            "class Service(LoggingMixin):\n"
+            "    def run(self): self.log_event('started')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="log_event")
+        assert "mixin method" in out, (
+            f"Expected 'mixin method' signal for method in LoggingMixin; got:\n{out}"
+        )
+
+    def test_mixin_method_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "service.py").write_text(
+            "class Service:\n"
+            "    def process(self, data): return data\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from service import Service\ndef run(): Service().process({})\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="process")
+        assert "mixin method" not in out, (
+            f"'mixin method' must not appear for regular class method; got:\n{out}"
+        )
+
+
+# ── S483: No type annotations overview ───────────────────────────────────────
+
+class TestNoTypeAnnotationsOverviewS483:
+    """S483: 5+ source files with zero type hints emits the signal."""
+
+    def test_no_type_annotations_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        for i in range(6):
+            (tmp_path / f"module_{i}.py").write_text(
+                f"def func_{i}(x, y):\n"
+                f"    return x + y\n"
+                f"def helper_{i}(data):\n"
+                f"    return data\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no type annotations" in out, (
+            f"Expected 'no type annotations' signal for 6 untyped files; got:\n{out}"
+        )
+
+    def test_no_type_annotations_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        for i in range(3):
+            (tmp_path / f"module_{i}.py").write_text(
+                f"def func_{i}(x: int, y: int) -> int:\n"
+                f"    return x + y\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "no type annotations" not in out, (
+            f"'no type annotations' must not appear when fewer than 5 untyped files; got:\n{out}"
+        )
+
+
+# ── S484: Data model blast ────────────────────────────────────────────────────
+
+class TestDataModelBlastS484:
+    """S484: Blast target with dataclass/TypedDict imports emits the signal."""
+
+    def test_data_model_blast_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "models.py").write_text(
+            "from dataclasses import dataclass\n"
+            "@dataclass\n"
+            "class User:\n"
+            "    name: str\n"
+            "    age: int\n"
+        )
+        (tmp_path / "service.py").write_text(
+            "from models import User\n"
+            "def create(name, age): return User(name=name, age=age)\n"
+        )
+        (tmp_path / "repo.py").write_text(
+            "from models import User\n"
+            "def save(u: User): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="models.py")
+        assert "data model blast" in out, (
+            f"Expected 'data model blast' signal for dataclass file; got:\n{out}"
+        )
+
+    def test_data_model_blast_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def helper(x):\n    return x * 2\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from utils import helper\ndef run(): return helper(5)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="utils.py")
+        assert "data model blast" not in out, (
+            f"'data model blast' must not appear for plain utility file; got:\n{out}"
+        )
+
+
+# ── S485: Base class touched diff ─────────────────────────────────────────────
+
+class TestBaseClassTouchedDiffS485:
+    """S485: Diff that touches a Base*/Abstract* class emits the signal."""
+
+    def test_base_class_touched_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "base_handler.py").write_text(
+            "class BaseHandler:\n"
+            "    def handle(self, req): raise NotImplementedError\n"
+        )
+        (tmp_path / "http_handler.py").write_text(
+            "from base_handler import BaseHandler\n"
+            "class HttpHandler(BaseHandler):\n"
+            "    def handle(self, req): return req\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["base_handler.py"])
+        assert "base class touched" in out, (
+            f"Expected 'base class touched' signal for BaseHandler; got:\n{out}"
+        )
+
+    def test_base_class_touched_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def helper(x): return x\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from utils import helper\ndef run(): return helper(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["utils.py"])
+        assert "base class touched" not in out, (
+            f"'base class touched' must not appear for plain utility file; got:\n{out}"
+        )
+
+
+# ── S486: Hotspot file no test ────────────────────────────────────────────────
+
+class TestHotspotNoTestFileS486:
+    """S486: Top hotspot has no corresponding test file emits the signal."""
+
+    def test_hotspot_no_test_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "engine.py").write_text(
+            "def compute(x):\n    return x * 2\n"
+        )
+        callers = "\n".join(
+            f"from engine import compute\ndef caller_{i}(): compute({i})\n"
+            for i in range(6)
+        )
+        (tmp_path / "callers.py").write_text(callers)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "no test file" in out, (
+            f"Expected 'no test file' signal for untested hotspot; got:\n{out}"
+        )
+
+    def test_hotspot_no_test_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "engine.py").write_text(
+            "def compute(x):\n    return x * 2\n"
+        )
+        (tmp_path / "test_engine.py").write_text(
+            "from engine import compute\ndef test_compute(): assert compute(2) == 4\n"
+        )
+        callers = "\n".join(
+            f"from engine import compute\ndef caller_{i}(): compute({i})\n"
+            for i in range(4)
+        )
+        (tmp_path / "callers.py").write_text(callers)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "no test file" not in out, (
+            f"'no test file' must not appear when test_engine.py exists; got:\n{out}"
+        )
+
+
+# ── S487: Dead context managers ───────────────────────────────────────────────
+
+class TestDeadContextManagersS487:
+    """S487: __enter__/__exit__ with 0 callers emits the signal."""
+
+    def test_dead_context_manager_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "resources.py").write_text(
+            "class DbConnection:\n"
+            "    def __enter__(self):\n"
+            "        return self\n"
+            "    def __exit__(self, *args):\n"
+            "        pass\n"
+            "    def query(self): pass\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "def run(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead context managers" in out, (
+            f"Expected 'dead context managers' for unused DbConnection; got:\n{out}"
+        )
+
+    def test_dead_context_manager_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "resources.py").write_text(
+            "class DbConnection:\n"
+            "    def __enter__(self):\n"
+            "        return self\n"
+            "    def __exit__(self, *args):\n"
+            "        pass\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from resources import DbConnection\n"
+            "def run():\n"
+            "    conn = DbConnection()\n"
+            "    conn.__enter__()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead context managers" not in out, (
+            f"'dead context managers' must not appear when __enter__ is called; got:\n{out}"
+        )
+
+
 class TestHighDeadCodeRatioS481:
     """S481: 30%+ of functions unreferenced emits high dead-code ratio signal."""
 

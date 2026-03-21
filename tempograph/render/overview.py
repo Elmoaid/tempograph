@@ -2189,6 +2189,37 @@ def _signals_async_oop(
                 f" — clean up dead code before adding features to reduce cognitive load"
             )
 
+    # S483: No type annotations — 5+ source files have no typed function signatures.
+    # Untyped codebases make refactoring dangerous; callers rely on implicit contracts that
+    # aren't machine-checkable, so type errors only surface at runtime.
+    _s483_untyped: list[str] = []
+    for _fp483, _fi483 in graph.files.items():
+        if _is_test_file(_fp483) or _fi483.language.value != "python":
+            continue
+        _fns483 = [
+            s for s in graph.symbols.values()
+            if s.file_path == _fp483 and s.kind.value in ("function", "method")
+        ]
+        if not _fns483:
+            continue
+        _typed483 = [
+            s for s in _fns483
+            if s.signature and (
+                "->" in s.signature
+                or (
+                    "(" in s.signature
+                    and ":" in s.signature.split("(", 1)[1].rsplit(")", 1)[0]
+                )
+            )
+        ]
+        if len(_typed483) == 0:
+            _s483_untyped.append(_fp483)
+    if len(_s483_untyped) >= 5:
+        lines.append(
+            f"no type annotations: {len(_s483_untyped)} Python source file(s) have zero typed signatures"
+            f" — add mypy/pyright before refactoring to surface implicit contract violations"
+        )
+
     return lines
 
 

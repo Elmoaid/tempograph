@@ -2738,6 +2738,32 @@ def _signals_focused_fn_advanced(
                     f" — changes must preserve the lock invariants; test under concurrency before merging"
                 )
 
+    # S482: Mixin class method — focused symbol is defined in a Mixin class.
+    # Mixin methods are injected into every class that includes the mixin via multiple inheritance;
+    # changing them propagates silently to all consumers, which may not call super() correctly.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim482 = next((s for s in _seed_syms if s.kind.value in ("function", "method")), None)
+        if _prim482:
+            _mixin_class482 = next(
+                (
+                    s for s in graph.symbols.values()
+                    if s.kind.value == "class"
+                    and s.file_path == _prim482.file_path
+                    and "mixin" in s.name.lower()
+                ),
+                None,
+            )
+            if _mixin_class482:
+                _users482 = [
+                    e for e in graph.edges
+                    if e.kind.value == "imports" and e.target_id == _prim482.file_path
+                ]
+                lines.append(
+                    f"\nmixin method: {_prim482.name} lives in {_mixin_class482.name}"
+                    f" — changes propagate to all {len(_users482)} consumer(s) that include this mixin;"
+                    f" verify super() chains are preserved"
+                )
+
     # S350: Orphaned symbol — focused symbol has 0 callers and the file is not imported anywhere.
     # Zero-caller symbols in unimported files may be dead code that was never wired up
     # during a refactor; modifying them has no effect unless the file is imported first.

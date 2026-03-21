@@ -1623,5 +1623,22 @@ def _collect_hotspots_signals(
                 f" — changes will be overwritten on next codegen run; patch the generator template instead"
             )
 
+    # S486: Hotspot file has no test file — top hotspot source file has no corresponding test.
+    # The most-called file in the repo has no dedicated test coverage; any change is a gamble.
+    # High call-count + zero tests = maximum blast radius, minimum safety net.
+    if scores:
+        _top486 = scores[0][1]
+        if not _is_test_file(_top486.file_path):
+            _base486 = _top486.file_path.rsplit("/", 1)[-1].replace(".py", "")
+            _has_test486 = any(
+                f"test_{_base486}" in fp or f"{_base486}_test" in fp
+                for fp in graph.files
+            )
+            if not _has_test486:
+                out.append(
+                    f"\nno test file: {_top486.file_path.rsplit('/', 1)[-1]} is the top hotspot but has no test file"
+                    f" — the most-called file in the repo has zero dedicated test coverage"
+                )
+
     return out
 
