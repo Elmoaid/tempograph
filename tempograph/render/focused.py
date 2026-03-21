@@ -2084,6 +2084,24 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                         f" — mutual dependency; changes must maintain protocol on both sides"
                     )
 
+
+    # S272: High callee fan-out — focused function calls 5+ distinct external functions.
+    # High fan-out increases coupling surface: changes to any callee may ripple back.
+    # Also makes the function harder to test in isolation (many dependencies to mock).
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim272 = _seed_syms[0]
+        if _prim272.kind.value in ("function", "method"):
+            _callees272 = [
+                c for c in graph.callees_of(_prim272.id)
+                if c.file_path != _prim272.file_path
+            ]
+            _unique272 = {c.name for c in _callees272}
+            if len(_unique272) >= 5:
+                lines.append(
+                    f"\nhigh fan-out: {_prim272.name} calls {len(_unique272)} distinct external fns"
+                    f" — many dependencies; consider dependency injection for testability"
+                )
+
     # S244: Property accessor — focused symbol is a @property method.
     # Callers access it like an attribute (no parentheses); renaming or changing type is
     # a breaking change even if the source looks like a function change.

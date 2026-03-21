@@ -804,4 +804,30 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — cross-module change; verify interface contracts at each boundary"
         )
 
+
+    # S273: Documentation file in diff — diff includes README, docs/, or changelog files.
+    # Documentation changes may indicate API or behavior changes that need broader
+    # communication; or doc changes without code changes (doc-only PR, low risk).
+    _s273_doc_names = {
+        "readme.md", "readme.rst", "readme.txt", "changelog.md", "changelog.rst",
+        "history.md", "contributing.md", "authors.md", "license", "license.md",
+    }
+    _s273_doc_dirs = ("docs/", "doc/", "documentation/", ".github/")
+    _s273_doc_files = []
+    for _fp273 in list(normalized) + [f for f in changed_files if f not in normalized]:
+        _name273 = _fp273.rsplit("/", 1)[-1].lower()
+        _fp273_lower = _fp273.lower()
+        if (
+            _name273 in _s273_doc_names
+            or any(_fp273_lower.startswith(d) or f"/{d}" in _fp273_lower for d in _s273_doc_dirs)
+        ):
+            _s273_doc_files.append(_fp273)
+    if _s273_doc_files:
+        _doc_names273 = [fp.rsplit("/", 1)[-1] for fp in _s273_doc_files[:3]]
+        _doc_str273 = ", ".join(_doc_names273)
+        lines.append(
+            f"docs in diff: {_doc_str273}"
+            f" — documentation changed; verify code changes are reflected"
+        )
+
     return "\n".join(lines)

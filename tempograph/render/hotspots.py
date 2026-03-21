@@ -1011,4 +1011,32 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 )
                 break
 
+
+    # S268: Churn concentration — top 3+ hotspot symbols all live in the same file.
+    # When high-churn symbols concentrate in one file, that file is an instability
+    # hotspot: changes there are frequent, contested, and risk merge conflicts.
+    if scores:
+        _s268_top_files: list[str] = []
+        _s268_seen_files268: set[str] = set()
+        for _, _sym268 in scores[:10]:
+            _fp268 = _sym268.file_path
+            if _fp268 not in _s268_seen_files268 and not _is_test_file(_fp268):
+                _s268_top_files.append(_fp268)
+                _s268_seen_files268.add(_fp268)
+            if len(_s268_top_files) >= 5:
+                break
+        if _s268_top_files:
+            _s268_file_counts: dict[str, int] = {}
+            for _, _sym268 in scores[:10]:
+                _fp268 = _sym268.file_path
+                if not _is_test_file(_fp268):
+                    _s268_file_counts[_fp268] = _s268_file_counts.get(_fp268, 0) + 1
+            _s268_max_file = max(_s268_file_counts, key=_s268_file_counts.get)
+            if _s268_file_counts[_s268_max_file] >= 3:
+                _s268_label = _s268_max_file.rsplit("/", 1)[-1]
+                lines.append(
+                    f"\nchurn concentration: {_s268_file_counts[_s268_max_file]} of top hotspots"
+                    f" in {_s268_label} — single file is instability center, high merge conflict risk"
+                )
+
     return "\n".join(lines)  # ALWAYS return here — never inside a conditional block

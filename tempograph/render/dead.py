@@ -795,6 +795,30 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — subcommand removed but handler not cleaned up"
         )
 
+
+    # S270: Dead event handlers — on_*/handle_*/listener_* functions with 0 callers.
+    # Dead event handlers suggest removed event subscriptions whose handler was not
+    # cleaned up; they may also be mistakenly detached (silent bugs).
+    # Only shown when 2+ such functions found (conf >= 40).
+    _s270_evt_prefixes = ("on_", "handle_", "listener_", "observer_", "subscriber_",
+                          "on_message", "on_event", "on_change", "on_error", "on_connect")
+    _s270_dead_evt = [
+        sym for sym, conf in scored
+        if conf >= 40
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.startswith(p) for p in _s270_evt_prefixes)
+    ]
+    if len(_s270_dead_evt) >= 2:
+        _evt_names = [s.name for s in _s270_dead_evt[:3]]
+        _evt_str = ", ".join(_evt_names)
+        if len(_s270_dead_evt) > 3:
+            _evt_str += f" +{len(_s270_dead_evt) - 3} more"
+        lines.append(
+            f"dead event handlers: {len(_s270_dead_evt)} unused event handler(s) ({_evt_str})"
+            f" — event subscription may have been removed or silently detached"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

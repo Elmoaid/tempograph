@@ -768,6 +768,28 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                 f" — self-contained; safe to extract, mock, or replace in isolation"
             )
 
+
+    # S269: Deep importer chain — a direct importer of this file is itself imported by many files.
+    # This means changes here amplify: they affect the direct importer AND everything that
+    # depends on that importer, creating a second-order blast radius.
+    _s269_deep_importers = []
+    for _imp269 in graph.importers_of(file_path):
+        if _imp269 not in graph.files or _imp269 == file_path:
+            continue
+        _s269_second_order = len([
+            f for f in graph.importers_of(_imp269)
+            if f in graph.files and f != file_path and f != _imp269
+        ])
+        if _s269_second_order >= 5:
+            _s269_deep_importers.append((_s269_second_order, _imp269.rsplit("/", 1)[-1]))
+    if _s269_deep_importers:
+        _s269_deep_importers.sort(reverse=True)
+        _n269, _name269 = _s269_deep_importers[0]
+        lines.append(
+            f"deep importer chain: {_name269} imports this and is itself imported by {_n269} files"
+            f" — second-order blast; changes propagate further than direct importers suggest"
+        )
+
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
 

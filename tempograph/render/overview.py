@@ -1533,6 +1533,22 @@ def render_overview(graph: Tempo) -> str:
             f" — consider grouping into modules/packages as codebase grows"
         )
 
+
+    # S271: Test-heavy codebase — test files outnumber source files by 2×.
+    # A very high test-to-code ratio may indicate test duplication, over-testing of
+    # trivial code, or test debt accumulated from abandoned features.
+    _s271_src = [
+        fp for fp in graph.files
+        if not _is_test_file(fp) and graph.files[fp].language.value in _CODE_LANGS
+    ]
+    _s271_tests = [fp for fp in graph.files if _is_test_file(fp)]
+    if len(_s271_src) >= 5 and len(_s271_tests) >= 10 and len(_s271_tests) > 2 * len(_s271_src):
+        _s271_ratio = len(_s271_tests) / max(len(_s271_src), 1)
+        lines.append(
+            f"test-heavy: {len(_s271_tests)} test files vs {len(_s271_src)} source files"
+            f" ({_s271_ratio:.1f}× ratio) — unusually high; check for test duplication or dead tests"
+        )
+
         # Suggest directories to exclude — detect likely noise
     noisy = _detect_noisy_dirs(graph, modules)
     if noisy:
