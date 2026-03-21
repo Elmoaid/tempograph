@@ -24568,3 +24568,235 @@ class TestDeadPropertyMethodsS505:
         assert "dead property methods" not in out, (
             f"'dead property methods' must not appear when getter is called; got:\n{out}"
         )
+
+
+# ── S507: Single language overview ────────────────────────────────────────────
+
+class TestSingleLanguageOverviewS507:
+    """S507: 90%+ source files in one language emits single language signal."""
+
+    def test_single_language_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        for i in range(11):
+            (tmp_path / f"module_{i}.py").write_text(
+                f"def func_{i}(x): return x\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "single language" in out, (
+            f"Expected 'single language' for 11 Python-only files; got:\n{out}"
+        )
+
+    def test_single_language_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        for i in range(6):
+            (tmp_path / f"module_{i}.py").write_text(f"def func_{i}(x): return x\n")
+        for i in range(6):
+            (tmp_path / f"module_{i}.js").write_text(
+                f"function func_{i}(x) {{ return x; }}\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "single language" not in out, (
+            f"'single language' must not appear for mixed-language codebase; got:\n{out}"
+        )
+
+
+# ── S508: Untyped export focused ──────────────────────────────────────────────
+
+class TestUntypedExportFocusedS508:
+    """S508: Exported function with 3+ callers and no return type emits untyped export signal."""
+
+    def test_untyped_export_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def process(data):\n    return data\n"
+        )
+        callers = "\n".join(
+            f"from utils import process\ndef caller_{i}(): return process({i})\n"
+            for i in range(4)
+        )
+        (tmp_path / "callers.py").write_text(callers)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="process")
+        assert "untyped export" in out, (
+            f"Expected 'untyped export' for process() with 4 callers and no return hint; got:\n{out}"
+        )
+
+    def test_untyped_export_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def process(data: str) -> str:\n    return data\n"
+        )
+        callers = "\n".join(
+            f"from utils import process\ndef caller_{i}(): return process('x')\n"
+            for i in range(4)
+        )
+        (tmp_path / "callers.py").write_text(callers)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="process")
+        assert "untyped export" not in out, (
+            f"'untyped export' must not appear for fully typed function; got:\n{out}"
+        )
+
+
+# ── S509: ORM model touched diff ──────────────────────────────────────────────
+
+class TestOrmModelTouchedDiffS509:
+    """S509: Diff touching a model/entity file emits ORM model touched signal."""
+
+    def test_orm_model_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "models.py").write_text(
+            "class User:\n    name = ''\n    email = ''\n"
+        )
+        (tmp_path / "service.py").write_text(
+            "from models import User\ndef create(n, e): return User()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["models.py"])
+        assert "ORM model touched" in out, (
+            f"Expected 'ORM model touched' for models.py; got:\n{out}"
+        )
+
+    def test_orm_model_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def helper(x): return x\n")
+        (tmp_path / "main.py").write_text(
+            "from utils import helper\ndef run(): return helper(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["utils.py"])
+        assert "ORM model touched" not in out, (
+            f"'ORM model touched' must not appear for non-model file; got:\n{out}"
+        )
+
+
+# ── S510: Async hotspot ───────────────────────────────────────────────────────
+
+class TestAsyncHotspotS510:
+    """S510: Top hotspot is an async function emits the signal."""
+
+    def test_async_hotspot_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "handlers.py").write_text(
+            "async def handle_request(req):\n    return req\n"
+        )
+        callers = "\n".join(
+            f"from handlers import handle_request\n"
+            f"async def req_{i}(): return await handle_request({i})\n"
+            for i in range(5)
+        )
+        (tmp_path / "callers.py").write_text(callers)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "async hotspot" in out, (
+            f"Expected 'async hotspot' for top async function; got:\n{out}"
+        )
+
+    def test_async_hotspot_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def compute(x): return x * 2\n"
+        )
+        callers = "\n".join(
+            f"from utils import compute\ndef caller_{i}(): compute({i})\n"
+            for i in range(5)
+        )
+        (tmp_path / "callers.py").write_text(callers)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "async hotspot" not in out, (
+            f"'async hotspot' must not appear for sync function; got:\n{out}"
+        )
+
+
+# ── S511: Single consumer blast ───────────────────────────────────────────────
+
+class TestSingleConsumerBlastS511:
+    """S511: Blast target imported by exactly one file emits single consumer signal."""
+
+    def test_single_consumer_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "helper.py").write_text("def compute(x): return x * 2\n")
+        (tmp_path / "service.py").write_text(
+            "from helper import compute\ndef run(x): return compute(x)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="helper.py")
+        assert "single consumer" in out, (
+            f"Expected 'single consumer' for helper.py with one importer; got:\n{out}"
+        )
+
+    def test_single_consumer_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "helper.py").write_text("def compute(x): return x * 2\n")
+        (tmp_path / "service_a.py").write_text(
+            "from helper import compute\ndef run_a(x): return compute(x)\n"
+        )
+        (tmp_path / "service_b.py").write_text(
+            "from helper import compute\ndef run_b(x): return compute(x + 1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="helper.py")
+        assert "single consumer" not in out, (
+            f"'single consumer' must not appear when 2 importers exist; got:\n{out}"
+        )
+
+
+# ── S512: Dead test utilities dead ────────────────────────────────────────────
+
+class TestDeadTestUtilitiesS512:
+    """S512: 2+ unused setup_/teardown_ in test files emit dead test utilities signal."""
+
+    def test_dead_test_utils_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "test_service.py").write_text(
+            "def setup_database(): pass\n"
+            "def teardown_session(): pass\n"
+            "def setup_cache(): pass\n"
+            "def test_basic(): assert True\n"
+        )
+        (tmp_path / "service.py").write_text("def run(): return 1\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead test utilities" in out, (
+            f"Expected 'dead test utilities' for unused setup_ helpers; got:\n{out}"
+        )
+
+    def test_dead_test_utils_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "test_service.py").write_text(
+            "def setup_database(): pass\n"
+            "def test_basic(): setup_database()\n"
+        )
+        (tmp_path / "service.py").write_text("def run(): return 1\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead test utilities" not in out, (
+            f"'dead test utilities' must not appear when setup helper is called; got:\n{out}"
+        )
