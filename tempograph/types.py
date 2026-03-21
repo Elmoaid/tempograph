@@ -196,28 +196,41 @@ class Tempo:
     _renderers: dict[str, list[str]] = field(default_factory=dict, repr=False)  # target → [sources that render it]
 
     def build_indexes(self) -> None:
-        self._callers.clear()
-        self._callees.clear()
-        self._children.clear()
-        self._importers.clear()
-        self._renderers.clear()
-        self._subtypes.clear()
+        # Local variable binding avoids repeated attribute and global lookups in the hot loop.
+        # 'is' comparison is correct for enum singletons and skips __eq__ dispatch overhead.
+        _CALLS = EdgeKind.CALLS
+        _CONTAINS = EdgeKind.CONTAINS
+        _IMPORTS = EdgeKind.IMPORTS
+        _RENDERS = EdgeKind.RENDERS
+        _INHERITS = EdgeKind.INHERITS
+        _IMPLEMENTS = EdgeKind.IMPLEMENTS
+        callers = self._callers
+        callees = self._callees
+        children = self._children
+        importers = self._importers
+        renderers = self._renderers
+        subtypes = self._subtypes
+        callers.clear(); callees.clear(); children.clear()
+        importers.clear(); renderers.clear(); subtypes.clear()
         for edge in self.edges:
-            if edge.kind == EdgeKind.CALLS:
-                self._callers.setdefault(edge.target_id, []).append(edge.source_id)
-                self._callees.setdefault(edge.source_id, []).append(edge.target_id)
-            elif edge.kind == EdgeKind.CONTAINS:
-                self._children.setdefault(edge.source_id, []).append(edge.target_id)
-            elif edge.kind == EdgeKind.IMPORTS:
-                self._importers.setdefault(edge.target_id, []).append(edge.source_id)
-            elif edge.kind == EdgeKind.RENDERS:
-                self._renderers.setdefault(edge.target_id, []).append(edge.source_id)
-            elif edge.kind in (EdgeKind.INHERITS, EdgeKind.IMPLEMENTS):
-                self._subtypes.setdefault(edge.target_id, []).append(edge.source_id)
+            k = edge.kind
+            src = edge.source_id
+            tgt = edge.target_id
+            if k is _CALLS:
+                callers.setdefault(tgt, []).append(src)
+                callees.setdefault(src, []).append(tgt)
+            elif k is _CONTAINS:
+                children.setdefault(src, []).append(tgt)
+            elif k is _IMPORTS:
+                importers.setdefault(tgt, []).append(src)
+            elif k is _RENDERS:
+                renderers.setdefault(tgt, []).append(src)
+            elif k is _INHERITS or k is _IMPLEMENTS:
+                subtypes.setdefault(tgt, []).append(src)
         # deduplicate
-        for d in (self._callers, self._callees, self._children, self._importers, self._renderers, self._subtypes):
-            for k in d:
-                d[k] = list(dict.fromkeys(d[k]))
+        for d in (callers, callees, children, importers, renderers, subtypes):
+            for kk in d:
+                d[kk] = list(dict.fromkeys(d[kk]))
 
     def callers_of(self, symbol_id: str) -> list[Symbol]:
         return [self.symbols[s] for s in self._callers.get(symbol_id, []) if s in self.symbols]
