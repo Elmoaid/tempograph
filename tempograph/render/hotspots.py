@@ -1660,5 +1660,19 @@ def _collect_hotspots_signals(
                         f" — no siblings to share load; complexity will compound with each change"
                     )
 
+    # S498: Hotspot wrapper/adapter — top hotspot filename suggests it wraps an external dependency.
+    # Wrapper files couple the internal system to an external API; changes must be validated
+    # against both the internal callers and the external dependency's contract.
+    if scores:
+        _top498 = scores[0][1]
+        if not _is_test_file(_top498.file_path):
+            _wrap_keywords498 = ("wrapper", "adapter", "proxy", "facade", "bridge", "client")
+            _fp_lower498 = _top498.file_path.lower().replace("_", "").replace("-", "")
+            if any(kw in _fp_lower498 for kw in _wrap_keywords498):
+                out.append(
+                    f"\nwrapper hotspot: {_top498.file_path.rsplit('/', 1)[-1]} wraps an external dependency"
+                    f" — changes must satisfy both internal callers and the external API contract"
+                )
+
     return out
 

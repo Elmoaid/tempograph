@@ -1480,4 +1480,13 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — changes propagate silently to all dependent tests; run the full test suite"
         )
 
+    # S497: Large diff surface — diff spans 10+ files.
+    # Very wide diffs are hard to review atomically; reviewers miss interactions between distant
+    # changes and the probability of a hidden regression grows with diff breadth.
+    if len(changed_files) >= 10:
+        lines.append(
+            f"large diff: {len(changed_files)} files changed"
+            f" — wide diffs increase review blind-spots; consider splitting into smaller PRs"
+        )
+
     return "\n".join(lines)

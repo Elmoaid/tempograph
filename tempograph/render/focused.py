@@ -2789,6 +2789,23 @@ def _signals_focused_fn_advanced(
                     f" verify all collection usage is compatible"
                 )
 
+    # S494: Class factory function — focused function name uses factory naming conventions.
+    # Factory functions create objects with specific invariants enforced at construction time;
+    # changing the return type, validation logic, or parameter defaults breaks all callers.
+    _factory_prefixes494 = ("make_", "create_", "build_", "new_", "from_", "get_or_create_")
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim494 = next((s for s in _seed_syms if s.kind.value in ("function", "method")), None)
+        if _prim494 and any(_prim494.name.lower().startswith(p) for p in _factory_prefixes494):
+            _callers494 = [
+                e for e in graph.edges
+                if e.kind.value == "calls" and e.target_id == _prim494.id
+            ]
+            if _callers494:
+                lines.append(
+                    f"\nfactory function: {_prim494.name} is a factory with {len(_callers494)} caller(s)"
+                    f" — changing return type or validation silently breaks all construction sites"
+                )
+
     # S350: Orphaned symbol — focused symbol has 0 callers and the file is not imported anywhere.
     # Zero-caller symbols in unimported files may be dead code that was never wired up
     # during a refactor; modifying them has no effect unless the file is imported first.
