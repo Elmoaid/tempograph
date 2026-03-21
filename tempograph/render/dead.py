@@ -3478,6 +3478,26 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — removed exception handlers may leave callers with unhandled errors propagating silently"
         )
 
+    # S1013: Dead migrations — unused migrate_/migration_/upgrade_/downgrade_ prefixed functions.
+    # Dead migration functions indicate abandoned schema evolution paths; if these are
+    # database migrations the schema version table may be inconsistent with the actual schema.
+    _mig_prefixes1013 = ("migrate_", "migration_", "upgrade_", "downgrade_", "rollback_", "apply_migration", "run_migration")
+    _dead_migrations1013 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().startswith(p) for p in _mig_prefixes1013)
+    ]
+    if _dead_migrations1013:
+        _mig_names1013 = ", ".join(s.name for s in _dead_migrations1013[:3])
+        if len(_dead_migrations1013) > 3:
+            _mig_names1013 += f" +{len(_dead_migrations1013) - 3} more"
+        lines.append(
+            f"dead migrations: {len(_dead_migrations1013)} unused migration function(s) ({_mig_names1013})"
+            f" — abandoned schema evolution paths; schema version table may be inconsistent with actual schema"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

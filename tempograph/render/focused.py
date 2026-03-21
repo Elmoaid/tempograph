@@ -4003,6 +4003,21 @@ def _signals_fn_focus_props_b(
                     f" — implicit interface pattern; changes must maintain contract across all implementations"
                 )
 
+    # S1008: High complexity — focused symbol has cyclomatic complexity >= 10.
+    # High cyclomatic complexity means many distinct code paths; each path needs test coverage
+    # and every change risks breaking one of the many execution branches.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim1008 = _seed_syms[0]
+        if (
+            not _is_test_file(_prim1008.file_path)
+            and _prim1008.kind.value in ("function", "method")
+            and getattr(_prim1008, "complexity", 0) >= 10
+        ):
+            lines.append(
+                f"\nhigh complexity: {_prim1008.name} has cyclomatic complexity {_prim1008.complexity}"
+                f" — {_prim1008.complexity} distinct paths need test coverage; refactor before growing further"
+            )
+
     return lines
 
 

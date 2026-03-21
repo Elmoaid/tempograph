@@ -2960,5 +2960,23 @@ def _collect_hotspots_signals(
                     f" — complex code at the start of all execution paths; changes affect every request/call"
                 )
 
+    # S1012: Co-located hotspots — top two hotspots are both in the same source file.
+    # When the highest-scoring symbols share a file, that file is a concentration risk;
+    # any regression in it simultaneously degrades the two most critical code paths.
+    if len(scores) >= 2:
+        _top_sym1012 = scores[0][1]
+        _second_sym1012 = scores[1][1]
+        if (
+            _top_sym1012 is not None
+            and _second_sym1012 is not None
+            and not _is_test_file(_top_sym1012.file_path)
+            and _top_sym1012.file_path == _second_sym1012.file_path
+        ):
+            _fname1012 = _top_sym1012.file_path.replace("\\", "/").rsplit("/", 1)[-1]
+            out.append(
+                f"\nco-located hotspots: {_top_sym1012.name} and {_second_sym1012.name} are both in {_fname1012}"
+                f" — hotspot concentration; a single regression here degrades two critical paths simultaneously"
+            )
+
     return out
 
