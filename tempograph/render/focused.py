@@ -3247,6 +3247,24 @@ def _signals_focused_fn_advanced(
                 f" — part of the package public API; changes affect all package consumers"
             )
 
+    # S642: Bridge node — focused symbol has both 3+ callers and 3+ callees (cross-layer connector).
+    # A function called by many AND calling many is a bridge between layers;
+    # changing its signature or behavior cascades in both directions simultaneously.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim642 = _seed_syms[0]
+        if (
+            not _is_test_file(_prim642.file_path)
+            and _prim642.kind.value in ("function", "method")
+        ):
+            _callers642 = graph.callers_of(_prim642.id)
+            _callees642 = graph.callees_of(_prim642.id)
+            if len(_callers642) >= 3 and len(_callees642) >= 3:
+                lines.append(
+                    f"\nbridge node: {_prim642.name} has {len(_callers642)} callers"
+                    f" and {len(_callees642)} callees"
+                    f" — cross-layer connector; changes cascade upstream AND downstream"
+                )
+
     return lines
 
 

@@ -2027,5 +2027,22 @@ def _collect_hotspots_signals(
                 f" — churn concentrated in class hierarchy; review for god-class patterns"
             )
 
+    # S646: Zero-complexity hotspot — top hotspot has complexity=1 but 5+ callers (trivial dispatch).
+    # A function that simply delegates to another (complexity=1) shouldn't be a hotspot;
+    # if many callers use it, they may be better served calling the underlying function directly.
+    if scores:
+        _top646 = scores[0][1]
+        if (
+            not _is_test_file(_top646.file_path)
+            and _top646.kind.value in ("function", "method")
+            and (_top646.complexity or 1) <= 1
+        ):
+            _caller_count646 = len(graph.callers_of(_top646.id))
+            if _caller_count646 >= 5:
+                out.append(
+                    f"\ntrivial hotspot: {_top646.name} has {_caller_count646} callers"
+                    f" but complexity=1 — thin dispatcher; callers may benefit from calling the underlying directly"
+                )
+
     return out
 

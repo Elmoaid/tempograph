@@ -2612,6 +2612,29 @@ def _signals_async_oop(
             f" — test infrastructure may need its own refactoring pass"
         )
 
+    # S643: Deep inheritance chain — at least one class inherits from a class that itself inherits.
+    # Inheritance depth >= 3 signals a fragile base class problem; changes to base classes
+    # propagate through all descendants, and deep chains are hard to reason about.
+    _inherits643 = {
+        e.source_id: e.target_id
+        for e in graph.edges
+        if e.kind.value == "inherits"
+        and not _is_test_file(e.source_id)
+    }
+    # Check for chains: A→B→C (depth 3)
+    _deep_chains643 = []
+    for child, parent in _inherits643.items():
+        grandparent = _inherits643.get(parent)
+        if grandparent:
+            _deep_chains643.append((child.split("::")[-1], parent.split("::")[-1], grandparent.split("::")[-1]))
+    if _deep_chains643:
+        _chain643 = _deep_chains643[0]
+        lines.append(
+            f"deep inheritance: {len(_deep_chains643)} class(es) have inheritance depth >= 3"
+            f" (e.g. {_chain643[0]} → {_chain643[1]} → {_chain643[2]})"
+            f" — fragile base class risk; prefer composition over deep inheritance"
+        )
+
     return lines
 
 

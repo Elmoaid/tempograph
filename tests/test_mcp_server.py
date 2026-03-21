@@ -30052,6 +30052,213 @@ class TestDeadDeprecatedS635:
         )
 
 
+class TestInitFileSymbolFocusedS636:
+    """S636: Focused symbol in __init__.py emits init-file-symbol signal."""
+
+    def test_init_file_symbol_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "pkg").mkdir()
+        (tmp_path / "pkg" / "__init__.py").write_text("def setup(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "setup")
+        assert "init-file symbol" in out, (
+            f"Expected 'init-file symbol' for function in __init__.py; got:\n{out}"
+        )
+
+    def test_init_file_symbol_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def setup(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "setup")
+        assert "init-file symbol" not in out, (
+            f"'init-file symbol' must not appear for function in a regular file; got:\n{out}"
+        )
+
+
+class TestTestHeavySymbolsOverviewS637:
+    """S637: 3x more test symbols than source symbols emits test-heavy-symbols signal."""
+
+    def test_test_heavy_symbols_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        (tmp_path / "models.py").write_text(
+            "\n".join(f"def fn_{i}(): pass" for i in range(5))
+        )
+        (tmp_path / "test_models.py").write_text(
+            "\n".join(f"def test_fn_{i}(): pass" for i in range(15))
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "test-heavy symbols" in out, (
+            f"Expected 'test-heavy symbols' for 3:1 test:source ratio; got:\n{out}"
+        )
+
+    def test_test_heavy_symbols_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        (tmp_path / "models.py").write_text(
+            "\n".join(f"def fn_{i}(): pass" for i in range(5))
+        )
+        (tmp_path / "test_models.py").write_text(
+            "\n".join(f"def test_fn_{i}(): pass" for i in range(5))
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "test-heavy symbols" not in out, (
+            f"'test-heavy symbols' must not appear for 1:1 test:source ratio; got:\n{out}"
+        )
+
+
+class TestThinWrapperBlastS638:
+    """S638: Blast target with exactly 1 symbol and 3+ importers emits thin-wrapper signal."""
+
+    def test_thin_wrapper_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "wrapper.py").write_text("def fn(): pass\n")
+        for i in range(3):
+            (tmp_path / f"app_{i}.py").write_text(
+                f"from wrapper import fn\ndef use_{i}(): fn()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "wrapper.py")
+        assert "thin wrapper" in out, (
+            f"Expected 'thin wrapper' for single-symbol file with 3 importers; got:\n{out}"
+        )
+
+    def test_thin_wrapper_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "wrapper.py").write_text(
+            "def fn(): pass\ndef helper(): pass\n"
+        )
+        for i in range(3):
+            (tmp_path / f"app_{i}.py").write_text(
+                f"from wrapper import fn\ndef use_{i}(): fn()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "wrapper.py")
+        assert "thin wrapper" not in out, (
+            f"'thin wrapper' must not appear for file with 2 symbols; got:\n{out}"
+        )
+
+
+class TestPolyglotDiffS639:
+    """S639: Diff spanning 3+ language extensions emits polyglot-diff signal."""
+
+    def test_polyglot_diff_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "server.go", "client.js"])
+        assert "polyglot diff" in out, (
+            f"Expected 'polyglot diff' for diff with .py/.go/.js files; got:\n{out}"
+        )
+
+    def test_polyglot_diff_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "utils.py", "models.py"])
+        assert "polyglot diff" not in out, (
+            f"'polyglot diff' must not appear for single-language diff; got:\n{out}"
+        )
+
+
+class TestMethodHotspotClusterS640:
+    """S640: All top-5 hotspots are class methods emits method-hotspot-cluster signal."""
+
+    def test_method_hotspot_cluster_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        # 5 services, each with a uniquely-named method; factory instantiates them;
+        # 6 client files call each method via the factory instances.
+        for i in range(5):
+            (tmp_path / f"svc_{i}.py").write_text(
+                f"class Service{i}:\n    def handle_{i}(self): pass\n"
+            )
+        factory_code = "\n".join(
+            f"from svc_{i} import Service{i}\nsvc{i} = Service{i}()"
+            for i in range(5)
+        ) + "\n"
+        (tmp_path / "factory.py").write_text(factory_code)
+        for j in range(6):
+            code = "import factory\n"
+            for i in range(5):
+                code += f"def use_{i}_{j}(): factory.svc{i}.handle_{i}()\n"
+            (tmp_path / f"client_{j}.py").write_text(code)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "method hotspot cluster" in out, (
+            f"Expected 'method hotspot cluster' when all top-5 hotspots are class methods; got:\n{out}"
+        )
+
+    def test_method_hotspot_cluster_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        # Top hotspot is a standalone function, not a method
+        (tmp_path / "utils.py").write_text("def process(x): return x\n")
+        for i in range(6):
+            (tmp_path / f"client_{i}.py").write_text(
+                f"from utils import process\ndef fn_{i}(): process({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "method hotspot cluster" not in out, (
+            f"'method hotspot cluster' must not appear when top hotspot is a function; got:\n{out}"
+        )
+
+
+class TestDeadInnerClassS641:
+    """S641: Unused nested class emits dead-inner-classes signal."""
+
+    def test_dead_inner_class_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "models.py").write_text(
+            "class Outer:\n"
+            "    class Inner:\n"
+            "        pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead inner classes" in out, (
+            f"Expected 'dead inner classes' for unused nested class; got:\n{out}"
+        )
+
+    def test_dead_inner_class_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "models.py").write_text(
+            "class Outer:\n"
+            "    class Inner:\n"
+            "        pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from models import Outer\ndef create(): return Outer.Inner()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead inner classes" not in out, (
+            f"'dead inner classes' must not appear when Inner is instantiated; got:\n{out}"
+        )
+
 # ── S636: Init-file symbol ────────────────────────────────────────────────────
 
 class TestInitFileSymbolS636:
@@ -30289,4 +30496,232 @@ class TestDeadInnerClassS641:
         out = render_dead_code(g)
         assert "dead inner classes" not in out, (
             f"'dead inner classes' must not appear when inner class is accessed; got:\n{out}"
+        )
+
+
+# ── S642: Bridge node ─────────────────────────────────────────────────────────
+
+class TestBridgeNodeS642:
+    """S642: Focused symbol with 3+ callers AND 3+ callees emits bridge-node signal."""
+
+    def test_bridge_node_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "helpers.py").write_text(
+            "def low_a(): return 1\ndef low_b(): return 2\ndef low_c(): return 3\n"
+        )
+        (tmp_path / "bridge.py").write_text(
+            "from helpers import low_a, low_b, low_c\n"
+            "def orchestrate(x):\n"
+            "    return low_a() + low_b() + low_c()\n"
+        )
+        for i in range(3):
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from bridge import orchestrate\ndef run_{i}(): orchestrate({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "orchestrate")
+        assert "bridge node" in out, (
+            f"Expected 'bridge node' for fn with 3+ callers and 3+ callees; got:\n{out}"
+        )
+
+    def test_bridge_node_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "simple.py").write_text("def helper(): return 42\n")
+        (tmp_path / "caller.py").write_text(
+            "from simple import helper\ndef run(): helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "helper")
+        assert "bridge node" not in out, (
+            f"'bridge node' must not appear for fn with few callers/callees; got:\n{out}"
+        )
+
+
+# ── S643: Deep inheritance chain ──────────────────────────────────────────────
+
+class TestDeepInheritanceS643:
+    """S643: Class with inheritance depth >= 3 emits deep-inheritance signal."""
+
+    def test_deep_inheritance_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        (tmp_path / "hier.py").write_text(
+            "class Base: pass\n"
+            "class Middle(Base): pass\n"
+            "class Child(Middle): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "deep inheritance" in out, (
+            f"Expected 'deep inheritance' for 3-level class chain; got:\n{out}"
+        )
+
+    def test_deep_inheritance_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        (tmp_path / "flat.py").write_text(
+            "class Base: pass\n"
+            "class ChildA(Base): pass\n"
+            "class ChildB(Base): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "deep inheritance" not in out, (
+            f"'deep inheritance' must not appear for shallow (depth=2) inheritance; got:\n{out}"
+        )
+
+
+# ── S644: Vendor blast ────────────────────────────────────────────────────────
+
+class TestPureClassModuleS644:
+    """S644: Blast target with 2+ exported classes and no module-level functions emits pure-class-module signal."""
+
+    def test_pure_class_module_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "models.py").write_text(
+            "class User:\n    def __init__(self, name): self.name = name\n"
+            "class Product:\n    def __init__(self, sku): self.sku = sku\n"
+        )
+        for i in range(3):
+            (tmp_path / f"svc_{i}.py").write_text(
+                f"from models import User, Product\n"
+                f"def task_{i}(): return User('x'), Product('sku-{i}')\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "models.py")
+        assert "pure class module" in out, (
+            f"Expected 'pure class module' for file with only class definitions; got:\n{out}"
+        )
+
+    def test_pure_class_module_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "mixed.py").write_text(
+            "class Config:\n    debug = False\n"
+            "def get_config(): return Config()\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from mixed import get_config\ndef run(): get_config()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "mixed.py")
+        assert "pure class module" not in out, (
+            f"'pure class module' must not appear when module has a function; got:\n{out}"
+        )
+
+
+# ── S645: Lockfile in diff ────────────────────────────────────────────────────
+
+class TestLockfileInDiffS645:
+    """S645: Lockfile (requirements.txt, yarn.lock, etc.) in diff emits lockfile-in-diff signal."""
+
+    def test_lockfile_in_diff_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["app.py", "requirements.txt"])
+        assert "lockfile in diff" in out, (
+            f"Expected 'lockfile in diff' when requirements.txt is changed; got:\n{out}"
+        )
+
+    def test_lockfile_in_diff_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["app.py", "setup.py"])
+        assert "lockfile in diff" not in out, (
+            f"'lockfile in diff' must not appear for non-lockfile changes; got:\n{out}"
+        )
+
+
+# ── S646: Trivial hotspot ─────────────────────────────────────────────────────
+
+class TestTrivialHotspotS646:
+    """S646: Top hotspot with complexity=1 and 5+ callers emits trivial-hotspot signal."""
+
+    def test_trivial_hotspot_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "dispatch.py").write_text("def get_value(): return 42\n")
+        for i in range(6):
+            (tmp_path / f"user_{i}.py").write_text(
+                f"from dispatch import get_value\ndef task_{i}(): return get_value()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "trivial hotspot" in out, (
+            f"Expected 'trivial hotspot' for complexity=1 fn with 6 callers; got:\n{out}"
+        )
+
+    def test_trivial_hotspot_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "complex_fn.py").write_text(
+            "def process(x):\n"
+            "    if x > 0:\n"
+            "        if x > 10:\n"
+            "            return x * 3\n"
+            "        return x * 2\n"
+            "    return 0\n"
+        )
+        for i in range(6):
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from complex_fn import process\ndef run_{i}(): process({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "trivial hotspot" not in out, (
+            f"'trivial hotspot' must not appear for fn with complexity > 1; got:\n{out}"
+        )
+
+
+# ── S647: Dead mixins ─────────────────────────────────────────────────────────
+
+class TestDeadMixinsS647:
+    """S647: Unused class with Mixin/Base/Abstract in name emits dead-mixins signal."""
+
+    def test_dead_mixins_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "mixins.py").write_text(
+            "class LoggingMixin:\n    def log(self): pass\n"
+            "class CachingMixin:\n    def cache(self): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead mixins" in out, (
+            f"Expected 'dead mixins' for unused Mixin classes; got:\n{out}"
+        )
+
+    def test_dead_mixins_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "mixins.py").write_text(
+            "class LoggingMixin:\n    def log(self): pass\n"
+        )
+        (tmp_path / "service.py").write_text(
+            "from mixins import LoggingMixin\n"
+            "class MyService(LoggingMixin):\n    def run(self): self.log()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead mixins" not in out, (
+            f"'dead mixins' must not appear when Mixin class is subclassed; got:\n{out}"
         )
