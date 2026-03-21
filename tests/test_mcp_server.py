@@ -16317,3 +16317,219 @@ class TestDiffDocsInDiff:
         assert "docs in diff" not in out, (
             f"'docs in diff' must not appear for source-only diff; got:\n{out}"
         )
+
+
+# S274 — OOP-heavy codebase (overview)
+# ---------------------------------------------------------------------------
+
+class TestOverviewOopHeavy:
+    def test_oop_heavy_shown(self, tmp_path):
+        """S274: 'oop-heavy' shown when 20+ class definitions in source files."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        for i in range(22):
+            (tmp_path / f"model{i}.py").write_text(
+                f"class Model{i}:\n    def process(self): return {i}\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "oop-heavy" in out, f"Expected 'oop-heavy'; got:\n{out}"
+        assert "god classes" in out
+
+    def test_oop_heavy_absent_for_few_classes(self, tmp_path):
+        """S274: 'oop-heavy' absent when fewer than 20 class definitions."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        for i in range(5):
+            (tmp_path / f"model{i}.py").write_text(
+                f"class Model{i}:\n    def get(self): return {i}\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "oop-heavy" not in out, (
+            f"'oop-heavy' must not appear with < 20 classes; got:\n{out}"
+        )
+
+
+# S275 — orphaned class (focus)
+# ---------------------------------------------------------------------------
+
+class TestFocusOrphanedClass:
+    def test_orphaned_class_shown(self, tmp_path):
+        """S275: 'orphaned class' shown when exported class has no external callers."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        (tmp_path / "legacy.py").write_text(
+            "class LegacyProcessor:\n"
+            "    def run(self): return None\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "LegacyProcessor")
+        assert "orphaned class" in out, f"Expected 'orphaned class'; got:\n{out}"
+        assert "no external callers" in out
+
+    def test_orphaned_class_absent_when_used(self, tmp_path):
+        """S275: 'orphaned class' absent when class has external callers."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        (tmp_path / "processor.py").write_text(
+            "class Processor:\n    def run(self): return 1\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from processor import Processor\ndef main(): Processor().run()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "Processor")
+        assert "orphaned class" not in out, (
+            f"'orphaned class' must not appear when class is used; got:\n{out}"
+        )
+
+
+# S276 — hotspot in diff (diff)
+# ---------------------------------------------------------------------------
+
+class TestDiffHotspotInDiff:
+    def test_hotspot_in_diff_shown(self, tmp_path):
+        """S276: 'hotspot in diff' shown when a changed file has 3+ widely-called symbols."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "core.py").write_text(
+            "def alpha(): return 1\n"
+            "def beta(): return 2\n"
+            "def gamma(): return 3\n"
+        )
+        for i in range(5):
+            (tmp_path / f"user{i}.py").write_text(
+                f"from core import alpha, beta, gamma\n"
+                f"def work_{i}(): alpha(); beta(); gamma()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["core.py"])
+        assert "hotspot in diff" in out, f"Expected 'hotspot in diff'; got:\n{out}"
+        assert "changes often" in out
+
+    def test_hotspot_in_diff_absent_for_utility(self, tmp_path):
+        """S276: 'hotspot in diff' absent when changed file has few callers."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        (tmp_path / "config.py").write_text("TIMEOUT = 30\n")
+        (tmp_path / "app.py").write_text(
+            "from config import TIMEOUT\ndef run(): return TIMEOUT\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["config.py"])
+        assert "hotspot in diff" not in out, (
+            f"'hotspot in diff' must not appear for low-caller file; got:\n{out}"
+        )
+
+
+# S277 — single-caller hotspot (hotspots)
+# ---------------------------------------------------------------------------
+
+class TestHotspotsSingleCaller:
+    def test_single_caller_hotspot_shown(self, tmp_path):
+        """S277: 'single-caller hotspot' shown when top hotspot has only 1 external caller."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        (tmp_path / "processor.py").write_text(
+            "def process_data(data): return [x * 2 for x in data]\n"
+        )
+        (tmp_path / "pipeline.py").write_text(
+            "from processor import process_data\n"
+            "def run_pipeline(data):\n"
+            "    for i in range(10): process_data(data)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "single-caller hotspot" in out, f"Expected 'single-caller hotspot'; got:\n{out}"
+        assert "inlining" in out
+
+    def test_single_caller_absent_with_many_callers(self, tmp_path):
+        """S277: 'single-caller hotspot' absent when top hotspot has multiple callers."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        (tmp_path / "core.py").write_text("def process(x): return x\n")
+        for i in range(4):
+            (tmp_path / f"service{i}.py").write_text(
+                f"from core import process\ndef work_{i}(): process({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "single-caller hotspot" not in out, (
+            f"'single-caller hotspot' must not appear with many callers; got:\n{out}"
+        )
+
+
+# S278 — test infrastructure blast (blast)
+# ---------------------------------------------------------------------------
+
+class TestBlastTestInfra:
+    def test_test_infra_blast_shown(self, tmp_path):
+        """S278: 'test infra blast' shown when blast target is a conftest/fixture file."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "conftest.py").write_text(
+            "import pytest\n@pytest.fixture\ndef client(): return {}\n"
+        )
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        for i in range(4):
+            (tests_dir / f"test_mod{i}.py").write_text(
+                f"from conftest import client\ndef test_{i}(client): assert client\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "conftest.py")
+        assert "test infra blast" in out, f"Expected 'test infra blast'; got:\n{out}"
+        assert "entire test suite" in out
+
+    def test_test_infra_absent_for_source_file(self, tmp_path):
+        """S278: 'test infra blast' absent when blast target is a regular source file."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "utils.py").write_text("def helper(): return 1\n")
+        (tmp_path / "app.py").write_text(
+            "from utils import helper\ndef run(): helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "utils.py")
+        assert "test infra blast" not in out, (
+            f"'test infra blast' must not appear for non-fixture file; got:\n{out}"
+        )
+
+
+# S279 — dead async functions (dead)
+# ---------------------------------------------------------------------------
+
+class TestDeadAsyncFunctions:
+    def test_dead_async_shown(self, tmp_path):
+        """S279: 'dead async fns' shown when 2+ async functions have 0 callers."""
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "tasks.py").write_text(
+            "async def fetch_data(): return []\n"
+            "async def process_queue(): return None\n"
+            "async def send_notification(): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead async fns" in out, f"Expected 'dead async fns'; got:\n{out}"
+        assert "detached coroutines" in out
+
+    def test_dead_async_absent_when_awaited(self, tmp_path):
+        """S279: 'dead async fns' absent when async functions are called."""
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "tasks.py").write_text(
+            "async def fetch_data(): return []\n"
+        )
+        (tmp_path / "runner.py").write_text(
+            "from tasks import fetch_data\n"
+            "async def run(): return await fetch_data()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead async fns" not in out, (
+            f"'dead async fns' must not appear when async fns are awaited; got:\n{out}"
+        )

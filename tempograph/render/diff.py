@@ -830,4 +830,28 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — documentation changed; verify code changes are reflected"
         )
 
+
+    # S276: Hotspot in diff — a changed file is also a top hotspot (high-churn) file.
+    # Editing an already-hot file increases instability and conflict risk further.
+    # Show when any changed file ranks in top-5 by cross-file caller count.
+    if normalized:
+        _s276_scores: list[tuple[int, str]] = []
+        for _fp276 in normalized:
+            if _is_test_file(_fp276):
+                continue
+            _callers276 = len([
+                s for s in graph.symbols.values()
+                if s.file_path == _fp276
+                and len([c for c in graph.callers_of(s.id) if c.file_path != _fp276]) >= 2
+            ])
+            if _callers276 > 0:
+                _s276_scores.append((_callers276, _fp276))
+        _s276_scores.sort(reverse=True)
+        if _s276_scores and _s276_scores[0][0] >= 3:
+            _s276_n, _s276_fp = _s276_scores[0]
+            lines.append(
+                f"hotspot in diff: {_s276_fp.rsplit('/', 1)[-1]} is a high-churn file"
+                f" ({_s276_n} widely-called symbols) — extra care needed; this file changes often"
+            )
+
     return "\n".join(lines)
