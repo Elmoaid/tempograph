@@ -2316,5 +2316,19 @@ def _collect_hotspots_signals(
                     f" — architectural dependency magnet; coupling spans the whole codebase"
                 )
 
+    # S748: Property hotspot — a top-5 hotspot is a property accessor.
+    # Property accessors are called implicitly (like attribute reads) but execute code;
+    # when a property ranks as a hotspot, callers are unaware of its cost and side effects.
+    _prop748 = next(
+        (sym for _, sym in scores[:5] if sym is not None and sym.kind.value == "property"),
+        None,
+    )
+    if _prop748 is not None:
+        _callers748 = graph.callers_of(_prop748.id)
+        out.append(
+            f"\nproperty hotspot: {_prop748.name} is a property accessor ranking in top hotspots"
+            f" — callers don't see the cost; consider memoization"
+        )
+
     return out
 
