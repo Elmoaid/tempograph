@@ -6,6 +6,16 @@ from pathlib import Path
 from ..types import Tempo, EdgeKind, FileInfo, Symbol, SymbolKind
 from ._utils import count_tokens, _is_test_file
 
+
+def _display_path(fp: str, all_fps: list[str]) -> str:
+    """Return basename if unique, else parent/basename to disambiguate (e.g. h1/mod.rs)."""
+    base = fp.rsplit("/", 1)[-1]
+    if sum(1 for p in all_fps if p.rsplit("/", 1)[-1] == base) > 1:
+        parts = fp.rsplit("/", 2)
+        return f"{parts[-2]}/{parts[-1]}" if len(parts) >= 2 else base
+    return base
+
+
 def _find_entry_points(graph: Tempo) -> list[str]:
     """Find actual execution entry points — where the program starts.
     These are what agents need to understand the architecture."""
@@ -23,17 +33,23 @@ def _find_entry_points(graph: Tempo) -> list[str]:
                 entries.append(f)
                 break
 
-    # Main entry points
+    # Main entry points (mod.rs excluded — it's a module declaration, not an entry point)
     for f in files:
         base = f.rsplit("/", 1)[-1]
         if base in ("main.py", "main.ts", "main.tsx", "main.rs", "main.go",
                      "index.ts", "index.tsx", "index.js", "app.py", "app.ts",
-                     "lib.rs", "mod.rs", "__main__.py", "server.py", "cli.py"):
+                     "lib.rs", "__main__.py", "server.py", "cli.py"):
             entries.append(f)
 
-    # Symbols named main/run/app at top level
+    # Symbols named main/run/app at top level (skip examples/ and benchmarks/)
+    _EXAMPLE_PATH_PARTS = {"examples", "example", "benchmarks", "bench", "benches", "samples"}
     for sym in graph.symbols.values():
         if sym.parent_id:
+            continue
+        path_parts = set(sym.file_path.replace("\\", "/").split("/"))
+        if path_parts & _EXAMPLE_PATH_PARTS:
+            continue
+        if _is_test_file(sym.file_path):
             continue
         if sym.name in ("main", "app", "run_server", "create_app", "cli"):
             entries.append(f"{sym.file_path}::{sym.name}")
@@ -199,7 +215,8 @@ def render_overview(graph: Tempo) -> str:
                         _sc_candidates.append((_src_imps, _days_sc, _fp))
             if len(_sc_candidates) >= 2:
                 _sc_candidates.sort(key=lambda x: -x[0])
-                _sc_parts = [f"{fp.rsplit('/', 1)[-1]} ({n} importers, {d}d stable)" for n, d, fp in _sc_candidates[:3]]
+                _sc3_fps = [fp for _, _, fp in _sc_candidates[:3]]
+                _sc_parts = [f"{_display_path(fp, _sc3_fps)} ({n} importers, {d}d stable)" for n, d, fp in _sc_candidates[:3]]
                 lines.append(f"stable core: {', '.join(_sc_parts)}")
         except Exception:
             pass
@@ -286,8 +303,9 @@ def render_overview(graph: Tempo) -> str:
         _min_importers = 3
         _top_imported = [(fp, n) for fp, n in _top_imported if n >= _min_importers]
         if _top_imported:
+            _ti_fps = [fp for fp, _ in _top_imported]
             _ti_parts = [
-                f"{fp.rsplit('/', 1)[-1]} ({n})" for fp, n in _top_imported
+                f"{_display_path(fp, _ti_fps)} ({n})" for fp, n in _top_imported
             ]
             lines.append("")
             lines.append(f"top imported: {', '.join(_ti_parts)}")
@@ -307,8 +325,9 @@ def render_overview(graph: Tempo) -> str:
                     _stable_core.append((_n_imp, _fp, _days_c))
             if _stable_core:
                 _stable_core.sort(key=lambda x: -x[0])
+                _sc_fps = [fp for _, fp, _ in _stable_core[:3]]
                 _sc_parts = [
-                    f"{fp.rsplit('/', 1)[-1]} ({n_imp} importers, {d}d)"
+                    f"{_display_path(fp, _sc_fps)} ({n_imp} importers, {d}d)"
                     for n_imp, fp, d in _stable_core[:3]
                 ]
                 lines.append(f"stable core: {', '.join(_sc_parts)}")
@@ -1111,7 +1130,8 @@ def render_overview(graph: Tempo) -> str:
     )
     _s161_hubs = [(n, fp) for n, fp in _s161_hubs if n >= 10]
     if _s161_hubs:
-        _s161_top3 = [fp.rsplit("/", 1)[-1] for _, fp in _s161_hubs[:3]]
+        _s161_fps = [fp for _, fp in _s161_hubs[:3]]
+        _s161_top3 = [_display_path(fp, _s161_fps) for fp in _s161_fps]
         _s161_str = ", ".join(_s161_top3)
         lines.append(
             f"hub files: {len(_s161_hubs)} files imported by 10+ others ({_s161_str})"
@@ -1286,7 +1306,301 @@ def render_overview(graph: Tempo) -> str:
             f" — not imported or called from anywhere"
         )
 
-    # Suggest directories to exclude — detect likely noise
+    # S233: Undertested codebase — source files exist but fewer than 20% of all files are tests.
+    # A low test ratio for a non-trivial codebase is a coverage risk signal.
+    # Only shown when < 20% of 10+ files are tests (excluding trivial single-file repos).
+    _s233_all = [fp for fp in graph.files if graph.files[fp].language.value in _CODE_LANGS]
+    _s233_tests = [fp for fp in _s233_all if _is_test_file(fp)]
+    _s233_src = [fp for fp in _s233_all if not _is_test_file(fp)]
+    if len(_s233_all) >= 10 and _s233_src:
+        _s233_ratio = len(_s233_tests) / len(_s233_all) * 100
+        if _s233_ratio < 20:
+            lines.append(
+                f"undertested: {len(_s233_tests)}/{len(_s233_all)} files are tests"
+                f" ({_s233_ratio:.0f}%) — consider adding test coverage"
+            )
+
+        # S227: High coupling — average number of imports per source file >= 5.
+    # High coupling means files are tightly interdependent; one change ripples widely.
+    # Only shown when avg >= 5 and 5+ source files exist.
+    _s227_src_fps = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_s227_src_fps) >= 5:
+        _s227_import_counts = []
+        for _fp227 in _s227_src_fps:
+            # Count files this fp imports (using importers API: how many others import THIS file)
+            # Instead: count files imported by this file = outgoing edges
+            _n_imports227 = sum(
+                1 for e in graph.edges
+                if e.kind.value == "imports" and e.source_id.split("::")[0] == _fp227
+            )
+            _s227_import_counts.append(_n_imports227)
+        _avg227 = sum(_s227_import_counts) / len(_s227_import_counts)
+        if _avg227 >= 5:
+            lines.append(
+                f"high coupling: avg {_avg227:.1f} imports/file across {len(_s227_src_fps)}"
+                f" source files — tightly interdependent modules"
+            )
+
+        # S226: Monolithic file — a source file containing >= 50 tracked symbols.
+    # A file with 50+ symbols is hard to navigate and often violates single-responsibility.
+    # Only shown when 1+ non-test source file has >= 50 tracked symbols.
+    _s226_mono: list[tuple[int, str]] = []
+    for _fp226 in graph.files:
+        if _is_test_file(_fp226):
+            continue
+        _n_syms226 = sum(1 for s in graph.symbols.values() if s.file_path == _fp226)
+        if _n_syms226 >= 50:
+            _s226_mono.append((_n_syms226, _fp226))
+    if _s226_mono:
+        _s226_mono.sort(reverse=True)
+        _s226_top = _s226_mono[0]
+        _s226_base = _s226_top[1].rsplit("/", 1)[-1]
+        lines.append(
+            f"monolithic file: {_s226_base} has {_s226_top[0]} symbols"
+            f" — consider splitting into focused modules"
+        )
+
+        # S213: High test ratio — more than 60% of source files are test files.
+    # Test-heavy repos are healthy, but very high ratios may indicate missing source coverage.
+    # Positive signal: only shown when ratio >= 60% and there are 5+ total files.
+    _all_files213 = [fp for fp in graph.files if graph.files[fp].language.value in _CODE_LANGS]
+    _test_files213 = [fp for fp in _all_files213 if _is_test_file(fp)]
+    if len(_all_files213) >= 5:
+        _test_ratio213 = len(_test_files213) / len(_all_files213) * 100
+        if _test_ratio213 >= 60:
+            lines.append(
+                f"high test ratio: {len(_test_files213)}/{len(_all_files213)} files are tests"
+                f" ({_test_ratio213:.0f}%) — well-tested codebase"
+            )
+
+    # S220: Multi-entry app — repo has 3+ distinct application entry point files.
+    # Multiple entry points can mean inconsistent startup paths or divergent CLI/server behaviors.
+    # Agents should verify cross-cutting changes (config, auth, logging) apply to all entry points.
+    # Only shown when 3+ entry point stems found among non-test source files.
+    _s220_entry_stems = {
+        "main", "app", "index", "server", "cli", "run", "manage",
+        "wsgi", "asgi", "__main__", "entrypoint", "entry_point",
+    }
+    _s220_entry_files = [
+        fp for fp in graph.files
+        if not _is_test_file(fp)
+        and fp.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower() in _s220_entry_stems
+        and graph.files[fp].language.value in _CODE_LANGS
+    ]
+    if len(_s220_entry_files) >= 3:
+        _s220_names = [fp.rsplit("/", 1)[-1] for fp in _s220_entry_files[:4]]
+        _s220_suffix = f" (+{len(_s220_entry_files) - 3} more)" if len(_s220_entry_files) > 3 else ""
+        _s220_str = ", ".join(_s220_names[:3]) + _s220_suffix
+        lines.append(
+            f"multi-entry app: {len(_s220_entry_files)} entry points ({_s220_str})"
+            f" — cross-cutting changes (config, auth, logging) must apply to all"
+        )
+
+    # S243: Framework/library detected — codebase imports a well-known web framework or library.
+    # Shown to orient agents: know what routing, ORM, and middleware patterns to expect.
+    # Only shown when 1+ framework import found across source files.
+    _s243_frameworks: dict[str, str] = {
+        "flask": "Flask", "django": "Django", "fastapi": "FastAPI",
+        "starlette": "Starlette", "tornado": "Tornado", "aiohttp": "aiohttp",
+        "falcon": "Falcon", "bottle": "Bottle", "sanic": "Sanic",
+        "sqlalchemy": "SQLAlchemy", "alembic": "Alembic", "celery": "Celery",
+        "pydantic": "Pydantic",
+        "express": "Express", "koa": "Koa", "fastify": "Fastify",
+        "nestjs": "NestJS", "nextjs": "Next.js",
+    }
+    _s243_detected: list[str] = []
+    _s243_seen: set[str] = set()
+    for _fi243 in graph.files.values():
+        if _is_test_file(_fi243.language.value):
+            continue
+        for _imp243 in _fi243.imports:
+            _imp243_lower = _imp243.lower()
+            for _fw_key, _fw_label in _s243_frameworks.items():
+                if _fw_key not in _s243_seen and _fw_key in _imp243_lower:
+                    _s243_detected.append(_fw_label)
+                    _s243_seen.add(_fw_key)
+    if _s243_detected:
+        _s243_str = ", ".join(_s243_detected[:3])
+        if len(_s243_detected) > 3:
+            _s243_str += f" +{len(_s243_detected) - 3} more"
+        lines.append(f"frameworks: {_s243_str}")
+
+    # S259: Global-state managers — 3+ source classes whose names end in Manager, Registry,
+    # Pool, Cache, or Singleton. These often hold global state and are risky to change.
+    # Only shown when 3+ such classes found.
+    _s255_mgr_suffixes = ("manager", "registry", "pool", "cache", "singleton",
+                          "store", "repository", "repo", "hub", "bus", "broker",
+                          "container", "context", "session")
+    _s255_mgr_classes = [
+        sym for sym in graph.symbols.values()
+        if sym.kind.value == "class"
+        and not _is_test_file(sym.file_path)
+        and any(sym.name.lower().endswith(sfx) for sfx in _s255_mgr_suffixes)
+    ]
+    if len(_s255_mgr_classes) >= 3:
+        _mgr_names = [s.name for s in _s255_mgr_classes[:3]]
+        _mgr_str = ", ".join(_mgr_names)
+        if len(_s255_mgr_classes) > 3:
+            _mgr_str += f" +{len(_s255_mgr_classes) - 3} more"
+        lines.append(
+            f"global-state classes: {len(_s255_mgr_classes)} managers/registries ({_mgr_str})"
+            f" — likely hold global state; test initialization and teardown carefully"
+        )
+
+    # S252: God symbol — single non-test symbol called from 10+ distinct files.
+    # One function/class/module that everything depends on is an architectural bottleneck.
+    # Only shown when 1+ symbol has 10+ distinct non-test caller files.
+    _s252_god: list[tuple[int, str, str]] = []
+    for _sym252 in graph.symbols.values():
+        if _sym252.kind.value not in ("function", "method", "class"):
+            continue
+        if _is_test_file(_sym252.file_path):
+            continue
+        _caller_files252 = {
+            c.file_path for c in graph.callers_of(_sym252.id)
+            if not _is_test_file(c.file_path) and c.file_path != _sym252.file_path
+        }
+        if len(_caller_files252) >= 10:
+            _s252_god.append((len(_caller_files252), _sym252.name, _sym252.file_path))
+    if _s252_god:
+        _s252_god.sort(key=lambda x: -x[0])
+        _n252, _name252, _fp252 = _s252_god[0]
+        lines.append(
+            f"god symbol: {_name252} ({_fp252.rsplit('/', 1)[-1]}) called from {_n252} files"
+            f" — central bottleneck; changes here blast everywhere"
+        )
+
+    # S247: API-heavy codebase — 3+ source files with "api", "route", "endpoint", or
+    # "view" in their names. Changes often need to update route handlers, serializers, and tests.
+    # Only shown when 3+ such files detected (1-2 is typical for small apps).
+    _s247_api_stems = {"api", "route", "routes", "router", "routers", "endpoint", "endpoints",
+                       "view", "views", "handler", "handlers", "controller", "controllers",
+                       "resource", "resources", "schema", "schemas", "serializer", "serializers"}
+    _s247_api_files = [
+        fp for fp in graph.files
+        if not _is_test_file(fp)
+        and graph.files[fp].language.value in _CODE_LANGS
+        and fp.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower() in _s247_api_stems
+    ]
+    if len(_s247_api_files) >= 3:
+        _s247_names = sorted({fp.rsplit("/", 1)[-1] for fp in _s247_api_files})[:3]
+        _s247_str = ", ".join(_s247_names)
+        if len(_s247_api_files) > 3:
+            _s247_str += f" +{len(_s247_api_files) - 3} more"
+        lines.append(
+            f"api-heavy: {len(_s247_api_files)} API/route files ({_s247_str})"
+            f" — changes often need aligned updates in routes, schemas, and handlers"
+        )
+
+
+    # S258: High coupling density — average imports-per-file exceeds 5 for non-trivial repos.
+    # Dense coupling makes refactoring expensive; each file change can cascade unpredictably.
+    # Only shown for repos with 10+ source files and avg fan-in > 5.
+    _s258_code_files = [
+        fp for fp in graph.files
+        if not _is_test_file(fp) and graph.files[fp].language.value in _CODE_LANGS
+    ]
+    if len(_s258_code_files) >= 10:
+        _s258_total_imports = sum(
+            1 for e in graph.edges
+            if e.kind.value == "imports"
+            and not _is_test_file(e.source_id)
+        )
+        _s258_avg = _s258_total_imports / len(_s258_code_files)
+        if _s258_avg >= 5:
+            lines.append(
+                f"high coupling: avg {_s258_avg:.1f} imports/file"
+                f" — dense dependency graph; refactors cascade unpredictably"
+            )
+
+
+    # S265: Flat structure — 8+ source files all at root level with no subdirectories.
+    # Flat codebases are harder to navigate as they grow; grouping by feature/layer
+    # into subdirectories reduces cognitive load and enables selective imports.
+    _s259_root_src = [
+        fp for fp in graph.files
+        if "/" not in fp
+        and not _is_test_file(fp)
+        and graph.files[fp].language.value in _CODE_LANGS
+    ]
+    _s259_all_src = [
+        fp for fp in graph.files
+        if not _is_test_file(fp) and graph.files[fp].language.value in _CODE_LANGS
+    ]
+    if len(_s259_root_src) >= 8 and len(_s259_root_src) == len(_s259_all_src):
+        lines.append(
+            f"flat structure: all {len(_s259_root_src)} source files at root level"
+            f" — consider grouping into modules/packages as codebase grows"
+        )
+
+
+    # S271: Test-heavy codebase — test files outnumber source files by 2×.
+    # A very high test-to-code ratio may indicate test duplication, over-testing of
+    # trivial code, or test debt accumulated from abandoned features.
+    _s271_src = [
+        fp for fp in graph.files
+        if not _is_test_file(fp) and graph.files[fp].language.value in _CODE_LANGS
+    ]
+    _s271_tests = [fp for fp in graph.files if _is_test_file(fp)]
+    if len(_s271_src) >= 5 and len(_s271_tests) >= 10 and len(_s271_tests) > 2 * len(_s271_src):
+        _s271_ratio = len(_s271_tests) / max(len(_s271_src), 1)
+        lines.append(
+            f"test-heavy: {len(_s271_tests)} test files vs {len(_s271_src)} source files"
+            f" ({_s271_ratio:.1f}× ratio) — unusually high; check for test duplication or dead tests"
+        )
+
+
+    # S274: OOP-heavy codebase — 20+ class definitions in non-test source files.
+    # Large class counts suggest heavy object orientation; complex inheritance hierarchies
+    # and class bloat are common risks. Consider checking for god classes and deep inheritance.
+    _s274_classes = [
+        sym for sym in graph.symbols.values()
+        if sym.kind.value == "class"
+        and not _is_test_file(sym.file_path)
+        and graph.files.get(sym.file_path) is not None
+        and graph.files[sym.file_path].language.value in _CODE_LANGS
+    ]
+    if len(_s274_classes) >= 20:
+        lines.append(
+            f"oop-heavy: {len(_s274_classes)} class definitions in source code"
+            f" — complex OOP; watch for deep inheritance and god classes"
+        )
+
+
+    # S280: Entry point overload — 5+ distinct entry point files detected.
+    # Many entry points suggest a multi-mode application (CLI + server + worker);
+    # each entry point has its own startup path that must be maintained independently.
+    if len(_s220_entry_files) >= 5:
+        _ep_names280 = [fp.rsplit("/", 1)[-1] for fp in _s220_entry_files[:5]]
+        _ep_str280 = ", ".join(_ep_names280)
+        if len(_s220_entry_files) > 5:
+            _ep_str280 += f" +{len(_s220_entry_files) - 5} more"
+        lines.append(
+            f"entry point overload: {len(_s220_entry_files)} entry points ({_ep_str280})"
+            f" — multi-mode app; each startup path must be maintained separately"
+        )
+
+
+    # S286: Shallow module graph — few import edges between source files (avg < 1 per file).
+    # Very low coupling may indicate disconnected modules, dead code islands, or
+    # a library with very independent components.
+    _s286_src = [
+        fp for fp in graph.files
+        if not _is_test_file(fp) and graph.files[fp].language.value in _CODE_LANGS
+    ]
+    if len(_s286_src) >= 8:
+        _s286_import_edges = sum(
+            1 for e in graph.edges
+            if e.kind.value == "imports" and not _is_test_file(e.source_id)
+        )
+        _s286_avg = _s286_import_edges / len(_s286_src)
+        if _s286_avg < 1.0:
+            lines.append(
+                f"shallow graph: avg {_s286_avg:.1f} imports/file across {len(_s286_src)} source files"
+                f" — low coupling; modules may be disconnected or code is largely dead"
+            )
+
+        # Suggest directories to exclude — detect likely noise
     noisy = _detect_noisy_dirs(graph, modules)
     if noisy:
         lines.append("")
