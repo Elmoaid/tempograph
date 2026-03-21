@@ -8,6 +8,16 @@
       body { margin: 0; background: #0a0a0b; color: #e8e8ed; font-family: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif; }
       #root { height: 100vh; }
     </style>
+    <script>
+      (function() {
+        var t = localStorage.getItem('tempo_theme');
+        if (t === 'light') {
+          document.documentElement.setAttribute('data-theme', 'light');
+          document.body.style.background = '#ffffff';
+          document.body.style.color = '#18181b';
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
