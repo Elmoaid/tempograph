@@ -46804,3 +46804,182 @@ class TestDeadFormattersS995:
         assert "dead formatters" not in out, (
             f"'dead formatters' must not appear when formatter is called; got:\n{out}"
         )
+
+
+class TestRecursiveS996:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "math.py").write_text(
+            "def factorial(n):\n"
+            "    if n <= 1: return 1\n"
+            "    return n * factorial(n - 1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "factorial")
+        assert "recursive" in out, (
+            f"'recursive' expected for self-calling function; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "math.py").write_text(
+            "def add(a, b): return a + b\n"
+            "def compute(x): return add(x, 1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "add")
+        assert "recursive" not in out, (
+            f"'recursive' must not appear for non-recursive function; got:\n{out}"
+        )
+
+
+class TestTestHeavyS997:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "app.py").write_text("def run(): pass\ndef process(): pass\n")
+        test_body = "\n".join(f"def test_case_{i}(): pass" for i in range(8))
+        (tmp_path / "test_app.py").write_text(test_body + "\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "test heavy" in out, (
+            f"'test heavy' expected when test count >= 3x source functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        (tmp_path / "app.py").write_text("def run(): pass\ndef process(): pass\n")
+        (tmp_path / "test_app.py").write_text("def test_run(): pass\ndef test_process(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "test heavy" not in out, (
+            f"'test heavy' must not appear when test count is 1:1 with source; got:\n{out}"
+        )
+
+
+class TestMiddlewareBlastS998:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "middleware.py").write_text(
+            "def auth_check(request): return request\n"
+            "def log_request(request): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "middleware.py")
+        assert "middleware blast" in out, (
+            f"'middleware blast' expected for file named middleware.py; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "views.py").write_text("def index(): pass\n")
+        (tmp_path / "app.py").write_text("from views import index\ndef run(): index()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "views.py")
+        assert "middleware blast" not in out, (
+            f"'middleware blast' must not appear for non-middleware file; got:\n{out}"
+        )
+
+
+class TestLargeDiffS999:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        for i in range(6):
+            (tmp_path / f"module_{i}.py").write_text(f"def fn_{i}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=[f"module_{i}.py" for i in range(6)])
+        assert "large diff" in out, (
+            f"'large diff' expected when 6 files are changed; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["app.py", "utils.py"])
+        assert "large diff" not in out, (
+            f"'large diff' must not appear for a 2-file diff; got:\n{out}"
+        )
+
+
+class TestMassiveHotspotS1000:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        fn_lines = "def engine(x):\n"
+        for i in range(160):
+            fn_lines += f"    if x > {i}: x += {i}\n"
+        fn_lines += "    return x\n"
+        (tmp_path / "core.py").write_text(fn_lines)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "massive hotspot" in out, (
+            f"'massive hotspot' expected for 160-line function; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        fn_lines = "def engine(x):\n"
+        for i in range(25):
+            fn_lines += f"    if x > {i}: x += {i}\n"
+        fn_lines += "    return x\n"
+        (tmp_path / "core.py").write_text(fn_lines)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "massive hotspot" not in out, (
+            f"'massive hotspot' must not appear for a 25-line function; got:\n{out}"
+        )
+
+
+class TestDeadBuildersS1001:
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "factories.py").write_text(
+            "def create_user(name): return {'name': name}\n"
+            "def build_response(data): return {'data': data}\n"
+        )
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead builders" in out, (
+            f"'dead builders' expected for unused create_/build_ functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "factories.py").write_text(
+            "def create_user(name): return {'name': name}\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from factories import create_user\n"
+            "def run(): return create_user('alice')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead builders" not in out, (
+            f"'dead builders' must not appear when builder is called; got:\n{out}"
+        )

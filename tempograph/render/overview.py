@@ -3579,6 +3579,23 @@ def _signals_async_oop(
             f" — single class accumulating many responsibilities; changes may have unintended coupling"
         )
 
+    # S997: Test heavy — test suite defines far more functions than source.
+    # When test count significantly exceeds source function count, CI slows and
+    # tests become brittle; agents may need to update many tests per code change.
+    _src_fns997 = [
+        s for s in graph.symbols.values()
+        if s.kind.value == "function" and s.parent_id is None and not _is_test_file(s.file_path)
+    ]
+    _test_fns997 = [
+        s for s in graph.symbols.values()
+        if s.kind.value in ("function", "test") and _is_test_file(s.file_path) and s.name.startswith("test_")
+    ]
+    if len(_src_fns997) >= 2 and len(_test_fns997) >= len(_src_fns997) * 3:
+        lines.append(
+            f"test heavy: {len(_test_fns997)} test functions for {len(_src_fns997)} source functions"
+            f" — high test burden; CI may be slow and expect many test updates per code change"
+        )
+
     return lines
 
 

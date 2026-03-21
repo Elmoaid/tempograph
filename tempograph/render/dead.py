@@ -3438,6 +3438,26 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — removed formatters may leave callers receiving raw or incorrectly structured data"
         )
 
+    # S1001: Dead builders — unused build_/create_/make_/construct_/factory_ prefixed functions.
+    # Dead factory functions indicate removed object creation paths; callers may be unable
+    # to instantiate objects they expect, causing AttributeErrors or None-type failures.
+    _build_prefixes1001 = ("build_", "create_", "make_", "construct_", "new_", "factory_", "produce_", "generate_")
+    _dead_builders1001 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().startswith(p) for p in _build_prefixes1001)
+    ]
+    if _dead_builders1001:
+        _bld_names1001 = ", ".join(s.name for s in _dead_builders1001[:3])
+        if len(_dead_builders1001) > 3:
+            _bld_names1001 += f" +{len(_dead_builders1001) - 3} more"
+        lines.append(
+            f"dead builders: {len(_dead_builders1001)} unused factory/builder function(s) ({_bld_names1001})"
+            f" — removed object creation paths may leave callers unable to instantiate expected objects"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
