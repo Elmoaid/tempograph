@@ -655,11 +655,16 @@ class TestPrepareContext:
         ))
         assert isinstance(r["data"], str)
 
-    def test_definition_first_default_false_matches_plain(self):
+    def test_definition_first_default_false_matches_plain(self, tmp_path):
         # definition_first=False (default) must produce identical output to omitting the param.
+        # Uses tmp_path (no git repo) to avoid flakiness when REPO_PATH has uncommitted changes.
         from tempograph.prepare import render_prepare
         from tempograph.builder import build_graph
-        graph = build_graph(REPO_PATH)
+        (tmp_path / "core.py").write_text("def render_focused(g, q):\n    pass\n")
+        (tmp_path / "caller.py").write_text(
+            "from core import render_focused\ndef main(): render_focused(None, 'q')\n"
+        )
+        graph = build_graph(str(tmp_path), use_cache=False)
         task = "Merge pull request #1 from org/add-render-focused\nAdd render_focused function"
         out_default = render_prepare(graph, task)
         out_false = render_prepare(graph, task, definition_first=False)
@@ -4287,4 +4292,47 @@ class TestBlastRefactorSafety:
 
         assert "refactor safety:" not in out, (
             f"refactor safety: must not appear when no test files exist; got:\n{out}"
+        )
+
+
+class TestDiffTestsToRun:
+    """S31: Diff mode — 'Tests to run:' section.
+
+    When render_diff_context is called with a changed file, the output should list
+    test files that call symbols from that file, sorted by call count.
+    Files with no test coverage should not show the section.
+    """
+
+    def _build(self, tmp_path, files: dict) -> object:
+        from tempograph.builder import build_graph
+
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_shows_tests_when_test_calls_changed_symbol(self, tmp_path):
+        """Diff shows 'Tests to run:' when a test file calls a symbol from the changed file."""
+        from tempograph.render import render_diff_context
+
+        g = self._build(tmp_path, {
+            "utils.py": "def helper():\n    return 1\n",
+            "test_utils.py": "from utils import helper\n\ndef test_helper():\n    assert helper() == 1\n",
+        })
+        out = render_diff_context(g, ["utils.py"])
+
+        assert "Tests to run" in out, f"Must show 'Tests to run' when test calls changed symbol; got:\n{out}"
+        assert "test_utils.py" in out, f"Must name the test file; got:\n{out}"
+
+    def test_omits_section_when_no_test_coverage(self, tmp_path):
+        """Diff omits 'Tests to run:' when no test files cover symbols in the changed file."""
+        from tempograph.render import render_diff_context
+
+        g = self._build(tmp_path, {
+            "core.py": "def fn():\n    pass\n",
+            "user.py": "from core import fn\n\ndef use_fn():\n    fn()\n",
+        })
+        out = render_diff_context(g, ["core.py"])
+
+        assert "Tests to run" not in out, (
+            f"Must NOT show 'Tests to run' when no test files cover the changed file; got:\n{out}"
         )
