@@ -4074,7 +4074,15 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
     medium = [(s, c) for s, c in scored if 40 <= c < 70]
     low = [(s, c) for s, c in scored if c < 40]
 
-    lines = [f"Potential dead code ({len(dead)} symbols):"]
+    # S98: Total removable lines — sum of line counts for high+medium confidence dead symbols.
+    # Gives agents immediate ROI signal: "is this worth cleaning up?"
+    # Only shown when total >= 50 lines (smaller amounts aren't worth flagging).
+    _removable_lines = sum(sym.line_count for sym, conf in scored if conf >= 40)
+    _removable_header = ""
+    if _removable_lines >= 50:
+        _removable_header = f" (~{_removable_lines} lines removable)"
+
+    lines = [f"Potential dead code ({len(dead)} symbols){_removable_header}:"]
 
     # Quick wins: top files with the most HIGH confidence dead symbols.
     # Shows agents where to start cleanup without reading the full list.
