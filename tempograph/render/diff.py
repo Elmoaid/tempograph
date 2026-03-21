@@ -259,6 +259,24 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — verify code and docs stay in sync; doc-only diffs may lag actual behavior"
         )
 
+    # S675: Version file in diff — diff includes a version tracking file.
+    # Version bumps signal a release boundary; changes alongside a version bump
+    # will ship immediately and should be held to a higher quality bar.
+    _version_names675 = {
+        "version.py", "__version__.py", "VERSION", "VERSION.txt",
+        "pyproject.toml", "package.json", "Cargo.toml", "setup.cfg",
+    }
+    _ver_files675 = [
+        f for f in changed_files
+        if f.rsplit("/", 1)[-1] in _version_names675
+    ]
+    if _ver_files675:
+        _ver_name675 = _ver_files675[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"version file in diff: {_ver_name675} changed"
+            f" — release boundary; co-changed code ships immediately; hold to higher quality bar"
+        )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 

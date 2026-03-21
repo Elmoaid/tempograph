@@ -31602,3 +31602,226 @@ class TestDeadModuleS671:
             f"'dead module' must not appear when files have at least 1 live symbol; got:\n{out}"
         )
 
+
+# ── S672: Duplicated name (focused) ───────────────────────────────────────────
+
+class TestDuplicatedNameS672:
+    """S672: Focused symbol whose name appears in 3+ files emits duplicated-name signal."""
+
+    def test_duplicated_name_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        # Same function name 'process' in 3 different files
+        for mod in ("alpha", "beta", "gamma"):
+            (tmp_path / f"{mod}.py").write_text("def process(x): return x\n")
+        # caller so we can query focused on one of them
+        (tmp_path / "app.py").write_text(
+            "from alpha import process\ndef run(): process(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process")
+        assert "duplicated name" in out, (
+            f"Expected 'duplicated name' when name exists in 3+ files; got:\n{out}"
+        )
+
+    def test_duplicated_name_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def unique_transform(x): return x * 2\n")
+        (tmp_path / "app.py").write_text(
+            "from utils import unique_transform\ndef run(): unique_transform(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "unique_transform")
+        assert "duplicated name" not in out, (
+            f"'duplicated name' must not appear for a uniquely-named symbol; got:\n{out}"
+        )
+
+
+# ── S673: Dominant file (overview) ────────────────────────────────────────────
+
+class TestDominantFileS673:
+    """S673: One file holding >30% of all repo symbols emits dominant-file signal."""
+
+    def test_dominant_file_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # big.py has 10 functions (>30% of 25 total)
+        big_fns = "\n".join(f"def fn_{i}(): pass" for i in range(10))
+        (tmp_path / "big.py").write_text(big_fns + "\n")
+        # small files spread the rest (15 functions across 5 files)
+        for i in range(5):
+            (tmp_path / f"small_{i}.py").write_text(
+                f"def helper_{i}_a(): pass\ndef helper_{i}_b(): pass\ndef helper_{i}_c(): pass\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "dominant file" in out, (
+            f"Expected 'dominant file' when one file holds >30% symbols; got:\n{out}"
+        )
+
+    def test_dominant_file_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # Evenly spread — each file has 3 functions (6 files, 18 total, each 16.7%)
+        for i in range(6):
+            (tmp_path / f"mod_{i}.py").write_text(
+                f"def a_{i}(): pass\ndef b_{i}(): pass\ndef c_{i}(): pass\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "dominant file" not in out, (
+            f"'dominant file' must not appear when symbols are evenly distributed; got:\n{out}"
+        )
+
+
+# ── S674: Entry point blast ────────────────────────────────────────────────────
+
+class TestEntryPointBlastS674:
+    """S674: Blast on a well-known entry point filename emits entry-point-blast signal."""
+
+    def test_entry_point_blast_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "main.py").write_text(
+            "from utils import setup\ndef main(): setup()\n"
+        )
+        (tmp_path / "utils.py").write_text("def setup(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "main.py")
+        assert "entry point blast" in out, (
+            f"Expected 'entry point blast' for main.py; got:\n{out}"
+        )
+
+    def test_entry_point_blast_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "helpers.py").write_text("def do_work(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from helpers import do_work\ndef run(): do_work()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "helpers.py")
+        assert "entry point blast" not in out, (
+            f"'entry point blast' must not appear for non-entry file; got:\n{out}"
+        )
+
+
+# ── S675: Version file in diff ────────────────────────────────────────────────
+
+class TestVersionFileInDiffS675:
+    """S675: Diff including a version file emits version-file-in-diff signal."""
+
+    def test_version_file_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "version.py").write_text('__version__ = "1.2.0"\n')
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "version.py"])
+        assert "version file in diff" in out, (
+            f"Expected 'version file in diff' when version.py in diff; got:\n{out}"
+        )
+
+    def test_version_file_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "utils.py"])
+        assert "version file in diff" not in out, (
+            f"'version file in diff' must not appear for non-version diff; got:\n{out}"
+        )
+
+
+# ── S676: Test-only callers (hotspots) ────────────────────────────────────────
+
+class TestTestOnlyCallersS676:
+    """S676: Top hotspot called only from test files emits test-only-callers signal."""
+
+    def test_test_only_callers_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "internals.py").write_text(
+            "def _compute(x): return x * 2\n"
+        )
+        # Only tests call _compute
+        for i in range(5):
+            (tmp_path / f"test_compute_{i}.py").write_text(
+                f"from internals import _compute\ndef test_{i}(): assert _compute({i}) == {i*2}\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "test-only callers" in out, (
+            f"Expected 'test-only callers' for fn called only from tests; got:\n{out}"
+        )
+
+    def test_test_only_callers_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def compute(x): return x * 2\n")
+        # Mixed callers: production + test
+        (tmp_path / "service.py").write_text(
+            "from core import compute\ndef process(v): return compute(v)\n"
+        )
+        (tmp_path / "test_core.py").write_text(
+            "from core import compute\ndef test_it(): assert compute(2) == 4\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "test-only callers" not in out, (
+            f"'test-only callers' must not appear when production code also calls the fn; got:\n{out}"
+        )
+
+
+# ── S677: Dead overloaded name ─────────────────────────────────────────────────
+
+class TestDeadOverloadedNameS677:
+    """S677: 3+ dead functions sharing the same name emits dead-overloaded-names signal."""
+
+    def test_dead_overloaded_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        # 'transform' defined in 3 files, none imported anywhere
+        for mod in ("alpha", "beta", "gamma"):
+            (tmp_path / f"{mod}.py").write_text("def transform(x): return x\n")
+        # Separate live file so the repo has something active
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        (tmp_path / "runner.py").write_text(
+            "from app import main\ndef start(): main()\n"
+        )
+        (tmp_path / "entry.py").write_text(
+            "from runner import start\nstart()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead overloaded names" in out, (
+            f"Expected 'dead overloaded names' for 3 dead 'transform' fns; got:\n{out}"
+        )
+
+    def test_dead_overloaded_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        # Only 2 copies of 'process' — below the threshold of 3
+        (tmp_path / "a.py").write_text("def process(x): return x\n")
+        (tmp_path / "b.py").write_text("def process(x): return x + 1\n")
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead overloaded names" not in out, (
+            f"'dead overloaded names' must not appear with only 2 copies; got:\n{out}"
+        )
+

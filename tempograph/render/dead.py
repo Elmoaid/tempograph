@@ -2313,6 +2313,22 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — entire file has no live consumers; candidate for deletion"
         )
 
+    # S677: Dead overloaded name — 3+ dead symbols share the same name (copy-paste drift).
+    # Multiple dead functions with the same name across files indicate widespread duplication
+    # that was never activated; none of the copies survived to production use.
+    _dead_name_counts677: dict[str, int] = {}
+    for _s677 in dead:
+        if _s677.kind.value in ("function", "method") and not _is_test_file(_s677.file_path):
+            _dead_name_counts677[_s677.name] = _dead_name_counts677.get(_s677.name, 0) + 1
+    _overloaded677 = [(name, cnt) for name, cnt in _dead_name_counts677.items() if cnt >= 3]
+    if _overloaded677:
+        _top677 = sorted(_overloaded677, key=lambda x: -x[1])[:2]
+        _label677 = ", ".join(f"'{n}' ×{c}" for n, c in _top677)
+        lines.append(
+            f"dead overloaded names: {len(_overloaded677)} name(s) dead in 3+ files ({_label677})"
+            f" — copy-paste drift; duplicated functions were never called anywhere"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
