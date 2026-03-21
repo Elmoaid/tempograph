@@ -577,6 +577,21 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — fixture changes affect all tests in scope; audit callers before merging"
             )
 
+    # S819: Diff spans 3+ directories — changed files come from 3+ distinct top-level dirs.
+    # Wide diffs touching many parts of the codebase are harder to review and test;
+    # they increase the probability of unexpected interactions between changed modules.
+    if changed_files:
+        _top_dirs819 = {
+            f.replace("\\", "/").split("/")[0]
+            for f in changed_files
+            if "/" in f.replace("\\", "/")
+        }
+        if len(_top_dirs819) >= 3:
+            lines.append(
+                f"wide-scope diff: changes span {len(_top_dirs819)} top-level directories ({', '.join(sorted(_top_dirs819)[:4])})"
+                f" — cross-cutting change; review for unexpected module interactions"
+            )
+
     # S813: __init__.py in diff — a package's public API surface file changed.
     # __init__.py controls what is exported from a package; changing it shifts the public
     # API and can break any code that relies on star imports or specific re-exports.

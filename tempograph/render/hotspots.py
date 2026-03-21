@@ -2492,6 +2492,17 @@ def _collect_hotspots_signals(
                     f" — concurrency bugs here manifest as race conditions; review await chains carefully"
                 )
 
+    # S820: Test-file hotspot — the top hotspot is inside a test file.
+    # A test function being the most-called symbol indicates tests are calling each other
+    # (test coupling), which makes test suites fragile and hard to run in isolation.
+    if scores:
+        _top820 = scores[0][1]
+        if _top820 is not None and _is_test_file(_top820.file_path):
+            out.append(
+                f"\ntest-file hotspot: {_top820.name} is a test function ranked as the top hotspot"
+                f" — tests calling other tests create coupling; consider shared fixtures instead"
+            )
+
     # S814: Cross-module hotspot — top hotspot is called from 3+ distinct top-level directories.
     # When a symbol is depended upon across many structural boundaries it becomes a de-facto
     # shared infrastructure piece; any change requires coordinating across all those modules.
