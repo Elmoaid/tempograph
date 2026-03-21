@@ -401,10 +401,18 @@ def render_overview(graph: Tempo) -> str:
 
     # Orphan test files: test files that name a source file which no longer exists.
     # These linger after source renames/deletions and should be cleaned up.
+    # Uses both basename and stem-segment matching to avoid false positives:
+    # test_bench_context.py -> "bench_context.py" OR any file ending in "context.py"
+    # with a path segment containing "bench".
     if len(_test_fps) >= 2:
         _orphan_tests: list[str] = []
         _src_basenames = {
             fp.rsplit("/", 1)[-1] for fp in graph.files if not _is_test_file(fp)
+        }
+        # Also build a stem set for partial matching (handles test_bench_ctx -> ctx.py patterns)
+        _src_stems = {
+            fp.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+            for fp in graph.files if not _is_test_file(fp)
         }
         for _tfp in _test_fps:
             _tname = _tfp.rsplit("/", 1)[-1]
@@ -415,9 +423,24 @@ def render_overview(graph: Tempo) -> str:
                 _sname = _sname[:-8] + ".py"
             else:
                 continue  # no test_ prefix/suffix pattern — skip
-            if _sname not in _src_basenames:
+            _sstem = _sname.rsplit(".", 1)[0]  # e.g. "bench_context"
+            # Direct basename match
+            if _sname in _src_basenames:
+                continue
+            # Partial stem match: any source file whose stem is a suffix of test stem
+            # e.g. "bench_context" -> source "context" (bench/changelocal/context.py)
+            _partial_match = any(
+                _sstem.endswith("_" + s) or _sstem == s
+                for s in _src_stems
+                if len(s) >= 3
+            )
+            if not _partial_match:
                 _orphan_tests.append(_tname)
-        if _orphan_tests:
+        # Suppress if many orphans AND >40% ratio — indicates a naming mismatch
+        # between test structure and source structure (e.g. test_bench_foo.py for bench/foo.py).
+        # Small counts (<5) always shown regardless of ratio (likely real orphans).
+        _orphan_ratio = len(_orphan_tests) / max(len(_test_fps), 1)
+        if _orphan_tests and (len(_orphan_tests) < 5 or _orphan_ratio <= 0.40):
             _ot_str = ", ".join(sorted(_orphan_tests)[:3])
             if len(_orphan_tests) > 3:
                 _ot_str += f" +{len(_orphan_tests) - 3} more"
@@ -2089,7 +2112,7 @@ def _build_symbol_block_lines(
             # Implementors: classes/traits that extend or implement this symbol.
             # Shown only for CLASS/INTERFACE seeds to surface the inheritance fanout.
             if sym.kind in (SymbolKind.CLASS, SymbolKind.INTERFACE):
-                _subtypes = graph.subtypes_of(sym.name)
+                _subtypes = graph.subtypes_of(sym.id)
                 if _subtypes:
                     _sub_strs = [
                         f"{s.qualified_name} ({s.file_path.rsplit('/', 1)[-1]}:{s.line_start})"

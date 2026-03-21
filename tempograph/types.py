@@ -142,7 +142,7 @@ EXTENSION_TO_LANGUAGE: dict[str, Language] = {
 }
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class Symbol:
     id: str                          # unique: "path/to/file.ts::ClassName.methodName"
     name: str                        # simple name: "methodName"
@@ -164,7 +164,7 @@ class Symbol:
         return self.line_end - self.line_start + 1
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class Edge:
     kind: EdgeKind
     source_id: str   # symbol or file id
