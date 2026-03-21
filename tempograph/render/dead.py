@@ -396,7 +396,93 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — event wiring may have been removed"
         )
 
-    # S196: Dead fixtures — setup_*/teardown_* functions that are dead.
+    # S218: Dead initializers — init/setup/configure functions with 0 callers (conf >= 40).
+    # Dead setup functions suggest abandoned initialization paths; risky if they contain side effects.
+    # Only shown when 1+ dead initializer found.
+    _s218_init_patterns = ("init_", "initialize_", "setup_app", "configure_", "bootstrap_", "startup_")
+    _s218_dead_inits = [
+        sym for sym, conf in scored
+        if conf >= 40
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.startswith(p) for p in _s218_init_patterns)
+    ]
+    if len(_s218_dead_inits) >= 1:
+        _init_names = [s.name for s in _s218_dead_inits[:3]]
+        _init_str = ", ".join(_init_names)
+        if len(_s218_dead_inits) > 3:
+            _init_str += f" +{len(_s218_dead_inits) - 3} more"
+        lines.append(
+            f"dead initializers: {len(_s218_dead_inits)} unused init/setup fn(s) ({_init_str})"
+            f" — abandoned initialization paths"
+        )
+
+        # S232: Dead serializers — serialize/to_dict/from_dict/to_json fns with 0 callers.
+    # Dead serializers often indicate abandoned API shapes or migration leftovers.
+    # Only shown when 1+ dead serializer function found (conf >= 40).
+    _s232_ser_patterns = ("serialize_", "deserialize_", "to_dict", "from_dict",
+                          "to_json", "from_json", "to_xml", "from_xml", "marshal_", "unmarshal_")
+    _s232_dead_sers = [
+        sym for sym, conf in scored
+        if conf >= 40
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.startswith(p) or sym.name == p for p in _s232_ser_patterns)
+    ]
+    if len(_s232_dead_sers) >= 1:
+        _ser_names = [s.name for s in _s232_dead_sers[:3]]
+        _ser_str = ", ".join(_ser_names)
+        if len(_s232_dead_sers) > 3:
+            _ser_str += f" +{len(_s232_dead_sers) - 3} more"
+        lines.append(
+            f"dead serializers: {len(_s232_dead_sers)} unused serialize/marshal fn(s) ({_ser_str})"
+            f" — abandoned API shapes or migration leftovers"
+        )
+
+        # S238: Dead middleware — middleware/before_*/after_* functions that are dead.
+    # Dead middleware suggests request pipeline wiring was removed but the fn wasn't cleaned up.
+    # Only shown when 1+ dead middleware function found (conf >= 40).
+    _s238_mw_patterns = ("middleware_", "before_", "after_", "pre_", "post_",
+                          "intercept_", "filter_", "on_request", "on_response")
+    _s238_dead_mw = [
+        sym for sym, conf in scored
+        if conf >= 40
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.startswith(p) for p in _s238_mw_patterns)
+    ]
+    if len(_s238_dead_mw) >= 1:
+        _mw_names = [s.name for s in _s238_dead_mw[:3]]
+        _mw_str = ", ".join(_mw_names)
+        if len(_s238_dead_mw) > 3:
+            _mw_str += f" +{len(_s238_dead_mw) - 3} more"
+        lines.append(
+            f"dead middleware: {len(_s238_dead_mw)} unused middleware fn(s) ({_mw_str})"
+            f" — request pipeline wiring may have been removed"
+        )
+
+        # S225: Dead validators — validate_*/check_* functions with 0 callers (conf >= 40).
+    # Dead validators suggest removed feature gates or abandoned data integrity checks.
+    # Only shown when 2+ such dead validator functions found.
+    _s225_val_patterns = ("validate_", "check_", "verify_", "assert_", "ensure_")
+    _s225_dead_vals = [
+        sym for sym, conf in scored
+        if conf >= 40
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.startswith(p) for p in _s225_val_patterns)
+    ]
+    if len(_s225_dead_vals) >= 2:
+        _val_names = [s.name for s in _s225_dead_vals[:3]]
+        _val_str = ", ".join(_val_names)
+        if len(_s225_dead_vals) > 3:
+            _val_str += f" +{len(_s225_dead_vals) - 3} more"
+        lines.append(
+            f"dead validators: {len(_s225_dead_vals)} unused validate/check fn(s) ({_val_str})"
+            f" — removed feature gates or abandoned integrity checks"
+        )
+
+        # S196: Dead fixtures — setup_*/teardown_* functions that are dead.
     # Test fixture functions with 0 callers are often orphaned test infrastructure.
     # Only shown when 2+ such dead fixture functions found.
     _s196_dead_fixtures = [
@@ -617,6 +703,143 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         if len(_whole_file_dead) > 3:
             _wfd_str += f" +{len(_whole_file_dead) - 3} more"
         lines.append(f"whole-file dead: {len(_whole_file_dead)} files fully dead ({_wfd_str}) — candidates for deletion")
+
+    # S241: Dead config/settings — config_*/settings_*/get_config/load_config functions with 0 callers.
+    # Dead config accessors often signal removed features whose configuration was never cleaned up.
+    # Only shown when 2+ dead config-accessor functions found (conf >= 40).
+    _s241_cfg_patterns = ("config_", "settings_", "get_config", "load_config", "get_setting",
+                          "load_settings", "parse_config", "read_config")
+    _s241_dead_cfg = [
+        sym for sym, conf in scored
+        if conf >= 40
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s241_cfg_patterns)
+    ]
+    if len(_s241_dead_cfg) >= 2:
+        _cfg_names = [s.name for s in _s241_dead_cfg[:3]]
+        _cfg_str = ", ".join(_cfg_names)
+        if len(_s241_dead_cfg) > 3:
+            _cfg_str += f" +{len(_s241_dead_cfg) - 3} more"
+        lines.append(
+            f"dead config: {len(_s241_dead_cfg)} unused config fn(s) ({_cfg_str})"
+            f" — removed feature configurations not yet cleaned up"
+        )
+
+    # S248: Dead exception classes — custom exception classes with 0 raise/except sites.
+    # Dead exception classes bloat the exception hierarchy; unused errors may signal
+    # removed features whose error paths were never cleaned up.
+    # Only shown when 2+ dead exception classes found (conf >= 40).
+    _s248_exc_indicators = ("error", "exception", "err", "exc", "fault", "failure")
+    _s248_dead_exc = [
+        sym for sym, conf in scored
+        if conf >= 40
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value == "class"
+        and any(sym.name.lower().endswith(ind) for ind in _s248_exc_indicators)
+    ]
+    if len(_s248_dead_exc) >= 2:
+        _exc_names = [s.name for s in _s248_dead_exc[:3]]
+        _exc_str = ", ".join(_exc_names)
+        if len(_s248_dead_exc) > 3:
+            _exc_str += f" +{len(_s248_dead_exc) - 3} more"
+        lines.append(
+            f"dead exceptions: {len(_s248_dead_exc)} unused exception class(es) ({_exc_str})"
+            f" — removed error paths not yet cleaned up"
+        )
+
+
+    # S257: Dead type definitions — Schema/DTO/Request/Response/Config classes with 0 callers.
+    # Dead type definitions suggest removed features or migrated data contracts that
+    # were never cleaned up; they bloat the type system and mislead readers.
+    # Only shown when 2+ such classes found (conf >= 40).
+    _s257_type_suffixes = ("schema", "dto", "request", "response", "config", "settings",
+                           "payload", "params", "options", "data", "model", "spec")
+    _s257_dead_types = [
+        sym for sym, conf in scored
+        if conf >= 40
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value == "class"
+        and any(sym.name.lower().endswith(ind) for ind in _s257_type_suffixes)
+    ]
+    if len(_s257_dead_types) >= 2:
+        _type_names = [s.name for s in _s257_dead_types[:3]]
+        _type_str = ", ".join(_type_names)
+        if len(_s257_dead_types) > 3:
+            _type_str += f" +{len(_s257_dead_types) - 3} more"
+        lines.append(
+            f"dead type defs: {len(_s257_dead_types)} unused type class(es) ({_type_str})"
+            f" — removed data contracts not yet cleaned up"
+        )
+
+
+    # S264: Dead CLI commands — cmd_*/command_*/do_* functions with 0 callers.
+    # Dead CLI handlers suggest removed subcommands whose dispatch wiring was cleaned up
+    # but the handler itself was left behind.
+    # Only shown when 2+ such functions found (conf >= 40).
+    _s264_cmd_prefixes = ("cmd_", "command_", "do_", "run_cmd", "execute_", "action_", "subcommand_")
+    _s264_dead_cmds = [
+        sym for sym, conf in scored
+        if conf >= 40
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.startswith(p) for p in _s264_cmd_prefixes)
+    ]
+    if len(_s264_dead_cmds) >= 2:
+        _cmd_names = [s.name for s in _s264_dead_cmds[:3]]
+        _cmd_str = ", ".join(_cmd_names)
+        if len(_s264_dead_cmds) > 3:
+            _cmd_str += f" +{len(_s264_dead_cmds) - 3} more"
+        lines.append(
+            f"dead CLI commands: {len(_s264_dead_cmds)} unused command handler(s) ({_cmd_str})"
+            f" — subcommand removed but handler not cleaned up"
+        )
+
+
+    # S270: Dead event handlers — on_*/handle_*/listener_* functions with 0 callers.
+    # Dead event handlers suggest removed event subscriptions whose handler was not
+    # cleaned up; they may also be mistakenly detached (silent bugs).
+    # Only shown when 2+ such functions found (conf >= 40).
+    _s270_evt_prefixes = ("on_", "handle_", "listener_", "observer_", "subscriber_",
+                          "on_message", "on_event", "on_change", "on_error", "on_connect")
+    _s270_dead_evt = [
+        sym for sym, conf in scored
+        if conf >= 40
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.startswith(p) for p in _s270_evt_prefixes)
+    ]
+    if len(_s270_dead_evt) >= 2:
+        _evt_names = [s.name for s in _s270_dead_evt[:3]]
+        _evt_str = ", ".join(_evt_names)
+        if len(_s270_dead_evt) > 3:
+            _evt_str += f" +{len(_s270_dead_evt) - 3} more"
+        lines.append(
+            f"dead event handlers: {len(_s270_dead_evt)} unused event handler(s) ({_evt_str})"
+            f" — event subscription may have been removed or silently detached"
+        )
+
+
+    # S279: Dead async functions — async def functions with 0 callers (conf >= 40).
+    # Unused async functions are particularly risky because their deletion is not
+    # always obvious from sync callers; they may be event loop callbacks or coroutines.
+    # Only shown when 2+ dead async functions found.
+    _s279_dead_async = [
+        sym for sym, conf in scored
+        if conf >= 40
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and sym.signature and "async" in sym.signature.lower()
+    ]
+    if len(_s279_dead_async) >= 2:
+        _async_names = [s.name for s in _s279_dead_async[:3]]
+        _async_str = ", ".join(_async_names)
+        if len(_s279_dead_async) > 3:
+            _async_str += f" +{len(_s279_dead_async) - 3} more"
+        lines.append(
+            f"dead async fns: {len(_s279_dead_async)} unused async function(s) ({_async_str})"
+            f" — may be detached coroutines or removed event loop callbacks"
+        )
 
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
