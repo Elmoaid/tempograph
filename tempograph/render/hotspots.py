@@ -2348,9 +2348,15 @@ def _collect_hotspots_signals(
     # subclasses and instances share the coupling — method changes affect the whole hierarchy.
     if scores:
         _top760 = scores[0][1]
-        if _top760 is not None and _top760.kind.value == "classmethod":
+        if (
+            _top760 is not None
+            and _top760.kind.value in ("function", "method", "classmethod")
+            and _top760.parent_id is not None
+            and _top760.signature is not None
+            and ("(cls," in _top760.signature or _top760.signature.endswith("(cls)") or "(cls):" in _top760.signature)
+        ):
             out.append(
-                f"\nclassmethod hotspot: {_top760.name} is a @classmethod and the top hotspot"
+                f"\nclassmethod hotspot: {_top760.name} is a classmethod (takes cls) and the top hotspot"
                 f" — changes affect every subclass and instance in the hierarchy"
             )
 

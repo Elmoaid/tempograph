@@ -3595,17 +3595,20 @@ def _signals_focused_fn_advanced(
                     f" — widely-used function without docs; add a docstring to reduce caller friction"
                 )
 
-    # S756: Classmethod focus — focused symbol is a classmethod (class-level shared state).
+    # S756: Classmethod focus — focused method takes cls as first param (classmethod convention).
     # Classmethods share state through the class itself rather than through instances;
     # changes can affect all instances and subclass behavior simultaneously.
     if _seed_syms and token_count < max_tokens - 30:
         _prim756 = _seed_syms[0]
         if (
-            _prim756.kind.value == "classmethod"
+            _prim756.kind.value in ("function", "method", "classmethod")
+            and _prim756.parent_id is not None
             and not _is_test_file(_prim756.file_path)
+            and _prim756.signature is not None
+            and ("(cls," in _prim756.signature or _prim756.signature.endswith("(cls)") or "(cls):" in _prim756.signature)
         ):
             lines.append(
-                f"\nclassmethod focus: {_prim756.name} is a @classmethod — operates on class-level state;"
+                f"\nclassmethod focus: {_prim756.name} takes cls as first parameter — operates on class-level state;"
                 f" changes affect all instances and subclasses simultaneously"
             )
 

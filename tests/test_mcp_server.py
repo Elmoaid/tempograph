@@ -35806,3 +35806,231 @@ class TestDeadStaticOnlyClassS755:
         assert "dead static-only class" not in out, (
             f"'dead static-only class' must not appear when class is used; got:\n{out}"
         )
+
+# ---------------------------------------------------------------------------
+# S756 – S761
+# ---------------------------------------------------------------------------
+
+# ── S756: Classmethod focus ───────────────────────────────────────────────────
+
+class TestClassmethodFocusS756:
+    """S756: Focused symbol is a @classmethod emits classmethod-focus signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "model.py").write_text(
+            "class User:\n"
+            "    @classmethod\n"
+            "    def from_dict(cls, data): return cls()\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from model import User\ndef create(d): return User.from_dict(d)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "from_dict")
+        assert "classmethod focus" in out, (
+            f"Expected 'classmethod focus' for @classmethod symbol; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def process(data): return data\n")
+        (tmp_path / "app.py").write_text(
+            "from utils import process\ndef run(x): return process(x)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process")
+        assert "classmethod focus" not in out, (
+            f"'classmethod focus' must not appear for regular function; got:\n{out}"
+        )
+
+
+# ── S757: Constant-heavy repo ─────────────────────────────────────────────────
+
+class TestConstantHeavyRepoS757:
+    """S757: Repo has 2x+ more constants than functions emits constant-heavy-repo signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # 3 functions, 8 constants = 2.67:1 ratio
+        (tmp_path / "config.py").write_text(
+            "MAX_RETRIES = 3\nTIMEOUT = 30\nBASE_URL = 'http://x'\n"
+            "DB_HOST = 'localhost'\nDB_PORT = 5432\n"
+        )
+        (tmp_path / "settings.py").write_text(
+            "DEBUG = False\nSECRET_KEY = 'abc'\nALLOWED_HOSTS = []\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "def run(): pass\ndef stop(): pass\ndef start(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "constant-heavy repo" in out, (
+            f"Expected 'constant-heavy repo' when constants >> functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # 5 functions, 2 constants (below 2:1 ratio)
+        (tmp_path / "app.py").write_text(
+            "MAX = 10\nMIN = 1\n"
+            "def fn_a(): pass\ndef fn_b(): pass\ndef fn_c(): pass\n"
+            "def fn_d(): pass\ndef fn_e(): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "constant-heavy repo" not in out, (
+            f"'constant-heavy repo' must not appear when function count is adequate; got:\n{out}"
+        )
+
+
+# ── S758: Router file blast ───────────────────────────────────────────────────
+
+class TestRouterFileBlastS758:
+    """S758: Blast target is a router/routes file emits router-file-blast signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "routes.py").write_text(
+            "def get_routes(): return ['/api/users', '/api/posts']\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from routes import get_routes\ndef build_app(): get_routes()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "routes.py")
+        assert "router file blast" in out, (
+            f"Expected 'router file blast' for routes.py; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def helper(x): return x\n")
+        (tmp_path / "app.py").write_text(
+            "from utils import helper\ndef run(): helper(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "utils.py")
+        assert "router file blast" not in out, (
+            f"'router file blast' must not appear for non-router files; got:\n{out}"
+        )
+
+
+# ── S759: Constants-only diff ─────────────────────────────────────────────────
+
+class TestConstantsOnlyDiffS759:
+    """S759: All changed source files contain only constants emits constants-only-diff signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "config.py").write_text("MAX_RETRIES = 3\nTIMEOUT = 30\n")
+        (tmp_path / "settings.py").write_text("DEBUG = False\nSECRET = 'abc'\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["config.py", "settings.py"])
+        assert "constants-only diff" in out, (
+            f"Expected 'constants-only diff' when changed files only have constants; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "config.py").write_text("MAX_RETRIES = 3\n")
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["config.py", "app.py"])
+        assert "constants-only diff" not in out, (
+            f"'constants-only diff' must not appear when a changed file has functions; got:\n{out}"
+        )
+
+
+# ── S760: Classmethod hotspot ────────────────────────────────────────────────
+
+class TestClassmethodHotspotS760:
+    """S760: Top hotspot is a @classmethod emits classmethod-hotspot signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "model.py").write_text(
+            "class User:\n"
+            "    @classmethod\n"
+            "    def from_dict(cls, data): return cls()\n"
+        )
+        for i in range(6):
+            (tmp_path / f"service_{i}.py").write_text(
+                f"from model import User\ndef create_{i}(d): return User.from_dict(d)\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "classmethod hotspot" in out, (
+            f"Expected 'classmethod hotspot' when top hotspot is a @classmethod; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text("def process(data): return data\n")
+        for i in range(5):
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from core import process\ndef run_{i}(x): return process(x)\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "classmethod hotspot" not in out, (
+            f"'classmethod hotspot' must not appear for regular function hotspot; got:\n{out}"
+        )
+
+
+# ── S761: Dead event handlers ─────────────────────────────────────────────────
+
+class TestDeadEventHandlersS761:
+    """S761: Unused functions with on_/handle_ naming emits dead-event-handlers signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "handlers.py").write_text(
+            "def on_user_created(event): pass\n"
+            "def handle_payment(event): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead event handlers" in out, (
+            f"Expected 'dead event handlers' for unused on_/handle_ functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "handlers.py").write_text(
+            "def on_user_created(event): pass\n"
+        )
+        (tmp_path / "bus.py").write_text(
+            "from handlers import on_user_created\n"
+            "def emit(e): on_user_created(e)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead event handlers" not in out, (
+            f"'dead event handlers' must not appear when event handler is called; got:\n{out}"
+        )
