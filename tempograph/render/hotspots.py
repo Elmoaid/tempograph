@@ -276,21 +276,37 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             lines.append("")
             lines.append(f"Untested hotspots: {', '.join(_uh_parts)}")
 
+
+    lines.extend(_collect_hotspots_signals(
+        graph, scores, velocity, velocity_14, _all_test_fps_hs, top_n
+    ))
+    return "\n".join(lines)  # ALWAYS return here — never inside a conditional block
+
+def _collect_hotspots_signals(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    velocity: dict[str, float],
+    velocity_14: dict[str, float],
+    all_test_fps: set[str],
+    top_n: int,
+) -> list[str]:
+    """Collect all signal annotation lines for hotspot output."""
+    out: list[str] = []
     # S113: Hot coverage ratio — fraction of top hotspot symbols that have test coverage.
     # Aggregates the per-symbol [tested]/[no tests] badges into a single health signal.
     # Only shown when test files exist AND at least 5 non-test hotspot symbols are scored.
-    if _all_test_fps_hs and scores:
+    if all_test_fps and scores:
         _hs_non_test = [(sc, sym) for sc, sym in scores[:top_n] if not _is_test_file(sym.file_path)]
         if len(_hs_non_test) >= 5:
             _hs_tested_count = 0
             for _sc2, _sym2 in _hs_non_test:
                 _base2 = _sym2.file_path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
-                if any(_base2 in t for t in _all_test_fps_hs):
+                if any(_base2 in t for t in all_test_fps):
                     _hs_tested_count += 1
             _hs_total = len(_hs_non_test)
             _hs_pct = int(_hs_tested_count / _hs_total * 100)
             if _hs_pct <= 70:  # only show when coverage gap is notable
-                lines.append(f"hot coverage: {_hs_tested_count}/{_hs_total} top symbols have tests ({_hs_pct}%)")
+                out.append(f"hot coverage: {_hs_tested_count}/{_hs_total} top symbols have tests ({_hs_pct}%)")
 
     # Churn risk: symbols that are BOTH complex (cx≥15) AND actively churning (≥3/wk).
     # These are the highest-priority refactor targets — changing frequently AND hard to reason about.
@@ -314,8 +330,8 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 f"{sym.qualified_name} (cx={sym.complexity}, {cpw:.0f}/wk)"
                 for _, sym, cpw in _churn_risk[:3]
             ]
-            lines.append("")
-            lines.append(f"Churn risk: {', '.join(_cr_parts)}")
+            out.append("")
+            out.append(f"Churn risk: {', '.join(_cr_parts)}")
 
     # File concentration: which files dominate the hotspot list.
     # If one file has 5+ hotspots, agents should read it first — it's the bottleneck.
@@ -329,8 +345,8 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             for fp, n in _top_conc if n >= 3
         ]
         if _conc_parts:
-            lines.append("")
-            lines.append(f"Hotspot concentration: {', '.join(_conc_parts)}")
+            out.append("")
+            out.append(f"Hotspot concentration: {', '.join(_conc_parts)}")
 
     # Coupled pairs: hotspot files that always change together (high co-change count).
     # Hidden coupling not visible in the call graph — agents must update both when touching one.
@@ -359,8 +375,8 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                     f"{a.rsplit('/', 1)[-1]} ↔ {b.rsplit('/', 1)[-1]} ({n}x)"
                     for n, a, b in _coupled[:2]
                 ]
-                lines.append("")
-                lines.append(f"Coupled pairs: {', '.join(_cp_parts)}")
+                out.append("")
+                out.append(f"Coupled pairs: {', '.join(_cp_parts)}")
         except Exception:
             pass
 
@@ -374,8 +390,8 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
     _top_cx_files = [(fp, cx) for fp, cx in _top_cx_files if cx >= 10][:3]
     if len(_top_cx_files) >= 2:
         _fcx_parts = [f"{fp.rsplit('/', 1)[-1]} (cx:{cx})" for fp, cx in _top_cx_files]
-        lines.append("")
-        lines.append(f"File complexity: {', '.join(_fcx_parts)}")
+        out.append("")
+        out.append(f"File complexity: {', '.join(_fcx_parts)}")
 
     # S89: Danger zone — files in BOTH the top-churn AND top-complexity quadrant.
     # Symbol-level churn risk (above) covers individual functions; this flags files where
@@ -397,8 +413,8 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 f"{fp.rsplit('/', 1)[-1]} (cx:{fcx}, {fv:.1f}/wk)"
                 for _, fp, fcx, fv in _dz_files[:3]
             ]
-            lines.append("")
-            lines.append(f"Danger zone: {', '.join(_dz_parts)} — high churn + complexity")
+            out.append("")
+            out.append(f"Danger zone: {', '.join(_dz_parts)} — high churn + complexity")
 
     # S131: Hot-and-complex files — source files that are BOTH in the hotspot top half
     # AND have high average cyclomatic complexity. These are the most dangerous: actively
@@ -432,8 +448,8 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 f"{fp.rsplit('/', 1)[-1]} (avg cx={cx:.1f})"
                 for cx, _, fp in _hot_complex_files[:3]
             ]
-            lines.append("")
-            lines.append(f"hot+complex: {', '.join(_hc_parts)} — active and hard to change")
+            out.append("")
+            out.append(f"hot+complex: {', '.join(_hc_parts)} — active and hard to change")
 
     # S112: Churn spike — files whose last-7d velocity is 2× their 14-day average.
     # Sudden acceleration = something changed: new feature push, bug-fixing crunch, or refactor.
@@ -450,8 +466,8 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         if _spikes:
             _spikes.sort(key=lambda x: -x[0])
             _sp_parts = [f"{fp.rsplit('/', 1)[-1]} (+{v:.1f}x/wk)" for v, fp in _spikes[:2]]
-            lines.append("")
-            lines.append(f"Churn spike: {', '.join(_sp_parts)} — velocity doubled vs 2-week avg")
+            out.append("")
+            out.append(f"Churn spike: {', '.join(_sp_parts)} — velocity doubled vs 2-week avg")
 
     # S97: High fan-out — functions calling 8+ distinct functions.
     # High callee count = coordination hubs: changing any callee can affect this function.
@@ -465,8 +481,8 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
     if len(_high_fanout) >= 1:
         _high_fanout.sort(key=lambda x: -x[0])
         _hf_parts = [f"{sym.name} ({n} callees)" for n, sym in _high_fanout[:3]]
-        lines.append("")
-        lines.append(f"High fan-out: {', '.join(_hf_parts)} — calls many functions")
+        out.append("")
+        out.append(f"High fan-out: {', '.join(_hf_parts)} — calls many functions")
 
     # S96: Outlier complexity — functions with cx >= 2× codebase average AND cx >= 10.
     # Average complexity anchors the signal: a cx:10 fn in a cx:2-avg codebase is notable;
@@ -492,8 +508,8 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 f"{s.name} (cx:{s.complexity}, avg:{_cx_avg:.1f})"
                 for s in _outliers[:3]
             ]
-            lines.append("")
-            lines.append(f"Outlier complexity: {', '.join(_out_parts)}")
+            out.append("")
+            out.append(f"Outlier complexity: {', '.join(_out_parts)}")
 
     # Refactor targets: unexported (private) functions with high complexity (cx >= 5) and
     # zero external callers. These are internal functions that have grown too complex
@@ -509,8 +525,8 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
     if len(_refactor_candidates) >= 2:
         _refactor_candidates.sort(key=lambda s: -s.complexity)
         _rf_parts = [f"{s.name} (cx={s.complexity})" for s in _refactor_candidates[:4]]
-        lines.append("")
-        lines.append(f"Refactor targets: {', '.join(_rf_parts)} — high-cx private with no ext callers")
+        out.append("")
+        out.append(f"Refactor targets: {', '.join(_rf_parts)} — high-cx private with no ext callers")
 
     # S94: Stable hotspots — top-ranked symbols in files not modified in 60+ days.
     # Mature, widely-used code that hasn't been touched: treat carefully, high breakage risk.
@@ -536,8 +552,8 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                     _stable_hot.append((_days, _sh_sym.name, _cross))
             if len(_stable_hot) >= 1:
                 _sh_parts = [f"{name} ({d}d, {n} callers)" for d, name, n in _stable_hot[:3]]
-                lines.append("")
-                lines.append(f"Stable hot: {', '.join(_sh_parts)} — unchanged 60d+, high coupling")
+                out.append("")
+                out.append(f"Stable hot: {', '.join(_sh_parts)} — unchanged 60d+, high coupling")
         except Exception:
             pass
 
@@ -562,8 +578,8 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             _na_str = ", ".join(_na_names)
             if len(_new_active) > 3:
                 _na_str += f" +{len(_new_active) - 3} more"
-            lines.append("")
-            lines.append(f"recently active (not in hotspots): {_na_str}")
+            out.append("")
+            out.append(f"recently active (not in hotspots): {_na_str}")
     except Exception:
         pass
 
@@ -583,8 +599,8 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             for _sc128, _fp128 in _top_hotspot_files[:5]:
                 _age128 = _fld128(graph.root, _fp128)
                 if _age128 is not None and _age128 >= 180:
-                    lines.append("")
-                    lines.append(
+                    out.append("")
+                    out.append(
                         f"long-stale hotspot: {_fp128.rsplit('/', 1)[-1]}"
                         f" ({_age128}d unchanged, risk={int(_sc128)})"
                     )
@@ -609,8 +625,8 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         _bn_fp, _bn_n = max(_hs_importer_counts.items(), key=lambda x: x[1])
         _bn_velo = velocity.get(_bn_fp, 0.0)
         _bn_velo_str = f", {_bn_velo:.1f}/wk" if _bn_velo >= 1.0 else ""
-        lines.append("")
-        lines.append(f"Import bottleneck: {_bn_fp.rsplit('/', 1)[-1]} ({_bn_n} dependents{_bn_velo_str})")
+        out.append("")
+        out.append(f"Import bottleneck: {_bn_fp.rsplit('/', 1)[-1]} ({_bn_n} dependents{_bn_velo_str})")
 
     # S139: Caller concentration — when a single file accounts for >= 50% of all callers
     # to the top hotspot symbol, the dependency is "concentrated."
@@ -631,8 +647,8 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             _max_count139 = _caller_file_counts139[_max_fp139]
             _pct139 = int(_max_count139 / len(_callers139) * 100)
             if _pct139 >= 50:
-                lines.append("")
-                lines.append(
+                out.append("")
+                out.append(
                     f"caller concentration: {_max_fp139.rsplit('/', 1)[-1]}"
                     f" = {_pct139}% of {_top_sym139.name} callers — single file dominates usage"
                 )
@@ -645,7 +661,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         _v156 = velocity.get(_top156.file_path, 0.0)
         _cx156 = _top156.complexity or 0
         if _v156 >= 2.0 and _cx156 >= 10:
-            lines.append(
+            out.append(
                 f"\ntop risk: {_top156.name} — cx={_cx156}, {_v156:.1f} changes/wk"
                 f" — highest combined velocity+complexity"
             )
@@ -665,7 +681,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             _top200_lines = graph.files[_top200_fp].line_count if _top200_fp in graph.files else 0
             _top200_base = _top200_fp.rsplit("/", 1)[-1]
             if _top200_lines and _top200_lines >= 50:
-                lines.append(
+                out.append(
                     f"\nsize hotspot: {_top200_base} is top hotspot AND largest file"
                     f" ({_top200_lines} lines) — maximum cognitive load per change"
                 )
@@ -686,7 +702,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         ]
         if _unique_test_fps194:
             _t194_name = _unique_test_fps194[0].rsplit("/", 1)[-1]
-            lines.append(
+            out.append(
                 f"\ntest file hotspot: {_t194_name} in top 5 hotspots — test churn"
                 f" may indicate flaky tests or rapidly-changing spec"
             )
@@ -706,7 +722,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             _avg_cx188 = sum(_cx_vals188) / len(_cx_vals188)
             if _avg_cx188 >= 8:
                 _top188_base = _top188_fp.rsplit("/", 1)[-1]
-                lines.append(
+                out.append(
                     f"\nhigh avg complexity: {_top188_base} — avg cx {_avg_cx188:.1f}"
                     f" across {len(_cx_vals188)} fns — entire file is complex"
                 )
@@ -729,7 +745,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         if _s182_clusters:
             _s182_count, _s182_dir = _s182_clusters[0]
             _s182_dir_name = _s182_dir.rsplit("/", 1)[-1]
-            lines.append(
+            out.append(
                 f"\nhot cluster: {_s182_dir_name}/ — {_s182_count} hotspot files"
                 f" concentrated in one directory"
             )
@@ -748,7 +764,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             _s176_names = [s.name for s in _s176_ifaces[:3]]
             _s176_str = ", ".join(_s176_names)
             _top176_base = _top176_fp.rsplit("/", 1)[-1]
-            lines.append(
+            out.append(
                 f"\ninterface hotspot: {_top176_base} defines {len(_s176_ifaces)}"
                 f" interface(s) ({_s176_str}) — contract changes break all implementors"
             )
@@ -765,7 +781,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             _top170_v = velocity[_top170_fp]
             if _top170_v >= _median170 * 3.0:
                 _top170_name = _top170_fp.rsplit("/", 1)[-1]
-                lines.append(
+                out.append(
                     f"\nvelocity spike: {_top170_name} — {_top170_v:.1f}/wk"
                     f" vs median {_median170:.1f}/wk ({_top170_v / _median170:.1f}×)"
                 )
@@ -792,7 +808,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             if _is_test_file(fp)
         )
         if not _s164_has_test:
-            lines.append(
+            out.append(
                 f"\nzero-test hotspot: {_top164_base} — top hotspot with no matching test file"
             )
 
@@ -813,8 +829,8 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             _r_str = ", ".join(_recursive_syms144[:3])
             if len(_recursive_syms144) > 3:
                 _r_str += f" +{len(_recursive_syms144) - 3} more"
-            lines.append("")
-            lines.append(f"recursive hotspots: {len(_recursive_syms144)} recursive fns in top ranks ({_r_str})")
+            out.append("")
+            out.append(f"recursive hotspots: {len(_recursive_syms144)} recursive fns in top ranks ({_r_str})")
 
     # S206: Fan-in spike — top-ranked hotspot symbol has significantly more callers than average.
     # A hotspot that is also a caller magnet is the highest-risk change target.
@@ -828,7 +844,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             _avg206 = sum(c for c, _ in _caller_counts206) / len(_caller_counts206)
             _top_count206, _top_sym206 = max(_caller_counts206, key=lambda x: x[0])
             if _avg206 > 0 and _top_count206 >= _avg206 * 3.0:
-                lines.append(
+                out.append(
                     f"\nfan-in spike: {_top_sym206.name} — {_top_count206} callers"
                     f" vs avg {_avg206:.1f} ({_top_count206 / _avg206:.1f}×)"
                 )
@@ -846,7 +862,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         ]
         if len(_s216_exported) >= 5:
             _top216_base = _top216_fp.rsplit("/", 1)[-1]
-            lines.append(
+            out.append(
                 f"\nexported hotspot: {_top216_base} has {len(_s216_exported)} exported symbols"
                 f" — frequent changes mean frequent contract churn for callers"
             )
@@ -863,7 +879,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             _cls223_children = graph.children_of(_cls223.id)
             if len(_cls223_children) >= len(_top223_syms) * 0.5:
                 _top223_base = _top223_fp.rsplit("/", 1)[-1]
-                lines.append(
+                out.append(
                     f"\nmono-class file: {_top223_base} dominated by {_cls223.name}"
                     f" ({len(_cls223_children)} of {len(_top223_syms)} symbols)"
                     f" — consider splitting into smaller classes"
@@ -884,7 +900,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             _avg_cx230 = sum(_cx_vals230) / len(_cx_vals230)
             if _avg_cx230 <= 2:
                 _top230_base = _top230_fp.rsplit("/", 1)[-1]
-                lines.append(
+                out.append(
                     f"\nlow-complexity hotspot: {_top230_base} avg cx {_avg_cx230:.1f}"
                     f" — frequently changed but simple; likely config/data churn"
                 )
@@ -901,7 +917,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 if _is_test_file(c.file_path)
             ]
             if not _test_callers236 and not _is_test_file(_sym236.file_path):
-                lines.append(
+                out.append(
                     f"\nghost hotspot: {_sym236.name} ({_sym236.file_path.rsplit('/', 1)[-1]})"
                     f" — top hotspot with 0 test callers, no safety net"
                 )
@@ -931,7 +947,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             if len(_top_files250) > 3:
                 _f250_str += f" +{len(_top_files250) - 3} more"
             _dir_label250 = _top_dir250.rsplit("/", 1)[-1] if "/" in _top_dir250 else _top_dir250
-            lines.append(
+            out.append(
                 f"\ncluster hotspot: {len(_top_files250)} files in {_dir_label250}/ ({_f250_str})"
                 f" — whole module is unstable; coordinate changes carefully"
             )
@@ -951,7 +967,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             # Heuristic: if name doesn't end in _ (dunder) and has no docstring indicator.
             _has_doc = '"""' in _sig253 or "'''" in _sig253 or "# doc" in _sig253
             if not _has_doc and not _top253.name.startswith("__"):
-                lines.append(
+                out.append(
                     f"\nundocumented hotspot: {_top253.name}"
                     f" — top hotspot has no docstring; add docs when modifying"
                 )
@@ -965,7 +981,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             None
         )
         if _top242_sym and _is_test_file(_top242_sym.file_path):
-            lines.append(
+            out.append(
                 f"\ntest file hotspot: {_top242_sym.name} ({_top242_sym.file_path.rsplit('/', 1)[-1]})"
                 f" — most-changed symbol is in a test; consider stabilizing test infrastructure"
             )
@@ -987,7 +1003,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             _stem255 = _fp255.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
             if _stem255 in _s255_util_stems:
                 _importers255 = len(graph.importers_of(_fp255))
-                lines.append(
+                out.append(
                     f"\nutility hotspot: {_fp255.rsplit('/', 1)[-1]} is a shared utility"
                     f" ({_importers255} importer(s)) — changes here have wide blast radius"
                 )
@@ -1005,7 +1021,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 continue
             _test_callers262 = [c for c in graph.callers_of(_sym262.id) if _is_test_file(c.file_path)]
             if len(_test_callers262) >= 3:
-                lines.append(
+                out.append(
                     f"\nstable hotspot: {_sym262.name} has {len(_test_callers262)} test callers"
                     f" — well-tested high-churn symbol; refactoring here has a safety net"
                 )
@@ -1034,7 +1050,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             _s268_max_file = max(_s268_file_counts, key=_s268_file_counts.get)
             if _s268_file_counts[_s268_max_file] >= 3:
                 _s268_label = _s268_max_file.rsplit("/", 1)[-1]
-                lines.append(
+                out.append(
                     f"\nchurn concentration: {_s268_file_counts[_s268_max_file]} of top hotspots"
                     f" in {_s268_label} — single file is instability center, high merge conflict risk"
                 )
@@ -1055,7 +1071,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             ]
             if len(_ext_callers277) == 1:
                 _caller_name277 = _ext_callers277[0].name
-                lines.append(
+                out.append(
                     f"\nsingle-caller hotspot: {_sym277.name} called only from {_caller_name277}"
                     f" — high-churn fn with one user; consider inlining or renaming"
                 )
@@ -1068,7 +1084,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
     if not _s283_any_tests and scores:
         _s283_top = next((sym for _, sym in scores[:3] if not _is_test_file(sym.file_path)), None)
         if _s283_top:
-            lines.append(
+            out.append(
                 f"\nuntested repo: no test files found — all hotspot churn is completely unprotected"
             )
 
@@ -1085,7 +1101,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         )
         if _s289_top:
             _importers289 = len([f for f in graph.importers_of(_s289_top.file_path) if f in graph.files])
-            lines.append(
+            out.append(
                 f"\ninterface hotspot: {_s289_top.name} is in __init__.py"
                 f" ({_importers289} package importer(s)) — changes here affect all package consumers"
             )
@@ -1110,7 +1126,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             ]
             if _same_name295:
                 _facade295 = _same_name295[0].file_path.rsplit("/", 1)[-1]
-                lines.append(
+                out.append(
                     f"\nre-exported hotspot: {_sym295.name} also exported from {_facade295}"
                     f" — multi-path symbol; changes propagate through all export facades"
                 )
@@ -1123,7 +1139,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         _top_files299 = [sym.file_path for _, sym in scores[:5]]
         if len(set(_top_files299)) == 1 and not _is_test_file(_top_files299[0]):
             _mf_name299 = _top_files299[0].rsplit("/", 1)[-1]
-            lines.append(
+            out.append(
                 f"\nmono-file hotspot: all top {len(_top_files299)} hotspots in {_mf_name299}"
                 f" — file monopolises churn; strong split candidate"
             )
@@ -1140,7 +1156,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 if not _is_test_file(fp) and fp != _top305_fp
             }
             if len(_importer_files305) >= 5:
-                lines.append(
+                out.append(
                     f"\nhotspot bottleneck: {_top305_fp.rsplit('/', 1)[-1]} — top hotspot"
                     f" imported by {len(_importer_files305)} files; churn ripples widely"
                 )
@@ -1155,7 +1171,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             _top_sym312 = scores[0][1]
             _pct312 = int(100 * _top_score312 / _total_score312)
             if not _is_test_file(_top_sym312.file_path):
-                lines.append(
+                out.append(
                     f"\nscore-dominant hotspot: {_top_sym312.file_path.rsplit('/', 1)[-1]}"
                     f" — {_pct312}% of total hotspot risk; highest-priority stabilization target"
                 )
@@ -1168,7 +1184,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         _top318 = scores[0][1]
         _lang318 = _top318.language.value.lower() if _top318.language else ""
         if _lang318 and _lang318 not in _PRIMARY_LANGS318 and not _is_test_file(_top318.file_path):
-            lines.append(
+            out.append(
                 f"\nnon-primary-language hotspot: {_top318.file_path.rsplit('/', 1)[-1]}"
                 f" ({_lang318}) — hotspot in secondary language; domain expertise required"
             )
@@ -1191,7 +1207,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 and any(s.id == e.source_id for s in _file_syms326)
             )
             if len(_file_syms326) >= 10 and _callee_count326 >= 20:
-                lines.append(
+                out.append(
                     f"\nhigh-activity hotspot: {_file326.rsplit('/', 1)[-1]} has"
                     f" {len(_file_syms326)} symbols and {_callee_count326} outgoing calls"
                     f" — dense file; isolate changes with thorough code review"
@@ -1211,7 +1227,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                     if len(_parts332) >= 2:
                         _top_dirs332.add(_parts332[0])
             if len(_top_dirs332) >= 3:
-                lines.append(
+                out.append(
                     f"\ncross-module hotspot: {_top332.name} called from"
                     f" {len(_top_dirs332)} top-level dirs ({', '.join(sorted(_top_dirs332)[:3])})"
                     f" — cross-cutting concern; multi-team coordination required"
@@ -1226,7 +1242,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         if _total_s338 > 0 and (_top3_s338 / _total_s338) >= 0.70:
             _pct338 = int(100 * _top3_s338 / _total_s338)
             _names338 = [sym.file_path.rsplit("/", 1)[-1] for _, sym in scores[:3]]
-            lines.append(
+            out.append(
                 f"\nrisk concentration: top 3 hotspots hold {_pct338}% of total risk"
                 f" ({', '.join(_names338)})"
                 f" — stabilising these 3 files improves overall codebase health most"
@@ -1239,7 +1255,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         _top344 = scores[0][1]
         _fname344 = _top344.file_path.rsplit("/", 1)[-1].lower()
         if _fname344 in ("__init__.py", "index.py", "index.ts", "index.js") and not _is_test_file(_top344.file_path):
-            lines.append(
+            out.append(
                 f"\ninit module hotspot: {_top344.file_path.rsplit('/', 1)[-1]}"
                 f" — package interface is unstable; every importer of the package is affected"
             )
@@ -1250,7 +1266,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
     if len(scores) >= 3:
         _files376 = [scores[i][1].file_path for i in range(3)]
         if len(set(_files376)) == 1 and not _is_test_file(_files376[0]):
-            lines.append(
+            out.append(
                 f"\nhotspot cluster: top 3 hotspots all in {_files376[0].rsplit('/', 1)[-1]}"
                 f" — extreme risk concentration; this file is the single most critical stabilization target"
             )
@@ -1266,7 +1282,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             _dir_top370 = _top370.file_path.rsplit("/", 1)[0] if "/" in _top370.file_path else "."
             _dir_sec370 = _sec370.file_path.rsplit("/", 1)[0] if "/" in _sec370.file_path else "."
             if _dir_top370 != _dir_sec370:
-                lines.append(
+                out.append(
                     f"\ndivergent hotspots: top risks in different modules"
                     f" ({_top370.file_path.rsplit('/', 1)[-1]} vs {_sec370.file_path.rsplit('/', 1)[-1]})"
                     f" — risk is distributed; plan changes in both areas separately"
@@ -1284,7 +1300,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         )
         _is_support364 = any(p in _fp364 for p in _test_support364) or _is_test_file(_top364.file_path)
         if _is_support364:
-            lines.append(
+            out.append(
                 f"\ntest support hotspot: {_top364.file_path.rsplit('/', 1)[-1]}"
                 f" — high-churn test support; frequent changes break tests for unrelated reasons"
             )
@@ -1301,7 +1317,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         )
         _is_gen358 = any(p in _fp358 for p in _gen_patterns358)
         if _is_gen358:
-            lines.append(
+            out.append(
                 f"\ngenerated-file hotspot: {_top358.file_path.rsplit('/', 1)[-1]} is auto-generated"
                 f" — do not edit directly; churn originates in the generator or .proto/.schema source"
             )
@@ -1314,7 +1330,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         if not _is_test_file(_top352.file_path):
             _fi352 = graph.files.get(_top352.file_path)
             if _fi352 and _fi352.line_count >= 500:
-                lines.append(
+                out.append(
                     f"\nmegafile hotspot: {_top352.file_path.rsplit('/', 1)[-1]} has {_fi352.line_count} lines"
                     f" — large files accumulate accidental complexity; consider splitting by responsibility"
                 )
@@ -1337,7 +1353,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 _total394 = sum(_lang_counts394.values())
                 _primary_pct394 = _lang_counts394[_primary394] / _total394
                 if _lang394 != _primary394 and _primary_pct394 >= 0.60:
-                    lines.append(
+                    out.append(
                         f"\ncross-language hotspot: {_fp394.rsplit('/', 1)[-1]} ({_lang394})"
                         f" — hotspot is in non-primary language ({_primary394} is primary);"
                         f" may have different testing and review standards"
@@ -1355,7 +1371,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         )
         _is_api388 = any(p in _fp388 for p in _api_patterns388) and not _is_test_file(_top388.file_path)
         if _is_api388:
-            lines.append(
+            out.append(
                 f"\nAPI hotspot: {_top388.file_path.rsplit('/', 1)[-1]} is a route/endpoint file"
                 f" — endpoint files should delegate; move logic to service layer to reduce hotspot"
             )
@@ -1375,7 +1391,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 if e.kind.value == "calls" and e.target_id in _direct382
             }
             if len(_direct382) >= 3 and len(_d2_382) >= 5:
-                lines.append(
+                out.append(
                     f"\ndeep call chain: {_top382.name} has {len(_direct382)} direct callers"
                     f" and {len(_d2_382)} depth-2 callers"
                     f" — refactors propagate through multiple layers; map all call paths before changing"
@@ -1391,7 +1407,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 e.source_id for e in graph.edges
                 if e.kind.value == "calls" and e.target_id == _top400.id
             }
-            lines.append(
+            out.append(
                 f"\ntest-file hotspot: {_top400.name} (in {_top400.file_path.rsplit('/', 1)[-1]})"
                 f" is the top hotspot with {len(_callers400)} caller(s)"
                 f" — test helpers should not accumulate logic; extract shared helpers to a src/ utility"
@@ -1409,7 +1425,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 if e.kind.value == "calls" and e.target_id == _top406.id
             }
             if len(_callers406) >= 2:
-                lines.append(
+                out.append(
                     f"\ninit-file hotspot: {_top406.name} (in {_fname406}) is the top hotspot"
                     f" with {len(_callers406)} caller(s)"
                     f" — init files should only re-export; move logic to a dedicated module"
@@ -1427,7 +1443,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 if _is_test_file(fp) and _name412 in fp
             ]
             if not _test_files412:
-                lines.append(
+                out.append(
                     f"\nuntested hotspot: {_top412.file_path.rsplit('/', 1)[-1]} has no"
                     f" corresponding test file"
                     f" — hotspot files change most often; add tests before the next modification"
@@ -1440,7 +1456,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         _top418 = scores[0][1]
         _vendor_dirs418 = ("vendor/", "third_party/", "vendors/", "node_modules/", "external/")
         if any(d in _top418.file_path.lower() for d in _vendor_dirs418):
-            lines.append(
+            out.append(
                 f"\nvendor hotspot: {_top418.file_path.rsplit('/', 1)[-1]} is in a vendor directory"
                 f" — vendored hotspots will be overwritten on next vendor update; consider wrapping"
             )
@@ -1456,7 +1472,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 if e.kind.value == "calls" and e.target_id == _top424.id
             }
             if len(_class_callers424) >= 3:
-                lines.append(
+                out.append(
                     f"\nclass hotspot: {_top424.name} is a class with {len(_class_callers424)} caller(s)"
                     f" — class instantiated in many places; consider DI/singleton to reduce coupling"
                 )
@@ -1467,9 +1483,10 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
     if scores:
         _top430 = scores[0][1]
         if not _is_test_file(_top430.file_path) and (_top430.complexity or 0) >= 20:
-            lines.append(
+            out.append(
                 f"\nhigh-complexity hotspot: {_top430.name} has cyclomatic complexity {_top430.complexity}"
                 f" — {_top430.complexity} distinct paths need test coverage; refactor before growing further"
             )
 
-    return "\n".join(lines)  # ALWAYS return here — never inside a conditional block
+    return out
+
