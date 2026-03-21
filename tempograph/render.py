@@ -1741,6 +1741,18 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
     if include_low:
         tiers.append(("LOW CONFIDENCE (likely false positives)", low))
 
+    # "Last touched N days ago" annotation per file — cached to avoid redundant git calls.
+    from .git import file_last_modified_days as _file_last_modified_days  # noqa: PLC0415
+    _touched_cache: dict[str, int | None] = {}
+
+    def _last_touched(file_path: str) -> str:
+        if file_path not in _touched_cache:
+            _touched_cache[file_path] = _file_last_modified_days(graph.root, file_path)
+        days = _touched_cache[file_path]
+        if days is None:
+            return ""
+        return f" — last touched: {days} days ago"
+
     for label, tier in tiers:
         if not tier:
             continue
@@ -1751,7 +1763,7 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         for sym, conf in shown:
             by_file.setdefault(sym.file_path, []).append((sym, conf))
         for fp in sorted(by_file):
-            lines.append(f"  {fp}:")
+            lines.append(f"  {fp}{_last_touched(fp)}:")
             for sym, conf in sorted(by_file[fp], key=lambda x: x[0].line_start):
                 lc = sym.line_count
                 total_lines += lc
