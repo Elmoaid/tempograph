@@ -2569,4 +2569,22 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — no production code changed; verify tests reflect intentional behavior, not bugs"
             )
 
+    # S933: Orphaned test change — test files changed but their source counterparts are not in the diff.
+    # Tests updated without a corresponding source change may be catching up to undocumented
+    # behavior, or hardcoding expected values rather than testing actual specifications.
+    if normalized:
+        _test_fps933 = [fp for fp in normalized if _is_test_file(fp)]
+        if _test_fps933:
+            _orphaned933 = []
+            for _tfp933 in _test_fps933:
+                _base933 = _tfp933.replace("test_", "", 1).replace("_test.py", ".py")
+                if _base933 not in normalized and _base933 != _tfp933:
+                    _orphaned933.append(_tfp933)
+            if _orphaned933:
+                _names933 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _orphaned933[:2])
+                lines.append(
+                    f"orphaned test change: {len(_orphaned933)} test file(s) changed without matching source ({_names933})"
+                    f" — tests updated without source change; verify tests reflect the intended spec"
+                )
+
     return "\n".join(lines)

@@ -2318,6 +2318,23 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — runs on every request; changes have maximum runtime impact; test exhaustively"
         )
 
+    # S932: Utility blast — blast target is a shared utility file.
+    # Utility files are imported by many modules; seemingly minor changes can ripple
+    # through the entire codebase in ways that are hard to anticipate.
+    _util_kws932 = ("util", "helper", "common", "shared", "lib", "base", "mixin")
+    _fname932 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if any(kw in _fname932 for kw in _util_kws932):
+        _callers_of_file932 = {
+            c.file_path for s in graph.symbols.values()
+            if s.file_path == _fp589 or (_fp589 in s.file_path and not _fp589.startswith("/"))
+            for c in graph.callers_of(s.id)
+        }
+        if len(_callers_of_file932) >= 3:
+            lines.append(
+                f"utility blast: {_fp589.rsplit('/', 1)[-1]} is a shared utility file used by {len(_callers_of_file932)} module(s)"
+                f" — minor changes ripple widely; test all consumers before merging"
+            )
+
     return "\n".join(lines)
 
 

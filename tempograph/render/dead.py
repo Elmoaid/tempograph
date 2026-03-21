@@ -3219,6 +3219,28 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — no-method classes may be leftover models; consider converting to TypedDict or dataclass"
         )
 
+    # S935: Dead exception classes — unused custom exception or error classes.
+    # Orphaned exception classes indicate removed error handling paths; the error
+    # conditions they represented may be silently suppressed or propagated differently.
+    _dead_exc935 = [
+        s for s in dead
+        if s.kind.value == "class"
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and (
+            s.name.endswith(("Error", "Exception", "Warning", "Fault", "Failure"))
+            or "Error" in s.name or "Exception" in s.name
+        )
+    ]
+    if _dead_exc935:
+        _exc_names935 = ", ".join(s.name for s in _dead_exc935[:3])
+        if len(_dead_exc935) > 3:
+            _exc_names935 += f" +{len(_dead_exc935) - 3} more"
+        lines.append(
+            f"dead exceptions: {len(_dead_exc935)} unused exception class(es) ({_exc_names935})"
+            f" — orphaned error types; removed error handling paths may be silently suppressing errors"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

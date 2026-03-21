@@ -2774,5 +2774,19 @@ def _collect_hotspots_signals(
                     f" — short but widely called; consider inlining or caching its result"
                 )
 
+    # S934: Untested hotspot — the top hotspot has no callers from test files.
+    # A heavily-used complex function with no direct test coverage is a blind spot;
+    # integration tests may exercise it but targeted unit tests are recommended.
+    if scores:
+        _top934 = scores[0][1]
+        if _top934 is not None and not _is_test_file(_top934.file_path):
+            _callers934 = graph.callers_of(_top934.id)
+            _has_test_callers934 = any(_is_test_file(c.file_path) for c in _callers934)
+            if _callers934 and not _has_test_callers934:
+                out.append(
+                    f"\nuntested hotspot: {_top934.name} has no direct test callers"
+                    f" — highest complexity function lacks unit test coverage; consider adding targeted tests"
+                )
+
     return out
 

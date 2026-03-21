@@ -3393,6 +3393,22 @@ def _signals_async_oop(
             f" — cross-language repo; ensure shared API contracts are updated consistently"
         )
 
+    # S931: Large public API — repo exports 20+ top-level functions or classes.
+    # A very large public surface is harder to maintain; agents should be conservative
+    # about adding new exports and check that any removed exports have no consumers.
+    _public_syms931 = [
+        s for s in graph.symbols.values()
+        if s.kind.value in ("function", "class")
+        and s.parent_id is None
+        and not s.name.startswith("_")
+        and not _is_test_file(s.file_path)
+    ]
+    if len(_public_syms931) >= 20:
+        lines.append(
+            f"large public API: {len(_public_syms931)} exported top-level symbols"
+            f" — wide public surface; be conservative adding exports; check consumers before removing"
+        )
+
     return lines
 
 

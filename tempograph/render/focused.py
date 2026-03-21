@@ -4078,6 +4078,24 @@ def _signals_focused_fn_advanced(
                     f" — same name across modules; verify callers import the intended definition"
                 )
 
+    # S930: Large class member — focused method belongs to a class with 10+ methods.
+    # Methods in large classes carry implicit coupling to the class's full state;
+    # changes are higher risk because they interact with more sibling methods.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim930 = _seed_syms[0]
+        if _prim930.kind.value in ("function", "method") and _prim930.parent_id:
+            _siblings930 = [
+                s for s in graph.symbols.values()
+                if s.parent_id == _prim930.parent_id and s.kind.value in ("method", "function")
+            ]
+            if len(_siblings930) >= 10:
+                _cls930 = graph.symbols.get(_prim930.parent_id)
+                _cls_name930 = _cls930.name if _cls930 else "class"
+                lines.append(
+                    f"\nlarge class member: {_prim930.name} is one of {len(_siblings930)} methods in {_cls_name930}"
+                    f" — large class; changes have higher coupling risk; consider extracting a smaller class"
+                )
+
     return lines
 
 
