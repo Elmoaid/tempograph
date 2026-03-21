@@ -993,4 +993,22 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                 )
                 break
 
+
+    # S262: Stable hotspot — top-ranked hotspot symbol has 3+ test callers.
+    # High churn with high test coverage is lower risk; changes here are unlikely
+    # to go undetected. Positive signal for teams considering refactors.
+    if scores:
+        for _sc262, _sym262 in scores[:5]:
+            if _sym262.kind.value not in ("function", "method"):
+                continue
+            if _is_test_file(_sym262.file_path):
+                continue
+            _test_callers262 = [c for c in graph.callers_of(_sym262.id) if _is_test_file(c.file_path)]
+            if len(_test_callers262) >= 3:
+                lines.append(
+                    f"\nstable hotspot: {_sym262.name} has {len(_test_callers262)} test callers"
+                    f" — well-tested high-churn symbol; refactoring here has a safety net"
+                )
+                break
+
     return "\n".join(lines)  # ALWAYS return here — never inside a conditional block

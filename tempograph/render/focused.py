@@ -2063,6 +2063,27 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                     f" — large class; consider splitting into focused components"
                 )
 
+
+    # S260: Circular call — focused symbol and one of its callees also call back to it.
+    # Circular calls create hidden coupling and make execution order unpredictable;
+    # they can cause infinite loops under certain conditions.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim260 = _seed_syms[0]
+        if _prim260.kind.value in ("function", "method"):
+            _callers260 = {c.id for c in graph.callers_of(_prim260.id)}
+            _callees260 = {c.id for c in graph.callees_of(_prim260.id)}
+            _mutual260 = _callers260 & _callees260
+            if _mutual260:
+                _mutual_name260 = next(
+                    (graph.symbols[sid].name for sid in _mutual260 if sid in graph.symbols),
+                    None
+                )
+                if _mutual_name260:
+                    lines.append(
+                        f"\ncircular call: {_prim260.name} ↔ {_mutual_name260} call each other"
+                        f" — mutual dependency; changes must maintain protocol on both sides"
+                    )
+
     # S244: Property accessor — focused symbol is a @property method.
     # Callers access it like an attribute (no parentheses); renaming or changing type is
     # a breaking change even if the source looks like a function change.

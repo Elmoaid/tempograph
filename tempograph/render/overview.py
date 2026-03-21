@@ -1513,6 +1513,26 @@ def render_overview(graph: Tempo) -> str:
                 f" — dense dependency graph; refactors cascade unpredictably"
             )
 
+
+    # S259: Flat structure — 8+ source files all at root level with no subdirectories.
+    # Flat codebases are harder to navigate as they grow; grouping by feature/layer
+    # into subdirectories reduces cognitive load and enables selective imports.
+    _s259_root_src = [
+        fp for fp in graph.files
+        if "/" not in fp
+        and not _is_test_file(fp)
+        and graph.files[fp].language.value in _CODE_LANGS
+    ]
+    _s259_all_src = [
+        fp for fp in graph.files
+        if not _is_test_file(fp) and graph.files[fp].language.value in _CODE_LANGS
+    ]
+    if len(_s259_root_src) >= 8 and len(_s259_root_src) == len(_s259_all_src):
+        lines.append(
+            f"flat structure: all {len(_s259_root_src)} source files at root level"
+            f" — consider grouping into modules/packages as codebase grows"
+        )
+
         # Suggest directories to exclude — detect likely noise
     noisy = _detect_noisy_dirs(graph, modules)
     if noisy:

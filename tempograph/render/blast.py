@@ -753,6 +753,21 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — wide dependency surface; refactoring this file requires many upstream checks"
         )
 
+
+    # S263: Leaf module — blast target has no outgoing imports (fully self-contained).
+    # Leaf modules are the easiest to extract, test, or replace in isolation.
+    # Positive signal: shown when blast target has 3+ symbols but zero import edges out.
+    if symbols:
+        _s263_outgoing = [
+            e for e in graph.edges
+            if e.kind.value == "imports" and e.source_id == file_path
+        ]
+        if not _s263_outgoing and len(symbols) >= 3:
+            lines.append(
+                f"leaf module: no outgoing imports"
+                f" — self-contained; safe to extract, mock, or replace in isolation"
+            )
+
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
 

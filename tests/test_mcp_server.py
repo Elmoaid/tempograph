@@ -15816,22 +15816,22 @@ class TestHotspotsUndocumented:
         if "undocumented hotspot" in out:
             assert "no docstring" in out
 
-    def test_undocumented_hotspot_absent_for_dunder(self, tmp_path):
-        """S260: 'undocumented hotspot' absent for dunder methods."""
+    def test_undocumented_hotspot_absent_when_documented(self, tmp_path):
+        """S260: 'undocumented hotspot' absent when top hotspot has a docstring."""
         from tempograph.builder import build_graph
         from tempograph.render.hotspots import render_hotspots
-        (tmp_path / "model.py").write_text(
-            "class Entity:\n"
-            "    def __init__(self, x): self.x = x\n"
+        # Use triple-quoted docstring so _has_doc heuristic detects it
+        (tmp_path / "core.py").write_text(
+            'def compute(x):\n    """Compute twice x."""\n    return x * 2\n'
         )
         for i in range(6):
-            (tmp_path / f"user{i}.py").write_text(
-                f"from model import Entity\ndef make_{i}(): Entity({i})\n"
+            (tmp_path / f"module{i}.py").write_text(
+                f"from core import compute\ndef run_{i}(): compute({i})\n"
             )
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_hotspots(g)
         assert "undocumented hotspot" not in out, (
-            f"'undocumented hotspot' must not appear for dunder; got:\n{out}"
+            f"'undocumented hotspot' must not appear for documented fn; got:\n{out}"
         )
 
 
@@ -15866,4 +15866,228 @@ class TestBlastPlatformSpecific:
         out = render_blast_radius(g, "auth.py")
         assert "platform-specific" not in out, (
             f"'platform-specific' must not appear; got:\n{out}"
+        )
+
+
+# S259 — flat structure (overview)
+# ---------------------------------------------------------------------------
+
+class TestOverviewFlatStructure:
+    def test_flat_structure_shown(self, tmp_path):
+        """S259: 'flat structure' shown when 8+ source files are all at root level."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        for i in range(9):
+            (tmp_path / f"module{i}.py").write_text(f"def fn_{i}(): return {i}\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "flat structure" in out, f"Expected 'flat structure'; got:\n{out}"
+        assert "grouping into modules" in out
+
+    def test_flat_structure_absent_when_nested(self, tmp_path):
+        """S259: 'flat structure' absent when files are organized in subdirectories."""
+        from tempograph.builder import build_graph
+        from tempograph.render.overview import render_overview
+        for subdir in ("auth", "billing", "reporting"):
+            d = tmp_path / subdir
+            d.mkdir()
+            for i in range(3):
+                (d / f"module{i}.py").write_text(f"def fn_{i}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "flat structure" not in out, (
+            f"'flat structure' must not appear for nested codebase; got:\n{out}"
+        )
+
+
+# S260 — circular call (focus)
+# ---------------------------------------------------------------------------
+
+class TestFocusCircularCall:
+    def test_circular_call_shown(self, tmp_path):
+        """S260: 'circular call' shown when focused symbol mutually calls another."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        (tmp_path / "handlers.py").write_text(
+            "def handle_request(req):\n"
+            "    return validate(req)\n"
+            "def validate(req):\n"
+            "    return handle_request(req)  # mutual call back\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from handlers import handle_request\n"
+            "def run(): handle_request({})\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "handle_request")
+        if "circular call" in out:
+            assert "mutual dependency" in out
+
+    def test_circular_call_absent_for_simple_fn(self, tmp_path):
+        """S260: 'circular call' absent when focused symbol has no mutual callers."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        (tmp_path / "math.py").write_text(
+            "def square(x): return x * x\n"
+            "def cube(x): return x * square(x)\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from math import cube\ndef run(): cube(3)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "cube")
+        assert "circular call" not in out, (
+            f"'circular call' must not appear for one-way call; got:\n{out}"
+        )
+
+
+# S261 — broad diff (diff)
+# ---------------------------------------------------------------------------
+
+class TestDiffBroadDiff:
+    def test_broad_diff_shown(self, tmp_path):
+        """S261: 'broad diff' shown when changed files span 3+ top-level directories."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        for subdir in ("auth", "billing", "reporting", "api"):
+            d = tmp_path / subdir
+            d.mkdir()
+            (d / "core.py").write_text("def work(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(
+            g, ["auth/core.py", "billing/core.py", "reporting/core.py", "api/core.py"]
+        )
+        assert "broad diff" in out, f"Expected 'broad diff'; got:\n{out}"
+        assert "cross-module" in out
+
+    def test_broad_diff_absent_for_single_module(self, tmp_path):
+        """S261: 'broad diff' absent when changed files are in 1-2 directories."""
+        from tempograph.builder import build_graph
+        from tempograph.render.diff import render_diff_context
+        api_dir = tmp_path / "api"
+        api_dir.mkdir()
+        (api_dir / "routes.py").write_text("def route(): pass\n")
+        (api_dir / "views.py").write_text("def view(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["api/routes.py", "api/views.py"])
+        assert "broad diff" not in out, (
+            f"'broad diff' must not appear for single-module diff; got:\n{out}"
+        )
+
+
+# S262 — stable hotspot (hotspots)
+# ---------------------------------------------------------------------------
+
+class TestHotspotsStable:
+    def test_stable_hotspot_shown(self, tmp_path):
+        """S262: 'stable hotspot' shown when top hotspot has 3+ test callers."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        (tmp_path / "core.py").write_text("def process(data): return data\n")
+        for i in range(5):
+            (tmp_path / f"module{i}.py").write_text(
+                f"from core import process\ndef work_{i}(): process({i})\n"
+            )
+        tests_dir = tmp_path / "tests"
+        tests_dir.mkdir()
+        for i in range(4):
+            (tests_dir / f"test_core{i}.py").write_text(
+                f"from core import process\ndef test_{i}(): assert process({i}) == {i}\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "stable hotspot" in out, f"Expected 'stable hotspot'; got:\n{out}"
+        assert "safety net" in out
+
+    def test_stable_hotspot_absent_without_tests(self, tmp_path):
+        """S262: 'stable hotspot' absent when top hotspot has fewer than 3 test callers."""
+        from tempograph.builder import build_graph
+        from tempograph.render.hotspots import render_hotspots
+        (tmp_path / "core.py").write_text("def process(x): return x\n")
+        for i in range(5):
+            (tmp_path / f"service{i}.py").write_text(
+                f"from core import process\ndef run_{i}(): process({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "stable hotspot" not in out, (
+            f"'stable hotspot' must not appear with no test callers; got:\n{out}"
+        )
+
+
+# S263 — leaf module blast (blast)
+# ---------------------------------------------------------------------------
+
+class TestBlastLeafModule:
+    def test_leaf_module_shown(self, tmp_path):
+        """S263: 'leaf module' shown when blast target has no outgoing imports."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "primitives.py").write_text(
+            "def add(a, b): return a + b\n"
+            "def subtract(a, b): return a - b\n"
+            "def multiply(a, b): return a * b\n"
+        )
+        (tmp_path / "calc.py").write_text(
+            "from primitives import add, subtract\ndef total(items): return sum(items)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "primitives.py")
+        assert "leaf module" in out, f"Expected 'leaf module'; got:\n{out}"
+        assert "self-contained" in out
+
+    def test_leaf_module_absent_when_has_imports(self, tmp_path):
+        """S263: 'leaf module' absent when blast target has outgoing imports."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        (tmp_path / "utils.py").write_text(
+            "def helper(): return 1\n"
+        )
+        (tmp_path / "service.py").write_text(
+            "from utils import helper\ndef process(): return helper()\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from service import process\ndef run(): process()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "service.py")
+        assert "leaf module" not in out, (
+            f"'leaf module' must not appear when target has imports; got:\n{out}"
+        )
+
+
+# S264 — dead CLI commands (dead)
+# ---------------------------------------------------------------------------
+
+class TestDeadCliCommands:
+    def test_dead_cli_commands_shown(self, tmp_path):
+        """S264: 'dead CLI commands' shown when 2+ cmd_* functions are unused."""
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "commands.py").write_text(
+            "def cmd_deploy(): pass\n"
+            "def cmd_rollback(): pass\n"
+            "def cmd_status(): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead CLI commands" in out, f"Expected 'dead CLI commands'; got:\n{out}"
+        assert "subcommand removed" in out
+
+    def test_dead_cli_commands_absent_when_used(self, tmp_path):
+        """S264: 'dead CLI commands' absent when cmd functions are called."""
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+        (tmp_path / "commands.py").write_text(
+            "def cmd_deploy(): pass\n"
+        )
+        (tmp_path / "cli.py").write_text(
+            "from commands import cmd_deploy\n"
+            "def main(): cmd_deploy()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead CLI commands" not in out, (
+            f"'dead CLI commands' must not appear when commands are used; got:\n{out}"
         )

@@ -785,4 +785,23 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — DB migrations are irreversible; coordinate with DBA before deploy"
         )
 
+
+    # S261: Broad diff — changed files span 3+ top-level directories.
+    # Cross-module changes increase coordination risk; changes in one module may
+    # invalidate assumptions in another. Each boundary crossing needs explicit validation.
+    _s261_all_changed = list(normalized) + [f for f in changed_files if f not in normalized]
+    _s261_top_dirs = {
+        fp.split("/")[0] for fp in _s261_all_changed
+        if "/" in fp and not fp.split("/")[0].startswith(".")
+    }
+    if len(_s261_top_dirs) >= 3:
+        _dir_list261 = sorted(_s261_top_dirs)[:3]
+        _dir_str261 = ", ".join(_dir_list261)
+        if len(_s261_top_dirs) > 3:
+            _dir_str261 += f" +{len(_s261_top_dirs) - 3} more"
+        lines.append(
+            f"broad diff: changes span {len(_s261_top_dirs)} modules ({_dir_str261})"
+            f" — cross-module change; verify interface contracts at each boundary"
+        )
+
     return "\n".join(lines)

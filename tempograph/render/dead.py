@@ -772,6 +772,29 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — removed data contracts not yet cleaned up"
         )
 
+
+    # S264: Dead CLI commands — cmd_*/command_*/do_* functions with 0 callers.
+    # Dead CLI handlers suggest removed subcommands whose dispatch wiring was cleaned up
+    # but the handler itself was left behind.
+    # Only shown when 2+ such functions found (conf >= 40).
+    _s264_cmd_prefixes = ("cmd_", "command_", "do_", "run_cmd", "execute_", "action_", "subcommand_")
+    _s264_dead_cmds = [
+        sym for sym, conf in scored
+        if conf >= 40
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.startswith(p) for p in _s264_cmd_prefixes)
+    ]
+    if len(_s264_dead_cmds) >= 2:
+        _cmd_names = [s.name for s in _s264_dead_cmds[:3]]
+        _cmd_str = ", ".join(_cmd_names)
+        if len(_s264_dead_cmds) > 3:
+            _cmd_str += f" +{len(_s264_dead_cmds) - 3} more"
+        lines.append(
+            f"dead CLI commands: {len(_s264_dead_cmds)} unused command handler(s) ({_cmd_str})"
+            f" — subcommand removed but handler not cleaned up"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
