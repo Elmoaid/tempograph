@@ -2433,6 +2433,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — eviction, key format, or TTL changes silently affect correctness for all cached call paths"
         )
 
+    # S986: Config blast — blast target is a configuration file.
+    # Config files control runtime behavior; changes propagate implicitly to all consumers
+    # of those config values, often without any traceable or type-safe dependency chain.
+    _config_kws986 = ("config", "configuration", "settings", "env", "environment", "options", "params", "parameters", "defaults", "conf")
+    _fname986 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if any(_fname986 == kw or _fname986.startswith(kw + "_") or _fname986.endswith("_" + kw) for kw in _config_kws986):
+        lines.append(
+            f"config blast: {_fp589.rsplit('/', 1)[-1]} is a configuration file"
+            f" — runtime behavior changes affect all consumers; flag for explicit review before merge"
+        )
+
     return "\n".join(lines)
 
 

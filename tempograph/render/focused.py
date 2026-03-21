@@ -4237,6 +4237,21 @@ def _signals_focused_fn_advanced(
                     f" — consider inlining; all logic changes affect only one call site"
                 )
 
+    # S984: Test-only caller — focused symbol is called only from test files.
+    # A production function reachable only via tests has no production call path;
+    # it may be dead code or needs wiring up to the actual application flow.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim984 = _seed_syms[0]
+        if not _is_test_file(_prim984.file_path) and _prim984.kind.value in ("function", "method"):
+            _all_callers984 = graph.callers_of(_prim984.id)
+            _test_callers984 = [c for c in _all_callers984 if _is_test_file(c.file_path)]
+            _prod_callers984 = [c for c in _all_callers984 if not _is_test_file(c.file_path)]
+            if _test_callers984 and not _prod_callers984:
+                lines.append(
+                    f"\ntest-only caller: {_prim984.name} is called only from test files, never from production code"
+                    f" — may be dead in production or needs wiring up to the application flow"
+                )
+
     return lines
 
 

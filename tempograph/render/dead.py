@@ -3398,6 +3398,26 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — removed publishers leave subscribers waiting for signals that never arrive"
         )
 
+    # S989: Dead validators — unused validate_/check_/verify_/assert_/ensure_/guard_ prefixed functions.
+    # Dead validation functions indicate removed input guards; callers may now pass invalid
+    # data that was previously caught, leading to silent corruption or runtime errors.
+    _val_prefixes989 = ("validate_", "check_", "verify_", "assert_", "ensure_", "guard_", "is_valid_", "must_")
+    _dead_validators989 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().startswith(p) for p in _val_prefixes989)
+    ]
+    if _dead_validators989:
+        _val_names989 = ", ".join(s.name for s in _dead_validators989[:3])
+        if len(_dead_validators989) > 3:
+            _val_names989 += f" +{len(_dead_validators989) - 3} more"
+        lines.append(
+            f"dead validators: {len(_dead_validators989)} unused validation function(s) ({_val_names989})"
+            f" — removed guards may leave callers passing invalid data silently"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

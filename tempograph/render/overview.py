@@ -3542,6 +3542,27 @@ def _signals_async_oop(
             f" — purely functional codebase; OOP abstractions replaced by modules and closures"
         )
 
+    # S985: No entrypoint — codebase has no obvious entry point function.
+    # Without a clear entry point, execution flow is ambiguous; agents may misidentify
+    # the primary code path when tracing bugs or reasoning about change impact.
+    _entry_names985 = {"main", "run", "__main__", "start", "app", "entry", "entrypoint"}
+    _has_entry985 = any(
+        s.name.lower() in _entry_names985
+        and s.kind.value == "function"
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        for s in graph.symbols.values()
+    )
+    _src_fns985 = [
+        s for s in graph.symbols.values()
+        if s.kind.value == "function" and not _is_test_file(s.file_path)
+    ]
+    if not _has_entry985 and len(_src_fns985) >= 5:
+        lines.append(
+            f"no entrypoint: no main/run/start function found among {len(_src_fns985)} source function(s)"
+            f" — entry point is unclear; execution flow harder to trace for agents and reviewers"
+        )
+
     return lines
 
 

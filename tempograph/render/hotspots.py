@@ -2904,5 +2904,22 @@ def _collect_hotspots_signals(
                     f" — widely used AND complex; changes carry compounded risk"
                 )
 
+    # S988: Private hotspot — top hotspot is a private function (starts with _).
+    # A private function dominating the complexity chart is an internal detail
+    # under high maintenance pressure; consider extracting it for independent testability.
+    if scores:
+        _top988 = scores[0][1]
+        if (
+            _top988 is not None
+            and not _is_test_file(_top988.file_path)
+            and _top988.name.startswith("_")
+            and not _top988.name.startswith("__")
+            and _top988.kind.value in ("function", "method")
+        ):
+            out.append(
+                f"\nprivate hotspot: {_top988.name} is a private function and the top complexity hotspot"
+                f" — internal implementation detail under high maintenance pressure; consider extraction"
+            )
+
     return out
 

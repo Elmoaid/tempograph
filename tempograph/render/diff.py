@@ -786,6 +786,17 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 f" — requires security review; subtle changes may introduce exploitable vulnerabilities"
             )
 
+    # S987: Test-only diff — all changed files are test files.
+    # A diff that only touches tests carries no production regression risk,
+    # but verify tests are strengthening rather than relaxing assertion thresholds.
+    if changed_files:
+        _test_changed987 = [f for f in changed_files if _is_test_file(f)]
+        if len(_test_changed987) == len(changed_files) and _test_changed987:
+            lines.append(
+                f"test-only diff: all {len(_test_changed987)} changed file(s) are test files"
+                f" — no production code changed; verify tests are strengthening, not relaxing, coverage"
+            )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 
