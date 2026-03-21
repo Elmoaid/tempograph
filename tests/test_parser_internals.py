@@ -203,3 +203,68 @@ class TestDynamicImports:
         p = FileParser("app.ts", Language.TYPESCRIPT, code.encode())
         _, _, imports = p.parse()
         assert any("utils" in imp for imp in imports)
+
+
+# ── _first_comment_above ──────────────────────────────────────────────────────
+
+class TestFirstCommentAbove:
+    def _get_func_node(self, code: str):
+        import tree_sitter_python as tspython
+        from tree_sitter import Language as TSLanguage, Parser
+        ts_lang = TSLanguage(tspython.language())
+        parser = Parser(ts_lang)
+        source = code.encode()
+        tree = parser.parse(source)
+        for child in tree.root_node.children:
+            if child.type == "function_definition":
+                return child, source
+        return None, source
+
+    def test_extracts_comment_above_function(self):
+        code = "# helper function\ndef fn(): pass\n"
+        node, source = self._get_func_node(code)
+        assert node is not None
+        text = _first_comment_above(node, source)
+        assert "helper function" in text
+
+    def test_returns_empty_when_no_comment(self):
+        code = "def fn(): pass\n"
+        node, source = self._get_func_node(code)
+        assert node is not None
+        text = _first_comment_above(node, source)
+        assert text == ""
+
+    def test_strips_comment_prefixes(self):
+        code = "# this is a doc\ndef fn(): pass\n"
+        node, source = self._get_func_node(code)
+        text = _first_comment_above(node, source)
+        assert not text.startswith("#")
+
+
+# ── _scan_calls ───────────────────────────────────────────────────────────────
+
+class TestScanCalls:
+    def test_function_call_creates_call_edge(self):
+        code = "from b import target\ndef caller():\n    target()\n"
+        syms, edges, _ = _parser(code).parse()
+        call_edges = [e for e in edges if e.kind == EdgeKind.CALLS]
+        assert len(call_edges) > 0
+
+    def test_call_target_name_captured(self):
+        code = "def caller():\n    some_fn()\n"
+        syms, edges, _ = _parser(code).parse()
+        call_edges = [e for e in edges if e.kind == EdgeKind.CALLS]
+        assert any("some_fn" in e.target_id for e in call_edges)
+
+    def test_method_call_captured(self):
+        code = "class A:\n    def method(self):\n        self.helper()\n"
+        syms, edges, _ = _parser(code).parse()
+        call_edges = [e for e in edges if e.kind == EdgeKind.CALLS]
+        assert len(call_edges) > 0
+
+    def test_call_in_typescript(self):
+        code = "function run(): void { myHelper(); }\n"
+        p = FileParser("api.ts", Language.TYPESCRIPT, code.encode())
+        _, edges, _ = p.parse()
+        call_edges = [e for e in edges if e.kind == EdgeKind.CALLS]
+        assert any("myHelper" in e.target_id for e in call_edges)
