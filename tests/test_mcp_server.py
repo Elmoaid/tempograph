@@ -45484,8 +45484,8 @@ class TestExportedHotspotS970:
         )
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_hotspots(g)
-        assert "exported hotspot" in out, (
-            f"'exported hotspot' expected for public top hotspot; got:\n{out}"
+        assert "api-surface hotspot" in out, (
+            f"'api-surface hotspot' expected for public top hotspot; got:\n{out}"
         )
 
     def test_absent(self, tmp_path):
@@ -45500,8 +45500,8 @@ class TestExportedHotspotS970:
         )
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_hotspots(g)
-        assert "exported hotspot" not in out, (
-            f"'exported hotspot' must not appear for private function; got:\n{out}"
+        assert "api-surface hotspot" not in out, (
+            f"'api-surface hotspot' must not appear for private function; got:\n{out}"
         )
 
 
@@ -45656,7 +45656,7 @@ class TestDependencyChangeDiffS969:
         )
 
 
-class TestExportedHotspotS970:
+class TestExportedHotspotS970b:
     def test_shown(self, tmp_path):
         from tempograph import build_graph
         from tempograph.render.hotspots import render_hotspots
@@ -45668,8 +45668,8 @@ class TestExportedHotspotS970:
         (tmp_path / "api.py").write_text(fn_lines + "def helper(): return public_api(1)\n")
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_hotspots(g)
-        assert "exported hotspot" in out, (
-            f"'exported hotspot' expected for public exported top hotspot; got:\n{out}"
+        assert "api-surface hotspot" in out, (
+            f"'api-surface hotspot' expected for public exported top hotspot; got:\n{out}"
         )
 
     def test_absent(self, tmp_path):
@@ -45683,8 +45683,8 @@ class TestExportedHotspotS970:
         (tmp_path / "internal.py").write_text(fn_lines + "def run(): return _private_fn(1)\n")
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_hotspots(g)
-        assert "exported hotspot" not in out, (
-            f"'exported hotspot' must not appear when top hotspot is private; got:\n{out}"
+        assert "api-surface hotspot" not in out, (
+            f"'api-surface hotspot' must not appear when top hotspot is private; got:\n{out}"
         )
 
 
