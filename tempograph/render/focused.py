@@ -2900,6 +2900,20 @@ def _signals_focused_fn_advanced(
                         f" but has no return type annotation — callers rely on implicit return type"
                     )
 
+    # S513: Generator function — focused symbol declares a lazy iterator return type.
+    # Generator functions yield values one at a time; callers must exhaust or explicitly close them.
+    # Converting a generator to return a list (or vice versa) changes memory profile and breaks lazy consumers.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim513 = next((s for s in _seed_syms if s.kind.value in ("function", "method")), None)
+        if _prim513:
+            _sig513 = (_prim513.signature or "").lower()
+            _gen_hints513 = ("-> iterator", "-> generator", "-> iterable", "-> asynciterator", "-> asyncgenerator")
+            if any(h in _sig513 for h in _gen_hints513):
+                lines.append(
+                    f"\ngenerator function: {_prim513.name} returns a lazy iterator"
+                    f" — callers must iterate or explicitly close it; converting to list changes memory + latency profile"
+                )
+
     return lines
 
 

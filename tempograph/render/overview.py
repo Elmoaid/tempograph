@@ -2286,6 +2286,24 @@ def _signals_async_oop(
                 f" of source files — tightly coupled to one runtime; polyglot needs require careful isolation"
             )
 
+    # S514: Mixed async/sync — source has both async coroutines and blocking sync functions.
+    # Sync code running inside an async event loop blocks all coroutines on the same thread.
+    # Any refactor crossing sync/async boundaries needs a concurrency review to avoid stalls.
+    _s514_async_n = 0
+    _s514_sync_n = 0
+    for _sym514 in graph.symbols.values():
+        if _sym514.kind.value in ("function", "method") and not _is_test_file(_sym514.file_path):
+            _sig514 = _sym514.signature or ""
+            if _sig514.startswith("async "):
+                _s514_async_n += 1
+            elif _sig514.startswith("def "):
+                _s514_sync_n += 1
+    if _s514_async_n >= 3 and _s514_sync_n >= 3:
+        lines.append(
+            f"mixed async/sync: {_s514_async_n} async + {_s514_sync_n} sync source functions"
+            f" — blocking calls in async context stall the event loop; audit sync→async call boundaries"
+        )
+
     return lines
 
 
