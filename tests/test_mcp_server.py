@@ -5087,3 +5087,40 @@ class TestBlastImporterCallIntensitySort:
         assert heavy_pos < light_pos, (
             f"heavy.py (3 calls) must appear before light.py (1 call); got:\n{out}"
         )
+
+
+class TestBlastCochangePartners:
+    """S38: Blast mode — 'Co-change partners:' section from git history.
+
+    Files that historically co-change with the blast target appear as hints.
+    Absent in non-git directories (graceful fallback).
+    """
+
+    def test_no_cochange_in_non_git_repo(self, tmp_path):
+        """Co-change partners: must not appear for non-git directory."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        (tmp_path / "core.py").write_text("def fn(): pass\n")
+        (tmp_path / "user.py").write_text("from core import fn\ndef use(): return fn()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "core.py")
+
+        assert "Co-change partners:" not in out, (
+            f"Co-change partners: must not appear without git history; got:\n{out}"
+        )
+
+    def test_cochange_format_when_present(self):
+        """When Co-change partners: appears, it uses filename (score% age) format."""
+        import os
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        g = build_graph(repo, use_cache=False)
+        out = render_blast_radius(g, "tempograph/render.py")
+
+        if "Co-change partners:" in out:
+            line = next(l for l in out.split("\n") if "Co-change partners:" in l)
+            # Format: "filename.py (XX% recent)" or similar
+            assert "%" in line, f"Co-change must include percentage; got:\n{line}"

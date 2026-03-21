@@ -1774,6 +1774,18 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             lines.append(f"  ... and {len(_blast_tests) - 5} more")
         lines.append("")
 
+    # Co-change partners: files that historically changed together with this file.
+    # Based on git history — not code structure. Helps agents know what else needs
+    # updating when this file changes, even if there's no import/call relationship.
+    _cc_orbit = _cochange_orbit(graph.root, [file_path], {file_path})
+    if _cc_orbit:
+        _cc_parts = []
+        for _cc_fp, _cc_score, _cc_days in _cc_orbit[:4]:
+            _cc_age = "recent" if _cc_days < 45 else ("aging" if _cc_days < 120 else "stale")
+            _cc_parts.append(f"{_cc_fp.rsplit('/', 1)[-1]} ({_cc_score:.0%} {_cc_age})")
+        lines.append(f"Co-change partners: {', '.join(_cc_parts)}")
+        lines.append("")
+
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
 
