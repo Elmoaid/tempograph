@@ -3612,6 +3612,22 @@ def _signals_focused_fn_advanced(
                 f" changes affect all instances and subclasses simultaneously"
             )
 
+    # S762: Async focus — focused function is defined with async def (async execution boundary).
+    # Async functions introduce an execution boundary requiring await at every call site;
+    # adding or removing async changes callers — they must add/remove await accordingly.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim762 = _seed_syms[0]
+        if (
+            _prim762.kind.value in ("function", "method")
+            and not _is_test_file(_prim762.file_path)
+            and _prim762.signature is not None
+            and _prim762.signature.lstrip().startswith("async def")
+        ):
+            lines.append(
+                f"\nasync focus: {_prim762.name} is an async function — callers must await it;"
+                f" adding or removing async changes all call sites"
+            )
+
     return lines
 
 
