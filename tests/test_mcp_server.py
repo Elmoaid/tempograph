@@ -40903,3 +40903,240 @@ class TestDeadSingletonsS863:
         assert "dead singletons" not in out, (
             f"'dead singletons' must not appear when get_instance is called; got:\n{out}"
         )
+
+
+# ── S858–S863 ──────────────────────────────────────────────────────────────────
+
+# ── S858: Abstract method focus ───────────────────────────────────────────────
+
+class TestAbstractMethodFocusS858:
+    """S858: Focused method in Abstract/Base class emits abstract-method signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "processor.py").write_text(
+            "class AbstractProcessor:\n"
+            "    def process(self, data): return data\n"
+        )
+        (tmp_path / "runner.py").write_text(
+            "from processor import AbstractProcessor\n"
+            "def run(): AbstractProcessor().process(1)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "process")
+        assert "abstract method" in out, (
+            f"'abstract method' expected for method in AbstractProcessor; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.focused import render_focused
+
+        (tmp_path / "worker.py").write_text(
+            "class ConcreteWorker:\n"
+            "    def execute(self, task): return task\n"
+        )
+        (tmp_path / "runner.py").write_text(
+            "from worker import ConcreteWorker\n"
+            "def run(): ConcreteWorker().execute('job')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "execute")
+        assert "abstract method" not in out, (
+            f"'abstract method' must not appear for method in ConcreteWorker; got:\n{out}"
+        )
+
+
+# ── S859: Low module cohesion ─────────────────────────────────────────────────
+
+class TestLowModuleCohesionS859:
+    """S859: 50%+ files each with 5+ top-level functions emits low-cohesion signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        # 6 source files each with 5 top-level functions → 100% match (> 50% threshold)
+        for i in range(6):
+            fns = "\n".join(f"def fn_{i}_{j}(): pass" for j in range(5))
+            (tmp_path / f"module_{i}.py").write_text(fns + "\n")
+        (tmp_path / "runner.py").write_text(
+            "from module_0 import fn_0_0\ndef run(): fn_0_0()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "low cohesion" in out, (
+            f"'low cohesion' expected when files all have 5+ top-level functions; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.overview import render_overview
+
+        # Files with 2 top-level functions each — well below 5 threshold
+        for i in range(6):
+            (tmp_path / f"module_{i}.py").write_text(
+                f"def fn_{i}_a(): pass\ndef fn_{i}_b(): pass\n"
+            )
+        (tmp_path / "runner.py").write_text(
+            "from module_0 import fn_0_a\ndef run(): fn_0_a()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "low cohesion" not in out, (
+            f"'low cohesion' must not appear when files have < 5 top-level functions; got:\n{out}"
+        )
+
+
+# ── S860: API file blast ──────────────────────────────────────────────────────
+
+class TestApiFileBlastS860:
+    """S860: Blast target in api/views/routes directory emits api-layer-blast signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        api_dir = tmp_path / "api"
+        api_dir.mkdir()
+        (api_dir / "handlers.py").write_text("def get_users(): return []\n")
+        (tmp_path / "client.py").write_text(
+            "from api.handlers import get_users\n"
+            "def fetch(): get_users()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "api/handlers.py")
+        assert "api layer blast" in out, (
+            f"'api layer blast' expected for file in api/ directory; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.blast import render_blast_radius
+
+        (tmp_path / "helpers.py").write_text("def format_date(d): return str(d)\n")
+        (tmp_path / "app.py").write_text(
+            "from helpers import format_date\n"
+            "def run(): format_date('2026-01-01')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "helpers.py")
+        assert "api layer blast" not in out, (
+            f"'api layer blast' must not appear for non-api file; got:\n{out}"
+        )
+
+
+# ── S861: Mixed test and source diff ──────────────────────────────────────────
+
+class TestMixedDiffS861:
+    """S861: Diff touching both source and test files emits mixed-diff signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "auth.py").write_text("def login(user): return True\n")
+        (tmp_path / "test_auth.py").write_text(
+            "from auth import login\ndef test_login(): assert login('admin')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["auth.py", "test_auth.py"])
+        assert "mixed diff" in out, (
+            f"'mixed diff' expected when source and test files are both changed; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.diff import render_diff_context
+
+        (tmp_path / "auth.py").write_text("def login(user): return True\n")
+        (tmp_path / "permissions.py").write_text(
+            "from auth import login\ndef check(): login('user')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["auth.py", "permissions.py"])
+        assert "mixed diff" not in out, (
+            f"'mixed diff' must not appear when only source files are changed; got:\n{out}"
+        )
+
+
+# ── S862: Private hotspot ─────────────────────────────────────────────────────
+
+class TestPrivateHotspotS862:
+    """S862: Top hotspot with _ prefix emits private-hotspot signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "core.py").write_text("def _resolve_config(env): return env\n")
+        for i in range(6):
+            (tmp_path / f"service_{i}.py").write_text(
+                "from core import _resolve_config\n"
+                f"def init_{i}(): _resolve_config('prod')\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "private hotspot" in out, (
+            f"'private hotspot' expected when top hotspot is _-prefixed; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.hotspots import render_hotspots
+
+        (tmp_path / "core.py").write_text("def resolve_config(env): return env\n")
+        for i in range(6):
+            (tmp_path / f"service_{i}.py").write_text(
+                "from core import resolve_config\n"
+                f"def init_{i}(): resolve_config('prod')\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "private hotspot" not in out, (
+            f"'private hotspot' must not appear for public-named top hotspot; got:\n{out}"
+        )
+
+
+# ── S863: Dead singleton accessors ────────────────────────────────────────────
+
+class TestDeadSingletonsS863:
+    """S863: Unused get_instance/get_singleton functions emits dead-singletons signal."""
+
+    def test_shown(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "registry.py").write_text(
+            "def get_instance(): return None\n"
+            "def get_singleton(): return None\n"
+            "def active_fn(): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from registry import active_fn\n"
+            "def run(): active_fn()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead singletons" in out, (
+            f"'dead singletons' expected for unused get_instance/get_singleton; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph import build_graph
+        from tempograph.render.dead import render_dead_code
+
+        (tmp_path / "registry.py").write_text(
+            "def get_instance(): return None\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from registry import get_instance\n"
+            "def run(): get_instance()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead singletons" not in out, (
+            f"'dead singletons' must not appear when get_instance is called; got:\n{out}"
+        )
