@@ -3232,6 +3232,21 @@ def _signals_focused_fn_advanced(
                 f" — looks like an attribute read but executes code; relevant if lazy/cached/expensive"
             )
 
+    # S636: Init-file symbol — focused symbol lives in a package __init__.py (re-export surface).
+    # Symbols defined or re-exported from __init__.py are part of the package's public API;
+    # changing them requires coordinating all package consumers, not just file-level callers.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim636 = _seed_syms[0]
+        if (
+            not _is_test_file(_prim636.file_path)
+            and (_prim636.file_path.endswith("/__init__.py") or _prim636.file_path == "__init__.py")
+        ):
+            _importers636 = graph.importers_of(_prim636.file_path)
+            lines.append(
+                f"\ninit-file symbol: {_prim636.name} is in __init__.py ({len(_importers636)} package importer(s))"
+                f" — part of the package public API; changes affect all package consumers"
+            )
+
     return lines
 
 

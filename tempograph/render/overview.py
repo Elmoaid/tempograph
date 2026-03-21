@@ -2595,6 +2595,23 @@ def _signals_async_oop(
                 f" — no OOP surface; verify this is intentional for the framework in use"
             )
 
+    # S637: Test-heavy symbols — test code contains 3x more symbols than source code.
+    # An inverted symbol ratio suggests test infrastructure has grown disproportionately;
+    # test helpers and fixtures may themselves need refactoring.
+    _s637_src_syms = sum(
+        1 for s in graph.symbols.values()
+        if not _is_test_file(s.file_path) and s.parent_id is None
+    )
+    _s637_test_syms = sum(
+        1 for s in graph.symbols.values()
+        if _is_test_file(s.file_path) and s.parent_id is None
+    )
+    if _s637_src_syms >= 5 and _s637_test_syms >= _s637_src_syms * 3:
+        lines.append(
+            f"test-heavy symbols: {_s637_test_syms} top-level test symbols vs {_s637_src_syms} source symbols"
+            f" — test infrastructure may need its own refactoring pass"
+        )
+
     return lines
 
 

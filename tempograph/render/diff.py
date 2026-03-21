@@ -153,6 +153,21 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — generated files should not be hand-edited; verify this is a regeneration"
         )
 
+    # S639: Polyglot diff — diff spans 3+ different file language extensions.
+    # A change touching many language runtimes (Python + JS + Go + SQL) has a wide
+    # blast radius across toolchains and may require multiple reviewers.
+    _diff_exts639: dict[str, int] = {}
+    for f in changed_files:
+        _ext639 = f.rsplit(".", 1)[-1].lower() if "." in f else ""
+        if _ext639 and _ext639 not in ("md", "txt", "rst", "json", "yaml", "yml", "toml", "cfg", "ini"):
+            _diff_exts639[_ext639] = _diff_exts639.get(_ext639, 0) + 1
+    if len(_diff_exts639) >= 3:
+        _ext_list639 = ", ".join(f".{e}" for e in sorted(_diff_exts639)[:5])
+        lines.append(
+            f"polyglot diff: {len(_diff_exts639)} languages in diff ({_ext_list639})"
+            f" — cross-runtime change; may require multiple specialists to review correctly"
+        )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 

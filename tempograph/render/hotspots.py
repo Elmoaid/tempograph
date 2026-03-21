@@ -2014,5 +2014,18 @@ def _collect_hotspots_signals(
                     f" — consider inlining into a higher-level module"
                 )
 
+    # S640: Method hotspot cluster — all top-5 non-test hotspots are methods (not functions).
+    # When all hotspots are class methods, the churn concentrates inside class hierarchies;
+    # this often signals a class that has accreted too many responsibilities over time.
+    if len(scores) >= 5:
+        _top5_kinds640 = [s.kind.value for _, s in scores[:5] if not _is_test_file(s.file_path)]
+        if len(_top5_kinds640) == 5 and all(k == "method" for k in _top5_kinds640):
+            _top640 = scores[0][1]
+            out.append(
+                f"\nmethod hotspot cluster: all top 5 hotspots are class methods"
+                f" (top: {_top640.name})"
+                f" — churn concentrated in class hierarchy; review for god-class patterns"
+            )
+
     return out
 

@@ -1723,6 +1723,20 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — pure consumer hub; changes here ripple widely with no upstream buffer"
         )
 
+    # S638: Thin wrapper module — blast target has exactly 1 non-test symbol and 3+ importers.
+    # A module that exposes a single symbol but is imported by many callers is a thin wrapper;
+    # it may exist only for historical reasons and could be collapsed into a caller.
+    _syms638 = [
+        s for s in graph.symbols.values()
+        if s.file_path == _fp589 and not _is_test_file(s.file_path) and s.parent_id is None
+    ]
+    _non_test_importers638 = [fp for fp in importers if not _is_test_file(fp)]
+    if len(_syms638) == 1 and len(_non_test_importers638) >= 3:
+        lines.append(
+            f"thin wrapper: {_fp589.rsplit('/', 1)[-1]} has 1 symbol and {len(_non_test_importers638)} importers"
+            f" — single-purpose wrapper; consider merging into the most frequent caller"
+        )
+
     return "\n".join(lines)
 
 
