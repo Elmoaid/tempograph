@@ -2158,22 +2158,23 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — orphaned configuration; remove or re-wire to avoid misleading future readers"
         )
 
-    # S629: Dead dataclass — unused class whose signature indicates `@dataclass` decoration.
-    # Dataclasses are data containers; an unused one suggests a data model was designed
-    # but the feature using it was never completed or was removed without cleanup.
-    _dead_dc629 = [
+    # S629: Dead callback — unused function/method with callback/handler/listener/hook suffix.
+    # These naming patterns signal event-driven intent; an unregistered callback is a
+    # dead wire — the event contract was designed but the wiring was never completed.
+    _cb_suffixes629 = ("_callback", "_handler", "_listener", "_hook", "_receiver", "_observer")
+    _dead_cb629 = [
         s for s in dead
-        if s.kind.value == "class"
+        if s.kind.value in ("function", "method")
         and not _is_test_file(s.file_path)
-        and "dataclass" in (s.signature or "").lower()
+        and any(s.name.lower().endswith(sfx) for sfx in _cb_suffixes629)
     ]
-    if _dead_dc629:
-        _dc_names629 = ", ".join(s.name for s in _dead_dc629[:3])
-        if len(_dead_dc629) > 3:
-            _dc_names629 += f" +{len(_dead_dc629) - 3} more"
+    if _dead_cb629:
+        _cb_names629 = ", ".join(s.name for s in _dead_cb629[:3])
+        if len(_dead_cb629) > 3:
+            _cb_names629 += f" +{len(_dead_cb629) - 3} more"
         lines.append(
-            f"dead dataclasses: {len(_dead_dc629)} unused @dataclass(es) ({_dc_names629})"
-            f" — data model for an incomplete feature; remove or wire into the active codebase"
+            f"dead callbacks: {len(_dead_cb629)} unused callback/handler function(s) ({_cb_names629})"
+            f" — dead wire; event contract was designed but never wired; remove or register"
         )
 
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
