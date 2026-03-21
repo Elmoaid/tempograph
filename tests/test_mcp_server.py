@@ -26833,72 +26833,6 @@ class TestSingleEntryPointOverviewS559:
         )
 
 
-# ── S558: Deprecated name focused ─────────────────────────────────────────────
-
-class TestDeprecatedNameFocusedS558:
-    """S558: Symbol name contains deprecated/legacy/old marker emits deprecated name signal."""
-
-    def test_deprecated_name_shown(self, tmp_path):
-        from tempograph.render.focused import render_focused
-        from tempograph.builder import build_graph
-
-        (tmp_path / "api.py").write_text(
-            "def get_user_legacy(user_id: int):\n"
-            "    return user_id\n"
-        )
-        g = build_graph(str(tmp_path), use_cache=False)
-        out = render_focused(g, query="get_user_legacy")
-        assert "deprecated name" in out, (
-            f"Expected 'deprecated name' for _legacy suffix; got:\n{out}"
-        )
-
-    def test_deprecated_name_absent(self, tmp_path):
-        from tempograph.render.focused import render_focused
-        from tempograph.builder import build_graph
-
-        (tmp_path / "api.py").write_text(
-            "def get_user(user_id: int):\n"
-            "    return user_id\n"
-        )
-        g = build_graph(str(tmp_path), use_cache=False)
-        out = render_focused(g, query="get_user")
-        assert "deprecated name" not in out, (
-            f"'deprecated name' must not appear for clean function name; got:\n{out}"
-        )
-
-
-# ── S559: Single entry point overview ─────────────────────────────────────────
-
-class TestSingleEntryPointOverviewS559:
-    """S559: Exactly 1 entry point file emits single entry point signal."""
-
-    def test_single_entry_shown(self, tmp_path):
-        from tempograph.render.overview import render_overview
-        from tempograph.builder import build_graph
-
-        (tmp_path / "main.py").write_text("def main(): pass\n")
-        (tmp_path / "utils.py").write_text("def helper(): pass\n")
-        (tmp_path / "config.py").write_text("HOST = 'localhost'\n")
-        g = build_graph(str(tmp_path), use_cache=False)
-        out = render_overview(g)
-        assert "single entry point" in out, (
-            f"Expected 'single entry point' for only main.py; got:\n{out}"
-        )
-
-    def test_single_entry_absent(self, tmp_path):
-        from tempograph.render.overview import render_overview
-        from tempograph.builder import build_graph
-
-        # Two entry points → not "single"
-        (tmp_path / "main.py").write_text("def main(): pass\n")
-        (tmp_path / "cli.py").write_text("def run(): pass\n")
-        g = build_graph(str(tmp_path), use_cache=False)
-        out = render_overview(g)
-        assert "single entry point" not in out, (
-            f"'single entry point' must not appear for 2 entry points; got:\n{out}"
-        )
-
-
 # ── S560: Test-only blast ─────────────────────────────────────────────────────
 
 class TestTestOnlyBlastS560:
@@ -27049,150 +26983,228 @@ class TestDeadValidatorS563:
         )
 
 
-# ── S560: Test-only blast ──────────────────────────────────────────────────────
 
-class TestTestOnlyBlastS560:
-    """S560: Blast target only imported by test files emits test-only blast signal."""
 
-    def test_test_only_blast_shown(self, tmp_path):
-        from tempograph.render.blast import render_blast_radius
+# ── S564: Variadic function focused ───────────────────────────────────────────
+
+class TestVariadicFunctionFocusedS564:
+    """S564: Focused function with *args or **kwargs emits variadic function signal."""
+
+    def test_variadic_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
         from tempograph.builder import build_graph
 
-        (tmp_path / "fixtures.py").write_text(
-            "def make_user(): return {'name': 'test'}\n"
-        )
-        (tmp_path / "test_core.py").write_text(
-            "from fixtures import make_user\ndef test_user(): assert make_user()\n"
+        (tmp_path / "core.py").write_text(
+            "def merge(*args, **kwargs):\n    return dict(*args, **kwargs)\n"
         )
         g = build_graph(str(tmp_path), use_cache=False)
-        out = render_blast_radius(g, file_path="fixtures.py")
-        assert "test-only blast" in out, (
-            f"Expected 'test-only blast' when file only imported by tests; got:\n{out}"
+        out = render_focused(g, query="merge")
+        assert "variadic function" in out, (
+            f"Expected 'variadic function' for *args/**kwargs signature; got:\n{out}"
         )
 
-    def test_test_only_blast_absent(self, tmp_path):
+    def test_variadic_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "core.py").write_text(
+            "def add(a: int, b: int) -> int:\n    return a + b\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="add")
+        assert "variadic function" not in out, (
+            f"'variadic function' must not appear for normal fixed-param function; got:\n{out}"
+        )
+
+
+# ── S565: Large test ratio overview ───────────────────────────────────────────
+
+class TestLargeTestRatioOverviewS565:
+    """S565: Test code > 2x source code by lines emits large test ratio signal."""
+
+    def test_large_test_ratio_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # 3 source files with 10 lines each
+        for i in range(3):
+            (tmp_path / f"src_{i}.py").write_text(
+                "\n".join(f"def fn_{i}_{j}(): pass" for j in range(10))
+            )
+        # 3 test files with 25 lines each (2.5x)
+        for i in range(3):
+            (tmp_path / f"test_src_{i}.py").write_text(
+                "\n".join(f"def test_{i}_{j}(): pass" for j in range(25))
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "large test ratio" in out, (
+            f"Expected 'large test ratio' for test:src > 2×; got:\n{out}"
+        )
+
+    def test_large_test_ratio_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # 3 source files with 20 lines, 3 test files with 10 lines
+        for i in range(3):
+            (tmp_path / f"src_{i}.py").write_text(
+                "\n".join(f"def fn_{i}_{j}(): pass" for j in range(20))
+            )
+        for i in range(3):
+            (tmp_path / f"test_src_{i}.py").write_text(
+                "\n".join(f"def test_{i}_{j}(): pass" for j in range(10))
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "large test ratio" not in out, (
+            f"'large test ratio' must not appear when test:src < 2×; got:\n{out}"
+        )
+
+
+# ── S566: Utility module blast ────────────────────────────────────────────────
+
+class TestUtilityModuleBlastS566:
+    """S566: Utility file with 5+ importers emits utility module blast signal."""
+
+    def test_utility_blast_shown(self, tmp_path):
         from tempograph.render.blast import render_blast_radius
         from tempograph.builder import build_graph
 
         (tmp_path / "utils.py").write_text(
-            "def helper(): return 42\n"
+            "def format_value(x): return str(x)\n"
         )
-        (tmp_path / "app.py").write_text(
-            "from utils import helper\ndef run(): return helper()\n"
-        )
+        for i in range(6):
+            (tmp_path / f"service_{i}.py").write_text(
+                f"from utils import format_value\ndef run_{i}(): return format_value({i})\n"
+            )
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_blast_radius(g, file_path="utils.py")
-        assert "test-only blast" not in out, (
-            f"'test-only blast' must not appear when file also imported by source; got:\n{out}"
+        assert "utility module blast" in out, (
+            f"Expected 'utility module blast' for utils.py with 6 importers; got:\n{out}"
+        )
+
+    def test_utility_blast_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        # utils.py with only 2 importers — below threshold
+        (tmp_path / "utils.py").write_text("def fmt(x): return str(x)\n")
+        for i in range(2):
+            (tmp_path / f"svc_{i}.py").write_text(
+                f"from utils import fmt\ndef run_{i}(): return fmt({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="utils.py")
+        assert "utility module blast" not in out, (
+            f"'utility module blast' must not appear for utils with only 2 importers; got:\n{out}"
         )
 
 
-# ── S561: Config-only diff ─────────────────────────────────────────────────────
+# ── S567: Schema migration in diff ────────────────────────────────────────────
 
-class TestConfigOnlyDiffS561:
-    """S561: Diff with only config file extensions emits config-only diff signal."""
+class TestSchemaMigrationDiffS567:
+    """S567: Diff with migration/schema files emits schema migration in diff signal."""
 
-    def test_config_only_diff_shown(self, tmp_path):
+    def test_schema_migration_shown(self, tmp_path):
         from tempograph.render.diff import render_diff_context
         from tempograph.builder import build_graph
 
         (tmp_path / "app.py").write_text("def run(): pass\n")
         g = build_graph(str(tmp_path), use_cache=False)
-        # Diff only .yaml and .toml files — pure config
-        out = render_diff_context(g, ["docker-compose.yaml", "pyproject.toml"])
-        assert "config-only diff" in out, (
-            f"Expected 'config-only diff' for diff with only .yaml/.toml files; got:\n{out}"
+        out = render_diff_context(g, ["alembic/versions/001_add_users.py", "app.py"])
+        assert "schema migration in diff" in out, (
+            f"Expected 'schema migration in diff' for alembic migration file; got:\n{out}"
         )
 
-    def test_config_only_diff_absent(self, tmp_path):
+    def test_schema_migration_absent(self, tmp_path):
         from tempograph.render.diff import render_diff_context
         from tempograph.builder import build_graph
 
         (tmp_path / "app.py").write_text("def run(): pass\n")
         g = build_graph(str(tmp_path), use_cache=False)
-        # Mix of source and config
-        out = render_diff_context(g, ["app.py", "config.yaml"])
-        assert "configuration files" not in out, (
-            f"'config-only diff' (configuration files) must not appear when source also changed; got:\n{out}"
+        out = render_diff_context(g, ["app.py"])
+        assert "schema migration in diff" not in out, (
+            f"'schema migration in diff' must not appear for regular source diff; got:\n{out}"
         )
 
 
-# ── S562: Cross-package hotspot ───────────────────────────────────────────────
+# ── S568: Deep hotspot ────────────────────────────────────────────────────────
 
-class TestCrossPackageHotspotS562:
-    """S562: Top hotspot called from 3+ top-level packages emits cross-package hotspot signal."""
+class TestDeepHotspotS568:
+    """S568: Top hotspot buried 3+ levels deep emits deep hotspot signal."""
 
-    def test_cross_package_hotspot_shown(self, tmp_path):
+    def test_deep_hotspot_shown(self, tmp_path):
         from tempograph.render.hotspots import render_hotspots
         from tempograph.builder import build_graph
 
-        # Create shared utility called from 3 different top-level packages
-        core = tmp_path / "core"
-        core.mkdir()
-        (core / "utils.py").write_text("def fmt(x): return str(x)\n")
-
-        for pkg in ("alpha", "beta", "gamma"):
-            pkg_dir = tmp_path / pkg
-            pkg_dir.mkdir()
-            (pkg_dir / "service.py").write_text(
-                f"from core.utils import fmt\ndef {pkg}_fn(x): return fmt(x)\n"
+        # Create file 3 dirs deep
+        deep = tmp_path / "services" / "auth" / "internal"
+        deep.mkdir(parents=True)
+        (deep / "validator.py").write_text("def check_token(tok): return bool(tok)\n")
+        for i in range(5):
+            caller = tmp_path / f"caller_{i}.py"
+            caller.write_text(
+                f"from services.auth.internal.validator import check_token\n"
+                f"def fn_{i}(): return check_token('x')\n"
             )
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_hotspots(g)
-        assert "cross-package hotspot" in out, (
-            f"Expected 'cross-package hotspot' for fn called from 3 packages; got:\n{out}"
+        assert "deep hotspot" in out, (
+            f"Expected 'deep hotspot' for top hotspot 3 dirs deep; got:\n{out}"
         )
 
-    def test_cross_package_hotspot_absent(self, tmp_path):
+    def test_deep_hotspot_absent(self, tmp_path):
         from tempograph.render.hotspots import render_hotspots
         from tempograph.builder import build_graph
 
-        # Utility called only from one package
-        (tmp_path / "utils.py").write_text("def fmt(x): return str(x)\n")
+        # Hotspot in root-level file
+        (tmp_path / "core.py").write_text("def process(x): return x\n")
         for i in range(5):
             (tmp_path / f"caller_{i}.py").write_text(
-                f"from utils import fmt\ndef fn_{i}(): return fmt({i})\n"
+                f"from core import process\ndef fn_{i}(): return process({i})\n"
             )
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_hotspots(g)
-        assert "cross-package hotspot" not in out, (
-            f"'cross-package hotspot' must not appear when all callers in root; got:\n{out}"
+        assert "deep hotspot" not in out, (
+            f"'deep hotspot' must not appear for root-level hotspot; got:\n{out}"
         )
 
 
-# ── S563: Dead validators dead ─────────────────────────────────────────────────
+# ── S569: Dead type aliases dead ───────────────────────────────────────────────
 
-class TestDeadValidatorsS563:
-    """S563: Unused validate_/check_/verify_ functions emits dead validators signal."""
+class TestDeadTypeAliasesS569:
+    """S569: Unused module-level type aliases emits dead type aliases signal."""
 
-    def test_dead_validators_shown(self, tmp_path):
+    def test_dead_type_alias_shown(self, tmp_path):
         from tempograph.render.dead import render_dead_code
         from tempograph.builder import build_graph
 
-        (tmp_path / "guards.py").write_text(
-            "def validate_email(email): return '@' in email\n"
-            "def validate_phone(phone): return len(phone) == 10\n"
+        # typing-only file with no importers — dead typing scaffolding
+        (tmp_path / "type_aliases.py").write_text(
+            "from typing import Optional, List\n"
+            "UserID = Optional[int]\n"
+            "Records = List[dict]\n"
         )
+        (tmp_path / "main.py").write_text("def run(): pass\n")
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_dead_code(g)
-        assert "dead validators" in out, (
-            f"Expected 'dead validators' for unused validate_ functions; got:\n{out}"
+        assert "dead type aliases" in out, (
+            f"Expected 'dead type aliases' for typing-only file with no importers; got:\n{out}"
         )
 
-    def test_dead_validators_absent(self, tmp_path):
+    def test_dead_type_alias_absent(self, tmp_path):
         from tempograph.render.dead import render_dead_code
         from tempograph.builder import build_graph
 
-        (tmp_path / "guards.py").write_text(
-            "def validate_email(email): return '@' in email\n"
+        (tmp_path / "type_aliases.py").write_text(
+            "from typing import Optional\nUserID = Optional[int]\n"
         )
         (tmp_path / "handler.py").write_text(
-            "from guards import validate_email\n"
-            "def submit(email):\n"
-            "    if validate_email(email): return True\n"
+            "from type_aliases import UserID\ndef get_user(uid): return uid\n"
         )
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_dead_code(g)
-        assert "abandoned input guards" not in out, (
-            f"S563 'abandoned input guards' suffix must not appear when validator has callers; got:\n{out}"
+        assert "dead type aliases" not in out, (
+            f"'dead type aliases' must not appear when typing file is imported; got:\n{out}"
         )

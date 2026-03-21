@@ -1968,6 +1968,25 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — abandoned input guards; callers silently skip these checks; wire up or remove"
         )
 
+    # S569: Dead typing file — Python file that only contains typing imports (no indexed symbols)
+    # and has no importers. Type-alias-only files with no consumers are stale scaffolding
+    # from abandoned API contracts; they create false confidence that types are in use.
+    _dead_typing_files569 = [
+        fp for fp, fi in graph.files.items()
+        if not _is_test_file(fp)
+        and not list(fi.symbols)
+        and any("typing" in imp.lower() for imp in fi.imports)
+        and not graph.importers_of(fp)
+    ]
+    if _dead_typing_files569:
+        _tf_names569 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _dead_typing_files569[:3])
+        if len(_dead_typing_files569) > 3:
+            _tf_names569 += f" +{len(_dead_typing_files569) - 3} more"
+        lines.append(
+            f"dead type aliases: {len(_dead_typing_files569)} typing-only file(s) with no importers ({_tf_names569})"
+            f" — stale type definitions from refactored APIs; safe to remove after confirming no runtime use"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
