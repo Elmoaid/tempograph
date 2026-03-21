@@ -1545,6 +1545,28 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — output may be unformatted; verify display layer before deleting"
         )
 
+    # S462: Dead validators — validate_*/check_*/verify_* functions with 0 callers.
+    # Unused validation functions suggest either the validation was bypassed (security risk)
+    # or the validated path was removed; either way, the constraint is no longer enforced.
+    _s462_val_prefixes = (
+        "validate_", "check_", "verify_", "assert_", "ensure_", "is_valid_",
+    )
+    _s462_dead_vals = [
+        sym for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s462_val_prefixes)
+    ]
+    if len(_s462_dead_vals) >= 2:
+        _val_names462 = ", ".join(s.name for s in _s462_dead_vals[:3])
+        if len(_s462_dead_vals) > 3:
+            _val_names462 += f" +{len(_s462_dead_vals) - 3} more"
+        lines.append(
+            f"dead validators: {len(_s462_dead_vals)} unused validation fn(s) ({_val_names462})"
+            f" — validation may be bypassed; verify constraints still enforced before deleting"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
