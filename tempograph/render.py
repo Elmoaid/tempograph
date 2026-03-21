@@ -1284,6 +1284,11 @@ def _build_symbol_block_lines(
         _blast_files = {c.file_path for c in graph.callers_of(sym.id) if c.file_path != sym.file_path}
         if len(_blast_files) >= 3:
             _blast_ann = f" [blast: {len(_blast_files)} files]"
+        elif len(_blast_files) == 1:
+            # Exactly 1 external caller file → tightly owned by that file.
+            # Agents can safely change this without reviewing other files.
+            _sole_file = next(iter(_blast_files))
+            _blast_ann = f" [owned by: {_sole_file.rsplit('/', 1)[-1]}]"
         # Symbol-level age: when was this specific function last changed?
         # Uses git log -L for per-line precision; falls back to file-level.
         # Skipped for symbols changed < 8 days ago (not actionable — treat as "fresh").
@@ -1588,32 +1593,38 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     related_section = _render_related_files_section(graph, ordered, seen_files)
     if related_section:
         lines.append(related_section)
+        token_count += count_tokens(related_section)
 
     # Blast risk badge: count unique downstream files for seed symbols.
     blast_section = _render_blast_risk_section(graph, ordered, token_count, max_tokens)
     if blast_section:
         lines.append(blast_section)
+        token_count += count_tokens(blast_section)
 
     # Co-change orbit: git history reveals which files change together with seed files.
     seed_file_paths = [s.file_path for s, d in ordered if d == 0]
     orbit_section = _render_cochange_orbit_section(graph, seed_file_paths, seen_files, token_count, max_tokens)
     if orbit_section:
         lines.append(orbit_section)
+        token_count += count_tokens(orbit_section)
 
     # File volatility: flag seed files that are actively changing.
     volatile_section = _render_volatility_section(graph, seed_file_paths, token_count, max_tokens)
     if volatile_section:
         lines.append(volatile_section)
+        token_count += count_tokens(volatile_section)
 
     # Recent changes: show last 3 commits for the primary seed file.
     recent_section = _render_recent_changes_section(graph, seed_file_paths)
     if recent_section:
         lines.append(recent_section)
+        token_count += count_tokens(recent_section)
 
     # Co-change suggestions: which source files historically move with the primary file?
     cochange_section = _render_cochange_section(graph, seed_file_paths)
     if cochange_section:
         lines.append(cochange_section)
+        token_count += count_tokens(cochange_section)
 
     # Test coverage section: which test files call the primary seed symbols?
     # Only consider depth-0 (seed) symbols to avoid noise from BFS expansion.
@@ -1629,27 +1640,31 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                 else:
                     _has_source_callers = True
         if _test_callers:
-            lines.append("\nTests:")
-            for _tfp, _tcount in sorted(_test_callers.items()):
-                lines.append(f"  {_tfp} ({_tcount} caller{'s' if _tcount != 1 else ''})")
+            _tcov = "\nTests:\n" + "\n".join(f"  {_tfp} ({_tcount} caller{'s' if _tcount != 1 else ''})" for _tfp, _tcount in sorted(_test_callers.items()))
+            lines.append(_tcov)
+            token_count += count_tokens(_tcov)
         elif _has_source_callers:
             lines.append("\nTests: none")
+            token_count += 4
 
     # All callers: complete caller list grouped by file (for rename/refactor impact).
     _seed_syms = [sym for sym, d in ordered if d == 0]
     callers_section = _render_all_callers_section(graph, _seed_syms, _callsite_lines, token_count, max_tokens)
     if callers_section:
         lines.append(callers_section)
+        token_count += count_tokens(callers_section)
 
     # Outgoing dependency files: what files do the seed symbols depend on?
     dep_section = _render_dependency_files_section(graph, ordered, seen_files, token_count, max_tokens)
     if dep_section:
         lines.append(dep_section)
+        token_count += count_tokens(dep_section)
 
     # Hot callers: callers of seed symbols that live in recently-modified files.
     hot_section = _render_hot_callers_section(graph, _seed_syms, token_count, max_tokens)
     if hot_section:
         lines.append(hot_section)
+        token_count += count_tokens(hot_section)
 
     # Similar symbols: functions/methods that share ≥2 callees with the seed.
     # Surfaces parallel implementations that likely need the same change.
@@ -1679,7 +1694,9 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
                         f"{sym.name} ({sym.file_path.rsplit('/', 1)[-1]}, {cnt} shared)"
                         for cnt, sym in _similar[:3]
                     ]
-                    lines.append(f"\nsimilar: {', '.join(_sim_parts)}")
+                    _sim_line = f"\nsimilar: {', '.join(_sim_parts)}"
+                    lines.append(_sim_line)
+                    token_count += count_tokens(_sim_line)
 
     # File siblings: other notable symbols in the primary seed's file.
     # Shows agents what else is in the file without requiring a blast query.

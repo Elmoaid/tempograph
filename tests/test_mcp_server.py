@@ -5898,3 +5898,58 @@ class TestDeadCodeSupersededHint:
         assert "possibly replaced by" not in out, (
             f"'possibly replaced by' must not appear for regular dead symbols; got:\n{out}"
         )
+
+
+class TestFocusOwnedByAnnotation:
+    """S50: Focus mode — '[owned by: file.py]' annotation for symbols with exactly
+    1 external caller file. Indicates tight coupling; agent can change without
+    reviewing other files. Complement to '[blast: N files]' for N>=3.
+    """
+
+    def _build(self, tmp_path, files: dict):
+        from tempograph.builder import build_graph
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_owned_by_shown_for_single_external_caller(self, tmp_path):
+        """'owned by: X' appears when exactly 1 external file calls the seed."""
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "utils.py": "def helper(): return 42\n",
+            "app.py": (
+                "from utils import helper\n"
+                "def main():\n"
+                "    return helper()\n"
+            ),
+        })
+        out = render_focused(g, "helper")
+        assert "owned by:" in out, f"Expected 'owned by:' annotation; got:\n{out}"
+        assert "app.py" in out, f"Expected app.py in 'owned by' annotation; got:\n{out}"
+
+    def test_owned_by_absent_for_multiple_callers(self, tmp_path):
+        """'owned by:' absent when multiple files call the seed."""
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "utils.py": "def helper(): return 42\n",
+            "app.py": "from utils import helper\ndef main(): return helper()\n",
+            "other.py": "from utils import helper\ndef other(): return helper()\n",
+        })
+        out = render_focused(g, "helper")
+        assert "owned by:" not in out, (
+            f"'owned by:' must not appear when multiple callers exist; got:\n{out}"
+        )
+
+    def test_owned_by_absent_for_no_external_callers(self, tmp_path):
+        """'owned by:' absent when symbol has 0 external callers."""
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "utils.py": "def helper(): return 42\n",
+        })
+        out = render_focused(g, "helper")
+        assert "owned by:" not in out, (
+            f"'owned by:' must not appear for symbol with 0 callers; got:\n{out}"
+        )
