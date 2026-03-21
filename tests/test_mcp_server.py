@@ -5748,3 +5748,60 @@ class TestHotspotsChurnRisk:
         assert "Churn risk:" not in out, (
             f"Churn risk: must not appear for low-complexity symbols; got:\n{out}"
         )
+
+
+class TestFocusCircularImportWarning:
+    """S45: Focus mode — CIRCULAR IMPORT warning when seed's file is in a cycle.
+
+    When the seed symbol's file is part of a circular import chain, the focus
+    output should include a '⚠ CIRCULAR IMPORT — a.py → b.py → a.py' warning.
+    """
+
+    def _build(self, tmp_path, files: dict):
+        from tempograph.builder import build_graph
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_circular_import_warning_shown(self, tmp_path):
+        """⚠ CIRCULAR IMPORT warning appears when seed's file is in a cycle."""
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "a.py": "from b import b_func\ndef a_func(): return 1\n",
+            "b.py": "from a import a_func\ndef b_func(): return 2\n",
+        })
+        out = render_focused(g, "a_func")
+        assert "CIRCULAR IMPORT" in out, (
+            f"Expected CIRCULAR IMPORT warning; got:\n{out}"
+        )
+        assert "a.py" in out and "b.py" in out, (
+            f"Expected a.py and b.py in circular import chain; got:\n{out}"
+        )
+
+    def test_circular_import_warning_absent_when_no_cycle(self, tmp_path):
+        """No warning when there is no circular import."""
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "utils.py": "def helper(): return 1\n",
+            "main.py": "from utils import helper\ndef run(): return helper()\n",
+        })
+        out = render_focused(g, "helper")
+        assert "CIRCULAR IMPORT" not in out, (
+            f"Unexpected CIRCULAR IMPORT warning when no cycle exists; got:\n{out}"
+        )
+
+    def test_circular_import_warning_absent_for_non_cycle_file(self, tmp_path):
+        """Warning only for the seed's file — not for other files with cycles."""
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "a.py": "from b import b_func\ndef a_func(): return 1\n",
+            "b.py": "from a import a_func\ndef b_func(): return 2\n",
+            "clean.py": "def clean_fn(): return 99\n",
+        })
+        out = render_focused(g, "clean_fn")
+        assert "CIRCULAR IMPORT" not in out, (
+            f"CIRCULAR IMPORT must not appear for clean_fn (not in cycle); got:\n{out}"
+        )
