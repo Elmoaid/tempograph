@@ -7549,3 +7549,47 @@ class TestFocusCoChangeBuddy:
         assert "co-changes with:" not in out, (
             f"'co-changes with:' must not appear without git history; got:\n{out}"
         )
+
+    def test_co_change_shown_with_mocked_buddy(self, tmp_path):
+        """'co-changes with:' shows the top co-change partner when count >= 4."""
+        from unittest.mock import patch
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+
+        (tmp_path / "core.py").write_text("def process(x): return x\n")
+        (tmp_path / "utils.py").write_text("def helper(y): return y\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        g.root = str(tmp_path)
+
+        mock_pairs = [{"path": "utils.py", "count": 7}]
+        with patch("tempograph.git.cochange_pairs", return_value=mock_pairs):
+            out = render_focused(g, "process")
+
+        assert "co-changes with:" in out, (
+            f"Expected 'co-changes with:' when co-change buddy count >= 4; got:\n{out}"
+        )
+        assert "utils.py" in out, (
+            f"Expected 'utils.py' in co-changes annotation; got:\n{out}"
+        )
+
+
+class TestOverviewStableCore:
+    """S72: Overview mode — 'stable core:' widely-imported files unchanged 30+ days.
+
+    Shows files with 5+ source importers that haven't been modified recently.
+    Absent for non-git repos and when no files meet the criteria.
+    """
+
+    def test_stable_core_absent_without_git(self, tmp_path):
+        """No stable core annotation in a non-git directory."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "core.py").write_text("def fn(): return 1\n")
+        for i in range(6):
+            (tmp_path / f"mod_{i}.py").write_text(f"from core import fn\ndef work_{i}(): return fn()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "stable core:" not in out, (
+            f"'stable core:' must not appear without git history; got:\n{out}"
+        )
