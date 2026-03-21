@@ -86,7 +86,7 @@ class RubyHandlerMixin:
         sym_id = self._make_id(name)
         sym = Symbol(
             id=sym_id, name=name, qualified_name=name,
-            kind=SymbolKind.CLASS, language=self.language,
+            kind=SymbolKind.MODULE, language=self.language,
             file_path=self.file_path,
             line_start=node.start_point[0] + 1,
             line_end=node.end_point[0] + 1,
