@@ -9219,3 +9219,47 @@ class TestArchCircularModuleDeps:
         assert "circular module deps:" not in out, (
             f"'circular module deps:' must not appear for one-way deps; got:\n{out}"
         )
+
+
+class TestHotspotsOutlierComplexity:
+    """S96: Hotspots 'Outlier complexity:' for functions 2x above codebase average cx."""
+
+    def test_outlier_shown_for_high_cx_function_above_average(self, tmp_path):
+        """One very complex function among mostly simple ones → 'Outlier complexity:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        # Build 10 simple functions (cx ~1-2) and 1 very complex one (cx ~15)
+        for i in range(10):
+            (tmp_path / f"simple_{i}.py").write_text(f"def fn_{i}(): return {i}\n")
+        complex_code = "def mega_fn(x):\n"
+        for i in range(15):
+            complex_code += f"    if x > {i}: return {i}\n"
+        complex_code += "    return 0\n"
+        (tmp_path / "complex.py").write_text(complex_code)
+
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "Outlier complexity:" in out, (
+            f"Expected 'Outlier complexity:' when one fn has 2x+ avg complexity; got:\n{out}"
+        )
+        assert "mega_fn" in out, f"Expected 'mega_fn' in outlier output; got:\n{out}"
+
+    def test_outlier_absent_when_complexity_is_uniform(self, tmp_path):
+        """All functions with similar complexity → no 'Outlier complexity:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        # Build 12 similar functions (cx ~3-4)
+        for i in range(12):
+            code = f"def fn_{i}(x):\n"
+            for j in range(3):
+                code += f"    if x > {j}: return {j}\n"
+            code += "    return 0\n"
+            (tmp_path / f"module_{i}.py").write_text(code)
+
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "Outlier complexity:" not in out, (
+            f"'Outlier complexity:' must not appear when complexity is uniform; got:\n{out}"
+        )

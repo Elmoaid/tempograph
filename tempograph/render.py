@@ -3761,6 +3761,33 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             lines.append("")
             lines.append(f"Danger zone: {', '.join(_dz_parts)} — high churn + complexity")
 
+    # S96: Outlier complexity — functions with cx >= 2× codebase average AND cx >= 10.
+    # Average complexity anchors the signal: a cx:10 fn in a cx:2-avg codebase is notable;
+    # same fn in a cx:8-avg codebase is normal. Requires >= 10 source functions for valid avg.
+    _all_fn_cx = [
+        sym.complexity for sym in graph.symbols.values()
+        if sym.kind.value in ("function", "method")
+        and not _is_test_file(sym.file_path)
+        and sym.complexity >= 1
+    ]
+    if len(_all_fn_cx) >= 10:
+        _cx_avg = sum(_all_fn_cx) / len(_all_fn_cx)
+        _outlier_threshold = max(2 * _cx_avg, 10.0)
+        _outliers = [
+            sym for sym in graph.symbols.values()
+            if sym.kind.value in ("function", "method")
+            and not _is_test_file(sym.file_path)
+            and sym.complexity >= _outlier_threshold
+        ]
+        if len(_outliers) >= 1:
+            _outliers.sort(key=lambda s: -s.complexity)
+            _out_parts = [
+                f"{s.name} (cx:{s.complexity}, avg:{_cx_avg:.1f})"
+                for s in _outliers[:3]
+            ]
+            lines.append("")
+            lines.append(f"Outlier complexity: {', '.join(_out_parts)}")
+
     # Refactor targets: unexported (private) functions with high complexity (cx >= 5) and
     # zero external callers. These are internal functions that have grown too complex
     # but have no call graph forcing the complexity — prime candidates for simplification.
