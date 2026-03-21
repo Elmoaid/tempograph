@@ -2507,6 +2507,25 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — abandoned migration or skipped upgrade path"
         )
 
+    # S737: Dead protocol/interface classes — unused abstract base classes or protocol definitions.
+    # ABC and Protocol classes define contracts for implementers; dead ones signal that the
+    # abstraction was designed but no concrete implementations are in active use.
+    _dead_protos737 = [
+        s for s in dead
+        if s.kind.value == "class"
+        and not _is_test_file(s.file_path)
+        and s.signature is not None
+        and any(kw in s.signature for kw in ("ABC", "Protocol", "Abstract", "Interface"))
+    ]
+    if _dead_protos737:
+        _proto_names737 = ", ".join(s.name for s in _dead_protos737[:3])
+        if len(_dead_protos737) > 3:
+            _proto_names737 += f" +{len(_dead_protos737) - 3} more"
+        lines.append(
+            f"dead protocols: {len(_dead_protos737)} unused abstract/protocol class(es) ({_proto_names737})"
+            f" — abstraction designed but no active implementations remain; remove or implement"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

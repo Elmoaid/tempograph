@@ -3526,6 +3526,23 @@ def _signals_focused_fn_advanced(
                         f" ({_bases726}) — complex MRO; verify method resolution order is intentional"
                     )
 
+    # S732: Large class — focused class has 10 or more methods and properties.
+    # Large classes often violate single responsibility; they become maintenance burdens
+    # and are hard to test in isolation — consider splitting into focused collaborators.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim732 = _seed_syms[0]
+        if (
+            _prim732.kind.value == "class"
+            and not _is_test_file(_prim732.file_path)
+        ):
+            _children732 = graph.children_of(_prim732.id)
+            _methods732 = [c for c in _children732 if c.kind.value in ("method", "property", "function")]
+            if len(_methods732) >= 10:
+                lines.append(
+                    f"\nlarge class: {_prim732.name} has {len(_methods732)} methods/properties"
+                    f" — god class candidate; consider splitting into focused collaborators"
+                )
+
     return lines
 
 

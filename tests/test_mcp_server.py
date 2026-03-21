@@ -34733,3 +34733,210 @@ class TestDeadMigrationFunctionsS731:
         assert "dead migration functions" not in out, (
             f"'dead migration functions' must not appear when migrate fn is called; got:\n{out}"
         )
+
+
+# ---------------------------------------------------------------------------
+# S732 – S737
+# ---------------------------------------------------------------------------
+
+class TestLargeClassS732:
+    def test_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        methods = "\n".join(
+            f"    def method{i}(self): pass" for i in range(12)
+        )
+        (tmp_path / "service.py").write_text(
+            f"class BigService:\n{methods}\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "BigService")
+        assert "large class" in out, (
+            f"Expected 'large class' for class with 12 methods; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "service.py").write_text(
+            "class SmallService:\n"
+            "    def run(self): pass\n"
+            "    def stop(self): pass\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "SmallService")
+        assert "large class" not in out, (
+            f"'large class' must not appear for small class; got:\n{out}"
+        )
+
+
+class TestFlatRepoS733:
+    def test_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        # All source files at root — no subdirectories
+        for name in ("alpha.py", "beta.py", "gamma.py", "delta.py", "epsilon.py"):
+            (tmp_path / name).write_text(f"def fn_{name[:2]}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "flat repo" in out, (
+            f"Expected 'flat repo' when all files are at root; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        sub = tmp_path / "mylib"
+        sub.mkdir()
+        for name in ("alpha.py", "beta.py", "gamma.py"):
+            (sub / name).write_text(f"def fn_{name[:2]}(): pass\n")
+        (tmp_path / "main.py").write_text("def main(): pass\n")
+        (tmp_path / "utils.py").write_text("def util(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "flat repo" not in out, (
+            f"'flat repo' must not appear when subdirectories exist; got:\n{out}"
+        )
+
+
+class TestDataModelBlastS734:
+    def test_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "models.py").write_text(
+            "class User:\n    name: str\n    email: str\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from models import User\ndef get_user(): return User()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "models.py")
+        assert "data model blast" in out, (
+            f"Expected 'data model blast' for models.py; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "processor.py").write_text("def process(): pass\n")
+        (tmp_path / "app.py").write_text(
+            "from processor import process\ndef run(): process()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "processor.py")
+        assert "data model blast" not in out, (
+            f"'data model blast' must not appear for non-model file; got:\n{out}"
+        )
+
+
+class TestSchemaDiffS735:
+    def test_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "schema.py").write_text("USER_TABLE = 'users'\n")
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["schema.py", "app.py"])
+        assert "schema diff" in out, (
+            f"Expected 'schema diff' when schema.py is in diff; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        (tmp_path / "app.py").write_text("def run(): pass\n")
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, ["app.py", "utils.py"])
+        assert "schema diff" not in out, (
+            f"'schema diff' must not appear for non-schema files; got:\n{out}"
+        )
+
+
+class TestChokePointS736:
+    def test_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        # orchestrate has many callers AND calls many things
+        deps = "\n".join(f"def dep{i}(): pass" for i in range(6))
+        callers_body = "\n".join(f"def user{i}(): orchestrate()" for i in range(6))
+        (tmp_path / "core.py").write_text(
+            deps + "\n"
+            "def orchestrate():\n" +
+            "".join(f"    dep{i}()\n" for i in range(6))
+        )
+        (tmp_path / "consumers.py").write_text(
+            "from core import orchestrate\n" + callers_body + "\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "choke point" in out, (
+            f"Expected 'choke point' for symbol with 5+ callers and 5+ callees; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        # process has many callers but calls nothing → not a choke point
+        callers = "\n".join(f"def caller{i}(): process()" for i in range(8))
+        (tmp_path / "core.py").write_text("def process(): pass\n")
+        (tmp_path / "consumers.py").write_text(
+            "from core import process\n" + callers + "\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "choke point" not in out, (
+            f"'choke point' must not appear when hotspot has few callees; got:\n{out}"
+        )
+
+
+class TestDeadProtocolsS737:
+    def test_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "interfaces.py").write_text(
+            "from abc import ABC\n"
+            "class DataStore(ABC):\n"
+            "    def save(self): pass\n"
+        )
+        (tmp_path / "app.py").write_text("def main(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead protocols" in out, (
+            f"Expected 'dead protocols' for unused ABC class; got:\n{out}"
+        )
+
+    def test_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "interfaces.py").write_text(
+            "from abc import ABC\n"
+            "class DataStore(ABC):\n"
+            "    def save(self): pass\n"
+        )
+        (tmp_path / "impl.py").write_text(
+            "from interfaces import DataStore\n"
+            "class SqlStore(DataStore):\n"
+            "    def save(self): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from impl import SqlStore\n"
+            "def main(): SqlStore().save()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead protocols" not in out, (
+            f"'dead protocols' must not appear when ABC class is used; got:\n{out}"
+        )
