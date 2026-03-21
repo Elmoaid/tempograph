@@ -3613,6 +3613,21 @@ def _signals_async_oop(
             f" — complex package hierarchy; agents may miss deeply nested modules"
         )
 
+    # S1009: Mixed languages — codebase spans 3 or more distinct programming languages.
+    # Multi-language repos require agents to switch language context frequently;
+    # cross-language call boundaries are harder to trace and may hide type or contract mismatches.
+    _lang_counts1009 = {
+        lang: count
+        for lang, count in graph.stats.get("languages", {}).items()
+        if count > 0
+    }
+    if len(_lang_counts1009) >= 3:
+        _lang_list1009 = ", ".join(k for k, _ in sorted(_lang_counts1009.items(), key=lambda x: -x[1])[:5])
+        lines.append(
+            f"mixed languages: {len(_lang_counts1009)} languages detected ({_lang_list1009})"
+            f" — multi-language repo; cross-language call boundaries are harder to trace for agents"
+        )
+
     return lines
 
 
