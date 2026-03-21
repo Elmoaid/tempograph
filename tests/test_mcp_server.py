@@ -5425,3 +5425,64 @@ class TestFocusRecentCommits:
         assert "d \"" in recent_line, (
             f"recent: line must include Nd \"msg\" format; got:\n{recent_line}"
         )
+
+
+class TestFocusSimilarFunctions:
+    """S41: Focus mode — 'similar:' section for FUNCTION/METHOD seeds.
+
+    When a function shares ≥2 callees with other functions, those functions
+    appear as 'similar: funcA (file:line, N shared), ...' in the focus output.
+    Helps agents discover parallel implementations that may need the same change.
+    """
+
+    def _build(self, tmp_path, files: dict):
+        from tempograph.builder import build_graph
+        for name, content in files.items():
+            (tmp_path / name).write_text(content)
+        return build_graph(str(tmp_path), use_cache=False)
+
+    def test_similar_shown_when_functions_share_callees(self, tmp_path):
+        """'similar:' appears when another function shares ≥2 callees."""
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "helpers.py": (
+                "def validate(x): return x > 0\n"
+                "def normalize(x): return x / 100\n"
+            ),
+            "processor.py": (
+                "from helpers import validate, normalize\n"
+                "def process_a(v):\n"
+                "    v = validate(v)\n"
+                "    return normalize(v)\n"
+                "def process_b(v):\n"
+                "    v = validate(v)\n"
+                "    return normalize(v)\n"
+            ),
+        })
+        out = render_focused(g, "process_a")
+        assert "similar:" in out, f"Expected similar: section; got:\n{out}"
+        assert "process_b" in out, f"Expected process_b in similar; got:\n{out}"
+
+    def test_similar_absent_when_no_shared_callees(self, tmp_path):
+        """'similar:' absent when no other function shares ≥2 callees."""
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "math.py": (
+                "def add(a, b): return a + b\n"
+                "def sub(a, b): return a - b\n"
+            ),
+        })
+        out = render_focused(g, "add")
+        assert "similar:" not in out, f"Unexpected similar: when no shared callees; got:\n{out}"
+
+    def test_similar_absent_for_class_seed(self, tmp_path):
+        """'similar:' must not appear for CLASS seeds."""
+        from tempograph.render import render_focused
+
+        g = self._build(tmp_path, {
+            "model.py": "class User:\n    def save(self): pass\n",
+        })
+        out = render_focused(g, "User")
+        assert "similar:" not in out, f"similar: must not appear for CLASS; got:\n{out}"
