@@ -1743,6 +1743,459 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
             if _inh_depth >= 3:
                 lines.append(f"\ninheritance depth: {_inh_depth} levels — deep hierarchy, high base-class coupling")
 
+    # S198: Leaf function — the focused symbol calls nothing externally but has many callers.
+    # Zero outgoing dependencies = very stable; many callers = widely relied upon. Positive signal.
+    # Only shown when seed has 0 external callees AND >= 5 total callers.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim198 = _seed_syms[0]
+        if _prim198.kind.value in ("function", "method"):
+            _ext_callees198 = [
+                c for c in graph.callees_of(_prim198.id)
+                if c.file_path != _prim198.file_path
+            ]
+            _caller_count198 = len(graph.callers_of(_prim198.id))
+            if len(_ext_callees198) == 0 and _caller_count198 >= 5:
+                lines.append(
+                    f"\nleaf function: {_prim198.name} has {_caller_count198} callers"
+                    f" and 0 external callees — stable leaf, safe to refactor internals"
+                )
+
+    # S192: Callee complexity — the focused symbol's external callees have high average complexity.
+    # Calling into complex functions means cognitive load is high even for simple-looking fns.
+    # Only shown when avg complexity of external callees >= 5 and 3+ external callees with cx data.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim192 = _seed_syms[0]
+        if _prim192.kind.value in ("function", "method"):
+            _callee_cx192 = [
+                c.complexity for c in graph.callees_of(_prim192.id)
+                if c.complexity is not None and c.complexity > 0
+                and c.file_path != _prim192.file_path
+            ]
+            if len(_callee_cx192) >= 3:
+                _avg_cx192 = sum(_callee_cx192) / len(_callee_cx192)
+                if _avg_cx192 >= 5.0:
+                    lines.append(
+                        f"\ncallee complexity: avg cx {_avg_cx192:.1f}"
+                        f" across {len(_callee_cx192)} callees"
+                        f" — calls into complex functions, high cognitive load"
+                    )
+
+    # S186: Cross-file callee — the focused symbol calls functions in 3+ distinct external files.
+    # Reaching out to many files means this fn is a coordination point; changes ripple widely.
+    # Only shown when seed is a fn/method with callees in 3+ different files.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim186 = _seed_syms[0]
+        if _prim186.kind.value in ("function", "method"):
+            _callee_files186 = {
+                c.file_path for c in graph.callees_of(_prim186.id)
+                if c.file_path != _prim186.file_path
+            }
+            if len(_callee_files186) >= 3:
+                _cf_names186 = [fp.rsplit("/", 1)[-1] for fp in sorted(_callee_files186)[:3]]
+                _cf_str186 = ", ".join(_cf_names186)
+                if len(_callee_files186) > 3:
+                    _cf_str186 += f" +{len(_callee_files186) - 3} more"
+                lines.append(
+                    f"\ncross-file callee: {_prim186.name} calls into {len(_callee_files186)} files"
+                    f" ({_cf_str186}) — coordination fn, changes ripple to many modules"
+                )
+
+    # S180: Complex hub — focused symbol has high cyclomatic complexity AND many callers.
+    # High cx + many callers = cognitive load at a widely-used junction; refactor priority.
+    # Only shown when seed is a fn/method, cx >= 8, and callers >= 5.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim180 = _seed_syms[0]
+        if _prim180.kind.value in ("function", "method"):
+            _cx180 = _prim180.complexity or 0
+            _caller_count180 = len(graph.callers_of(_prim180.id))
+            if _cx180 >= 8 and _caller_count180 >= 5:
+                lines.append(
+                    f"\ncomplex hub: {_prim180.name} — cx={_cx180}, {_caller_count180} callers"
+                    f" — high-complexity function used everywhere, refactor candidate"
+                )
+
+    # S174: Test coverage — how many distinct test files call the focused symbol.
+    # More test files = better coverage spread; 0 test callers = coverage gap.
+    # Only shown when >= 2 test files call the focused symbol (positive signal).
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim174 = _seed_syms[0]
+        _s174_test_fps = {
+            c.file_path for c in graph.callers_of(_prim174.id)
+            if _is_test_file(c.file_path)
+        }
+        if len(_s174_test_fps) >= 2:
+            _s174_names = [fp.rsplit("/", 1)[-1] for fp in sorted(_s174_test_fps)[:3]]
+            _s174_str = ", ".join(_s174_names)
+            if len(_s174_test_fps) > 3:
+                _s174_str += f" +{len(_s174_test_fps) - 3} more"
+            lines.append(
+                f"\ntest coverage: {len(_s174_test_fps)} test files exercise {_prim174.name}"
+                f" ({_s174_str})"
+            )
+
+    # S168: Large fn — the primary symbol is among the largest in its file (>= 50 lines).
+    # Large functions are hard to reason about and test; they often hide multiple responsibilities.
+    # Only shown when seed is a fn/method, line_count >= 50, and it's the largest in its file.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim168 = _seed_syms[0]
+        if _prim168.kind.value in ("function", "method") and _prim168.line_count >= 50:
+            _file_fn_sizes168 = [
+                s.line_count for s in graph.symbols.values()
+                if s.file_path == _prim168.file_path
+                and s.kind.value in ("function", "method")
+                and s.line_count is not None
+            ]
+            if _file_fn_sizes168 and _prim168.line_count >= max(_file_fn_sizes168) * 0.8:
+                lines.append(
+                    f"\nlarge fn: {_prim168.name} ({_prim168.line_count} lines)"
+                    f" — largest in {_prim168.file_path.rsplit('/', 1)[-1]}, consider splitting"
+                )
+
+    # S162: Overloaded name — the primary symbol's name appears in 3+ different files.
+    # Same name in many files = collision risk; reader context shifts when jumping between files.
+    # Only shown when the seed symbol name occurs in 3+ distinct source files.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim162 = _seed_syms[0]
+        _s162_files = {
+            s.file_path for s in graph.symbols.values()
+            if s.name == _prim162.name and not _is_test_file(s.file_path)
+        }
+        if len(_s162_files) >= 3:
+            lines.append(
+                f"\noverloaded name: '{_prim162.name}' appears in {len(_s162_files)} files"
+                f" — name collision risk when navigating"
+            )
+
+    # S210: Cochange partners outside static graph — files that co-change with the seed
+    # file in git history but have NO import/call edge to it (hidden coupling).
+    # Git history catches runtime coupling, config coupling, and test fixture coupling
+    # that static analysis misses entirely.
+    # Only shown when 2+ such hidden co-editors exist with >= 3 co-changes each.
+    if _seed_syms and graph.root and token_count < max_tokens - 30:
+        try:
+            from ..git import cochange_pairs as _cp210, is_git_repo as _igr210
+            from ..types import EdgeKind as _EK210
+            if _igr210(graph.root):
+                _seed_fp210 = _seed_syms[0].file_path
+                # Files connected via any static edge to the seed file
+                _static_neighbors210: set[str] = set()
+                for _e210 in graph.edges:
+                    if _e210.kind in (_EK210.CALLS, _EK210.IMPORTS):
+                        _src210 = _e210.source_id.split("::")[0]
+                        _tgt210 = _e210.target_id.split("::")[0]
+                        if _src210 == _seed_fp210:
+                            _static_neighbors210.add(_tgt210)
+                        elif _tgt210 == _seed_fp210:
+                            _static_neighbors210.add(_src210)
+                _pairs210 = _cp210(graph.root, _seed_fp210, n=10)
+                _hidden210 = [
+                    p for p in _pairs210
+                    if p["path"] not in _static_neighbors210
+                    and p["path"] != _seed_fp210
+                    and not _is_test_file(p["path"])
+                    and p["count"] >= 3
+                ]
+                if len(_hidden210) >= 2:
+                    _h210_names = [p["path"].rsplit("/", 1)[-1] for p in _hidden210[:3]]
+                    _h210_str = ", ".join(_h210_names)
+                    if len(_hidden210) > 3:
+                        _h210_str += f" +{len(_hidden210) - 3} more"
+                    lines.append(
+                        f"\ncochange partners (not in call graph): {_h210_str}"
+                        f" — co-edit history suggests hidden coupling"
+                    )
+        except Exception:
+            pass
+
+    # S209: Test file pointer — when there's exactly one test file with a name matching
+    # the seed file's stem, surface it directly so agents know where to add tests.
+    # Only shown when no other test coverage signal was shown (avoids redundancy with S174).
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim209 = _seed_syms[0]
+        _stem209 = _prim209.file_path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+        _s209_test_fps = [
+            fp for fp in graph.files
+            if _is_test_file(fp) and _stem209 in fp.rsplit("/", 1)[-1]
+        ]
+        # Only show when exactly 1 matching test file (unambiguous pointer) and
+        # S174 didn't already surface >= 2 test callers
+        _s174_shown = _seed_syms and len({
+            c.file_path for c in graph.callers_of(_prim209.id)
+            if _is_test_file(c.file_path)
+        }) >= 2
+        if len(_s209_test_fps) == 1 and not _s174_shown:
+            _s209_name = _s209_test_fps[0].rsplit("/", 1)[-1]
+            lines.append(
+                f"\ntest file: {_s209_name} — add tests here for {_prim209.name}"
+            )
+
+    # S204: Async function — the focused symbol is declared with async.
+    # Async fns require await at call sites; changes affect async context propagation.
+    # Only shown when seed is a fn/method and 'async' appears in its signature.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim204 = _seed_syms[0]
+        if _prim204.kind.value in ("function", "method"):
+            _sig204 = _prim204.signature or ""
+            if "async" in _sig204:
+                lines.append(
+                    f"\nasync fn: {_prim204.name} — callers must await,"
+                    f" changes affect async context propagation"
+                )
+
+    # S214: Private symbol with external callers — symbol named with leading underscore
+    # is called from other files, leaking an implementation detail into the public interface.
+    # Only shown when seed starts with '_' (single) and has >= 1 external non-test caller.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim214 = _seed_syms[0]
+        if _prim214.name.startswith("_") and not _prim214.name.startswith("__"):
+            _ext_callers214 = [
+                c for c in graph.callers_of(_prim214.id)
+                if c.file_path != _prim214.file_path and not _is_test_file(c.file_path)
+            ]
+            if _ext_callers214:
+                lines.append(
+                    f"\nprivate symbol with external callers: {_prim214.name}"
+                    f" called from {len(_ext_callers214)} external file(s)"
+                    f" — underscore naming convention violated"
+                )
+
+    # S221: Recursive function — the focused symbol calls itself directly.
+    # Recursive fns have loop invariants and base-case contracts that break non-obviously.
+    # Only shown when seed is a fn/method that appears in its own callees.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim221 = _seed_syms[0]
+        if _prim221.kind.value in ("function", "method"):
+            _is_recursive221 = any(
+                c.id == _prim221.id for c in graph.callees_of(_prim221.id)
+            )
+            if _is_recursive221:
+                lines.append(
+                    f"\nrecursive fn: {_prim221.name} calls itself"
+                    f" — changes must preserve loop invariants and base cases"
+                )
+
+    # S228: Class symbol focused — the focused symbol is a class; show subclass count.
+    # Classes with subclasses have contracts that affect all inheritors; changes propagate down.
+    # Only shown when seed is a class with >= 1 subclass in the graph.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim228 = _seed_syms[0]
+        if _prim228.kind.value == "class":
+            from ..types import EdgeKind as _EK228
+            _subclasses228 = [
+                graph.symbols[e.source_id]
+                for e in graph.edges
+                if e.kind.value == "inherits" and e.target_id == _prim228.id
+                and e.source_id in graph.symbols
+            ]
+            if _subclasses228:
+                _sub_names228 = [s.name for s in _subclasses228[:3]]
+                _sub_str228 = ", ".join(_sub_names228)
+                if len(_subclasses228) > 3:
+                    _sub_str228 += f" +{len(_subclasses228) - 3} more"
+                lines.append(
+                    f"\nclass with subclasses: {len(_subclasses228)} subclass(es) ({_sub_str228})"
+                    f" — interface changes break all inheritors"
+                )
+
+    # S234: Long parameter list — focused fn/method has >= 5 parameters.
+    # Many parameters = hard to call correctly, often signals missing data objects.
+    # Only shown when seed has >= 5 params in its signature.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim234 = _seed_syms[0]
+        if _prim234.kind.value in ("function", "method"):
+            _sig234 = _prim234.signature or ""
+            # Count commas in the parameter section as a proxy for param count
+            _paren_start = _sig234.find("(")
+            _paren_end = _sig234.rfind(")")
+            if _paren_start != -1 and _paren_end != -1:
+                _params_str = _sig234[_paren_start + 1:_paren_end].strip()
+                # Remove self/cls
+                _params_str = _params_str.replace("self, ", "").replace("cls, ", "")
+                _params_str = _params_str.replace("self,", "").replace("cls,", "")
+                _params_str = _params_str.replace("self", "").replace("cls", "").strip()
+                if _params_str:
+                    _param_count234 = len([p for p in _params_str.split(",") if p.strip()])
+                    if _param_count234 >= 5:
+                        lines.append(
+                            f"\nlong parameter list: {_prim234.name} has {_param_count234} params"
+                            f" — consider grouping into a config/data object"
+                        )
+
+    # S249: Abstract method — focused symbol is abstract (must be implemented by subclasses).
+    # Any signature change cascades to ALL concrete implementations — harder blast than normal.
+    # Detection: @abstractmethod in signature/decorators, or body is just `raise NotImplementedError`.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim249 = _seed_syms[0]
+        if _prim249.kind.value in ("function", "method"):
+            _sig249 = _prim249.signature or ""
+            _is_abstract = (
+                "abstractmethod" in _sig249
+                or "@abc.abstractmethod" in _sig249
+            )
+            if _is_abstract:
+                # Count concrete implementations (subclasses that have same-named method)
+                _prim249_name = _prim249.name
+                _impl249 = [
+                    s for s in graph.symbols.values()
+                    if s.name == _prim249_name
+                    and s.file_path != _prim249.file_path
+                    and s.kind.value in ("function", "method")
+                ]
+                _n_impl249 = len(_impl249)
+                lines.append(
+                    f"\nabstract method: {_prim249_name} must be implemented by all subclasses"
+                    + (f" — {_n_impl249} implementation(s) found" if _n_impl249 else "")
+                    + " — signature changes cascade to all concrete classes"
+                )
+
+
+    # S253: Fat class — focused symbol is a class with 10+ methods/properties.
+    # Large classes often violate SRP; consider splitting into smaller components.
+    # Only shown when focused symbol is a class and has 10+ child methods.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim253 = next((s for s in _seed_syms if s.kind.value == "class"), None)
+        if _prim253 and _prim253.kind.value == "class":
+            _children253 = graph.children_of(_prim253.id)
+            _methods253 = [c for c in _children253 if c.kind.value in ("method", "function")]
+            if len(_methods253) >= 10:
+                lines.append(
+                    f"\nfat class: {_prim253.name} has {len(_methods253)} methods"
+                    f" — large class; consider splitting into focused components"
+                )
+
+
+    # S266: Circular call — focused symbol and one of its callees also call back to it.
+    # Circular calls create hidden coupling and make execution order unpredictable;
+    # they can cause infinite loops under certain conditions.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim260 = _seed_syms[0]
+        if _prim260.kind.value in ("function", "method"):
+            _callers260 = {c.id for c in graph.callers_of(_prim260.id)}
+            _callees260 = {c.id for c in graph.callees_of(_prim260.id)}
+            _mutual260 = _callers260 & _callees260
+            if _mutual260:
+                _mutual_name260 = next(
+                    (graph.symbols[sid].name for sid in _mutual260 if sid in graph.symbols),
+                    None
+                )
+                if _mutual_name260:
+                    lines.append(
+                        f"\ncircular call: {_prim260.name} ↔ {_mutual_name260} call each other"
+                        f" — mutual dependency; changes must maintain protocol on both sides"
+                    )
+
+
+    # S272: High callee fan-out — focused function calls 5+ distinct external functions.
+    # High fan-out increases coupling surface: changes to any callee may ripple back.
+    # Also makes the function harder to test in isolation (many dependencies to mock).
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim272 = _seed_syms[0]
+        if _prim272.kind.value in ("function", "method"):
+            _callees272 = [
+                c for c in graph.callees_of(_prim272.id)
+                if c.file_path != _prim272.file_path
+            ]
+            _unique272 = {c.name for c in _callees272}
+            if len(_unique272) >= 5:
+                lines.append(
+                    f"\nhigh fan-out: {_prim272.name} calls {len(_unique272)} distinct external fns"
+                    f" — many dependencies; consider dependency injection for testability"
+                )
+
+
+    # S275: Orphaned class — focused class has 0 callers from outside its own file.
+    # An exported class that nobody uses externally is either dead code or
+    # intentionally kept for extension (interface/base); clarify which.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim275 = next((s for s in _seed_syms if s.kind.value == "class"), None)
+        if _prim275:
+            _ext_callers275 = [
+                c for c in graph.callers_of(_prim275.id)
+                if c.file_path != _prim275.file_path
+            ]
+            _method_has_ext_callers275 = any(
+                any(c.file_path != _prim275.file_path for c in graph.callers_of(child.id))
+                for child in graph.children_of(_prim275.id)
+            )
+            if not _ext_callers275 and not _method_has_ext_callers275 and _prim275.exported:
+                lines.append(
+                    f"\norphaned class: {_prim275.name} is exported but has no external callers"
+                    f" — may be dead code or an unused base class"
+                )
+
+    # S281: Undocumented public function — exported fn/method with 3+ callers has no docstring.
+    # Public functions without documentation create maintenance risk; callers must infer
+    # behavior from implementation, making changes more dangerous.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim281 = _seed_syms[0]
+        if (
+            _prim281.kind.value in ("function", "method")
+            and _prim281.exported
+            and not _is_test_file(_prim281.file_path)
+        ):
+            _sig281 = _prim281.signature or ""
+            _has_doc281 = '"""' in _sig281 or "'''" in _sig281
+            if not _has_doc281:
+                _ext_callers281 = [
+                    c for c in graph.callers_of(_prim281.id)
+                    if c.file_path != _prim281.file_path
+                ]
+                if len(_ext_callers281) >= 3:
+                    lines.append(
+                        f"\nundocumented: {_prim281.name} is public with {len(_ext_callers281)} callers"
+                        f" but has no docstring — callers must infer behavior from code"
+                    )
+
+
+    # S287: Method override — focused method has the same name as a method in a parent class.
+    # Overriding methods must maintain the parent's contract (Liskov Substitution Principle).
+    # Changes to signature or return type may break polymorphic callers.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim287 = _seed_syms[0]
+        if _prim287.kind.value == "method" and _prim287.parent_id:
+            _parent287 = graph.symbols.get(_prim287.parent_id)
+            if _parent287 and _parent287.kind.value == "class":
+                # Find parent classes (via inherits edges)
+                _super_class_ids287 = [
+                    e.target_id for e in graph.edges
+                    if e.kind.value == "inherits" and e.source_id == _parent287.id
+                ]
+                for _super_id287 in _super_class_ids287:
+                    _super_children287 = graph.children_of(_super_id287)
+                    _matching287 = [c for c in _super_children287 if c.name == _prim287.name]
+                    if _matching287:
+                        _super_sym287 = graph.symbols.get(_super_id287)
+                        _super_name287 = _super_sym287.name if _super_sym287 else "parent"
+                        lines.append(
+                            f"\nmethod override: {_prim287.name} overrides {_super_name287}.{_prim287.name}"
+                            f" — must preserve parent's contract; signature changes break polymorphism"
+                        )
+                        break
+
+    # S244: Property accessor — focused symbol is a @property method.
+    # Callers access it like an attribute (no parentheses); renaming or changing type is
+    # a breaking change even if the source looks like a function change.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim244 = _seed_syms[0]
+        if _prim244.kind.value == "method":
+            _sig244 = _prim244.signature or ""
+            _name244 = _prim244.name
+            # Detect property: signature starts with "@property" or name matches Python/TS getter patterns
+            _is_property = (
+                "@property" in _sig244
+                or _sig244.strip().startswith("@property")
+                or (
+                    _name244.startswith("get_") and "(" in _sig244
+                    and "self" in _sig244
+                    and _sig244.count(",") == 0  # no params other than self
+                )
+            )
+            if _is_property:
+                lines.append(
+                    f"\nproperty accessor: {_name244} is accessed as an attribute"
+                    f" — type or name changes break all usages silently"
+                )
+
     return "\n".join(lines)
 
 
