@@ -2960,6 +2960,23 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
         lines.append(f"Imports from ({len(_deps_of_target)}): {_dep_str}")
         lines.append("")
 
+    # S99: Peak exposure — the exported symbol with the most cross-file callers.
+    # When a file has many exported symbols, agents need to know WHICH one carries the most risk.
+    # Only shown when 2+ exported symbols exist and the peak has >= 3 cross-file callers.
+    _peak_sym: "Symbol | None" = None
+    _peak_count = 0
+    for _exp_sym in symbols:
+        if not _exp_sym.exported or _exp_sym.kind.value not in ("function", "method"):
+            continue
+        _cf = len({c.file_path for c in graph.callers_of(_exp_sym.id) if c.file_path != file_path and not _is_test_file(c.file_path)})
+        if _cf > _peak_count:
+            _peak_count = _cf
+            _peak_sym = _exp_sym
+    _exp_sym_count = sum(1 for s in symbols if s.exported and s.kind.value in ("function", "method"))
+    if _peak_sym and _peak_count >= 3 and _exp_sym_count >= 2:
+        lines.append(f"Peak exposure: {_peak_sym.name} ({_peak_count} caller files) — most-called export")
+        lines.append("")
+
     # S70: Singleton caller hint — file only imported by 1 non-test file.
     # This tight coupling suggests the two files may be candidates for merging.
     _src_imps = [imp for imp in importers if not _is_test_file(imp)]
