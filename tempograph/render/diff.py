@@ -295,6 +295,21 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — consider splitting into smaller focused PRs for easier review"
         )
 
+    # S693: Migration file in diff — diff includes a database migration or schema file.
+    # Database migrations change live data structures; they require backward compatibility
+    # checks and careful coordination with deployment order.
+    _migration_keywords693 = ("migration", "migrate", "alembic", "schema", "flyway", "liquibase")
+    _migration_files693 = [
+        f for f in changed_files
+        if any(kw in f.replace("\\", "/").lower() for kw in _migration_keywords693)
+    ]
+    if _migration_files693:
+        _mig_names693 = ", ".join(f.rsplit("/", 1)[-1] for f in _migration_files693[:2])
+        lines.append(
+            f"migration in diff: {_mig_names693} ({len(_migration_files693)} migration file(s))"
+            f" — schema change; verify backward compatibility and deployment order"
+        )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 
