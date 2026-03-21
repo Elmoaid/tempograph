@@ -1694,17 +1694,25 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
     # S499: Dead class methods — `@classmethod` or `@staticmethod` functions with 0 callers.
     # Unused class/static methods are deceptive: they look like utilities but are never invoked,
     # suggesting they were added for future use and forgot, or a refactor left them behind.
-    _s499_dead_class_methods = [
-        sym for sym, conf in scored
-        if conf >= 40
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value == "method"
-        and sym.name not in ("__init__", "__str__", "__repr__", "__enter__", "__exit__")
-        and (
-            (sym.signature or "").startswith("@classmethod")
-            or (sym.signature or "").startswith("@staticmethod")
-        )
-    ]
+    _s499_dunder_skip = {"__init__", "__str__", "__repr__", "__enter__", "__exit__", "__new__"}
+    _s499_dead_class_methods = []
+    for _sym499 in graph.symbols.values():
+        if (
+            not _is_test_file(_sym499.file_path)
+            and _sym499.kind.value in ("function", "method")
+            and _sym499.name not in _s499_dunder_skip
+            and _sym499.signature
+        ):
+            # Detect classmethod: first param after ( is 'cls'
+            _sig499 = _sym499.signature
+            _params499_raw = _sig499.split("(", 1)[-1].split(")", 1)[0] if "(" in _sig499 else ""
+            _first_param499 = _params499_raw.split(",")[0].strip().split(":")[0].strip()
+            if _first_param499 == "cls":
+                _callers499 = [
+                    e for e in graph.edges if e.kind.value == "calls" and e.target_id == _sym499.id
+                ]
+                if not _callers499 and not graph.importers_of(_sym499.file_path):
+                    _s499_dead_class_methods.append(_sym499)
     if len(_s499_dead_class_methods) >= 2:
         _cm_names499 = ", ".join(s.name for s in _s499_dead_class_methods[:3])
         if len(_s499_dead_class_methods) > 3:

@@ -24050,3 +24050,240 @@ class TestDeadEventHandlersS493:
         assert "dead event handlers" not in out, (
             f"'dead event handlers' must not appear when handlers are called; got:\n{out}"
         )
+
+
+# ── S494: Factory function focused ───────────────────────────────────────────
+
+class TestFactoryFunctionFocusedS494:
+    """S494: Focused factory-named function with callers emits the signal."""
+
+    def test_factory_function_shown(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "factory.py").write_text(
+            "def create_user(name, role):\n"
+            "    return {'name': name, 'role': role}\n"
+        )
+        (tmp_path / "service.py").write_text(
+            "from factory import create_user\n"
+            "def register(name): return create_user(name, 'member')\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="create_user")
+        assert "factory function" in out, (
+            f"Expected 'factory function' signal for create_user; got:\n{out}"
+        )
+
+    def test_factory_function_absent(self, tmp_path):
+        from tempograph.render.focused import render_focused
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text(
+            "def process_data(data):\n    return data\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from utils import process_data\ndef run(d): return process_data(d)\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, query="process_data")
+        assert "factory function" not in out, (
+            f"'factory function' must not appear for non-factory fn; got:\n{out}"
+        )
+
+
+# ── S495: Star imports overview ───────────────────────────────────────────────
+
+class TestStarImportsOverviewS495:
+    """S495: 3+ source files with star imports emits the signal."""
+
+    def test_star_imports_shown(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        (tmp_path / "base.py").write_text("X = 1\nY = 2\n")
+        for i in range(4):
+            (tmp_path / f"module_{i}.py").write_text(
+                "from base import *\ndef use(): return X + Y\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "star imports" in out, (
+            f"Expected 'star imports' signal for 4 files with `import *`; got:\n{out}"
+        )
+
+    def test_star_imports_absent(self, tmp_path):
+        from tempograph.render.overview import render_overview
+        from tempograph.builder import build_graph
+
+        (tmp_path / "base.py").write_text("X = 1\n")
+        (tmp_path / "a.py").write_text("from base import X\ndef f(): return X\n")
+        (tmp_path / "b.py").write_text("from base import X\ndef g(): return X + 1\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+        assert "star imports" not in out, (
+            f"'star imports' must not appear when no wildcard imports used; got:\n{out}"
+        )
+
+
+# ── S496: Package init blast ──────────────────────────────────────────────────
+
+class TestPackageInitBlastS496:
+    """S496: Blast target that is __init__.py emits the signal."""
+
+    def test_package_init_blast_shown(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        pkg = tmp_path / "mypkg"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text(
+            "from .core import run\nfrom .utils import helper\n"
+        )
+        (pkg / "core.py").write_text("def run(): pass\n")
+        (pkg / "utils.py").write_text("def helper(): pass\n")
+        (tmp_path / "main.py").write_text(
+            "from mypkg import run, helper\ndef start(): run()\n"
+        )
+        (tmp_path / "cli.py").write_text(
+            "from mypkg import run\ndef execute(): run()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="mypkg/__init__.py")
+        assert "package init blast" in out, (
+            f"Expected 'package init blast' for __init__.py; got:\n{out}"
+        )
+
+    def test_package_init_blast_absent(self, tmp_path):
+        from tempograph.render.blast import render_blast_radius
+        from tempograph.builder import build_graph
+
+        (tmp_path / "utils.py").write_text("def helper(): pass\n")
+        (tmp_path / "main.py").write_text(
+            "from utils import helper\ndef run(): helper()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="utils.py")
+        assert "package init blast" not in out, (
+            f"'package init blast' must not appear for non-init file; got:\n{out}"
+        )
+
+
+# ── S497: Large diff surface ──────────────────────────────────────────────────
+
+class TestLargeDiffSurfaceS497:
+    """S497: Diff spanning 10+ files emits the signal."""
+
+    def test_large_diff_shown(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        for i in range(12):
+            (tmp_path / f"module_{i}.py").write_text(
+                f"def fn_{i}(): pass\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        changed = [f"module_{i}.py" for i in range(12)]
+        out = render_diff_context(g, changed_files=changed)
+        assert "large diff" in out, (
+            f"Expected 'large diff' signal for 12-file diff; got:\n{out}"
+        )
+
+    def test_large_diff_absent(self, tmp_path):
+        from tempograph.render.diff import render_diff_context
+        from tempograph.builder import build_graph
+
+        for i in range(3):
+            (tmp_path / f"mod_{i}.py").write_text(f"def f_{i}(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_diff_context(g, changed_files=["mod_0.py", "mod_1.py"])
+        assert "large diff" not in out, (
+            f"'large diff' must not appear for 2-file diff; got:\n{out}"
+        )
+
+
+# ── S498: Wrapper hotspot ─────────────────────────────────────────────────────
+
+class TestWrapperHotspotS498:
+    """S498: Top hotspot with wrapper/adapter filename emits the signal."""
+
+    def test_wrapper_hotspot_shown(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "db_wrapper.py").write_text(
+            "def query(sql):\n    return []\n"
+        )
+        callers = "\n".join(
+            f"from db_wrapper import query\ndef caller_{i}(): query('SELECT 1')\n"
+            for i in range(6)
+        )
+        (tmp_path / "callers.py").write_text(callers)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "wrapper hotspot" in out, (
+            f"Expected 'wrapper hotspot' signal for db_wrapper.py hotspot; got:\n{out}"
+        )
+
+    def test_wrapper_hotspot_absent(self, tmp_path):
+        from tempograph.render.hotspots import render_hotspots
+        from tempograph.builder import build_graph
+
+        (tmp_path / "engine.py").write_text("def compute(x):\n    return x * 2\n")
+        callers = "\n".join(
+            f"from engine import compute\ndef caller_{i}(): compute({i})\n"
+            for i in range(5)
+        )
+        (tmp_path / "callers.py").write_text(callers)
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_hotspots(g)
+        assert "wrapper hotspot" not in out, (
+            f"'wrapper hotspot' must not appear for non-wrapper hotspot; got:\n{out}"
+        )
+
+
+# ── S499: Dead class methods ──────────────────────────────────────────────────
+
+class TestDeadClassMethodsS499:
+    """S499: 2+ unused @classmethod/@staticmethod emits the signal."""
+
+    def test_dead_class_methods_shown(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "models.py").write_text(
+            "class User:\n"
+            "    @classmethod\n"
+            "    def from_dict(cls, d): return cls()\n"
+            "    @staticmethod\n"
+            "    def validate(data): return bool(data)\n"
+            "    @classmethod\n"
+            "    def default(cls): return cls()\n"
+            "    def __init__(self): pass\n"
+        )
+        (tmp_path / "main.py").write_text("def run(): pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead class methods" in out, (
+            f"Expected 'dead class methods' for unused classmethods; got:\n{out}"
+        )
+
+    def test_dead_class_methods_absent(self, tmp_path):
+        from tempograph.render.dead import render_dead_code
+        from tempograph.builder import build_graph
+
+        (tmp_path / "models.py").write_text(
+            "class User:\n"
+            "    @classmethod\n"
+            "    def from_dict(cls, d): return cls()\n"
+            "    def __init__(self): pass\n"
+        )
+        (tmp_path / "main.py").write_text(
+            "from models import User\n"
+            "def run(): return User.from_dict({})\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_dead_code(g)
+        assert "dead class methods" not in out, (
+            f"'dead class methods' must not appear when classmethods are used; got:\n{out}"
+        )
