@@ -695,4 +695,44 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — auth/crypto/token files require careful review"
         )
 
+    # S235: Schema/contract change — diff includes API schema or data contract files.
+    # Proto, OpenAPI, GraphQL, SQL schema changes = breaking change risk for all consumers.
+    # Only shown when 1+ schema file is in the diff.
+    _s235_schema_exts = (".proto", ".graphql", ".gql", ".avro")
+    _s235_schema_names = ("schema.sql", "openapi.yaml", "openapi.json", "swagger.yaml",
+                          "swagger.json", "schema.json", "schema.graphql")
+    _s235_schema_files = [
+        fp for fp in list(normalized) + [f for f in changed_files if f not in normalized]
+        if fp.endswith(_s235_schema_exts) or fp.rsplit("/", 1)[-1].lower() in _s235_schema_names
+    ]
+    if _s235_schema_files:
+        _sch_names = [fp.rsplit("/", 1)[-1] for fp in _s235_schema_files[:3]]
+        _sch_str = ", ".join(_sch_names)
+        lines.append(
+            f"schema change: {_sch_str} in diff"
+            f" — API contract change, all consumers must be updated"
+        )
+
+    # S240: Changelog/release file in diff — diff includes CHANGELOG, HISTORY, or RELEASE notes.
+    # These files mark public releases; changes in the same diff should be backward-compatible
+    # and well-tested — treat like a release commit.
+    # Only shown when 1+ changelog-style file appears in the diff.
+    _s240_changelog_names = {
+        "changelog", "changelog.md", "changelog.rst", "changelog.txt",
+        "history", "history.md", "history.rst", "history.txt",
+        "release", "release.md", "release_notes.md", "releases.md",
+        "news.rst", "changes.rst",
+    }
+    _s240_files = [
+        fp for fp in list(normalized) + [f for f in changed_files if f not in normalized]
+        if fp.rsplit("/", 1)[-1].lower() in _s240_changelog_names
+    ]
+    if _s240_files:
+        _cl_names = [fp.rsplit("/", 1)[-1] for fp in _s240_files[:2]]
+        _cl_str = ", ".join(_cl_names)
+        lines.append(
+            f"release commit: {_cl_str} in diff"
+            f" — treat as public release; changes must be backward-compatible"
+        )
+
     return "\n".join(lines)

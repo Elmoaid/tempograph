@@ -889,4 +889,36 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
                     f" — frequently changed but simple; likely config/data churn"
                 )
 
-    return "\n".join(lines)
+    # S236: Ghost hotspot — top hotspot symbol has 0 direct test callers.
+    # Frequently-changed code with no test callers is high-risk; no safety net.
+    # Only shown when the top-ranked hotspot fn/method has 0 test callers.
+    if scores:
+        for _sc236, _sym236 in scores[:5]:
+            if _sym236.kind.value not in ("function", "method"):
+                continue
+            _test_callers236 = [
+                c for c in graph.callers_of(_sym236.id)
+                if _is_test_file(c.file_path)
+            ]
+            if not _test_callers236 and not _is_test_file(_sym236.file_path):
+                lines.append(
+                    f"\nghost hotspot: {_sym236.name} ({_sym236.file_path.rsplit('/', 1)[-1]})"
+                    f" — top hotspot with 0 test callers, no safety net"
+                )
+                break
+
+    # S242: Test file hotspot — top hotspot symbol lives in a test file.
+    # Frequently-changed test code suggests flaky tests, brittle fixtures, or rapidly-evolving specs.
+    # Only shown when the top-ranked hotspot symbol is itself in a test file.
+    if scores:
+        _top242_sym = next(
+            (sym for _, sym in scores[:3] if sym.kind.value in ("function", "method")),
+            None
+        )
+        if _top242_sym and _is_test_file(_top242_sym.file_path):
+            lines.append(
+                f"\ntest file hotspot: {_top242_sym.name} ({_top242_sym.file_path.rsplit('/', 1)[-1]})"
+                f" — most-changed symbol is in a test; consider stabilizing test infrastructure"
+            )
+
+    return "\n".join(lines)  # ALWAYS return here — never inside a conditional block

@@ -439,6 +439,28 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — abandoned API shapes or migration leftovers"
         )
 
+        # S238: Dead middleware — middleware/before_*/after_* functions that are dead.
+    # Dead middleware suggests request pipeline wiring was removed but the fn wasn't cleaned up.
+    # Only shown when 1+ dead middleware function found (conf >= 40).
+    _s238_mw_patterns = ("middleware_", "before_", "after_", "pre_", "post_",
+                          "intercept_", "filter_", "on_request", "on_response")
+    _s238_dead_mw = [
+        sym for sym, conf in scored
+        if conf >= 40
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.startswith(p) for p in _s238_mw_patterns)
+    ]
+    if len(_s238_dead_mw) >= 1:
+        _mw_names = [s.name for s in _s238_dead_mw[:3]]
+        _mw_str = ", ".join(_mw_names)
+        if len(_s238_dead_mw) > 3:
+            _mw_str += f" +{len(_s238_dead_mw) - 3} more"
+        lines.append(
+            f"dead middleware: {len(_s238_dead_mw)} unused middleware fn(s) ({_mw_str})"
+            f" — request pipeline wiring may have been removed"
+        )
+
         # S225: Dead validators — validate_*/check_* functions with 0 callers (conf >= 40).
     # Dead validators suggest removed feature gates or abandoned data integrity checks.
     # Only shown when 2+ such dead validator functions found.
@@ -681,6 +703,28 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         if len(_whole_file_dead) > 3:
             _wfd_str += f" +{len(_whole_file_dead) - 3} more"
         lines.append(f"whole-file dead: {len(_whole_file_dead)} files fully dead ({_wfd_str}) — candidates for deletion")
+
+    # S241: Dead config/settings — config_*/settings_*/get_config/load_config functions with 0 callers.
+    # Dead config accessors often signal removed features whose configuration was never cleaned up.
+    # Only shown when 2+ dead config-accessor functions found (conf >= 40).
+    _s241_cfg_patterns = ("config_", "settings_", "get_config", "load_config", "get_setting",
+                          "load_settings", "parse_config", "read_config")
+    _s241_dead_cfg = [
+        sym for sym, conf in scored
+        if conf >= 40
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.lower().startswith(p) for p in _s241_cfg_patterns)
+    ]
+    if len(_s241_dead_cfg) >= 2:
+        _cfg_names = [s.name for s in _s241_dead_cfg[:3]]
+        _cfg_str = ", ".join(_cfg_names)
+        if len(_s241_dead_cfg) > 3:
+            _cfg_str += f" +{len(_s241_dead_cfg) - 3} more"
+        lines.append(
+            f"dead config: {len(_s241_dead_cfg)} unused config fn(s) ({_cfg_str})"
+            f" — removed feature configurations not yet cleaned up"
+        )
 
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:

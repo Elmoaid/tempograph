@@ -640,6 +640,34 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — all importers of the package are affected by changes here"
         )
 
+    # S237: Internal-only file — blast target exports no symbols.
+    # Files with no exports are internal implementation details; changes stay within the module.
+    # Positive signal: safe to refactor without breaking callers' public interface expectations.
+    if symbols and not any(s.exported for s in symbols):
+        lines.append(
+            f"internal-only file: {file_path.rsplit('/', 1)[-1]} has no exported symbols"
+            f" — changes don't affect public interface"
+        )
+
+    # S239: Async function blast — blast target contains async functions.
+    # Callers must properly await async functions; any refactoring to sync breaks all call sites.
+    # Only shown when 1+ async function exists in the blast target (Python/JS/TS).
+    _s239_async_syms = [
+        s for s in symbols
+        if s.kind.value in ("function", "method")
+        and s.signature
+        and (s.signature.startswith("async def ") or s.signature.startswith("async "))
+    ]
+    if _s239_async_syms:
+        _s239_names = [s.name for s in _s239_async_syms[:3]]
+        _s239_str = ", ".join(_s239_names)
+        if len(_s239_async_syms) > 3:
+            _s239_str += f" +{len(_s239_async_syms) - 3} more"
+        lines.append(
+            f"async blast: {len(_s239_async_syms)} async fn(s) ({_s239_str})"
+            f" — callers must await; sync conversion breaks all call sites"
+        )
+
     if not importers and not external_callers and not render_targets:
         lines.append("No external dependencies found — safe to modify in isolation.")
 
