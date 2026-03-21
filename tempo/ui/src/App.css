@@ -440,6 +440,11 @@ select.input {
 }
 .btn:hover { background: var(--accent-hover); }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-run.running {
+  animation: pulse 1.2s ease-in-out infinite;
+  background: var(--accent-muted);
+  color: var(--accent-hover);
+}
 .btn-ghost {
   background: transparent;
   color: var(--text-secondary);
