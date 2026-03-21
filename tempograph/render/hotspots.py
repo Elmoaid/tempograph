@@ -506,27 +506,29 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         except Exception:
             pass
 
-    # S121: Recent additions — new files touched in the last 7 days that aren't in the hotspot list.
-    # "Growing" files that haven't yet accumulated churn but are actively under development.
-    # Shown when 3+ recently active source files exist outside the top hotspot set.
-    if graph.root:
-        try:
-            from ..git import recently_modified_files as _rmf121
-            _recent_fps = _rmf121(graph.root, n_commits=10)
-            _hs_top_files = {sym.file_path for _, sym in scores[:top_n]}
-            _new_active = [
-                fp for fp in _recent_fps
-                if fp in graph.files and not _is_test_file(fp) and fp not in _hs_top_files
-            ]
-            if len(_new_active) >= 3:
-                _na_names = [fp.rsplit("/", 1)[-1] for fp in sorted(_new_active)[:3]]
-                _na_str = ", ".join(_na_names)
-                if len(_new_active) > 3:
-                    _na_str += f" +{len(_new_active) - 3} more"
-                lines.append("")
-                lines.append(f"recently active (not in hotspots): {_na_str}")
-        except Exception:
-            pass
+    # S121: Recently active files not in the hot zone — files touched recently but with low
+    # hotspot scores (clean, growing code). Agents should be aware of these active files
+    # even though they haven't accumulated complexity or coupling yet.
+    # Only shown when 3+ recently active files have hotspot score = 0.
+    try:
+        from ..git import recently_modified_files as _rmf121
+        _repo_root_121 = graph.root or "."
+        _recent_fps = _rmf121(_repo_root_121, n_commits=10)
+        # "Hot zone" = files with at least one symbol scoring >= 1.0 (real coupling/complexity)
+        _hs_hot_files = {sym.file_path for sc, sym in scores if sc >= 1.0}
+        _new_active = [
+            fp for fp in _recent_fps
+            if fp in graph.files and not _is_test_file(fp) and fp not in _hs_hot_files
+        ]
+        if len(_new_active) >= 3:
+            _na_names = [fp.rsplit("/", 1)[-1] for fp in sorted(_new_active)[:3]]
+            _na_str = ", ".join(_na_names)
+            if len(_new_active) > 3:
+                _na_str += f" +{len(_new_active) - 3} more"
+            lines.append("")
+            lines.append(f"recently active (not in hotspots): {_na_str}")
+    except Exception:
+        pass
 
     # S107: Import bottleneck — the file most depended on by other source files.
     # A heavily-imported file that's also actively churning = maximum blast risk.

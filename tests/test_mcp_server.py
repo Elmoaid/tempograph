@@ -10308,3 +10308,52 @@ class TestFocusCallDepth:
         assert "call depth" not in out, (
             f"'call depth' must not appear for shallow call chain; got:\n{out}"
         )
+
+
+class TestHotspotsRecentlyActive:
+    """S121: Hotspots — 'recently active (not in hotspots)' for active but non-hotspot files."""
+
+    def test_recently_active_shown_when_files_outside_hotspots(self, tmp_path):
+        """Files recently touched but not in top hotspot list appear as recently active."""
+        from unittest.mock import patch
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        # Create several source files — some highly complex (in hotspots), some simple
+        for i in range(5):
+            (tmp_path / f"complex{i}.py").write_text(
+                f"def fn_{i}():\n" + "    x = 1\n" * 20 + f"    return x + {i}\n"
+            )
+        (tmp_path / "new_service.py").write_text("def new_fn():\n    pass\n")
+        (tmp_path / "fresh_module.py").write_text("def fresh_fn():\n    pass\n")
+        (tmp_path / "recent_util.py").write_text("def util_fn():\n    pass\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+
+        # Mock recently_modified_files to return the simple files (not in hotspots)
+        with patch("tempograph.git.recently_modified_files",
+                   return_value={"new_service.py", "fresh_module.py", "recent_util.py"}):
+            out = render_hotspots(g)
+        assert "recently active" in out, (
+            f"Expected 'recently active' signal when 3+ files are active but outside hotspots; got:\n{out}"
+        )
+
+    def test_recently_active_not_shown_when_overlap_with_hotspots(self, tmp_path):
+        """If all recently-touched files are already in the hotspot list, skip signal."""
+        from unittest.mock import patch
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        # Single highly-complex file — will be the hotspot
+        (tmp_path / "core.py").write_text(
+            "def main():\n" + "    x = 1\n" * 30 + "    return x\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+
+        # Mock recently_modified_files to return the same hotspot file — no gap
+        with patch("tempograph.git.recently_modified_files",
+                   return_value={"core.py"}):
+            out = render_hotspots(g)
+        # With only 1 active file that IS a hotspot, signal should NOT appear
+        assert "recently active (not in hotspots)" not in out, (
+            f"'recently active' must not appear when active files are all in hotspots; got:\n{out}"
+        )
