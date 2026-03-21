@@ -1660,6 +1660,23 @@ def _build_symbol_block_lines(
                     )
         except Exception:
             pass
+    # Co-change buddy: which file most frequently appears in commits with the seed's file?
+    # Warns agents they'll likely need to update that file too when modifying the seed.
+    # Only shown for git repos with enough history. One file only (avoid noise).
+    if depth == 0 and graph.root:
+        try:
+            from .git import cochange_pairs as _ccp  # noqa: PLC0415
+            _buddies = _ccp(graph.root, sym.file_path, n=1, min_count=4)
+            if _buddies:
+                _buddy = _buddies[0]
+                _buddy_fp = _buddy["path"]
+                if _buddy_fp in graph.files and not _is_test_file(_buddy_fp):
+                    _buddy_name = _buddy_fp.rsplit("/", 1)[-1]
+                    block_lines.append(
+                        f"{indent}  co-changes with: {_buddy_name} ({_buddy['count']}x)"
+                    )
+        except Exception:
+            pass
     # Inline TODO/FIXME scanner: scan the focused function's source lines for
     # open issues. Agents making changes NEED to see these — don't let them
     # implement something that's already flagged as broken or incomplete.
