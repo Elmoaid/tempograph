@@ -4,8 +4,11 @@ import { MODES } from "../components/modes";
 interface KeyboardShortcutsConfig {
   modeRunning: boolean;
   modeOutput: string;
+  historyOpen: boolean;
   runModeRef: React.RefObject<(() => void) | null>;
+  argsInputRef: React.RefObject<HTMLInputElement | null>;
   filterInputRef: React.RefObject<HTMLInputElement | null>;
+  clearOutput: () => void;
   switchMode: (mode: string) => void;
   setPaletteOpen: (open: boolean) => void;
   setKitBuilderOpen: (open: boolean) => void;
@@ -16,8 +19,11 @@ interface KeyboardShortcutsConfig {
 export function useKeyboardShortcuts({
   modeRunning,
   modeOutput,
+  historyOpen,
   runModeRef,
+  argsInputRef,
   filterInputRef,
+  clearOutput,
   switchMode,
   setPaletteOpen,
   setKitBuilderOpen,
@@ -26,7 +32,18 @@ export function useKeyboardShortcuts({
 }: KeyboardShortcutsConfig) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Escape: clear output (only when history dropdown is closed)
+      if (e.key === "Escape" && modeOutput && !historyOpen) {
+        clearOutput();
+        return;
+      }
+
       if (!e.metaKey && !e.ctrlKey) return;
+
+      // Cmd/Ctrl+Enter: run mode
+      if (e.key === "Enter" && !modeRunning) { e.preventDefault(); runModeRef.current?.(); }
+      // Cmd/Ctrl+L: focus args input
+      if (e.key === "l") { e.preventDefault(); argsInputRef.current?.focus(); argsInputRef.current?.select(); }
       if (e.key === "k") { e.preventDefault(); setPaletteOpen(true); }
       if (e.key === "n") { e.preventDefault(); setKitBuilderOpen(true); setSidebarTab("kits"); }
       if (e.key === "r" && !modeRunning) { e.preventDefault(); runModeRef.current?.(); }
@@ -39,5 +56,5 @@ export function useKeyboardShortcuts({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [modeRunning, modeOutput]);
+  }, [modeRunning, modeOutput, historyOpen, clearOutput]);
 }

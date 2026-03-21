@@ -53,6 +53,7 @@ export interface ModeRunnerActions {
   onHistorySelect: (q: string) => void;
   onFilterToggle: () => void;
   onFilterClose: () => void;
+  clearOutput: () => void;
 }
 
 function buildActiveModeInfo(activeKit: string | null, activeMode: string, customKits: KitInfo[]) {
@@ -179,11 +180,23 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     }
   };
 
+  const clearOutput = useCallback(() => {
+    const cacheKey = activeKit ? `kit:${activeKit}` : activeMode;
+    outputCache.current.delete(cacheKey);
+    outputTsCache.current.delete(cacheKey);
+    setModeOutput("");
+    setOutputTs(null);
+    setCachedModes(prev => { const s = new Set(prev); s.delete(cacheKey); return s; });
+  }, [activeMode, activeKit]);
+
   useKeyboardShortcuts({
     modeRunning,
     modeOutput,
+    historyOpen,
     runModeRef,
+    argsInputRef,
     filterInputRef,
+    clearOutput,
     switchMode,
     setPaletteOpen,
     setKitBuilderOpen,
@@ -311,5 +324,6 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     onHistorySelect,
     onFilterToggle,
     onFilterClose,
+    clearOutput,
   };
 }
