@@ -2902,6 +2902,29 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — abandoned interface contracts; verify no concrete class is checked against them"
         )
 
+    # S845: Dead event handler functions — unused on_/handle_/_handler functions.
+    # Event handlers are wired to event buses, signals, or hooks; dead handlers indicate
+    # removed subscriptions where the handler was not cleaned up alongside the subscription.
+    _handler_prefixes845 = ("on_", "handle_")
+    _handler_suffixes845 = ("_handler", "_callback", "_listener")
+    _dead_handlers845 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and (
+            any(s.name.lower().startswith(p) for p in _handler_prefixes845)
+            or any(s.name.lower().endswith(sfx) for sfx in _handler_suffixes845)
+        )
+    ]
+    if _dead_handlers845:
+        _handler_names845 = ", ".join(s.name for s in _dead_handlers845[:3])
+        if len(_dead_handlers845) > 3:
+            _handler_names845 += f" +{len(_dead_handlers845) - 3} more"
+        lines.append(
+            f"dead event handlers: {len(_dead_handlers845)} unused event handler function(s) ({_handler_names845})"
+            f" — removed subscriptions not cleaned up; verify the event or signal was also removed"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

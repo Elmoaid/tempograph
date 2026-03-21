@@ -2567,5 +2567,19 @@ def _collect_hotspots_signals(
                     f" — top hotspot is untested; behavioral changes will not be caught by tests"
                 )
 
+    # S844: Deprecated hotspot — top hotspot has "deprecated" in its docstring.
+    # Hotspots marked deprecated are widely called but scheduled for removal;
+    # each caller is a migration debt item that must be addressed before deletion.
+    if scores:
+        _top844 = scores[0][1]
+        if _top844 is not None and not _is_test_file(_top844.file_path):
+            _doc844 = (_top844.doc or "").lower()
+            if "deprecated" in _doc844 or "deprecat" in _doc844:
+                _callers844 = graph.callers_of(_top844.id)
+                out.append(
+                    f"\ndeprecated hotspot: {_top844.name} is marked deprecated but has {len(_callers844)} caller(s)"
+                    f" — deprecated symbol still heavily used; each caller is a migration debt item"
+                )
+
     return out
 

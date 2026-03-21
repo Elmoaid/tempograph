@@ -3158,6 +3158,17 @@ def _signals_async_oop(
             f" — test suite is 2×+ the source; check for duplicated scenarios or orphaned tests"
         )
 
+    # S841: No async functions — codebase has many functions but none are async.
+    # A repo with zero async functions may be using blocking I/O; async-naive
+    # patterns can become bottlenecks when services are later integrated with async frameworks.
+    _all_fns841 = [s for s in graph.symbols.values() if s.kind.value == "function" and not _is_test_file(s.file_path)]
+    _async_fns841 = [s for s in _all_fns841 if (s.signature or "").lstrip().startswith("async ")]
+    if len(_all_fns841) >= 10 and not _async_fns841:
+        lines.append(
+            f"no async functions: {len(_all_fns841)} functions but none are async"
+            f" — all synchronous; blocking I/O may become a bottleneck in async frameworks"
+        )
+
     return lines
 
 
