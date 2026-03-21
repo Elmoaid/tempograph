@@ -2905,6 +2905,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
 
     # Symbols in this file that are called externally
     symbols = [graph.symbols[sid] for sid in fi.symbols if sid in graph.symbols]
+
+    # S111: Export surface — fraction of symbols in blast file that are exported.
+    # High export ratio = public API file = callers everywhere = max review caution.
+    # Only shown when 3+ total symbols and ratio >= 50%.
+    _all_file_syms = [s for s in symbols if s.kind.value in ("function", "method", "class", "interface")]
+    _exported_file_syms = [s for s in _all_file_syms if s.exported]
+    if len(_all_file_syms) >= 3 and len(_exported_file_syms) >= 2:
+        _exp_pct = int(len(_exported_file_syms) / len(_all_file_syms) * 100)
+        if _exp_pct >= 50:
+            lines.append(f"export surface: {len(_exported_file_syms)}/{len(_all_file_syms)} symbols exported ({_exp_pct}%)")
+
     external_callers: dict[str, list[str]] = {}
     for sym in symbols:
         callers = graph.callers_of(sym.id)
@@ -3889,6 +3900,24 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             ]
             lines.append("")
             lines.append(f"Danger zone: {', '.join(_dz_parts)} — high churn + complexity")
+
+    # S112: Churn spike — files whose last-7d velocity is 2× their 14-day average.
+    # Sudden acceleration = something changed: new feature push, bug-fixing crunch, or refactor.
+    # Agents need to know about these to prioritize review and watch for regressions.
+    # Only shown when 1+ non-test file has spiked AND recent velocity >= 3 commits/week.
+    if velocity and velocity_14:
+        _spikes: list[tuple[float, str]] = []
+        for _sp_fp, _sp_v7 in velocity.items():
+            if _is_test_file(_sp_fp) or _sp_v7 < 3.0:
+                continue
+            _sp_v14 = velocity_14.get(_sp_fp, 0.0)
+            if _sp_v14 > 0 and _sp_v7 >= 2.0 * _sp_v14:
+                _spikes.append((_sp_v7, _sp_fp))
+        if _spikes:
+            _spikes.sort(key=lambda x: -x[0])
+            _sp_parts = [f"{fp.rsplit('/', 1)[-1]} (+{v:.1f}x/wk)" for v, fp in _spikes[:2]]
+            lines.append("")
+            lines.append(f"Churn spike: {', '.join(_sp_parts)} — velocity doubled vs 2-week avg")
 
     # S97: High fan-out — functions calling 8+ distinct functions.
     # High callee count = coordination hubs: changing any callee can affect this function.

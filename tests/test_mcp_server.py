@@ -782,6 +782,32 @@ class TestSearchRanking:
         assert any("FileParser" in n for n in names), \
             f"'FileParser' query did not find FileParser class. Top 5: {names}"
 
+    def test_idf_penalty_high_frequency_token(self, tmp_path):
+        """High-frequency tokens in multi-token queries should be penalized (IDF),
+        so rare/specific tokens dominate ranking."""
+        from tempograph.builder import build_graph
+
+        # Create a codebase where 'handler' appears in almost every symbol name
+        # but 'auth' is specific — query 'auth handler' should return auth symbols, not generic handlers
+        content_lines = []
+        # Many generic handler functions (make 'handler' very common, >15% of names)
+        for i in range(30):
+            content_lines.append(f"def generic_handler_{i}(x): return x")
+        # One specific auth function
+        content_lines.append("def auth_verify(token): return token")
+        content_lines.append("def auth_login(user): return user")
+        (tmp_path / "handlers.py").write_text("\n".join(content_lines) + "\n")
+
+        g = build_graph(str(tmp_path), use_cache=False)
+        scored = g.search_symbols_scored("auth handler")
+        assert scored, "Expected results for 'auth handler'"
+
+        # 'auth' is rare (appears in ~2 of 32 symbols ≈ 6%), 'handler' is common (appears in ~30/32 ≈ 94%)
+        # IDF should penalize 'handler' heavily → auth_verify / auth_login should rank above generic_handler_*
+        top_names = [sym.name for _, sym in scored[:3]]
+        assert any("auth" in n for n in top_names), \
+            f"IDF: specific 'auth' token should dominate over common 'handler'. Top 3: {top_names}"
+
     def test_seed_quality_gate_filters_low_relevance(self):
         """Focus mode should filter out low-scoring seeds instead of showing noise."""
         from tempograph.render import render_focused
@@ -9811,4 +9837,90 @@ class TestOverviewAvgFileSize:
         out = render_overview(g)
         assert "avg file size:" not in out, (
             f"'avg file size:' must not appear for tiny files; got:\n{out}"
+        )
+
+
+class TestBlastExportSurface:
+    """S111: Blast 'export surface: N/M symbols exported (X%)' — API coverage ratio."""
+
+    def test_export_surface_shown_for_high_export_ratio(self, tmp_path):
+        """File with 4/5 symbols exported (80%) → 'export surface:' shown."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        (tmp_path / "api.py").write_text(
+            "def create(): return 1\n"
+            "def read(): return 2\n"
+            "def update(): return 3\n"
+            "def delete(): return 4\n"
+            "def _internal(): return 5\n"  # one private
+        )
+        (tmp_path / "consumer.py").write_text("from api import create\ndef run(): return create()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="api.py")
+        assert "export surface:" in out, (
+            f"Expected 'export surface:' for 80% exported file; got:\n{out}"
+        )
+
+    def test_export_surface_absent_for_mostly_private_file(self, tmp_path):
+        """File with only 1/5 symbols exported (20%) → no 'export surface:'."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_blast_radius
+
+        (tmp_path / "impl.py").write_text(
+            "def public_api(): return 1\n"
+            "def _helper_a(): return 2\n"
+            "def _helper_b(): return 3\n"
+            "def _helper_c(): return 4\n"
+            "def _helper_d(): return 5\n"
+        )
+        (tmp_path / "user.py").write_text("from impl import public_api\ndef run(): return public_api()\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, file_path="impl.py")
+        assert "export surface:" not in out, (
+            f"'export surface:' must not appear for mostly-private file; got:\n{out}"
+        )
+
+
+class TestHotspotsChurnSpike:
+    """S112: Hotspots 'Churn spike: file (+Nx/wk)' — velocity acceleration signal."""
+
+    def test_churn_spike_shown_when_velocity_doubled(self, tmp_path):
+        """Mock velocity: file with recent 6.0/wk vs 14d avg 2.0/wk → spike shown."""
+        from unittest.mock import patch
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        (tmp_path / "hot.py").write_text(
+            "def fn_a(x):\n" + "".join(f"    if x == {i}: return {i}\n" for i in range(10)) + "    return 0\n"
+        )
+        for i in range(3):
+            (tmp_path / f"caller_{i}.py").write_text(
+                f"from hot import fn_a\ndef run_{i}(): return fn_a({i})\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        with patch("tempograph.git.file_change_velocity") as mock_vel:
+            def _vel_side(root, recent_days=7):
+                if recent_days == 7:
+                    return {"hot.py": 6.0}
+                return {"hot.py": 2.0}  # 14-day avg much lower
+            mock_vel.side_effect = _vel_side
+            out = render_hotspots(g)
+        assert "Churn spike:" in out, (
+            f"Expected 'Churn spike:' when velocity doubled vs 2-week avg; got:\n{out}"
+        )
+
+    def test_churn_spike_absent_for_steady_velocity(self, tmp_path):
+        """File with steady velocity (no spike) → no 'Churn spike:' shown."""
+        from unittest.mock import patch
+        from tempograph.builder import build_graph
+        from tempograph.render import render_hotspots
+
+        (tmp_path / "stable.py").write_text("def fn(): return 1\n")
+        g = build_graph(str(tmp_path), use_cache=False)
+        with patch("tempograph.git.file_change_velocity") as mock_vel:
+            mock_vel.return_value = {"stable.py": 2.0}  # same in both windows
+            out = render_hotspots(g)
+        assert "Churn spike:" not in out, (
+            f"'Churn spike:' must not appear for steady-velocity file; got:\n{out}"
         )
