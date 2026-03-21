@@ -73,6 +73,7 @@ class Language(str, Enum):
     ZIG = "zig"
     CPP = "cpp"
     C = "c"
+    FSHARP = "fsharp"
     HASKELL = "haskell"
     OCAML = "ocaml"
     CLOJURE = "clojure"
@@ -124,6 +125,9 @@ EXTENSION_TO_LANGUAGE: dict[str, Language] = {
     ".hxx": Language.CPP,
     ".c": Language.C,
     ".h": Language.C,
+    ".fs": Language.FSHARP,
+    ".fsx": Language.FSHARP,
+    ".fsi": Language.FSHARP,
     ".hs": Language.HASKELL,
     ".ml": Language.OCAML,
     ".mli": Language.OCAML,
@@ -137,7 +141,7 @@ EXTENSION_TO_LANGUAGE: dict[str, Language] = {
 }
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Symbol:
     id: str                          # unique: "path/to/file.ts::ClassName.methodName"
     name: str                        # simple name: "methodName"
@@ -159,7 +163,7 @@ class Symbol:
         return self.line_end - self.line_start + 1
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Edge:
     kind: EdgeKind
     source_id: str   # symbol or file id
@@ -167,7 +171,7 @@ class Edge:
     line: int = 0    # where the reference occurs
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class FileInfo:
     path: str
     language: Language
