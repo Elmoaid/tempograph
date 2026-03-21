@@ -15235,19 +15235,24 @@ class TestHotspotsCluster:
         if "cluster hotspot" in out:
             assert "whole module is unstable" in out
 
-    def test_no_cluster_for_single_file(self, tmp_path):
-        """S250: 'cluster hotspot' absent when only 1 hotspot file per directory."""
+    def test_no_cluster_for_single_hotspot(self, tmp_path):
+        """S250: 'cluster hotspot' absent when only 1 source file is a hotspot."""
         from tempograph.builder import build_graph
         from tempograph.render.hotspots import render_hotspots
-        (tmp_path / "core.py").write_text("def main(): pass\n")
-        for i in range(4):
-            (tmp_path / f"user{i}.py").write_text(
-                "from core import main\ndef run(): main()\n"
+        # Single module called from many callers spread across different dirs
+        (tmp_path / "core.py").write_text("def central(): pass\n")
+        for mod in ("alpha", "beta", "gamma", "delta"):
+            d = tmp_path / mod
+            d.mkdir()
+            (d / "handler.py").write_text(
+                "from core import central\ndef handle(): central()\n"
             )
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_hotspots(g)
+        # Only core.py is a hotspot; handler.py files are in different dirs (1 each)
+        # → no cluster (no single dir has 3+ hotspot files)
         assert "cluster hotspot" not in out, (
-            f"'cluster hotspot' must not appear with single hotspot; got:\n{out}"
+            f"'cluster hotspot' must not appear with 1 hotspot source; got:\n{out}"
         )
 
 
