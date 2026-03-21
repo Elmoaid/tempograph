@@ -183,6 +183,81 @@ class TestGraphDB:
         assert result['callers'] == {'a': ['b']}
 
 
+# ── begin_batch / end_batch ───────────────────────────────────────────────────
+
+class TestBatchOperations:
+    def test_begin_batch_sets_flag(self, db):
+        assert not db._batching
+        db.begin_batch()
+        assert db._batching
+
+    def test_end_batch_clears_flag(self, db):
+        db.begin_batch()
+        db.end_batch()
+        assert not db._batching
+
+    def test_batch_writes_commit_on_end(self, db):
+        db.begin_batch()
+        db.update_file("a.py", "hash1", "python", 10, 100, [], [], [])
+        # Before end_batch, check the data is available (within same connection)
+        db.end_batch()
+        stored = db.get_stored_files()
+        assert "a.py" in stored
+
+
+# ── get_stored_files ──────────────────────────────────────────────────────────
+
+class TestGetStoredFiles:
+    def test_empty_db_returns_empty_dict(self, db):
+        result = db.get_stored_files()
+        assert result == {}
+
+    def test_stored_file_appears_in_result(self, db):
+        db.update_file("mod.py", "abc123", "python", 10, 200, [], [], [])
+        result = db.get_stored_files()
+        assert "mod.py" in result
+
+    def test_returns_hash_and_mtime(self, db):
+        db.update_file("mod.py", "myhash", "python", 10, 200, [], [], [])
+        result = db.get_stored_files()
+        file_hash, mtime_ns = result["mod.py"]
+        assert file_hash == "myhash"
+        assert isinstance(mtime_ns, int)
+
+    def test_multiple_files_returned(self, db):
+        db.update_file("a.py", "h1", "python", 10, 100, [], [], [])
+        db.update_file("b.py", "h2", "python", 5, 50, [], [], [])
+        result = db.get_stored_files()
+        assert len(result) == 2
+
+
+# ── update_file_mtime ─────────────────────────────────────────────────────────
+
+class TestUpdateFileMtime:
+    def test_mtime_updated_correctly(self, db):
+        db.update_file("mod.py", "h1", "python", 10, 100, [], [], [])
+        db.update_file_mtime("mod.py", 1234567890)
+        result = db.get_stored_files()
+        _, mtime_ns = result["mod.py"]
+        assert mtime_ns == 1234567890
+
+    def test_unknown_file_does_not_crash(self, db):
+        # Updating mtime of a file that doesn't exist should not raise
+        db.update_file_mtime("nonexistent.py", 999)
+
+
+# ── upsert_vectors_batch ──────────────────────────────────────────────────────
+
+class TestUpsertVectorsBatch:
+    def test_empty_batch_does_not_crash(self, db):
+        db.upsert_vectors_batch([])
+
+    def test_vectors_stored(self, db):
+        # This may silently skip if sqlite-vec is not available
+        items = [("a.py::fn", [0.1] * 384)]
+        db.upsert_vectors_batch(items)  # should not raise
+
+
 class TestVectorSearch:
     def test_init_vectors(self, db):
         result = db.init_vectors(dimensions=384)
