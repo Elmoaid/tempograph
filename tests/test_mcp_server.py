@@ -270,7 +270,7 @@ class TestParameters:
 class TestTokenBudgets:
     def test_overview_cheap(self):
         r = assert_ok(overview(REPO_PATH, output_format="json"))
-        assert r["tokens"] < 1400  # bumped S185-S190+S20: more scenarios + lang handlers
+        assert r["tokens"] < 1550  # bumped S203-S252: continuous signal additions grow repo overview
 
     def test_stats_cheap(self):
         r = assert_ok(stats(REPO_PATH, output_format="json"))
