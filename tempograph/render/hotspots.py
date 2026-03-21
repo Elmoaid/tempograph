@@ -1702,5 +1702,19 @@ def _collect_hotspots_signals(
                     f" — adding blocking calls or changing its event-loop behavior affects all awaiters"
                 )
 
+    # S517: Deprecated hotspot — top hotspot symbol name suggests it is marked for removal.
+    # A deprecated function that remains the most-called symbol blocks cleanup;
+    # callers prevent deprecation follow-through and the warning loses urgency over time.
+    if scores:
+        _top517 = scores[0][1]
+        if not _is_test_file(_top517.file_path) and _top517.kind.value in ("function", "method"):
+            _name517 = _top517.name.lower()
+            _dep_markers517 = ("_old", "_legacy", "deprecated", "_v1", "_deprecated", "_obsolete")
+            if any(m in _name517 for m in _dep_markers517):
+                out.append(
+                    f"\ndeprecated hotspot: {_top517.name} appears deprecated but is still the most-called symbol"
+                    f" — active callers block removal; plan migration path before it accumulates more callers"
+                )
+
     return out
 

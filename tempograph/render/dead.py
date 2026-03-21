@@ -1765,6 +1765,27 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — stale helpers mislead about test coverage; remove to clarify actual test scope"
         )
 
+    # S518: Dead magic methods — dunder display/comparison methods with 0 callers in non-imported files.
+    # __str__/__repr__/__len__ in files with no importers indicate abandoned model classes;
+    # magic methods are rarely flagged as dead code but the whole class is likely removable.
+    _s518_dunder_targets = frozenset(("__str__", "__repr__", "__len__", "__iter__", "__contains__", "__format__"))
+    _s518_dead_dunders = [
+        sym for sym in graph.symbols.values()
+        if not _is_test_file(sym.file_path)
+        and sym.kind.value == "method"
+        and sym.name in _s518_dunder_targets
+        and not graph.callers_of(sym.id)
+        and not graph.importers_of(sym.file_path)
+    ]
+    if len(_s518_dead_dunders) >= 2:
+        _du_names518 = ", ".join(s.name for s in _s518_dead_dunders[:3])
+        if len(_s518_dead_dunders) > 3:
+            _du_names518 += f" +{len(_s518_dead_dunders) - 3} more"
+        lines.append(
+            f"dead magic methods: {len(_s518_dead_dunders)} unused dunder method(s) ({_du_names518})"
+            f" — orphaned display/comparison methods in dead files; whole class is likely removable"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
