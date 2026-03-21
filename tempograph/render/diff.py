@@ -2425,4 +2425,16 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — verify documentation accurately reflects the current code state"
         )
 
+    # S873: Test-only diff — all changed files are test files.
+    # A diff that only modifies tests without touching source code may indicate
+    # tests were updated to match a bug rather than the bug being fixed.
+    if changed_files:
+        _non_test_changed873 = [f for f in changed_files if not _is_test_file(f)]
+        _test_changed873 = [f for f in changed_files if _is_test_file(f)]
+        if _test_changed873 and not _non_test_changed873:
+            lines.append(
+                f"test-only diff: all {len(_test_changed873)} changed file(s) are test files"
+                f" — tests modified without source changes; verify tests weren't updated to hide bugs"
+            )
+
     return "\n".join(lines)

@@ -2638,5 +2638,19 @@ def _collect_hotspots_signals(
                     f" — extremely wide usage; changes require coordination across {len(_callers868)} callers"
                 )
 
+    # S874: Wide-file hotspot — top hotspot has callers from 5+ different files.
+    # A hotspot with callers spread across many files is a cross-cutting concern;
+    # any change ripples through a wide surface area of the codebase.
+    if scores:
+        _top874 = scores[0][1]
+        if _top874 is not None and not _is_test_file(_top874.file_path):
+            _callers874 = graph.callers_of(_top874.id)
+            _caller_files874 = {c.file_path for c in _callers874}
+            if len(_caller_files874) >= 5:
+                out.append(
+                    f"\nwide-file hotspot: {_top874.name} is called from {len(_caller_files874)} distinct files"
+                    f" — cross-cutting concern; changes affect {len(_caller_files874)} files across the codebase"
+                )
+
     return out
 

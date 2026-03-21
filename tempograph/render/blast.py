@@ -2202,6 +2202,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — schema change; verify all models and queries match the new schema"
         )
 
+    # S872: Serializer/formatter blast — blast target file handles serialization or encoding.
+    # Serializer files transform data structures to/from external formats; changes affect
+    # all I/O boundaries and may silently break protocol compatibility.
+    _fname872 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    _serial_kws872 = ("serial", "format", "codec", "marshal", "encode", "decode", "schema")
+    if any(kw in _fname872 for kw in _serial_kws872):
+        lines.append(
+            f"serializer blast: {_fp589.rsplit('/', 1)[-1]} handles serialization or encoding"
+            f" — format changes affect all I/O boundaries; verify protocol compatibility"
+        )
+
     return "\n".join(lines)
 
 

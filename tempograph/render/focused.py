@@ -3926,6 +3926,23 @@ def _signals_focused_fn_advanced(
                         f" — too many parameters; consider a config object or builder pattern"
                     )
 
+    # S870: No-caller symbol focus — focused function or method has zero recorded callers.
+    # A symbol with no callers is either an entry point, a dead symbol, or called via
+    # reflection/dynamic dispatch; agents should investigate before assuming it is safe to remove.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim870 = _seed_syms[0]
+        if (
+            _prim870.kind.value in ("function", "method")
+            and not _is_test_file(_prim870.file_path)
+            and not _prim870.name.startswith("_")
+        ):
+            _callers870 = graph.callers_of(_prim870.id)
+            if not _callers870:
+                lines.append(
+                    f"\nno callers: {_prim870.name} has no recorded callers"
+                    f" — may be an entry point, unused, or called via reflection/dynamic dispatch"
+                )
+
     return lines
 
 

@@ -3239,6 +3239,16 @@ def _signals_async_oop(
             f" — deep class hierarchy; verify all contracts are implemented by concrete subclasses"
         )
 
+    # S871: No test files — repo has 5+ source files but no test files.
+    # An untested codebase means all changes carry undetected regression risk;
+    # agents should flag any behavior changes as potentially breaking.
+    _test_files871 = [fp for fp in graph.files if _is_test_file(fp)]
+    if not _test_files871 and len(graph.files) >= 5:
+        lines.append(
+            f"no test files: {len(graph.files)} source files but no test files detected"
+            f" — untested codebase; changes carry higher risk of undetected regressions"
+        )
+
     return lines
 
 

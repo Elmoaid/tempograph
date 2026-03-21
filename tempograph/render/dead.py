@@ -3001,6 +3001,28 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — abandoned configuration; verify no code uses these via dynamic attribute lookup"
         )
 
+    # S875: Dead type aliases — unused symbols whose names end with Type or start with T_ or Type_.
+    # Type aliases are used for documentation and type-checking; dead type aliases indicate
+    # renamed or removed types where the alias was not cleaned up.
+    _dead_types875 = [
+        s for s in dead
+        if s.kind.value in ("variable", "constant", "class")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and (
+            s.name.endswith("Type") or s.name.endswith("Types")
+            or s.name.startswith("T_") or s.name.startswith("Type_")
+        )
+    ]
+    if _dead_types875:
+        _type_names875 = ", ".join(s.name for s in _dead_types875[:3])
+        if len(_dead_types875) > 3:
+            _type_names875 += f" +{len(_dead_types875) - 3} more"
+        lines.append(
+            f"dead type aliases: {len(_dead_types875)} unused type alias(es) ({_type_names875})"
+            f" — stale type annotations; verify no type checker or IDE depends on these"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")
