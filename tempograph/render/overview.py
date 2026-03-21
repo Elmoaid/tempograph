@@ -2909,6 +2909,26 @@ def _signals_async_oop(
             f" — config-heavy repo; verify constants are not scattered across multiple files"
         )
 
+    # S745: Test concentration — more than 80% of test symbols are in one test file.
+    # When tests are heavily concentrated in one file, the test suite becomes monolithic;
+    # it's hard to navigate, slow to run selectively, and prone to test coupling.
+    _test_files745 = [fp for fp in graph.files if _is_test_file(fp)]
+    if len(_test_files745) >= 2:
+        _total_test_syms745 = sum(
+            len(graph.files[fp].symbols) for fp in _test_files745 if fp in graph.files
+        )
+        if _total_test_syms745 > 0:
+            for _tfp745 in _test_files745:
+                _file_syms745 = len(graph.files[_tfp745].symbols) if _tfp745 in graph.files else 0
+                if _file_syms745 / _total_test_syms745 > 0.80:
+                    lines.append(
+                        f"test concentration: {_tfp745.rsplit('/', 1)[-1]} has"
+                        f" {_file_syms745}/{_total_test_syms745}"
+                        f" ({_file_syms745 / _total_test_syms745:.0%}) of all test symbols"
+                        f" — monolithic test file; split into feature-specific test modules"
+                    )
+                    break
+
     return lines
 
 

@@ -1968,6 +1968,16 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — cross-cutting concern; changes affect every code path using this wrapper"
         )
 
+    # S746: Client file blast — the blast target has "client" in its filename.
+    # Client files encapsulate external service connections; changes affect all code that
+    # calls external APIs, databases, or services through this client abstraction.
+    _blast_stem746 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].replace(".py", "").lower()
+    if "client" in _blast_stem746:
+        lines.append(
+            f"client file blast: {_fp589.rsplit('/', 1)[-1]} is a client/connector file"
+            f" — changes affect all code reaching external services through this client"
+        )
+
     return "\n".join(lines)
 
 
