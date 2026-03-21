@@ -3406,6 +3406,29 @@ def _signals_focused_fn_advanced(
                     f" — god class; split by responsibility before adding more methods"
                 )
 
+    # S696: Hotspot caller — a cross-file caller of the focused symbol is itself widely called.
+    # When a popular function depends on the focused symbol, changes here can cascade through
+    # high-traffic paths; the blast radius is amplified by the caller's own call volume.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim696 = _seed_syms[0]
+        if not _is_test_file(_prim696.file_path):
+            _callers696 = [
+                c for c in graph.callers_of(_prim696.id)
+                if c.file_path != _prim696.file_path
+            ]
+            _hot_callers696 = [
+                c for c in _callers696
+                if len([
+                    cc for cc in graph.callers_of(c.id)
+                    if cc.file_path != c.file_path
+                ]) >= 5
+            ]
+            if _hot_callers696:
+                lines.append(
+                    f"\nhotspot caller: {_hot_callers696[0].name} (a hotspot) calls {_prim696.name}"
+                    f" — changes propagate through a high-traffic path; extra caution needed"
+                )
+
     return lines
 
 
