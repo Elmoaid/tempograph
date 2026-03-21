@@ -5571,3 +5571,51 @@ class TestDeadCodeRecentlyDead:
             assert "Recently dead" in out, (
                 f"Expected 'Recently dead' when mock age=5d; got:\n{out}"
             )
+
+
+class TestOverviewAPISurface:
+    """S46: Overview — 'API surface: N exported, M unused (K%)' metric.
+
+    Shows the ratio of unused exported symbols to total exported symbols.
+    Only appears when >= 5 exported symbols exist. When all are called,
+    shows just 'API surface: N exported' without the unused count.
+    """
+
+    def test_api_surface_shows_unused_fraction(self, tmp_path):
+        """API surface line shows unused fraction when some exports have no callers."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "lib.py").write_text(
+            "def used_a(): pass\n"
+            "def used_b(): pass\n"
+            "def unused_a(): pass\n"
+            "def unused_b(): pass\n"
+            "def unused_c(): pass\n"
+            "def unused_d(): pass\n"
+        )
+        (tmp_path / "app.py").write_text(
+            "from lib import used_a, used_b\n"
+            "def main(): used_a(); used_b()\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+
+        assert "API surface:" in out, f"Expected API surface line; got:\n{out}"
+        assert "unused" in out, f"Expected 'unused' count when 4/6 exports are unused; got:\n{out}"
+
+    def test_api_surface_absent_for_tiny_repo(self, tmp_path):
+        """API surface line absent when fewer than 5 exported symbols exist."""
+        from tempograph.builder import build_graph
+        from tempograph.render import render_overview
+
+        (tmp_path / "mini.py").write_text(
+            "def add(x, y): return x + y\n"
+            "def sub(x, y): return x - y\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_overview(g)
+
+        assert "API surface:" not in out, (
+            f"API surface: must not appear for tiny repo (<5 exports); got:\n{out}"
+        )
