@@ -258,6 +258,33 @@ class TestUpsertVectorsBatch:
         db.upsert_vectors_batch(items)  # should not raise
 
 
+# ── graph_stats ───────────────────────────────────────────────────────────────
+
+class TestGraphStats:
+    def test_returns_dict(self, db):
+        result = db.graph_stats()
+        assert isinstance(result, dict)
+
+    def test_has_expected_keys(self, db):
+        result = db.graph_stats()
+        assert "files" in result
+        assert "symbols" in result
+        assert "edges" in result
+        assert "languages" in result
+
+    def test_counts_match_stored(self, db):
+        db.update_file("a.py", "h1", "python", 10, 100,
+                       [_make_symbol("a.py", "fn")], [], [])
+        result = db.graph_stats()
+        assert result["files"] == 1
+        assert result["symbols"] == 1
+
+    def test_languages_breakdown(self, db):
+        db.update_file("a.py", "h1", "python", 10, 100, [], [], [])
+        result = db.graph_stats()
+        assert "python" in result["languages"]
+
+
 class TestVectorSearch:
     def test_init_vectors(self, db):
         result = db.init_vectors(dimensions=384)

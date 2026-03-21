@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from tempograph.builder import build_graph
+from tempograph.builder import build_graph, load_from_snapshot
 from tempograph.types import Language, SymbolKind, EdgeKind
 
 
@@ -184,3 +184,12 @@ class TestTempoConfig:
         names = {s.name for s in g.symbols.values()}
         assert "secret" not in names
         assert "visible" in names
+
+
+# ── load_from_snapshot ────────────────────────────────────────────────────────
+
+class TestLoadFromSnapshot:
+    def test_missing_snapshot_raises_file_not_found(self):
+        import pytest
+        with pytest.raises(FileNotFoundError):
+            load_from_snapshot("nonexistent/repo-xyz-abc-123")
