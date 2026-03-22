@@ -443,6 +443,39 @@ def _render_cochange_section(graph, seed_file_paths: list[str]) -> str:
     return ""
 
 
+def _render_cochange_cohort_section(
+    graph, seed_file_paths: list[str], seen_files: set[str]
+) -> str:
+    """Build the 'Co-change cohort:' section — files historically co-edited with the
+    seed file that are NOT already shown in the focus BFS output (S46).
+
+    Unlike _render_cochange_section (no seen_files filter) and
+    _render_cochange_orbit_section (recency-weighted), this section uses raw commit
+    counts and filters seen_files — surfacing structurally coupled files that BFS
+    missed (no direct call edges) even when coupling is old/stale.
+
+    Only shown if ≥1 qualifying file exists (min 3 co-changes, not in seen_files).
+    Cap at 5 files.
+    """
+    if not graph.root or not seed_file_paths:
+        return ""
+    try:
+        from ..git import cochange_pairs
+        pairs = cochange_pairs(graph.root, seed_file_paths[0], n=10, min_count=3)
+        if not pairs:
+            return ""
+        basename = Path(seed_file_paths[0]).name
+        filtered = [p for p in pairs if p["path"] not in seen_files][:5]
+        if not filtered:
+            return ""
+        parts = [f"\nCo-change cohort (files often edited alongside {basename}):"]
+        for p in filtered:
+            parts.append(f"  {p['path']} (co-changed {p['count']} times)")
+        return "\n".join(parts)
+    except Exception:
+        return ""
+
+
 def _render_all_callers_section(
     graph, seeds: list, callsite_lines: dict, token_count: int = 0, max_tokens: int = 0
 ) -> str:
@@ -4420,6 +4453,11 @@ def _render_context_sections(
     if cochange_section:
         lines.append(cochange_section)
         token_count += count_tokens(cochange_section)
+
+    cohort_section = _render_cochange_cohort_section(graph, seed_file_paths, seen_files)
+    if cohort_section:
+        lines.append(cohort_section)
+        token_count += count_tokens(cohort_section)
 
     _tcov_lines = _signals_focused_test_coverage(
         graph, ordered=ordered, token_count=token_count, max_tokens=max_tokens,
