@@ -230,8 +230,10 @@ def build_graph(
             _resolve_edges(graph)
             # Save resolved edges so next warm build can skip both resolution steps
             if db:
+                # Store EdgeKind enum objects (not .value strings) so load_all() skips
+                # per-edge get_edge_kind() dict lookup on the next warm build.
                 edge_tuples = [
-                    (e.kind.value, e.source_id, e.target_id, e.line)
+                    (e.kind, e.source_id, e.target_id, e.line)
                     for e in graph.edges
                 ]
                 db.save_resolved_edges_blob(edge_tuples, db._last_edge_count, db._last_sym_count)

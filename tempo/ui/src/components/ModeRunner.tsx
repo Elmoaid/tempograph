@@ -52,6 +52,7 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
           outputTs={vm.outputTs}
           runDuration={vm.runDuration}
           copied={vm.copied}
+          saved={vm.saved}
           filterVisible={vm.filterVisible}
           outputFilter={vm.outputFilter}
           filteredOutput={vm.filteredOutput}
