@@ -61,6 +61,32 @@ function estimateTokens(text: string): string {
   return count >= 1000 ? `~${(count / 1000).toFixed(1)}k tokens` : `~${count} tokens`;
 }
 
+function HighlightedOutput({ text, query, style }: { text: string; query: string; style: React.CSSProperties }) {
+  if (!query.trim()) return <pre className="output" role="region" aria-label="Mode output" aria-live="polite" style={style}>{text}</pre>;
+  const lowerQ = query.toLowerCase();
+  const lines = text.split("\n");
+  return (
+    <pre className="output" role="region" aria-label="Mode output" aria-live="polite" style={style}>
+      {lines.map((line, i) => {
+        const parts: React.ReactNode[] = [];
+        let rest = line;
+        while (rest) {
+          const idx = rest.toLowerCase().indexOf(lowerQ);
+          if (idx === -1) { parts.push(rest); break; }
+          if (idx > 0) parts.push(rest.slice(0, idx));
+          parts.push(
+            <mark key={parts.length} style={{ background: "var(--accent-dim, rgba(99,102,241,0.25))", color: "inherit", borderRadius: 2, padding: "0 1px" }}>
+              {rest.slice(idx, idx + query.length)}
+            </mark>
+          );
+          rest = rest.slice(idx + query.length);
+        }
+        return <span key={i}>{parts}{i < lines.length - 1 ? "\n" : ""}</span>;
+      })}
+    </pre>
+  );
+}
+
 const EXPANDED_KEY = (activeMode: string) => `tempo-kit-expanded-${activeMode}`;
 
 function loadExpanded(activeMode: string, modes: string[]): Set<string> {
@@ -314,7 +340,11 @@ export function OutputPanel(props: OutputPanelProps) {
                 })}
               </div>
             ) : (
-              <pre className="output" role="region" aria-label="Mode output" aria-live="polite" style={{ maxHeight: activeMode === "prepare" ? "calc(100% - 96px)" : "calc(100% - 64px)", overflow: "auto", whiteSpace: wrapEnabled ? "pre-wrap" : "pre", fontSize }}>{filteredOutput}</pre>
+              <HighlightedOutput
+                text={filteredOutput}
+                query={filterVisible ? outputFilter : ""}
+                style={{ maxHeight: activeMode === "prepare" ? "calc(100% - 96px)" : "calc(100% - 64px)", overflow: "auto", whiteSpace: wrapEnabled ? "pre-wrap" : "pre", fontSize, margin: 0 }}
+              />
             )}
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>
               <span style={{ fontSize: 9, color: "var(--text-tertiary)", marginRight: 2 }}>Helpful?</span>
