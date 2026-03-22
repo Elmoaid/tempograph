@@ -1916,10 +1916,12 @@ def _signals_structure(
     return lines
 
 
-def _signals_async_oop(
+
+
+def _signals_async_oop_a(
     graph: Tempo, *, _s220_entry_files: list[str],
 ) -> list[str]:
-    """Async/OOP signals."""
+    """Async, OOP, and project-structure signals (S84–S565)."""
     lines: list[str] = []
 
     # S84: Async surface — count exported async functions to signal async-heavy codebases.
@@ -2396,6 +2398,11 @@ def _signals_async_oop(
                 f" — high test volume may indicate brittle implementation-coupled tests; prefer behavior tests"
             )
 
+    return lines
+
+def _signals_async_oop_b(graph: Tempo) -> list[str]:
+    """Symbol and export metric signals (S571–S649)."""
+    lines: list[str] = []
     # S571: No exports — 5+ source files but zero exported (public) symbols detected.
     # A codebase with no exports is likely a script collection or has accidentally made
     # everything private; agents can't reliably identify the public API surface.
@@ -2655,6 +2662,11 @@ def _signals_async_oop(
                 f" — wide failure surface; callers must handle many distinct exception types"
             )
 
+    return lines
+
+def _signals_async_oop_c(graph: Tempo) -> list[str]:
+    """File quality and hub pattern signals (S655–S787)."""
+    lines: list[str] = []
     # S655: High average complexity — average symbol complexity exceeds 5.
     # Complex functions are harder to understand, test, and maintain;
     # a high average signals that the codebase may need targeted refactoring passes.
@@ -3036,6 +3048,11 @@ def _signals_async_oop(
                 f" — structural singleton; breaking changes require touching all importers"
             )
 
+    return lines
+
+def _signals_async_oop_d(graph: Tempo) -> list[str]:
+    """Language, docstring, and module cohesion signals (S781–S1009)."""
+    lines: list[str] = []
     # S781: Many small files — average source file is under 10 lines with 5+ source files.
     # Over-fragmented codebases split logic into many tiny files, increasing navigation
     # cost and import overhead; consider consolidating into fewer coherent modules.
@@ -3628,6 +3645,17 @@ def _signals_async_oop(
             f" — multi-language repo; cross-language call boundaries are harder to trace for agents"
         )
 
+    return lines
+
+def _signals_async_oop(
+    graph: Tempo, *, _s220_entry_files: list[str],
+) -> list[str]:
+    """Async/OOP signals."""
+    lines: list[str] = []
+    lines.extend(_signals_async_oop_a(graph, _s220_entry_files=_s220_entry_files))
+    lines.extend(_signals_async_oop_b(graph))
+    lines.extend(_signals_async_oop_c(graph))
+    lines.extend(_signals_async_oop_d(graph))
     return lines
 
 
