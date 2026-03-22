@@ -282,16 +282,15 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
     ))
     return "\n".join(lines)  # ALWAYS return here — never inside a conditional block
 
-def _collect_hotspots_signals(
+def _signals_hotspots_core_a(
     graph: Tempo,
     scores: list[tuple[float, Symbol]],
     velocity: dict[str, float],
     velocity_14: dict[str, float],
     all_test_fps: set[str],
     top_n: int,
-) -> list[str]:
-    """Collect all signal annotation lines for hotspot output."""
-    out: list[str] = []
+    out: list[str],
+) -> None:
     # S113: Hot coverage ratio — fraction of top hotspot symbols that have test coverage.
     # Aggregates the per-symbol [tested]/[no tests] badges into a single health signal.
     # Only shown when test files exist AND at least 5 non-test hotspot symbols are scored.
@@ -972,6 +971,17 @@ def _collect_hotspots_signals(
                     f" — top hotspot has no docstring; add docs when modifying"
                 )
 
+
+
+def _signals_hotspots_core_b(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    velocity: dict[str, float],
+    velocity_14: dict[str, float],
+    all_test_fps: set[str],
+    top_n: int,
+    out: list[str],
+) -> None:
     # S242: Test file hotspot — top hotspot symbol lives in a test file.
     # Frequently-changed test code suggests flaky tests, brittle fixtures, or rapidly-evolving specs.
     # Only shown when the top-ranked hotspot symbol is itself in a test file.
@@ -1660,6 +1670,17 @@ def _collect_hotspots_signals(
                         f" — no siblings to share load; complexity will compound with each change"
                     )
 
+
+
+def _signals_hotspots_core_c(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    velocity: dict[str, float],
+    velocity_14: dict[str, float],
+    all_test_fps: set[str],
+    top_n: int,
+    out: list[str],
+) -> None:
     # S498: Hotspot wrapper/adapter — top hotspot filename suggests it wraps an external dependency.
     # Wrapper files couple the internal system to an external API; changes must be validated
     # against both the internal callers and the external dependency's contract.
@@ -2343,6 +2364,17 @@ def _collect_hotspots_signals(
                     f" ({_cross754[0].name}) — tight coupling; consider inlining or co-locating"
                 )
 
+
+
+def _signals_hotspots_core_d(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    velocity: dict[str, float],
+    velocity_14: dict[str, float],
+    all_test_fps: set[str],
+    top_n: int,
+    out: list[str],
+) -> None:
     # S760: Classmethod hotspot — the top hotspot is a @classmethod.
     # Classmethods are called on the class itself; when one is a top hotspot, all
     # subclasses and instances share the coupling — method changes affect the whole hierarchy.
@@ -3018,5 +3050,23 @@ def _collect_hotspots_signals(
                     f" — whole-file risk with no sibling context; changes are harder to scope safely"
                 )
 
+
+
+def _collect_hotspots_signals(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    velocity: dict[str, float],
+    velocity_14: dict[str, float],
+    all_test_fps: set[str],
+    top_n: int,
+) -> list[str]:
+    """Collect all signal annotation lines for hotspot output."""
+    out: list[str] = []
+    _signals_hotspots_core_a(graph, scores, velocity, velocity_14, all_test_fps, top_n, out)
+    _signals_hotspots_core_b(graph, scores, velocity, velocity_14, all_test_fps, top_n, out)
+    _signals_hotspots_core_c(graph, scores, velocity, velocity_14, all_test_fps, top_n, out)
+    _signals_hotspots_core_d(graph, scores, velocity, velocity_14, all_test_fps, top_n, out)
     return out
+
+
 
