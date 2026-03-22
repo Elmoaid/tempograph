@@ -17,6 +17,7 @@ interface OutputPanelProps {
   modeArgs: string;
   modeRunning: boolean;
   modeOutput: string;
+  prevOutput: string | null;
   elapsed: number;
   outputTs: number | null;
   runDuration: number | null;
@@ -85,9 +86,54 @@ function HighlightedOutput({ text, query, style }: { text: string; query: string
   );
 }
 
+type DiffLine = { type: "add" | "remove" | "same"; line: string };
+
+function computeLineDiff(prev: string, curr: string): DiffLine[] {
+  const prevLines = prev.split("\n");
+  const currLines = curr.split("\n");
+  const prevCount = new Map<string, number>();
+  for (const l of prevLines) prevCount.set(l, (prevCount.get(l) ?? 0) + 1);
+  const result: DiffLine[] = [];
+  for (const line of currLines) {
+    const count = prevCount.get(line) ?? 0;
+    if (count > 0) {
+      result.push({ type: "same", line });
+      prevCount.set(line, count - 1);
+    } else {
+      result.push({ type: "add", line });
+    }
+  }
+  for (const line of prevLines) {
+    const count = prevCount.get(line) ?? 0;
+    if (count > 0) {
+      result.push({ type: "remove", line });
+      prevCount.set(line, count - 1);
+    }
+  }
+  return result;
+}
+
+function DiffOutput({ prev, curr, style }: { prev: string; curr: string; style: React.CSSProperties }) {
+  const lines = computeLineDiff(prev, curr);
+  return (
+    <pre className="output" role="region" aria-label="Mode output diff" aria-live="polite" style={style}>
+      {lines.map((l, i) => (
+        <span key={i} style={{
+          display: "block",
+          background: l.type === "add" ? "rgba(34, 197, 94, 0.15)" : l.type === "remove" ? "rgba(239, 68, 68, 0.15)" : "transparent",
+          color: l.type === "remove" ? "var(--text-tertiary)" : "inherit",
+        }}>
+          <span style={{ userSelect: "none", opacity: 0.6 }}>{l.type === "add" ? "+ " : l.type === "remove" ? "- " : "  "}</span>
+          {l.line}
+        </span>
+      ))}
+    </pre>
+  );
+}
+
 export function OutputPanel(props: OutputPanelProps) {
   const {
-    activeModeInfo, activeMode, modeArgs, modeRunning, modeOutput,
+    activeModeInfo, activeMode, modeArgs, modeRunning, modeOutput, prevOutput,
     elapsed, outputTs, runDuration, copied, filterVisible, outputFilter,
     filteredOutput, filterMatchCount, history, historyOpen, feedbackGiven,
     argsInputRef, filterInputRef,
@@ -100,6 +146,7 @@ export function OutputPanel(props: OutputPanelProps) {
   const hasKitSections = isKitMode && kitSections.length > 0;
 
   const [wrapEnabled, setWrapEnabled] = useState(() => localStorage.getItem("tempo_output_wrap") !== "false");
+  const [diffMode, setDiffMode] = useState(() => localStorage.getItem("tempo_diff_mode") === "true");
   const [fontSize, setFontSize] = useState<number>(() => {
     const saved = parseInt(localStorage.getItem(FONT_SIZE_KEY) || "", 10);
     return saved >= FONT_SIZE_MIN && saved <= FONT_SIZE_MAX ? saved : FONT_SIZE_DEFAULT;
@@ -126,6 +173,8 @@ export function OutputPanel(props: OutputPanelProps) {
         fontSize={fontSize}
         fontSizeMin={FONT_SIZE_MIN}
         fontSizeMax={FONT_SIZE_MAX}
+        hasPrevOutput={prevOutput !== null}
+        diffMode={diffMode}
         onFilterToggle={onFilterToggle}
         onSave={onSave}
         saved={saved}
@@ -135,6 +184,11 @@ export function OutputPanel(props: OutputPanelProps) {
           const next = !wrapEnabled;
           setWrapEnabled(next);
           localStorage.setItem("tempo_output_wrap", String(next));
+        }}
+        onDiffToggle={() => {
+          const next = !diffMode;
+          setDiffMode(next);
+          localStorage.setItem("tempo_diff_mode", String(next));
         }}
         onCopy={onCopy}
       />
@@ -206,6 +260,12 @@ export function OutputPanel(props: OutputPanelProps) {
                 activeMode={activeMode}
                 wrapEnabled={wrapEnabled}
                 fontSize={fontSize}
+              />
+            ) : diffMode && prevOutput ? (
+              <DiffOutput
+                prev={prevOutput}
+                curr={filteredOutput}
+                style={{ maxHeight: activeMode === "prepare" ? "calc(100% - 96px)" : "calc(100% - 64px)", overflow: "auto", whiteSpace: wrapEnabled ? "pre-wrap" : "pre", fontSize, margin: 0 }}
               />
             ) : (
               <HighlightedOutput
