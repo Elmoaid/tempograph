@@ -16,7 +16,7 @@ from .types import Edge, EdgeKind, FileInfo, Language, Symbol, SymbolKind
 
 CACHE_DIR = ".tempograph"
 DB_FILE = "graph.db"
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 # Module-level enum lookup dicts — O(1) vs try/except, ~31% faster in load_all()
 _SYMBOL_KIND_MAP: dict[str, SymbolKind] = {v.value: v for v in SymbolKind}
@@ -41,6 +41,8 @@ class GraphDB:
         self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.row_factory = sqlite3.Row
         self._batching = False
+        self._last_edge_count: int = 0  # set by load_all for use by save_resolved_edges_blob
+        self._last_sym_count: int = 0   # set by load_all for use by save_resolved_edges_blob
         self._init_schema()
 
     def begin_batch(self) -> None:
@@ -133,6 +135,11 @@ class GraphDB:
                 sym_count INTEGER PRIMARY KEY,
                 data BLOB NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS resolved_edges_blob (
+                edge_sym_key TEXT PRIMARY KEY,
+                data BLOB NOT NULL
+            );
         """)
         self._conn.commit()
         self._migrate()
@@ -187,6 +194,19 @@ class GraphDB:
                     "(sym_count INTEGER PRIMARY KEY, data BLOB NOT NULL)"
                 )
                 self._conn.execute("UPDATE meta SET value='5' WHERE key='schema_version'")
+                self._conn.commit()
+            except Exception:
+                pass
+        if version < 6:
+            # Add resolved_edges_blob table — caches post-resolution edge tuples (after
+            # _resolve_imports and _resolve_edges). On a warm-build cache hit, both resolution
+            # steps are skipped entirely. Savings: ~14ms per warm build (25%).
+            try:
+                self._conn.execute(
+                    "CREATE TABLE IF NOT EXISTS resolved_edges_blob "
+                    "(edge_sym_key TEXT PRIMARY KEY, data BLOB NOT NULL)"
+                )
+                self._conn.execute("UPDATE meta SET value='6' WHERE key='schema_version'")
                 self._conn.commit()
             except Exception:
                 pass
@@ -291,7 +311,9 @@ class GraphDB:
             self._conn.commit()
         return len(stale)
 
-    def load_all(self, *, lazy_edges: bool = False) -> tuple[dict[str, FileInfo], dict[str, Symbol], list[Edge]]:
+    def load_all(
+        self, *, lazy_edges: bool = False
+    ) -> tuple[dict[str, FileInfo], dict[str, Symbol], list[Edge], bool]:
         """Load entire graph from DB into memory.
 
         Uses tuple positional access instead of sqlite3.Row dict access to avoid
@@ -300,6 +322,10 @@ class GraphDB:
 
         lazy_edges: skip edge loading entirely — useful for modes that only need
         files + symbols (overview, dead_code, hotspots). Saves ~10ms on load_all.
+
+        Returns (files, symbols, edges, edges_pre_resolved). When edges_pre_resolved
+        is True, edges include post-resolution IMPORTS and resolved CALLS edges from
+        the previous build — caller should skip _resolve_imports and _resolve_edges.
         """
         orig_factory = self._conn.row_factory
         self._conn.row_factory = None  # raw tuples: faster positional access
@@ -330,19 +356,30 @@ class GraphDB:
                 _syms_from_blob = False
 
             # edges: kind(0) source_id(1) target_id(2) line(3) — skipped when lazy_edges=True
-            # Warm-build fast path: COUNT(*) + blob lookup replaces full row fetch.
-            # Blob hit: ~3.7ms vs ~14.5ms SQL + 7.1ms Edge construct = ~11ms savings.
+            # Fast path hierarchy (warm-build):
+            #   1. resolved_edges_blob: post-resolution tuples (skip both _resolve_imports +
+            #      _resolve_edges). Keyed by edge_count:sym_count. ~14ms savings.
+            #   2. edges_blob: pre-resolution raw tuples. Saves SQL fetch, but resolution runs.
+            #   3. SQL SELECT: cold-build path.
+            _edges_pre_resolved = False
             if not lazy_edges:
                 edge_count = self._conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
-                cached_rows = self.load_edges_blob(edge_count)
-                if cached_rows is not None:
-                    edge_rows = cached_rows
+                # Try resolved blob first (saves both resolution steps)
+                resolved_rows = self.load_resolved_edges_blob(edge_count, sym_count)
+                if resolved_rows is not None:
+                    edge_rows = resolved_rows
+                    _edges_pre_resolved = True
                     _edges_from_blob = True
                 else:
-                    edge_rows = self._conn.execute(
-                        "SELECT kind, source_id, target_id, line FROM edges"
-                    ).fetchall()
-                    _edges_from_blob = False
+                    cached_rows = self.load_edges_blob(edge_count)
+                    if cached_rows is not None:
+                        edge_rows = cached_rows
+                        _edges_from_blob = True
+                    else:
+                        edge_rows = self._conn.execute(
+                            "SELECT kind, source_id, target_id, line FROM edges"
+                        ).fetchall()
+                        _edges_from_blob = False
             else:
                 edge_count = 0
                 edge_rows = []
@@ -354,6 +391,10 @@ class GraphDB:
             self.save_edges_blob(edge_rows, edge_count)
         if not _syms_from_blob:
             self.save_symbols_blob(sym_rows, sym_count)
+
+        # Store for use by save_resolved_edges_blob() after resolution
+        self._last_edge_count = edge_count
+        self._last_sym_count = sym_count
 
         jl = json.loads
         get_lang = _LANGUAGE_MAP.get
@@ -388,7 +429,7 @@ class GraphDB:
             if (k := get_edge_kind(r[0])) is not None
         ]
 
-        return files, symbols, edges
+        return files, symbols, edges, _edges_pre_resolved
 
     def search_fts(self, query: str, limit: int = 20) -> list[tuple[float, str]]:
         """Full-text search over symbols. Returns (rank, symbol_id) pairs."""
@@ -633,6 +674,42 @@ class GraphDB:
             self._conn.execute(
                 "INSERT OR REPLACE INTO symbols_blob (sym_count, data) VALUES (?, ?)",
                 (sym_count, sqlite3.Binary(pickle.dumps(sym_rows, protocol=5))),
+            )
+            self._conn.commit()
+        except Exception:
+            pass
+
+    def load_resolved_edges_blob(self, edge_count: int, sym_count: int) -> list[tuple] | None:
+        """Load post-resolution edge tuples for warm-build skip of _resolve_imports/_resolve_edges.
+
+        Key: '{edge_count}:{sym_count}' — invalidated if edges or symbols change.
+        Returns None on miss.
+        """
+        import pickle
+        try:
+            key = f"{edge_count}:{sym_count}"
+            row = self._conn.execute(
+                "SELECT data FROM resolved_edges_blob WHERE edge_sym_key=?", (key,)
+            ).fetchone()
+            if row is None:
+                return None
+            return pickle.loads(bytes(row[0]))
+        except Exception:
+            return None
+
+    def save_resolved_edges_blob(self, edge_tuples: list[tuple], edge_count: int, sym_count: int) -> None:
+        """Persist post-resolution edge tuples (including IMPORTS edges from _resolve_imports).
+
+        Stored as pickled list of (kind_str, source_id, target_id, line) tuples — same format
+        as edges_blob, but with resolved target_ids (symbol IDs with '::' separators).
+        On next warm build, load_all() returns these directly and skips both resolution steps.
+        """
+        import pickle
+        try:
+            key = f"{edge_count}:{sym_count}"
+            self._conn.execute(
+                "INSERT OR REPLACE INTO resolved_edges_blob (edge_sym_key, data) VALUES (?, ?)",
+                (key, sqlite3.Binary(pickle.dumps(edge_tuples, protocol=5))),
             )
             self._conn.commit()
         except Exception:
