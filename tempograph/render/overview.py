@@ -250,16 +250,9 @@ def _signals_complexity(
     return lines
 
 
-def _signals_coupling(
-    graph: Tempo, *, _src_fps: list[str],
-    _importer_counts: dict[str, int], _import_adj: dict[str, list[str]],
-    modules: dict[str, list[str]],
-) -> list[str]:
-    """Import/coupling signals."""
+def _signals_coupling_fanin(graph: Tempo) -> list[str]:
+    """Top imported files + stable core (fan-in section)."""
     lines: list[str] = []
-
-    # Top imported: files most imported by other source files — true infrastructure files.
-    # Distinct from hot symbols (call frequency) and hot files (commit count).
     _importer_counts: dict[str, int] = {}
     for fp in graph.files:
         if _is_test_file(fp):
@@ -270,25 +263,22 @@ def _signals_coupling(
         ]
         if importers:
             _importer_counts[fp] = len(set(importers))
+
+    # Top imported: files most imported by other source files.
     if _importer_counts:
         _top_imported = sorted(_importer_counts.items(), key=lambda x: -x[1])[:3]
-        _min_importers = 3
-        _top_imported = [(fp, n) for fp, n in _top_imported if n >= _min_importers]
+        _top_imported = [(fp, n) for fp, n in _top_imported if n >= 3]
         if _top_imported:
             _ti_fps = [fp for fp, _ in _top_imported]
-            _ti_parts = [
-                f"{_display_path(fp, _ti_fps)} ({n})" for fp, n in _top_imported
-            ]
+            _ti_parts = [f"{_display_path(fp, _ti_fps)} ({n})" for fp, n in _top_imported]
             lines.append("")
             lines.append(f"top imported: {', '.join(_ti_parts)}")
 
-    # Stable core: widely-imported files (>= 5 source importers) that haven't been
-    # modified in 30+ days. These are the infrastructure heart of the codebase —
-    # agents can rely on them being stable and well-tested.
+    # Stable core: widely-imported (>= 5) + unchanged >= 30 days.
     if graph.root and _importer_counts:
         try:
             from ..git import file_last_modified_days as _fld_core  # noqa: PLC0415
-            _stable_core: list[tuple[int, str, int]] = []  # (importers, fp, days)
+            _stable_core: list[tuple[int, str, int]] = []
             for _fp, _n_imp in _importer_counts.items():
                 if _n_imp < 5:
                     continue
@@ -306,8 +296,14 @@ def _signals_coupling(
         except Exception:
             pass
 
+    return lines
+
+
+def _signals_coupling_fanout_cochange(graph: Tempo) -> list[str]:
+    """High fan-out files + co-change pairs."""
+    lines: list[str] = []
+
     # High-coupling files: non-test source files that import >= 8 distinct source files.
-    # High fan-out = many dependencies = fragile integration points. Hard to change safely.
     _import_fanout: dict[str, int] = {}
     for _edge in graph.edges:
         if _edge.kind == EdgeKind.IMPORTS:
@@ -327,9 +323,7 @@ def _signals_coupling(
         _hc_parts = [f"{fp.rsplit('/', 1)[-1]} ({n} imports)" for n, fp in _high_coupling[:3]]
         lines.append(f"high-coupling: {', '.join(_hc_parts)}")
 
-    # Co-change pairs: file pairs that frequently change together in git commits.
-    # Surfaces edit-coupling that static imports don't capture.
-    # e.g. "render.py ↔ test_mcp_server.py (100%)" tells agents what to touch together.
+    # Co-change pairs: file pairs that frequently change together in git.
     if graph.root:
         try:
             from ..git import cochange_matrix as _ccm, is_git_repo as _igr  # noqa: PLC0415
@@ -340,6 +334,7 @@ def _signals_coupling(
                     ".java", ".kt", ".rb", ".cs", ".cpp", ".c", ".h",
                     ".swift", ".dart", ".scala", ".ex", ".exs",
                 }
+
                 def _is_src(_p: str) -> bool:
                     return any(_p.endswith(e) for e in _CC_SRC_EXTS)
 
@@ -368,17 +363,19 @@ def _signals_coupling(
         except Exception:
             pass
 
+    return lines
 
-    # Deepest import chain: longest path from any source file through import edges.
-    # High depth = deep coupling = hard to refactor. Only shown when depth >= 5.
-    # Uses iterative DFS on the import graph; stops early at depth 12 to stay fast.
-    # Skips test files and considers only source files with symbols.
+
+def _signals_coupling_depth(graph: Tempo) -> list[str]:
+    """Import chain depth: DFS deepest chain, BFS importer depth, basic circular check."""
+    lines: list[str] = []
+
+    # Deepest import chain (DFS) — shown when depth >= 5.
     _MAX_CHAIN = 12
     _best_chain: list[str] = []
-    _import_adj: dict[str, list[str]] = {}  # file → files it imports
+    _import_adj: dict[str, list[str]] = {}
     for _edge in graph.edges:
         if _edge.kind == EdgeKind.IMPORTS:
-            # IMPORTS edges use file paths directly as source_id/target_id
             _src_fp = _edge.source_id
             _tgt_fp = _edge.target_id
             if (
@@ -388,10 +385,8 @@ def _signals_coupling(
                 _import_adj.setdefault(_src_fp, [])
                 if _tgt_fp not in _import_adj[_src_fp]:
                     _import_adj[_src_fp].append(_tgt_fp)
-    # DFS from each file with symbols, find longest non-cyclic chain
     _src_imp_fps = [fp for fp in _import_adj if fp in graph.files and graph.files[fp].symbols]
-    for _start in _src_imp_fps[:100]:  # cap to 100 starts for performance
-        # Iterative DFS: (file, chain)
+    for _start in _src_imp_fps[:100]:
         _stack = [(_start, [_start])]
         while _stack:
             _cur, _chain = _stack.pop()
@@ -400,25 +395,24 @@ def _signals_coupling(
             if len(_chain) >= _MAX_CHAIN:
                 continue
             for _nxt in _import_adj.get(_cur, []):
-                if _nxt not in _chain:  # avoid cycles
+                if _nxt not in _chain:
                     _stack.append((_nxt, _chain + [_nxt]))
     if len(_best_chain) >= 5:
         def _short(fp: str) -> str:
             parts = fp.split("/")
             return "/".join(parts[-2:]) if len(parts) > 2 else fp
         _chain_names = [_short(fp) for fp in _best_chain]
-        lines.append(f"dep depth: {len(_best_chain)} ({' → '.join(_chain_names[:5])}{'...' if len(_best_chain) > 5 else ''})")
+        lines.append(
+            f"dep depth: {len(_best_chain)}"
+            f" ({' → '.join(_chain_names[:5])}{'...' if len(_best_chain) > 5 else ''})"
+        )
 
-
-    # S119: Deepest import chain — the source file with the highest import depth from root.
-    # Deeply-nested files are fragile: a change anywhere up the chain cascades down.
-    # Only shown when there are 5+ source files and max depth >= 4.
+    # S119: Deepest import chain (BFS from each file up the importer chain).
     _src_fps_depth = [fp for fp in graph.files if not _is_test_file(fp)]
     if len(_src_fps_depth) >= 5:
         _max_depth = 0
         _deepest_fp = ""
         for _dfp in _src_fps_depth:
-            # BFS depth from this file up the importer chain
             _visited: set[str] = set()
             _queue = [(_dfp, 0)]
             _local_max = 0
@@ -435,10 +429,12 @@ def _signals_coupling(
                 _max_depth = _local_max
                 _deepest_fp = _dfp
         if _max_depth >= 4:
-            lines.append(f"deepest import chain: {_deepest_fp.rsplit('/', 1)[-1]} ({_max_depth} hops from root)")
+            lines.append(
+                f"deepest import chain: {_deepest_fp.rsplit('/', 1)[-1]}"
+                f" ({_max_depth} hops from root)"
+            )
 
-    # Circular imports: flag immediately in overview so agents don't miss them.
-    # Details are in `--mode deps` but overview gives a quick count + first cycle.
+    # Circular imports — quick flag; details in `--mode deps`.
     try:
         _cycles = graph.detect_circular_imports()
         if _cycles:
@@ -448,16 +444,21 @@ def _signals_coupling(
     except Exception:
         pass
 
+    return lines
 
-    # S129: Orphan modules — top-level dirs where no file is imported by any other module.
-    # These are candidate standalone tools, dead plugins, or forgotten experiments.
-    # Only shown when 3+ top-level dirs exist and 2+ are orphans (not "." root files).
+
+def _signals_coupling_structure(
+    graph: Tempo, *, modules: dict[str, list[str]],
+) -> list[str]:
+    """Module-level structure: orphan modules, barrel files, coupling density, circulars."""
+    lines: list[str] = []
+
+    # S129: Orphan modules — top-level dirs not imported from outside.
     if len(modules) >= 3:
         _orphan_mods: list[str] = []
         for _om, _om_files in modules.items():
             if _om == ".":
                 continue
-            # A module is orphan if none of its files are imported from outside the module
             _any_importer = any(
                 imp in graph.files and not imp.startswith(_om + "/")
                 for fp in _om_files
@@ -471,14 +472,10 @@ def _signals_coupling(
                 _om_str += f" +{len(_orphan_mods) - 4} more"
             lines.append(f"orphan modules: {_om_str} — no files imported by other modules")
 
-
-    # S146: Barrel file count — source files that import from 5+ other modules (aggregators).
-    # Many barrel files = fragmented architecture; changes to any dependency flow through them.
-    # Only shown when 2+ barrel files found.
-    from ..types import EdgeKind as _EK146
+    # S146: Barrel file count — aggregator files that import from 5+ modules.
     _s146_import_counts: dict[str, int] = {}
     for _e146 in graph.edges:
-        if _e146.kind != _EK146.IMPORTS:
+        if _e146.kind != EdgeKind.IMPORTS:
             continue
         if _e146.source_id not in graph.files or _e146.target_id not in graph.files:
             continue
@@ -495,10 +492,7 @@ def _signals_coupling(
             _s146_str += f" +{len(_s146_barrels) - 3} more"
         lines.append(f"barrel files: {len(_s146_barrels)} aggregator files ({_s146_str})")
 
-
     # S185: Circular deps — pairs of source files that mutually import each other.
-    # Circular imports introduce tight coupling and make testing or refactoring harder.
-    # Only shown when >= 1 such circular pair is detected.
     _s185_fp_imports: dict[str, set[str]] = {}
     for _fp185b in graph.files:
         if _is_test_file(_fp185b):
@@ -522,21 +516,16 @@ def _signals_coupling(
             f" — tight coupling, difficult to test in isolation"
         )
 
-
     # S227: High coupling — average number of imports per source file >= 5.
-    # High coupling means files are tightly interdependent; one change ripples widely.
-    # Only shown when avg >= 5 and 5+ source files exist.
     _s227_src_fps = [fp for fp in graph.files if not _is_test_file(fp)]
     if len(_s227_src_fps) >= 5:
-        _s227_import_counts = []
-        for _fp227 in _s227_src_fps:
-            # Count files this fp imports (using importers API: how many others import THIS file)
-            # Instead: count files imported by this file = outgoing edges
-            _n_imports227 = sum(
+        _s227_import_counts = [
+            sum(
                 1 for e in graph.edges
                 if e.kind.value == "imports" and e.source_id.split("::")[0] == _fp227
             )
-            _s227_import_counts.append(_n_imports227)
+            for _fp227 in _s227_src_fps
+        ]
         _avg227 = sum(_s227_import_counts) / len(_s227_import_counts)
         if _avg227 >= 5:
             lines.append(
@@ -544,10 +533,7 @@ def _signals_coupling(
                 f" source files — tightly interdependent modules"
             )
 
-
-    # S258: High coupling density — average imports-per-file exceeds 5 for non-trivial repos.
-    # Dense coupling makes refactoring expensive; each file change can cascade unpredictably.
-    # Only shown for repos with 10+ source files and avg fan-in > 5.
+    # S258: High coupling density — avg imports-per-file > 5 for 10+ code files.
     _s258_code_files = [
         fp for fp in graph.files
         if not _is_test_file(fp) and graph.files[fp].language.value in _CODE_LANGS
@@ -555,8 +541,7 @@ def _signals_coupling(
     if len(_s258_code_files) >= 10:
         _s258_total_imports = sum(
             1 for e in graph.edges
-            if e.kind.value == "imports"
-            and not _is_test_file(e.source_id)
+            if e.kind.value == "imports" and not _is_test_file(e.source_id)
         )
         _s258_avg = _s258_total_imports / len(_s258_code_files)
         if _s258_avg >= 5:
@@ -565,14 +550,10 @@ def _signals_coupling(
                 f" — dense dependency graph; refactors cascade unpredictably"
             )
 
-
     # S265: Flat structure — 8+ source files all at root level with no subdirectories.
-    # Flat codebases are harder to navigate as they grow; grouping by feature/layer
-    # into subdirectories reduces cognitive load and enables selective imports.
     _s259_root_src = [
         fp for fp in graph.files
-        if "/" not in fp
-        and not _is_test_file(fp)
+        if "/" not in fp and not _is_test_file(fp)
         and graph.files[fp].language.value in _CODE_LANGS
     ]
     _s259_all_src = [
@@ -585,11 +566,7 @@ def _signals_coupling(
             f" — consider grouping into modules/packages as codebase grows"
         )
 
-
-
-    # S286: Shallow module graph — few import edges between source files (avg < 1 per file).
-    # Very low coupling may indicate disconnected modules, dead code islands, or
-    # a library with very independent components.
+    # S286: Shallow module graph — avg < 1 import/file among 8+ code files.
     _s286_src = [
         fp for fp in graph.files
         if not _is_test_file(fp) and graph.files[fp].language.value in _CODE_LANGS
@@ -606,11 +583,7 @@ def _signals_coupling(
                 f" — low coupling; modules may be disconnected or code is largely dead"
             )
 
-
-
-    # S342: Circular imports detected — 2+ files form a circular import chain.
-    # Circular imports cause unpredictable initialization order and are hard to refactor;
-    # Python lazy-imports them partially, causing AttributeError at runtime for some access patterns.
+    # S342: Circular imports detected via symbol-level edges.
     _s342_import_edges: dict[str, set[str]] = {}
     for _e342 in graph.edges:
         if _e342.kind.value == "imports":
@@ -635,7 +608,20 @@ def _signals_coupling(
             f" — unpredictable init order; refactor to break cycle before adding new imports"
         )
 
+    return lines
 
+
+def _signals_coupling(
+    graph: Tempo, *, _src_fps: list[str],
+    _importer_counts: dict[str, int], _import_adj: dict[str, list[str]],
+    modules: dict[str, list[str]],
+) -> list[str]:
+    """Import/coupling signals."""
+    lines: list[str] = []
+    lines.extend(_signals_coupling_fanin(graph))
+    lines.extend(_signals_coupling_fanout_cochange(graph))
+    lines.extend(_signals_coupling_depth(graph))
+    lines.extend(_signals_coupling_structure(graph, modules=modules))
     return lines
 
 
