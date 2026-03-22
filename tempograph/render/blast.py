@@ -2477,6 +2477,17 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             f" — format changes break downstream consumers without any code change on their side"
         )
 
+    # S1016: Task blast — blast target is a background task or job scheduling file.
+    # Task files define async work dispatched to queues; changes affect background processing
+    # paths that are harder to trace because they run outside the normal request cycle.
+    _task_kws1016 = ("task", "tasks", "job", "jobs", "worker", "workers", "celery", "queue", "queues", "scheduler", "beat")
+    _fname1016 = _fp589.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+    if any(_fname1016 == kw or _fname1016.startswith(kw + "_") or _fname1016.endswith("_" + kw) for kw in _task_kws1016):
+        lines.append(
+            f"task blast: {_fp589.rsplit('/', 1)[-1]} is a background task or job file"
+            f" — changes affect async work outside the request cycle; harder to trace and test end-to-end"
+        )
+
     return "\n".join(lines)
 
 

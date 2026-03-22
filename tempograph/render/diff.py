@@ -849,6 +849,23 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             f" — isolated change; verify no implicit dependencies require updates in other files"
         )
 
+    # S1017: Version file in diff — changed files include a version or changelog file.
+    # Version bumps often accompany releases; changes here may require coordinated
+    # tag creation, changelog updates, and downstream package dependency updates.
+    if changed_files:
+        _ver_names1017 = {"version.py", "_version.py", "__version__.py", "version.txt", "version.json",
+                          "changelog.md", "changes.md", "history.md", "release_notes.md", "news.md"}
+        _ver_files1017 = [
+            f for f in changed_files
+            if f.replace("\\", "/").rsplit("/", 1)[-1].lower() in _ver_names1017
+        ]
+        if _ver_files1017:
+            _vname1017 = _ver_files1017[0].replace("\\", "/").rsplit("/", 1)[-1]
+            lines.append(
+                f"version file in diff: {_vname1017} changed"
+                f" — may require coordinated tag, changelog update, and package dependency bump"
+            )
+
     if not normalized:
         return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
 

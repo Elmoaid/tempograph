@@ -4132,6 +4132,19 @@ def _signals_fn_focus_props_b(
                 f" — {_prim1008.complexity} distinct paths need test coverage; refactor before growing further"
             )
 
+    # S1014: Test target — focused symbol is itself a test function.
+    # When focusing on a test rather than production code, the real logic under investigation
+    # is the function being tested; agents should search for the implementation, not the test.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim1014 = _seed_syms[0]
+        if _prim1014.kind.value in ("function", "method", "test") and (
+            _prim1014.name.startswith("test_") or _is_test_file(_prim1014.file_path)
+        ):
+            lines.append(
+                f"\ntest target: {_prim1014.name} is a test function"
+                f" — focusing on test code; find the implementation under test for the production logic"
+            )
+
     return lines
 
 

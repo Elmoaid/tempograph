@@ -3001,5 +3001,22 @@ def _collect_hotspots_signals(
                     f" ({_hi_str}) — a change here disrupts files already in active churn"
                 )
 
+    # S1020: Singleton hotspot — top hotspot's file contains only one function.
+    # A single-function file at the top of hotspots scores as a whole-file risk;
+    # there is no sibling context to help understand intent, making safe changes harder.
+    if scores:
+        _top1020 = scores[0][1]
+        if _top1020 is not None and not _is_test_file(_top1020.file_path):
+            _file_syms1020 = [
+                s for s in graph.symbols.values()
+                if s.file_path == _top1020.file_path and s.kind.value in ("function", "method")
+            ]
+            if len(_file_syms1020) == 1:
+                _fname1020 = _top1020.file_path.replace("\\", "/").rsplit("/", 1)[-1]
+                out.append(
+                    f"\nsingleton hotspot: {_top1020.name} is the only function in {_fname1020}"
+                    f" — whole-file risk with no sibling context; changes are harder to scope safely"
+                )
+
     return out
 
