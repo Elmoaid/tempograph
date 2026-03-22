@@ -226,3 +226,62 @@ class TestFocusDeadCallerAnnotation:
         with patch("tempograph.git.file_last_modified_days", return_value=5):
             out = render_focused(graph, "process")
         assert "[dead?]" not in out
+
+
+class TestFocusApexPath:
+    """S45: apex path — nearest symbol with no non-test callers, shown in focus depth-0."""
+
+    def _sym(self, name, file_path="core.py"):
+        return Symbol(
+            id=f"{file_path}::{name}",
+            name=name, qualified_name=name,
+            kind=SymbolKind.FUNCTION, language=Language.PYTHON,
+            file_path=file_path, line_start=1, line_end=10, exported=True,
+        )
+
+    def test_apex_shows_nearest_entry_point_hop(self, tmp_path):
+        """Chain: main → handler → core::process. Process sees apex: main [2 hops]."""
+        from unittest.mock import patch
+        from tempograph.render import render_focused
+        process = self._sym("process", "core.py")
+        handler = self._sym("handle_request", "handler.py")
+        main = self._sym("main", "app.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=handler.id, target_id=process.id),
+            Edge(kind=EdgeKind.CALLS, source_id=main.id, target_id=handler.id),
+        ]
+        graph = _make_graph(tmp_path, edges, [process, handler, main])
+        with patch("tempograph.git.file_last_modified_days", return_value=5):
+            out = render_focused(graph, "process")
+        assert "apex:" in out
+        # main has no callers → it's the apex at 2 hops
+        assert "main" in out
+        assert "2 hops" in out
+
+    def test_apex_self_when_no_callers(self, tmp_path):
+        """Symbol with no callers at all shows 'apex: self [entry]'."""
+        from unittest.mock import patch
+        from tempograph.render import render_focused
+        entry = self._sym("run", "main.py")
+        graph = _make_graph(tmp_path, [], [entry])
+        with patch("tempograph.git.file_last_modified_days", return_value=5):
+            out = render_focused(graph, "run")
+        assert "apex: self [entry]" in out
+
+    def test_apex_suppressed_when_only_test_callers(self, tmp_path):
+        """Symbol called only from test files: apex line suppressed (no interesting chain)."""
+        from unittest.mock import patch
+        from tempograph.render import render_focused
+        target = self._sym("helper", "utils.py")
+        test_caller = Symbol(
+            id="tests/test_utils.py::test_helper",
+            name="test_helper", qualified_name="test_helper",
+            kind=SymbolKind.FUNCTION, language=Language.PYTHON,
+            file_path="tests/test_utils.py", line_start=1, line_end=5, exported=False,
+        )
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=test_caller.id, target_id=target.id)]
+        graph = _make_graph(tmp_path, edges, [target, test_caller])
+        with patch("tempograph.git.file_last_modified_days", return_value=5):
+            out = render_focused(graph, "helper")
+        # No apex line when caller chain is test-only
+        assert "apex:" not in out
