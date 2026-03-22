@@ -5,6 +5,7 @@ import { BUILTIN_KITS, type KitInfo } from "./kits";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { useRunMode } from "../hooks/useRunMode";
 import { useOutputFilter } from "../hooks/useOutputFilter";
+import { useOutputSearch } from "../hooks/useOutputSearch";
 
 export interface ModeRunnerState {
   activeMode: string;
@@ -34,7 +35,12 @@ export interface ModeRunnerState {
   filterMatchCount: number | null;
   argsInputRef: React.RefObject<HTMLInputElement | null>;
   filterInputRef: React.RefObject<HTMLInputElement | null>;
+  searchInputRef: React.RefObject<HTMLInputElement | null>;
   feedbackGiven: React.RefObject<Map<string, boolean>>;
+  searchText: string;
+  searchActive: boolean;
+  searchMatchCount: number;
+  searchCurrentMatch: number;
 }
 
 export interface ModeRunnerActions {
@@ -57,6 +63,10 @@ export interface ModeRunnerActions {
   onFilterToggle: () => void;
   onFilterClose: () => void;
   clearOutput: () => void;
+  onSearchOpen: () => void;
+  onSearchClose: () => void;
+  onSearchChange: (text: string) => void;
+  onSearchNavigate: (dir: "next" | "prev") => void;
 }
 
 function buildActiveModeInfo(activeKit: string | null, activeMode: string, customKits: KitInfo[]) {
@@ -120,6 +130,18 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     onFilterClose,
     resetFilter,
   } = useOutputFilter(modeOutput);
+
+  const {
+    searchText,
+    setSearchText,
+    matchCount: searchMatchCount,
+    currentMatch: searchCurrentMatch,
+    active: searchActive,
+    searchInputRef,
+    open: onSearchOpen,
+    close: onSearchClose,
+    navigateMatch: onSearchNavigate,
+  } = useOutputSearch(filteredOutput);
 
   const loadCustomKits = useCallback(() => {
     if (!repoPath) return;
@@ -199,10 +221,13 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     modeRunning,
     modeOutput,
     historyOpen,
+    searchActive,
     runModeRef,
     argsInputRef,
     filterInputRef,
     clearOutput,
+    closeSearch: onSearchClose,
+    openSearch: onSearchOpen,
     switchMode,
     setPaletteOpen,
     setKitBuilderOpen,
@@ -306,7 +331,12 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     filterMatchCount,
     argsInputRef,
     filterInputRef,
+    searchInputRef,
     feedbackGiven,
+    searchText,
+    searchActive,
+    searchMatchCount,
+    searchCurrentMatch,
     // actions
     setActiveMode,
     setSidebarTab,
@@ -327,5 +357,9 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     onFilterToggle,
     onFilterClose,
     clearOutput,
+    onSearchOpen,
+    onSearchClose,
+    onSearchChange: setSearchText,
+    onSearchNavigate,
   };
 }
