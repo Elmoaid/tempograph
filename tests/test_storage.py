@@ -44,7 +44,7 @@ class TestGraphDB:
         assert db.file_count() == 1
         assert db.symbol_count() == 1
 
-        files, symbols, edges = db.load_all()
+        files, symbols, edges, _ = db.load_all()
         assert "main.py" in files
         assert files["main.py"].line_count == 50
         assert "main.py::main" in symbols
@@ -58,13 +58,13 @@ class TestGraphDB:
         edge = _make_edge("main.py::main", "utils.py::helper")
         db.update_file("main.py", "abc123", "python", 50, 1000, [sym], [edge], ["import utils"])
 
-        files, symbols, edges = db.load_all(lazy_edges=True)
+        files, symbols, edges, _ = db.load_all(lazy_edges=True)
         assert "main.py" in files
         assert "main.py::main" in symbols
         assert len(edges) == 0  # edges skipped
 
         # Normal load still works after lazy load
-        _, _, edges_full = db.load_all(lazy_edges=False)
+        _, _, edges_full, _ = db.load_all(lazy_edges=False)
         assert len(edges_full) == 1
 
     def test_hash_check(self, db):
@@ -84,7 +84,7 @@ class TestGraphDB:
         db.update_file("main.py", "hash2", "python", 20, 200, [sym2, sym3], [], [])
         assert db.symbol_count() == 2  # old_func replaced by new_func + another_func
 
-        _, symbols, _ = db.load_all()
+        _,symbols,_,_ = db.load_all()
         assert "main.py::old_func" not in symbols
         assert "main.py::new_func" in symbols
         assert "main.py::another_func" in symbols
@@ -131,7 +131,7 @@ class TestGraphDB:
     def test_imports_preserved(self, db):
         db.update_file("main.py", "h1", "python", 10, 100, [],
                        [], ["import os", "from pathlib import Path"])
-        files, _, _ = db.load_all()
+        files,_,_,_ = db.load_all()
         assert files["main.py"].imports == ["import os", "from pathlib import Path"]
 
     def test_symbol_kinds(self, db):
@@ -141,7 +141,7 @@ class TestGraphDB:
             _make_symbol("main.py", "my_method", SymbolKind.METHOD),
         ]
         db.update_file("main.py", "h1", "python", 30, 300, syms, [], [])
-        _, symbols, _ = db.load_all()
+        _,symbols,_,_ = db.load_all()
         assert symbols["main.py::MyClass"].kind == SymbolKind.CLASS
         assert symbols["main.py::my_func"].kind == SymbolKind.FUNCTION
         assert symbols["main.py::my_method"].kind == SymbolKind.METHOD
