@@ -1184,11 +1184,12 @@ def _signals_exports(
     return lines
 
 
-def _signals_structure(
+def _signals_structure_a(
     graph: Tempo, *, _src_fps: list[str], _test_fps: set[str],
     modules: dict[str, list[str]], _s220_entry_files: list[str],
 ) -> list[str]:
-    """Structural signals."""
+    """Structural signals: file isolation, module layout, entry-point patterns."""
+    lines: list[str] = []
     lines: list[str] = []
 
     # Lone files: source files with both 0 outgoing imports AND 0 incoming importers.
@@ -1455,16 +1456,6 @@ def _signals_structure(
     # Multiple entry points can mean inconsistent startup paths or divergent CLI/server behaviors.
     # Agents should verify cross-cutting changes (config, auth, logging) apply to all entry points.
     # Only shown when 3+ entry point stems found among non-test source files.
-    _s220_entry_stems = {
-        "main", "app", "index", "server", "cli", "run", "manage",
-        "wsgi", "asgi", "__main__", "entrypoint", "entry_point",
-    }
-    _s220_entry_files = [
-        fp for fp in graph.files
-        if not _is_test_file(fp)
-        and fp.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower() in _s220_entry_stems
-        and graph.files[fp].language.value in _CODE_LANGS
-    ]
     if len(_s220_entry_files) >= 3:
         _s220_names = [fp.rsplit("/", 1)[-1] for fp in _s220_entry_files[:4]]
         _s220_suffix = f" (+{len(_s220_entry_files) - 3} more)" if len(_s220_entry_files) > 3 else ""
@@ -1490,6 +1481,12 @@ def _signals_structure(
 
 
 
+    return lines
+
+
+def _signals_structure_b(graph: Tempo) -> list[str]:
+    """Structural signals: repo meta — polyglot, packages, plugins, frameworks."""
+    lines: list[str] = []
     # S292: Polyglot codebase — 3+ programming languages detected in source files.
     # Polyglot repos require multi-language expertise; each language adds its own
     # toolchain, build system, and dependency management overhead.
@@ -1718,6 +1715,12 @@ def _signals_structure(
             f" — framework conventions shape change impact; review framework-specific patterns"
         )
 
+    return lines
+
+
+def _signals_structure_c(graph: Tempo) -> list[str]:
+    """Structural signals: quality metrics — stubs, exports, constants, methods."""
+    lines: list[str] = []
     # S355: Test-only codebase — no source files found outside of test files.
     # A repo with only test files and no source is likely a test-only slice or
     # a misconfigured project; signals that the tempograph graph may be incomplete.
@@ -1916,10 +1919,25 @@ def _signals_structure(
     return lines
 
 
-def _signals_async_oop(
+def _signals_structure(
+    graph: Tempo, *, _src_fps: list[str], _test_fps: set[str],
+    modules: dict[str, list[str]], _s220_entry_files: list[str],
+) -> list[str]:
+    """Structural signals."""
+    lines: list[str] = []
+    lines.extend(_signals_structure_a(
+        graph, _src_fps=_src_fps, _test_fps=_test_fps,
+        modules=modules, _s220_entry_files=_s220_entry_files,
+    ))
+    lines.extend(_signals_structure_b(graph))
+    lines.extend(_signals_structure_c(graph))
+    return lines
+
+
+def _signals_async_oop_a(
     graph: Tempo, *, _s220_entry_files: list[str],
 ) -> list[str]:
-    """Async/OOP signals."""
+    """Async, OOP, and project-structure signals (S84–S565)."""
     lines: list[str] = []
 
     # S84: Async surface — count exported async functions to signal async-heavy codebases.
@@ -2396,6 +2414,11 @@ def _signals_async_oop(
                 f" — high test volume may indicate brittle implementation-coupled tests; prefer behavior tests"
             )
 
+    return lines
+
+def _signals_async_oop_b(graph: Tempo) -> list[str]:
+    """Symbol and export metric signals (S571–S649)."""
+    lines: list[str] = []
     # S571: No exports — 5+ source files but zero exported (public) symbols detected.
     # A codebase with no exports is likely a script collection or has accidentally made
     # everything private; agents can't reliably identify the public API surface.
@@ -2655,6 +2678,11 @@ def _signals_async_oop(
                 f" — wide failure surface; callers must handle many distinct exception types"
             )
 
+    return lines
+
+def _signals_async_oop_c(graph: Tempo) -> list[str]:
+    """File quality and hub pattern signals (S655–S787)."""
+    lines: list[str] = []
     # S655: High average complexity — average symbol complexity exceeds 5.
     # Complex functions are harder to understand, test, and maintain;
     # a high average signals that the codebase may need targeted refactoring passes.
@@ -3036,6 +3064,11 @@ def _signals_async_oop(
                 f" — structural singleton; breaking changes require touching all importers"
             )
 
+    return lines
+
+def _signals_async_oop_d(graph: Tempo) -> list[str]:
+    """Language, docstring, and module cohesion signals (S781–S1009)."""
+    lines: list[str] = []
     # S781: Many small files — average source file is under 10 lines with 5+ source files.
     # Over-fragmented codebases split logic into many tiny files, increasing navigation
     # cost and import overhead; consider consolidating into fewer coherent modules.
@@ -3628,6 +3661,17 @@ def _signals_async_oop(
             f" — multi-language repo; cross-language call boundaries are harder to trace for agents"
         )
 
+    return lines
+
+def _signals_async_oop(
+    graph: Tempo, *, _s220_entry_files: list[str],
+) -> list[str]:
+    """Async/OOP signals."""
+    lines: list[str] = []
+    lines.extend(_signals_async_oop_a(graph, _s220_entry_files=_s220_entry_files))
+    lines.extend(_signals_async_oop_b(graph))
+    lines.extend(_signals_async_oop_c(graph))
+    lines.extend(_signals_async_oop_d(graph))
     return lines
 
 
