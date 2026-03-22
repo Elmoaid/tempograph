@@ -723,6 +723,712 @@ def _render_monolith_section(graph, ordered: list, token_count: int, max_tokens:
     return "", 0
 
 
+# ---------------------------------------------------------------------------
+# _build_symbol_block_lines helper: depth-0 header annotation sub-helpers
+# ---------------------------------------------------------------------------
+
+def _compute_blast_age_anns(
+    sym: "Symbol",
+    graph: "Tempo",
+    staleness_cache: dict,
+) -> tuple[str, str]:
+    """Compute blast-radius and symbol-age annotation strings for the depth-0 header."""
+    _blast_files = {c.file_path for c in graph.callers_of(sym.id) if c.file_path != sym.file_path}
+    if len(_blast_files) >= 3:
+        blast_ann = f" [blast: {len(_blast_files)} files]"
+    elif len(_blast_files) == 1:
+        _sole_file = next(iter(_blast_files))
+        blast_ann = f" [owned by: {_sole_file.rsplit('/', 1)[-1]}]"
+    elif len(_blast_files) == 0 and sym.exported and sym.kind.value in ("function", "method", "class"):
+        blast_ann = " [entry point]"
+    else:
+        blast_ann = ""
+    age_ann = ""
+    try:
+        from ..git import symbol_last_modified_days as _sld  # noqa: PLC0415
+        _days = _sld(graph.root, sym.file_path, sym.line_start)
+        if _days is not None and _days >= 8:
+            if _days >= 365:
+                age_ann = " [age: 1y+]"
+            elif _days >= 30:
+                age_ann = f" [age: {_days // 30}m]"
+            else:
+                age_ann = f" [age: {_days}d]"
+    except Exception:
+        pass
+    return blast_ann, age_ann
+
+
+def _compute_callee_depth_anns(
+    sym: "Symbol",
+    graph: "Tempo",
+) -> tuple[str, str]:
+    """Compute callee-count and callee-depth annotation strings for the depth-0 header."""
+    _callee_ids = {
+        e.target_id for e in graph.edges
+        if e.kind == EdgeKind.CALLS and e.source_id == sym.id
+    }
+    callee_ann = f" [calls: {len(_callee_ids)}]" if len(_callee_ids) >= 5 else ""
+    _bfs_q: list[tuple[str, int]] = [(sym.id, 0)]
+    _bfs_seen: set[str] = {sym.id}
+    _max_callee_depth = 0
+    while _bfs_q and len(_bfs_seen) < 60:
+        _cur_id, _cur_lvl = _bfs_q.pop(0)
+        if _cur_lvl > _max_callee_depth:
+            _max_callee_depth = _cur_lvl
+        if _cur_lvl >= 8:
+            continue
+        for _e in graph.edges:
+            if _e.kind == EdgeKind.CALLS and _e.source_id == _cur_id and _e.target_id not in _bfs_seen:
+                _bfs_seen.add(_e.target_id)
+                _bfs_q.append((_e.target_id, _cur_lvl + 1))
+    depth_ann = f" [callee depth: {_max_callee_depth}]" if _max_callee_depth >= 3 else ""
+    return callee_ann, depth_ann
+
+
+def _compute_async_doc_param_anns(
+    sym: "Symbol",
+    graph: "Tempo",
+) -> tuple[str, str, str]:
+    """Compute async, undocumented, and param-count annotation strings for depth-0 header."""
+    async_ann = ""
+    if sym.kind.value in ("function", "method") and sym.signature.startswith("async "):
+        async_ann = " [async]"
+    doc_ann = ""
+    if sym.exported and not sym.doc and sym.kind.value in ("function", "method"):
+        _ext_caller_files = {c.file_path for c in graph.callers_of(sym.id) if c.file_path != sym.file_path}
+        if len(_ext_caller_files) >= 3:
+            doc_ann = " [undocumented]"
+    param_ann = ""
+    if sym.kind.value in ("function", "method") and sym.signature:
+        _s_open = sym.signature.find("(")
+        _s_close = sym.signature.rfind(")")
+        if _s_open != -1 and _s_close > _s_open:
+            _ps = sym.signature[_s_open + 1:_s_close].strip()
+            if _ps:
+                _pd, _pc = 0, 0
+                for _ch in _ps:
+                    if _ch in "([{":
+                        _pd += 1
+                    elif _ch in ")]}":
+                        _pd -= 1
+                    elif _ch == "," and _pd == 0:
+                        _pc += 1
+                if _pc + 1 >= 5:
+                    param_ann = f" [params: {_pc + 1}]"
+    return async_ann, doc_ann, param_ann
+
+
+def _compute_structure_anns(
+    sym: "Symbol",
+    graph: "Tempo",
+) -> tuple[str, str]:
+    """Compute class-size and import-depth annotation strings for depth-0 header."""
+    class_size_ann = ""
+    if sym.kind.value in ("class", "interface", "component"):
+        _children = graph.children_of(sym.id)
+        _methods = [c for c in _children if c.kind.value in ("method", "function")]
+        _props = [c for c in _children if c.kind.value in ("field", "property", "variable")]
+        if len(_methods) >= 5:
+            class_size_ann = f" [methods: {len(_methods)}]"
+            if _props:
+                class_size_ann += f"[props: {len(_props)}]"
+    depth_from_entry_ann = ""
+    _FOCUS_ENTRY_NAMES = {
+        "__main__.py", "main.py", "app.py", "manage.py", "cli.py",
+        "server.py", "wsgi.py", "asgi.py", "run.py", "index.js",
+        "index.ts", "index.tsx", "main.ts", "main.tsx", "main.go",
+    }
+    _entry_fps = {fp for fp in graph.files if fp.rsplit("/", 1)[-1] in _FOCUS_ENTRY_NAMES}
+    if _entry_fps and sym.file_path not in _entry_fps:
+        _rev_adj: dict[str, list[str]] = {}
+        for _e in graph.edges:
+            if _e.kind == EdgeKind.IMPORTS and _e.source_id in graph.files and _e.target_id in graph.files:
+                _rev_adj.setdefault(_e.target_id, []).append(_e.source_id)
+        _bfs_imp: list[tuple[str, int]] = [(sym.file_path, 0)]
+        _seen_imp: set[str] = {sym.file_path}
+        _found_depth: int | None = None
+        while _bfs_imp and _found_depth is None:
+            _cur_fp, _cur_d = _bfs_imp.pop(0)
+            if _cur_d >= 8:
+                continue
+            for _imp in _rev_adj.get(_cur_fp, []):
+                if _imp in _entry_fps:
+                    _found_depth = _cur_d + 1
+                    break
+                if _imp not in _seen_imp and len(_seen_imp) < 80:
+                    _seen_imp.add(_imp)
+                    _bfs_imp.append((_imp, _cur_d + 1))
+        if _found_depth is not None and _found_depth >= 4:
+            depth_from_entry_ann = f" [depth: {_found_depth}]"
+    return class_size_ann, depth_from_entry_ann
+
+
+def _compute_recursion_label(
+    sym: "Symbol",
+    graph: "Tempo",
+) -> str:
+    """Detect self or mutual recursion; return the annotation label string."""
+    if sym.kind.value not in ("function", "method"):
+        return ""
+    _seed_callee_ids = {
+        e.target_id for e in graph.edges
+        if e.kind == EdgeKind.CALLS and e.source_id == sym.id
+    }
+    if sym.id in _seed_callee_ids:
+        return "[recursive]"
+    for _callee_s in graph.callees_of(sym.id)[:10]:
+        _callee_callees = {
+            e.target_id for e in graph.edges
+            if e.kind == EdgeKind.CALLS and e.source_id == _callee_s.id
+        }
+        if sym.id in _callee_callees:
+            return f"[recursive: mutual with {_callee_s.name}]"
+    return ""
+
+
+def _compute_seed_annotations(
+    sym: "Symbol",
+    graph: "Tempo",
+    staleness_cache: dict,
+) -> dict[str, str]:
+    """Compute all annotation strings for a depth-0 symbol header.
+
+    Returns dict: blast, age, callee, depth, async_, doc, param,
+    class_size, depth_entry, recursive. Hub is always '' at depth 0."""
+    blast_ann, age_ann = _compute_blast_age_anns(sym, graph, staleness_cache)
+    callee_ann, depth_ann = _compute_callee_depth_anns(sym, graph)
+    async_ann, doc_ann, param_ann = _compute_async_doc_param_anns(sym, graph)
+    class_size_ann, depth_from_entry_ann = _compute_structure_anns(sym, graph)
+    recursive_label = _compute_recursion_label(sym, graph)
+    return {
+        "blast": blast_ann,
+        "age": age_ann,
+        "callee": callee_ann,
+        "depth": depth_ann,
+        "async_": async_ann,
+        "doc": doc_ann,
+        "param": param_ann,
+        "class_size": class_size_ann,
+        "depth_entry": depth_from_entry_ann,
+        "recursive": recursive_label,
+    }
+
+
+# ---------------------------------------------------------------------------
+# _build_symbol_block_lines helper: depth-0 sub-line builders
+# ---------------------------------------------------------------------------
+
+def _build_seed_identity_lines(
+    sym: "Symbol",
+    graph: "Tempo",
+    recursive_label: str,
+    indent: str,
+) -> list[str]:
+    """Build also-in (S61), implements (S83), and recursion sub-lines."""
+    lines: list[str] = []
+    # S61: warn when same symbol name exists in other files
+    _dupes = [s for s in graph.find_symbol(sym.name) if s.id != sym.id and not _is_test_file(s.file_path)]
+    if _dupes:
+        _dupe_strs = [f"{s.file_path.rsplit('/', 1)[-1]}:{s.line_start}" for s in _dupes[:3]]
+        lines.append(f"{indent}  also in: {', '.join(_dupe_strs)}")
+    # S83: show parent classes/interfaces via INHERITS edges
+    if sym.kind.value in ("class", "interface", "struct"):
+        _parent_ids = [
+            e.target_id for e in graph.edges
+            if e.kind == EdgeKind.INHERITS and e.source_id == sym.id
+        ]
+        _parents = [graph.symbols[pid].name for pid in _parent_ids if pid in graph.symbols]
+        if not _parents:
+            _parents = [
+                e.target_id for e in graph.edges
+                if e.kind == EdgeKind.INHERITS and e.source_id == sym.id
+                and "::" not in e.target_id
+            ]
+        if _parents:
+            lines.append(f"{indent}  implements: {', '.join(_parents[:4])}")
+    if recursive_label:
+        lines.append(f"{indent}  {recursive_label}")
+    return lines
+
+
+def _build_seed_test_lines(
+    sym: "Symbol",
+    graph: "Tempo",
+    indent: str,
+) -> list[str]:
+    """Build test-coverage and caller-coverage sub-lines for a depth-0 fn/method."""
+    lines: list[str] = []
+    if sym.kind.value not in ("function", "method"):
+        return lines
+    _all_callers = graph.callers_of(sym.id)
+    _test_callers = [c for c in _all_callers if _is_test_file(c.file_path)]
+    if _test_callers:
+        _t_files = sorted({c.file_path.rsplit("/", 1)[-1] for c in _test_callers})
+        lines.append(f"{indent}  tested: {', '.join(_t_files[:3])}")
+        # S81: show test scenario names
+        _scenario_names = sorted({
+            c.name for c in _test_callers
+            if c.name.startswith("test_") and c.kind.value in ("function", "method", "test")
+        })
+        if _scenario_names:
+            _sc_str = ", ".join(_scenario_names[:3])
+            if len(_scenario_names) > 3:
+                _sc_str += f" +{len(_scenario_names) - 3} more"
+            lines.append(f"{indent}  scenarios: {_sc_str}")
+    elif sym.exported:
+        lines.append(f"{indent}  no tests — exported but never called from a test file")
+    # S85: caller coverage fraction
+    _all_src_callers = [
+        c for c in _all_callers
+        if not _is_test_file(c.file_path) and c.file_path != sym.file_path
+    ]
+    if len(_all_src_callers) >= 3:
+        _tested_callers = [
+            c for c in _all_src_callers
+            if any(_is_test_file(t.file_path) for t in graph.callers_of(c.id))
+        ]
+        _cc_pct = int(len(_tested_callers) / len(_all_src_callers) * 100)
+        lines.append(
+            f"{indent}  caller coverage: {len(_tested_callers)}/{len(_all_src_callers)} callers tested ({_cc_pct}%)"
+        )
+    return lines
+
+
+def _build_seed_method_ctx_lines(
+    sym: "Symbol",
+    graph: "Tempo",
+    indent: str,
+) -> list[str]:
+    """Build container and hot-siblings sub-lines for a depth-0 symbol."""
+    lines: list[str] = []
+    # Container annotation for methods
+    if sym.kind.value == "method" and "::" in sym.id:
+        _name_part = sym.id.split("::", 1)[1]
+        if "." in _name_part:
+            _class_id = sym.id.rsplit(".", 1)[0]
+            _class_sym = graph.symbols.get(_class_id)
+            if _class_sym:
+                _c_callers = len(graph.callers_of(_class_id))
+                _c_methods = len([c for c in graph.children_of(_class_id) if c.kind.value == "method"])
+                _c_ann = f"{_c_callers} callers" if _c_callers else "no callers"
+                lines.append(f"{indent}  container: {_class_sym.kind.value} {_class_sym.name} ({_c_ann}, {_c_methods} methods)")
+    # S81: sibling hot annotation
+    if sym.kind.value in ("function", "method") and sym.file_path in graph.files:
+        _file_sids = graph.files[sym.file_path].symbols
+        _hot_siblings: list[tuple[int, str]] = []
+        for _fsid in _file_sids:
+            if _fsid == sym.id or _fsid not in graph.symbols:
+                continue
+            _fs = graph.symbols[_fsid]
+            if _fs.kind.value not in ("function", "method") or _is_test_file(_fs.file_path):
+                continue
+            _fs_cross = len({c.file_path for c in graph.callers_of(_fsid) if c.file_path != _fs.file_path})
+            if _fs_cross >= 3:
+                _hot_siblings.append((_fs_cross, _fs.name))
+        _hot_siblings.sort(reverse=True)
+        if len(_hot_siblings) >= 2:
+            _hs_strs = [f"{name} ({n})" for n, name in _hot_siblings[:3]]
+            lines.append(f"{indent}  also hot: {', '.join(_hs_strs)}")
+    return lines
+
+
+def _build_seed_git_ctx_lines(
+    sym: "Symbol",
+    graph: "Tempo",
+    staleness_cache: dict,
+    indent: str,
+) -> list[str]:
+    """Build recent-commits, callee-drift, and co-change sub-lines for a depth-0 symbol."""
+    lines: list[str] = []
+    if not graph.root:
+        return lines
+    # Recent commit messages
+    try:
+        from ..git import recent_file_commits as _rfc  # noqa: PLC0415
+        _commits = _rfc(graph.root, sym.file_path, n=2)
+        if _commits:
+            _commit_parts = [f"{c['days_ago']}d \"{c['message']}\"" for c in _commits]
+            lines.append(f"{indent}  recent: {', '.join(_commit_parts)}")
+    except Exception:
+        pass
+    # Callee drift: seed is old but calls recently changed deps
+    try:
+        from ..git import symbol_last_modified_days as _sld_cd  # noqa: PLC0415
+        from ..git import file_last_modified_days as _fld_cd    # noqa: PLC0415
+        _seed_days = _sld_cd(graph.root, sym.file_path, sym.line_start)
+        if _seed_days is not None and _seed_days >= 30:
+            _drifted: list[tuple[int, str]] = []
+            for _c in graph.callees_of(sym.id)[:15]:
+                if _c.file_path == sym.file_path:
+                    continue
+                if _c.file_path not in staleness_cache:
+                    staleness_cache[_c.file_path] = _fld_cd(graph.root, _c.file_path)
+                _c_days = staleness_cache[_c.file_path]
+                if _c_days is not None and _c_days < 14:
+                    _drifted.append((_c_days, _c.name))
+            if _drifted:
+                _drifted.sort()
+                _drift_strs = [f"{n} ({d}d)" for d, n in _drifted[:3]]
+                _drift_overflow = f" +{len(_drifted) - 3} more" if len(_drifted) > 3 else ""
+                lines.append(
+                    f"{indent}  ⚠ callee drift: {len(_drifted)} dep(s) changed after your last edit"
+                    f" — {', '.join(_drift_strs)}{_drift_overflow}"
+                )
+    except Exception:
+        pass
+    # Co-change buddy
+    try:
+        from ..git import cochange_pairs as _ccp  # noqa: PLC0415
+        _buddies = _ccp(graph.root, sym.file_path, n=1, min_count=4)
+        if _buddies:
+            _buddy = _buddies[0]
+            _buddy_fp = _buddy["path"]
+            if _buddy_fp in graph.files and not _is_test_file(_buddy_fp):
+                _buddy_name = _buddy_fp.rsplit("/", 1)[-1]
+                lines.append(
+                    f"{indent}  co-changes with: {_buddy_name} ({_buddy['count']}x)"
+                )
+    except Exception:
+        pass
+    return lines
+
+
+def _build_seed_todo_lines(
+    sym: "Symbol",
+    graph: "Tempo",
+    indent: str,
+) -> list[str]:
+    """Scan the seed function's source for inline TODO/FIXME/HACK/BUG comments."""
+    lines: list[str] = []
+    if sym.kind.value not in ("function", "method") or not graph.root:
+        return lines
+    try:
+        import os as _os, re as _re  # noqa: PLC0415
+        _full_path = _os.path.join(graph.root, sym.file_path)
+        if _os.path.isfile(_full_path):
+            with open(_full_path, encoding="utf-8", errors="replace") as _fh:
+                _src_lines = _fh.readlines()
+            _todo_pat = _re.compile(
+                r"#.*\b(TODO|FIXME|HACK|XXX|BUG)\b[:\s]*(.*)", _re.IGNORECASE
+            )
+            _hits: list[tuple[int, str, str]] = []
+            for _li in range(sym.line_start - 1, min(sym.line_end, len(_src_lines))):
+                _m = _todo_pat.search(_src_lines[_li])
+                if _m:
+                    _tag = _m.group(1).upper()
+                    _note = _m.group(2).strip()[:80]
+                    _hits.append((_li + 1, _tag, _note))
+            for _lineno, _tag, _note in _hits[:3]:
+                _suffix = f': "{_note}"' if _note else ""
+                lines.append(f"{indent}  {_tag.lower()}: L{_lineno}{_suffix}")
+    except Exception:
+        pass
+    return lines
+
+
+def _build_seed_effects_lines(
+    sym: "Symbol",
+    graph: "Tempo",
+    indent: str,
+) -> list[str]:
+    """Detect side effects and raise statements in the seed function body."""
+    lines: list[str] = []
+    if sym.kind.value not in ("function", "method") or not graph.root:
+        return lines
+    try:
+        import os as _os2, re as _re2  # noqa: PLC0415
+        _fp2 = _os2.path.join(graph.root, sym.file_path)
+        if _os2.path.isfile(_fp2):
+            with open(_fp2, encoding="utf-8", errors="replace") as _fh2:
+                _body = "".join(_fh2.readlines()[sym.line_start - 1:sym.line_end])
+            _effects: list[str] = []
+            if _re2.search(r'(execute|cursor|session[.]query|db[.]|[.]save[(]|[.]commit[(]|SELECT|INSERT|UPDATE|DELETE)', _body, _re2.IGNORECASE):
+                _effects.append("db")
+            if _re2.search(r'(open[(]|write[(]|read[(]|os[.]path|shutil[.]|pathlib|json[.]dump|json[.]load|yaml[.])', _body):
+                _effects.append("file")
+            if _re2.search(r'(requests[.]|httpx[.]|aiohttp[.]|urllib[.]|fetch[(]|http[.]|socket[.]|grpc[.])', _body):
+                _effects.append("network")
+            if _re2.search(r'(subprocess[.]|os[.]system[(]|os[.]popen[(]|Popen[(])', _body):
+                _effects.append("subprocess")
+            if _re2.search(r'self[.]\w+\s*=(?!=)', _body) or _re2.search(r'\bglobal\b', _body):
+                _effects.append("mutates state")
+            if _effects:
+                lines.append(f"{indent}  effects: {', '.join(_effects)}")
+            # S85: throws detection
+            _raise_pat = _re2.compile(r'\braise\s+([A-Za-z_][A-Za-z0-9_]*(?:[.][A-Za-z_][A-Za-z0-9_]*)*)')
+            _exc_names = list(dict.fromkeys(_raise_pat.findall(_body)))
+            _exc_names = [e for e in _exc_names if e not in ("Exception", "BaseException")][:4]
+            if _exc_names:
+                lines.append(f"{indent}  throws: {', '.join(_exc_names)}")
+    except Exception:
+        pass
+    return lines
+
+
+def _build_seed_callee_chain_line(
+    sym: "Symbol",
+    graph: "Tempo",
+    indent: str,
+) -> list[str]:
+    """Build the callee-chain annotation line for a depth-0 fn/method."""
+    lines: list[str] = []
+    if sym.kind.value not in ("function", "method"):
+        return lines
+    _file_callees = [
+        c for c in graph.callees_of(sym.file_path)
+        if c.file_path != sym.file_path
+    ]
+    if 1 <= len(_file_callees) <= 4:
+        _chain_parts = [sym.name, _file_callees[0].name]
+        _c1 = _file_callees[0]
+        _c1_callees = [c for c in graph.callees_of(_c1.file_path) if c.file_path != _c1.file_path]
+        if _c1_callees:
+            _chain_parts.append(_c1_callees[0].name)
+        lines.append(f"{indent}  callee chain: {' → '.join(_chain_parts)}")
+    return lines
+
+
+# ---------------------------------------------------------------------------
+# _build_symbol_block_lines helper: structural section builders
+# ---------------------------------------------------------------------------
+
+def _build_siblings_block(
+    sym: "Symbol",
+    depth: int,
+    graph: "Tempo",
+    indent: str,
+) -> list[str]:
+    """Build the 'in this file: N others' sibling summary line."""
+    lines: list[str] = []
+    if depth != 0:
+        return lines
+    _siblings = [
+        s for s in graph.symbols.values()
+        if s.file_path == sym.file_path and s.id != sym.id
+        and s.kind.value in ("class", "function", "method", "interface", "module")
+        and s.parent_id is None
+    ]
+    if len(_siblings) >= 2:
+        _sib_sorted = sorted(
+            _siblings,
+            key=lambda s: (0 if s.kind.value in ("class", "interface", "module") else 1, s.name)
+        )
+        _kind_abbr = {"function": "fn", "method": "fn", "class": "cls",
+                      "interface": "iface", "module": "mod"}
+        _sib_parts = [
+            f"{_kind_abbr.get(s.kind.value, s.kind.value)} {s.name}" for s in _sib_sorted[:3]
+        ]
+        _sib_overflow = len(_siblings) - 3
+        _sib_str = ", ".join(_sib_parts)
+        if _sib_overflow > 0:
+            _sib_str += f" +{_sib_overflow} more"
+        lines.append(f"{indent}  in this file: {len(_siblings)} others ({_sib_str})")
+    return lines
+
+
+def _build_warnings_block(
+    sym: "Symbol",
+    depth: int,
+    graph: "Tempo",
+    indent: str,
+) -> list[str]:
+    """Build all warning annotations (LARGE, HIGH COMPLEXITY, POSSIBLY DEAD, etc.)."""
+    if depth > 1:
+        return []
+    lines: list[str] = []
+    warnings: list[str] = []
+    if sym.line_count > 500:
+        warnings.append(f"LARGE ({sym.line_count} lines — use grep, don't read)")
+    if sym.complexity > 50:
+        _file_fns = [
+            s for s in graph.symbols.values()
+            if s.file_path == sym.file_path
+            and s.kind.value in ("function", "method")
+            and s.complexity > 0
+        ]
+        _cx_rel = ""
+        if len(_file_fns) >= 3:
+            _avg_cx = sum(s.complexity for s in _file_fns) / len(_file_fns)
+            if _avg_cx > 0:
+                _ratio = sym.complexity / _avg_cx
+                if _ratio >= 1.5:
+                    _cx_rel = f" ({_ratio:.1f}x file avg)"
+        warnings.append(f"HIGH COMPLEXITY (cx={sym.complexity}{_cx_rel})")
+    if depth == 0 and not graph.callers_of(sym.id):
+        _name_lower = sym.name.lower()
+        _entry_patterns = ("handle_", "on_", "run", "start", "main", "execute", "dispatch",
+                           "route", "command", "hook", "middleware", "plugin", "setup", "teardown")
+        _is_entry = any(_name_lower.startswith(p) or _name_lower == p for p in _entry_patterns)
+        if _is_entry:
+            lines.append(f"{indent}  [likely entry point — wired externally, not dead]")
+        elif not sym.exported and _dead_code_confidence(sym, graph) >= 40:
+            warnings.append("POSSIBLY DEAD — 0 callers, not exported (run dead_code mode to confirm)")
+    if depth == 0:
+        _callers = graph.callers_of(sym.id)
+        if len(_callers) >= 2 and all(_is_test_file(c.file_path) for c in _callers):
+            warnings.append("TEST-ONLY CALLERS — not called from production code")
+    if depth == 0 and graph.root:
+        _cycles = graph.detect_circular_imports()
+        for _cycle in _cycles:
+            if sym.file_path in _cycle:
+                _names = [fp.rsplit("/", 1)[-1] for fp in _cycle]
+                warnings.append(f"CIRCULAR IMPORT — {' → '.join(_names)}")
+                break
+    if warnings:
+        lines.append(f"{indent}  ⚠ {', '.join(warnings)}")
+    return lines
+
+
+def _build_callers_block(
+    sym: "Symbol",
+    depth: int,
+    graph: "Tempo",
+    query_tokens: list[str],
+    staleness_cache: dict,
+    callsite_lines: "dict[tuple[str,str], list[int]] | None",
+    indent: str,
+) -> list[str]:
+    """Build the 'called by:' section."""
+    lines: list[str] = []
+    callers = graph.callers_of(sym.id)
+    if not callers:
+        return lines
+    try:
+        from ..git import file_last_modified_days as _fld  # noqa: PLC0415
+    except Exception:
+        _fld = None
+
+    def _stale_annotation(file_path: str) -> str:
+        if _fld is None:
+            return ""
+        if file_path not in staleness_cache:
+            staleness_cache[file_path] = _fld(graph.root, file_path)
+        days = staleness_cache[file_path]
+        if days is None or days <= 30:
+            return ""
+        return " [stale: 6m+]" if days > 180 else f" [stale: {days}d]"
+
+    def _is_kw(c: "Symbol") -> bool:
+        return bool(query_tokens and any(tok in c.file_path.lower() for tok in query_tokens))
+
+    _callers_for_display = (
+        [c for c in callers if not _is_test_file(c.file_path)] if depth == 0 else callers
+    )
+    callers_sorted = sorted(_callers_for_display, key=lambda c: 0 if _is_kw(c) else 1)
+    kw_callers = [c for c in callers_sorted if _is_kw(c)]
+    other_callers = [c for c in callers_sorted if not _is_kw(c)]
+    hot_other = [c for c in other_callers if c.file_path in graph.hot_files]
+    cold_other = [c for c in other_callers if c.file_path not in graph.hot_files]
+    max_other = 3 if kw_callers else (8 if depth == 0 else 5)
+    shown_callers = kw_callers + (hot_other + cold_other)[:max_other]
+    shown_count = len(kw_callers) + max_other
+    _total_for_overflow = len(_callers_for_display)
+    caller_strs = []
+    for c in shown_callers:
+        _cl = (callsite_lines or {}).get((c.id, sym.id), [])
+        if len(_cl) == 1:
+            _line_ann = f" [line {_cl[0]}]"
+        elif len(_cl) >= 2:
+            _line_ann = f" [lines {_cl[0]}, {_cl[1]}]"
+        else:
+            _line_ann = ""
+        if c.file_path in graph.hot_files:
+            caller_strs.append(f"{c.qualified_name}{_line_ann} [hot]")
+        else:
+            caller_strs.append(c.qualified_name + _line_ann + _stale_annotation(c.file_path))
+    if caller_strs:
+        lines.append(f"{indent}  called by: {', '.join(caller_strs)}")
+        if _total_for_overflow > shown_count:
+            lines[-1] += f" (+{_total_for_overflow - shown_count} more)"
+    return lines
+
+
+def _build_callees_block(
+    sym: "Symbol",
+    depth: int,
+    graph: "Tempo",
+    indent: str,
+) -> list[str]:
+    """Build the 'calls:' section."""
+    lines: list[str] = []
+    callees = graph.callees_of(sym.id)
+    if not callees:
+        return lines
+    shown = 8 if depth == 0 else 5
+    hot_callees = [c for c in callees if c.file_path in graph.hot_files]
+    cold_callees = [c for c in callees if c.file_path not in graph.hot_files]
+    ordered_callees = (hot_callees + cold_callees)[:shown]
+    callee_strs = []
+    for c in ordered_callees:
+        _hot_ann = " [hot]" if c.file_path in graph.hot_files else ""
+        _cb_ann = ""
+        if depth == 0:
+            _cb_files = len({cr.file_path for cr in graph.callers_of(c.id) if cr.file_path != c.file_path})
+            if _cb_files >= 3:
+                _cb_ann = f" [blast: {_cb_files}]"
+        callee_strs.append(f"{c.qualified_name}{_hot_ann}{_cb_ann}")
+    lines.append(f"{indent}  calls: {', '.join(callee_strs)}")
+    if len(callees) > shown:
+        lines[-1] += f" (+{len(callees) - shown} more)"
+    return lines
+
+
+def _build_children_block(
+    sym: "Symbol",
+    graph: "Tempo",
+    indent: str,
+) -> list[str]:
+    """Build contains, implementors, and similar sections for a depth-0 symbol."""
+    lines: list[str] = []
+    children = graph.children_of(sym.id)
+    if children:
+        _child_strs = []
+        for c in children[:10]:
+            _c_callers = len(graph.callers_of(c.id))
+            _c_ann = f" ({_c_callers})" if _c_callers >= 1 else ""
+            _child_strs.append(f"{c.kind.value[:4]} {c.name}{_c_ann}")
+        lines.append(f"{indent}  contains: {', '.join(_child_strs)}")
+    if sym.kind in (SymbolKind.CLASS, SymbolKind.INTERFACE):
+        _subtypes = graph.subtypes_of(sym.id)
+        if _subtypes:
+            _sub_strs = [
+                f"{s.qualified_name} ({s.file_path.rsplit('/', 1)[-1]}:{s.line_start})"
+                for s in _subtypes[:8]
+            ]
+            _overflow_sub = len(_subtypes) - 8
+            _sub_line = f"{indent}  implementors: {', '.join(_sub_strs)}"
+            if _overflow_sub > 0:
+                _sub_line += f" (+{_overflow_sub} more)"
+            lines.append(_sub_line)
+    if sym.kind in (SymbolKind.FUNCTION, SymbolKind.METHOD):
+        _seed_callees = {
+            cid for cid in graph._callees.get(sym.id, [])
+            if cid in graph.symbols and graph.symbols[cid].kind.value not in ("class", "type_alias", "enum")
+        }
+        if len(_seed_callees) >= 2:
+            _overlap: dict[str, int] = {}
+            for _callee_id in _seed_callees:
+                for _sibling_id in graph._callers.get(_callee_id, []):
+                    if _sibling_id != sym.id:
+                        _sib = graph.symbols.get(_sibling_id)
+                        if _sib and _sib.kind.value in ("function", "method"):
+                            _overlap[_sibling_id] = _overlap.get(_sibling_id, 0) + 1
+            _similar = [
+                (cnt, graph.symbols[sid])
+                for sid, cnt in _overlap.items()
+                if cnt >= 2 and sid in graph.symbols
+            ]
+            if _similar:
+                _similar.sort(key=lambda x: -x[0])
+                _sim_strs = [
+                    f"{s.qualified_name} ({s.file_path.rsplit('/', 1)[-1]}:{s.line_start}, {n} shared)"
+                    for n, s in _similar[:4]
+                ]
+                lines.append(f"{indent}  similar: {', '.join(_sim_strs)}")
+    return lines
+
+
 def _build_symbol_block_lines(
     sym: "Symbol",
     depth: int,
@@ -738,634 +1444,42 @@ def _build_symbol_block_lines(
     indent = "  " * depth if depth > 0 else ""
     prefix = ["●", "  →", "    ·", "      "][min(depth, 3)]
     loc = f"{sym.file_path}:{sym.line_start}-{sym.line_end}"
-    # Blast annotation for depth-0 seed: number of unique files that call this symbol.
-    # Gives agents immediate risk context — "[blast: 7 files]" = 7 files need review.
-    _blast_ann = ""
-    _hub_ann = ""
-    _age_ann = ""
-    _doc_ann = ""
-    _param_ann = ""
-    _depth_from_entry_ann = ""
-    _class_size_ann = ""
     if depth == 0:
-        _blast_files = {c.file_path for c in graph.callers_of(sym.id) if c.file_path != sym.file_path}
-        if len(_blast_files) >= 3:
-            _blast_ann = f" [blast: {len(_blast_files)} files]"
-        elif len(_blast_files) == 1:
-            # Exactly 1 external caller file → tightly owned by that file.
-            # Agents can safely change this without reviewing other files.
-            _sole_file = next(iter(_blast_files))
-            _blast_ann = f" [owned by: {_sole_file.rsplit('/', 1)[-1]}]"
-        elif len(_blast_files) == 0 and sym.exported and sym.kind.value in ("function", "method", "class"):
-            # Exported but no cross-file callers — likely a CLI/API entry point.
-            # Agents need this to distinguish "safe to change, nothing calls it internally"
-            # from a dead API (which would be non-exported with 0 callers).
-            _blast_ann = " [entry point]"
-        # Symbol-level age: when was this specific function last changed?
-        # Uses git log -L for per-line precision; falls back to file-level.
-        # Skipped for symbols changed < 8 days ago (not actionable — treat as "fresh").
-        try:
-            from ..git import symbol_last_modified_days as _sld  # noqa: PLC0415
-            _days = _sld(graph.root, sym.file_path, sym.line_start)
-            if _days is not None and _days >= 8:
-                if _days >= 365:
-                    _age_ann = " [age: 1y+]"
-                elif _days >= 30:
-                    _age_ann = f" [age: {_days // 30}m]"
-                else:
-                    _age_ann = f" [age: {_days}d]"
-        except Exception:
-            pass
-    # Callee count annotation: if seed calls >= 5 distinct functions, show [calls: N].
-    # High callee count signals broad side-effects — risky to change.
-    _callee_ann = ""
-    _depth_ann = ""
-    _async_ann = ""
-    _recursive_label = ""
+        anns = _compute_seed_annotations(sym, graph, staleness_cache)
+        ann_str = (
+            anns["blast"] + anns["age"] + anns["callee"] + anns["depth"]
+            + anns["async_"] + anns["doc"] + anns["param"]
+            + anns["depth_entry"] + anns["class_size"]
+        )
+        recursive_label = anns["recursive"]
+    else:
+        ann_str = ""
+        recursive_label = ""
+        if depth >= 1:
+            _hub_files = {c.file_path for c in graph.callers_of(sym.id) if c.file_path != sym.file_path}
+            if len(_hub_files) >= 15:
+                ann_str = f" [hub: {len(_hub_files)} files]"
+    block_lines = [f"{prefix} {sym.kind.value} {sym.qualified_name}{ann_str} — {loc}{orbit_note}"]
     if depth == 0:
-        _callee_ids = {
-            e.target_id for e in graph.edges
-            if e.kind == EdgeKind.CALLS and e.source_id == sym.id
-        }
-        if len(_callee_ids) >= 5:
-            _callee_ann = f" [calls: {len(_callee_ids)}]"
-        # Callee depth: longest forward call chain from seed.
-        # Signals how far changes propagate — [callee depth: 4] means 4 levels of calls.
-        # BFS capped at 60 nodes / depth 8 to avoid O(N²) on large graphs.
-        _bfs_q: list[tuple[str, int]] = [(sym.id, 0)]
-        _bfs_seen: set[str] = {sym.id}
-        _max_callee_depth = 0
-        while _bfs_q and len(_bfs_seen) < 60:
-            _cur_id, _cur_lvl = _bfs_q.pop(0)
-            if _cur_lvl > _max_callee_depth:
-                _max_callee_depth = _cur_lvl
-            if _cur_lvl >= 8:
-                continue
-            for _e in graph.edges:
-                if _e.kind == EdgeKind.CALLS and _e.source_id == _cur_id and _e.target_id not in _bfs_seen:
-                    _bfs_seen.add(_e.target_id)
-                    _bfs_q.append((_e.target_id, _cur_lvl + 1))
-        if _max_callee_depth >= 3:
-            _depth_ann = f" [callee depth: {_max_callee_depth}]"
-        # S81: Async annotation — mark async functions/methods in the focus header.
-        # Agents working with async code need to track await chains and error propagation differently.
-        if sym.kind.value in ("function", "method") and sym.signature.startswith("async "):
-            _async_ann = " [async]"
-        # S68: Undocumented annotation — exported fn with 3+ external caller files but no docstring.
-        # Signals missing API docs on a widely-used symbol.
-        _doc_ann = ""
-        if sym.exported and not sym.doc and sym.kind.value in ("function", "method"):
-            _ext_caller_files = {c.file_path for c in graph.callers_of(sym.id) if c.file_path != sym.file_path}
-            if len(_ext_caller_files) >= 3:
-                _doc_ann = " [undocumented]"
-        # S71: Parameter count annotation — functions with >= 5 params are hard to call/mock.
-        # Counts top-level commas inside the first (...) of the signature.
-        _param_ann = ""
-        if sym.kind.value in ("function", "method") and sym.signature:
-            _s_open = sym.signature.find("(")
-            _s_close = sym.signature.rfind(")")
-            if _s_open != -1 and _s_close > _s_open:
-                _ps = sym.signature[_s_open + 1:_s_close].strip()
-                if _ps:
-                    _pd, _pc = 0, 0
-                    for _ch in _ps:
-                        if _ch in "([{":
-                            _pd += 1
-                        elif _ch in ")]}":
-                            _pd -= 1
-                        elif _ch == "," and _pd == 0:
-                            _pc += 1
-                    _pcount = _pc + 1
-                    if _pcount >= 5:
-                        _param_ann = f" [params: {_pcount}]"
-        # S79: Class size annotation — for CLASS seeds, show [methods: N] in header.
-        # Helps agents assess class complexity before reading; large classes need grep not read.
-        _class_size_ann = ""
-        if sym.kind.value in ("class", "interface", "component"):
-            _children = graph.children_of(sym.id)
-            _methods = [c for c in _children if c.kind.value in ("method", "function")]
-            _props = [c for c in _children if c.kind.value in ("field", "property", "variable")]
-            if len(_methods) >= 5:
-                _class_size_ann = f" [methods: {len(_methods)}]"
-                if _props:
-                    _class_size_ann += f"[props: {len(_props)}]"
-        # S75: Import depth from entry point — BFS backwards through import graph
-        # to find the shortest path from any known entry file to the seed's file.
-        # [depth: N] tells agents how deeply nested this file is; N>=4 = hard to trace.
-        _depth_from_entry_ann = ""
-        _FOCUS_ENTRY_NAMES = {
-            "__main__.py", "main.py", "app.py", "manage.py", "cli.py",
-            "server.py", "wsgi.py", "asgi.py", "run.py", "index.js",
-            "index.ts", "index.tsx", "main.ts", "main.tsx", "main.go",
-        }
-        _entry_fps = {fp for fp in graph.files if fp.rsplit("/", 1)[-1] in _FOCUS_ENTRY_NAMES}
-        if _entry_fps and sym.file_path not in _entry_fps:
-            # Build import adjacency (target → importers) for reverse BFS
-            _rev_adj: dict[str, list[str]] = {}
-            for _e in graph.edges:
-                if _e.kind == EdgeKind.IMPORTS and _e.source_id in graph.files and _e.target_id in graph.files:
-                    _rev_adj.setdefault(_e.target_id, []).append(_e.source_id)
-            # BFS backwards from seed's file toward entry files
-            _bfs_imp: list[tuple[str, int]] = [(sym.file_path, 0)]
-            _seen_imp: set[str] = {sym.file_path}
-            _found_depth: int | None = None
-            while _bfs_imp and _found_depth is None:
-                _cur_fp, _cur_d = _bfs_imp.pop(0)
-                if _cur_d >= 8:
-                    continue
-                for _imp in _rev_adj.get(_cur_fp, []):
-                    if _imp in _entry_fps:
-                        _found_depth = _cur_d + 1
-                        break
-                    if _imp not in _seen_imp and len(_seen_imp) < 80:
-                        _seen_imp.add(_imp)
-                        _bfs_imp.append((_imp, _cur_d + 1))
-            if _found_depth is not None and _found_depth >= 4:
-                _depth_from_entry_ann = f" [depth: {_found_depth}]"
-        # Recursion detection: self-recursion or mutual recursion via direct callees.
-        # Recursive functions need care before memoizing, splitting, or inlining.
-        if sym.kind.value in ("function", "method"):
-            _seed_callee_ids = {
-                e.target_id for e in graph.edges
-                if e.kind == EdgeKind.CALLS and e.source_id == sym.id
-            }
-            if sym.id in _seed_callee_ids:
-                # Direct self-call — e.g. fibonacci(n-1)
-                _recursive_label = "[recursive]"
-            else:
-                # Mutual recursion: callee calls back to seed
-                _mutual_partner: str | None = None
-                for _callee_s in graph.callees_of(sym.id)[:10]:
-                    _callee_callees = {
-                        e.target_id for e in graph.edges
-                        if e.kind == EdgeKind.CALLS and e.source_id == _callee_s.id
-                    }
-                    if sym.id in _callee_callees:
-                        _mutual_partner = _callee_s.name
-                        break
-                _recursive_label = (
-                    f"[recursive: mutual with {_mutual_partner}]" if _mutual_partner else ""
-                )
-        else:
-            _recursive_label = ""
-    elif depth >= 1:
-        # Hub annotation: deeply-imported utilities used across 15+ files.
-        # Tells agents this is a widely-shared symbol — don't expect to find
-        # all its callers in the focus output (BFS suppresses their expansion).
-        _hub_caller_files = {
-            c.file_path for c in graph.callers_of(sym.id)
-            if c.file_path != sym.file_path
-        }
-        if len(_hub_caller_files) >= 15:
-            _hub_ann = f" [hub: {len(_hub_caller_files)} files]"
-    block_lines = [f"{prefix} {sym.kind.value} {sym.qualified_name}{_blast_ann}{_hub_ann}{_age_ann}{_callee_ann}{_depth_ann}{_async_ann}{_doc_ann}{_param_ann}{_depth_from_entry_ann}{_class_size_ann} — {loc}{orbit_note}"]
-    # S61: "also in:" — warn when same symbol name exists in other files.
-    # Prevents agents from fixing the wrong copy in multi-file refactors.
-    if depth == 0:
-        _dupes = [s for s in graph.find_symbol(sym.name) if s.id != sym.id and not _is_test_file(s.file_path)]
-        if _dupes:
-            _dupe_strs = [f"{s.file_path.rsplit('/', 1)[-1]}:{s.line_start}" for s in _dupes[:3]]
-            block_lines.append(f"{indent}  also in: {', '.join(_dupe_strs)}")
-    # S83: "implements:" — show parent classes/interfaces for class seeds via INHERITS edges.
-    # Tells agents about the class hierarchy before they look at the call graph.
-    if depth == 0 and sym.kind.value in ("class", "interface", "struct"):
-        _parent_ids = [
-            e.target_id for e in graph.edges
-            if e.kind == EdgeKind.INHERITS and e.source_id == sym.id
-        ]
-        _parents = [graph.symbols[pid].name for pid in _parent_ids if pid in graph.symbols]
-        if not _parents:
-            # Fallback: bare target_id for unresolved parent names (no "::" = likely a simple name)
-            _parents = [
-                e.target_id for e in graph.edges
-                if e.kind == EdgeKind.INHERITS and e.source_id == sym.id
-                and "::" not in e.target_id
-            ]
-        if _parents:
-            block_lines.append(f"{indent}  implements: {', '.join(_parents[:4])}")
-    # Recursion annotation: emit [recursive] or [recursive: mutual with X] as sub-line.
-    if depth == 0 and _recursive_label:
-        block_lines.append(f"{indent}  {_recursive_label}")
-    # Test coverage hint: show which test file(s) directly call this symbol.
-    # If exported and no test callers → warn agents there's no safety net.
-    # Only shown for functions/methods; skipped for classes/modules/constants.
-    if depth == 0 and sym.kind.value in ("function", "method"):
-        _all_callers = graph.callers_of(sym.id)
-        _test_callers = [c for c in _all_callers if _is_test_file(c.file_path)]
-        if _test_callers:
-            _t_files = sorted({c.file_path.rsplit("/", 1)[-1] for c in _test_callers})
-            block_lines.append(f"{indent}  tested: {', '.join(_t_files[:3])}")
-            # S81: Show test scenario names — what cases are already covered.
-            # Agents use this to avoid writing duplicate tests or spotting gaps.
-            _scenario_names = sorted({
-                c.name for c in _test_callers
-                if c.name.startswith("test_") and c.kind.value in ("function", "method", "test")
-            })
-            if _scenario_names:
-                _sc_str = ", ".join(_scenario_names[:3])
-                if len(_scenario_names) > 3:
-                    _sc_str += f" +{len(_scenario_names) - 3} more"
-                block_lines.append(f"{indent}  scenarios: {_sc_str}")
-        elif sym.exported:
-            block_lines.append(f"{indent}  no tests — exported but never called from a test file")
-    # S85: Caller coverage — what fraction of this symbol's callers have test coverage?
-    # Key safety signal for change risk: 30 callers with only 5 tested = high blast risk.
-    # Only shown for depth-0 functions/methods with 5+ non-test callers.
-    if depth == 0 and sym.kind.value in ("function", "method"):
-        _all_src_callers = [
-            c for c in graph.callers_of(sym.id)
-            if not _is_test_file(c.file_path) and c.file_path != sym.file_path
-        ]
-        if len(_all_src_callers) >= 3:
-            _tested_callers = [
-                c for c in _all_src_callers
-                if any(_is_test_file(t.file_path) for t in graph.callers_of(c.id))
-            ]
-            _cc_pct = int(len(_tested_callers) / len(_all_src_callers) * 100)
-            block_lines.append(
-                f"{indent}  caller coverage: {len(_tested_callers)}/{len(_all_src_callers)} callers tested ({_cc_pct}%)"
-            )
-    # Container annotation for methods: show parent class with caller count.
-    # Helps agents understand the class context of the focused method.
-    if depth == 0 and sym.kind.value == "method" and "::" in sym.id:
-        _name_part = sym.id.split("::", 1)[1]
-        if "." in _name_part:
-            _class_id = sym.id.rsplit(".", 1)[0]  # "file.py::ClassName"
-            _class_sym = graph.symbols.get(_class_id)
-            if _class_sym:
-                _c_callers = len(graph.callers_of(_class_id))
-                _c_methods = len([c for c in graph.children_of(_class_id) if c.kind.value == "method"])
-                _c_ann = f"{_c_callers} callers" if _c_callers else "no callers"
-                block_lines.append(f"{indent}  container: {_class_sym.kind.value} {_class_sym.name} ({_c_ann}, {_c_methods} methods)")
-    # S81: Sibling hot annotation — other hot functions (3+ cross-file callers) in same file.
-    # When multiple sibling functions are hot, agents know the whole file is a hotspot.
-    if depth == 0 and sym.kind.value in ("function", "method") and sym.file_path in graph.files:
-        _file_sids = graph.files[sym.file_path].symbols
-        _hot_siblings: list[tuple[int, str]] = []
-        for _fsid in _file_sids:
-            if _fsid == sym.id or _fsid not in graph.symbols:
-                continue
-            _fs = graph.symbols[_fsid]
-            if _fs.kind.value not in ("function", "method") or _is_test_file(_fs.file_path):
-                continue
-            _fs_cross = len({c.file_path for c in graph.callers_of(_fsid) if c.file_path != _fs.file_path})
-            if _fs_cross >= 3:
-                _hot_siblings.append((_fs_cross, _fs.name))
-        _hot_siblings.sort(reverse=True)
-        if len(_hot_siblings) >= 2:
-            _hs_strs = [f"{name} ({n})" for n, name in _hot_siblings[:3]]
-            block_lines.append(f"{indent}  also hot: {', '.join(_hs_strs)}")
-    # Recent commit messages: last 2 commits that touched the seed symbol's file.
-    # Gives agents instant "why was this last changed" context without running git log.
-    if depth == 0 and graph.root:
-        try:
-            from ..git import recent_file_commits as _rfc  # noqa: PLC0415
-            _commits = _rfc(graph.root, sym.file_path, n=2)
-            if _commits:
-                _commit_parts = [f"{c['days_ago']}d \"{c['message']}\"" for c in _commits]
-                block_lines.append(f"{indent}  recent: {', '.join(_commit_parts)}")
-        except Exception:
-            pass
-    # Callee drift: seed is >=30d old but calls things changed in the last 14d.
-    # Flags potential "stale wrapper" — function may not reflect its dependency changes.
-    # Uses file-level age for callees (fast — no per-line git log overhead).
-    if depth == 0 and graph.root:
-        try:
-            from ..git import symbol_last_modified_days as _sld_cd  # noqa: PLC0415
-            from ..git import file_last_modified_days as _fld_cd    # noqa: PLC0415
-            _seed_days = _sld_cd(graph.root, sym.file_path, sym.line_start)
-            if _seed_days is not None and _seed_days >= 30:
-                _callees_cd = graph.callees_of(sym.id)
-                _drifted: list[tuple[int, str]] = []
-                for _c in _callees_cd[:15]:  # cap to avoid subprocess spam
-                    if _c.file_path == sym.file_path:
-                        continue  # same-file callees usually updated together
-                    if _c.file_path not in staleness_cache:
-                        staleness_cache[_c.file_path] = _fld_cd(graph.root, _c.file_path)
-                    _c_days = staleness_cache[_c.file_path]
-                    if _c_days is not None and _c_days < 14:
-                        _drifted.append((_c_days, _c.name))
-                if _drifted:
-                    _drifted.sort()  # most recently changed first
-                    _drift_strs = [f"{n} ({d}d)" for d, n in _drifted[:3]]
-                    _drift_overflow = f" +{len(_drifted) - 3} more" if len(_drifted) > 3 else ""
-                    block_lines.append(
-                        f"{indent}  ⚠ callee drift: {len(_drifted)} dep(s) changed after your last edit"
-                        f" — {', '.join(_drift_strs)}{_drift_overflow}"
-                    )
-        except Exception:
-            pass
-    # Co-change buddy: which file most frequently appears in commits with the seed's file?
-    # Warns agents they'll likely need to update that file too when modifying the seed.
-    # Only shown for git repos with enough history. One file only (avoid noise).
-    if depth == 0 and graph.root:
-        try:
-            from ..git import cochange_pairs as _ccp  # noqa: PLC0415
-            _buddies = _ccp(graph.root, sym.file_path, n=1, min_count=4)
-            if _buddies:
-                _buddy = _buddies[0]
-                _buddy_fp = _buddy["path"]
-                if _buddy_fp in graph.files and not _is_test_file(_buddy_fp):
-                    _buddy_name = _buddy_fp.rsplit("/", 1)[-1]
-                    block_lines.append(
-                        f"{indent}  co-changes with: {_buddy_name} ({_buddy['count']}x)"
-                    )
-        except Exception:
-            pass
-    # Inline TODO/FIXME scanner: scan the focused function's source lines for
-    # open issues. Agents making changes NEED to see these — don't let them
-    # implement something that's already flagged as broken or incomplete.
-    if depth == 0 and sym.kind.value in ("function", "method") and graph.root:
-        try:
-            import os as _os, re as _re  # noqa: PLC0415
-            _full_path = _os.path.join(graph.root, sym.file_path)
-            if _os.path.isfile(_full_path):
-                with open(_full_path, encoding="utf-8", errors="replace") as _fh:
-                    _src_lines = _fh.readlines()
-                _todo_pat = _re.compile(
-                    r"#.*\b(TODO|FIXME|HACK|XXX|BUG)\b[:\s]*(.*)", _re.IGNORECASE
-                )
-                _hits: list[tuple[int, str, str]] = []
-                for _li in range(sym.line_start - 1, min(sym.line_end, len(_src_lines))):
-                    _m = _todo_pat.search(_src_lines[_li])
-                    if _m:
-                        _tag = _m.group(1).upper()
-                        _note = _m.group(2).strip()[:80]
-                        _hits.append((_li + 1, _tag, _note))
-                for _lineno, _tag, _note in _hits[:3]:
-                    _suffix = f': "{_note}"' if _note else ""
-                    block_lines.append(f"{indent}  {_tag.lower()}: L{_lineno}{_suffix}")
-        except Exception:
-            pass
-    # S82: Side-effect scanner — detect I/O patterns in the function body.
-    # Pure functions are safest to refactor; DB/file/network functions need more care.
-    # Regex-based, no AST needed; scans the function's source lines.
-    if depth == 0 and sym.kind.value in ("function", "method") and graph.root:
-        try:
-            import os as _os2, re as _re2  # noqa: PLC0415
-            _fp2 = _os2.path.join(graph.root, sym.file_path)
-            if _os2.path.isfile(_fp2):
-                with open(_fp2, encoding="utf-8", errors="replace") as _fh2:
-                    _body = "".join(_fh2.readlines()[sym.line_start - 1:sym.line_end])
-                _effects: list[str] = []
-                # DB: SQL queries, ORM calls, cursor operations
-                if _re2.search(r'(execute|cursor|session[.]query|db[.]|[.]save[(]|[.]commit[(]|SELECT|INSERT|UPDATE|DELETE)', _body, _re2.IGNORECASE):
-                    _effects.append("db")
-                # File I/O
-                if _re2.search(r'(open[(]|write[(]|read[(]|os[.]path|shutil[.]|pathlib|json[.]dump|json[.]load|yaml[.])', _body):
-                    _effects.append("file")
-                # Network / HTTP
-                if _re2.search(r'(requests[.]|httpx[.]|aiohttp[.]|urllib[.]|fetch[(]|http[.]|socket[.]|grpc[.])', _body):
-                    _effects.append("network")
-                # Subprocess / shell
-                if _re2.search(r'(subprocess[.]|os[.]system[(]|os[.]popen[(]|Popen[(])', _body):
-                    _effects.append("subprocess")
-                # Mutation of shared state (class attributes, globals)
-                if _re2.search(r'self[.]\w+\s*=(?!=)', _body) or _re2.search(r'\bglobal\b', _body):
-                    _effects.append("mutates state")
-                if _effects:
-                    block_lines.append(f"{indent}  effects: {', '.join(_effects)}")
-                # S85: Throws detection — find explicit `raise` statements in the function body.
-                # Tells agents what exceptions callers must handle; critical for error-path coverage.
-                # Detects `raise ExceptionType`, `raise ExceptionType(...)`, and `raise some_var` patterns.
-                _raise_pat = _re2.compile(r'\braise\s+([A-Za-z_][A-Za-z0-9_]*(?:[.][A-Za-z_][A-Za-z0-9_]*)*)')
-                _exc_names = list(dict.fromkeys(_raise_pat.findall(_body)))  # dedup, preserve order
-                # Filter out noise: re-raises (`raise` alone) and overly common bases
-                _exc_names = [e for e in _exc_names if e not in ("Exception", "BaseException")][:4]
-                if _exc_names:
-                    block_lines.append(f"{indent}  throws: {', '.join(_exc_names)}")
-        except Exception:
-            pass
-
-    # Callee chain: show the first-hop cross-file callees for depth-0 functions.
-    # Helps agents trace execution flow without reading all callee source files.
-    # Shows "callee chain: process → parse → tokenize" (seed → callee → callee's callee).
-    # Uses file-level CALLS index (source_id = file path) to find callees.
-    if depth == 0 and sym.kind.value in ("function", "method"):
-        _file_callees = [
-            c for c in graph.callees_of(sym.file_path)
-            if c.file_path != sym.file_path  # cross-file only
-        ]
-        if 1 <= len(_file_callees) <= 4:
-            _chain_parts = [sym.name, _file_callees[0].name]
-            # Add second hop: first cross-file callee of the first callee
-            _c1 = _file_callees[0]
-            _c1_callees = [
-                c for c in graph.callees_of(_c1.file_path)
-                if c.file_path != _c1.file_path
-            ]
-            if _c1_callees:
-                _chain_parts.append(_c1_callees[0].name)
-            block_lines.append(f"{indent}  callee chain: {' → '.join(_chain_parts)}")
-
+        block_lines += _build_seed_identity_lines(sym, graph, recursive_label, indent)
+        block_lines += _build_seed_test_lines(sym, graph, indent)
+        block_lines += _build_seed_method_ctx_lines(sym, graph, indent)
+        block_lines += _build_seed_git_ctx_lines(sym, graph, staleness_cache, indent)
+        block_lines += _build_seed_todo_lines(sym, graph, indent)
+        block_lines += _build_seed_effects_lines(sym, graph, indent)
+        block_lines += _build_seed_callee_chain_line(sym, graph, indent)
     if sym.signature and depth < 2:
         block_lines.append(f"{indent}  sig: {sym.signature[:150]}")
     if sym.doc and depth == 0:
         block_lines.append(f"{indent}  doc: {sym.doc}")
-    # File siblings: other symbols defined in the same file at depth 0.
-    # Gives agents immediate context about what surrounds this symbol
-    # without requiring a separate file read.
+    block_lines += _build_siblings_block(sym, depth, graph, indent)
+    block_lines += _build_warnings_block(sym, depth, graph, indent)
+    block_lines += _build_callers_block(sym, depth, graph, query_tokens, staleness_cache, callsite_lines, indent)
+    block_lines += _build_callees_block(sym, depth, graph, indent)
     if depth == 0:
-        _siblings = [
-            s for s in graph.symbols.values()
-            if s.file_path == sym.file_path and s.id != sym.id
-            and s.kind.value in ("class", "function", "method", "interface", "module")
-            and s.parent_id is None  # top-level only
-        ]
-        if len(_siblings) >= 2:
-            # Prioritize: classes first, then functions/methods
-            _sib_sorted = sorted(
-                _siblings,
-                key=lambda s: (0 if s.kind.value in ("class", "interface", "module") else 1, s.name)
-            )
-            _kind_abbr = {"function": "fn", "method": "fn", "class": "cls",
-                          "interface": "iface", "module": "mod"}
-            _sib_parts = [
-                f"{_kind_abbr.get(s.kind.value, s.kind.value)} {s.name}" for s in _sib_sorted[:3]
-            ]
-            _sib_overflow = len(_siblings) - 3
-            _sib_str = ", ".join(_sib_parts)
-            if _sib_overflow > 0:
-                _sib_str += f" +{_sib_overflow} more"
-            block_lines.append(
-                f"{indent}  in this file: {len(_siblings)} others ({_sib_str})"
-            )
-    if depth <= 1:
-        warnings = []
-        if sym.line_count > 500:
-            warnings.append(f"LARGE ({sym.line_count} lines — use grep, don't read)")
-        if sym.complexity > 50:
-            # Show complexity relative to file average for functions/methods
-            _file_fns = [
-                s for s in graph.symbols.values()
-                if s.file_path == sym.file_path
-                and s.kind.value in ("function", "method")
-                and s.complexity > 0
-            ]
-            _cx_rel = ""
-            if len(_file_fns) >= 3:
-                _avg_cx = sum(s.complexity for s in _file_fns) / len(_file_fns)
-                if _avg_cx > 0:
-                    _ratio = sym.complexity / _avg_cx
-                    if _ratio >= 1.5:
-                        _cx_rel = f" ({_ratio:.1f}x file avg)"
-            warnings.append(f"HIGH COMPLEXITY (cx={sym.complexity}{_cx_rel})")
-        if depth == 0 and not graph.callers_of(sym.id):
-            _name_lower = sym.name.lower()
-            _entry_patterns = ("handle_", "on_", "run", "start", "main", "execute", "dispatch",
-                               "route", "command", "hook", "middleware", "plugin", "setup", "teardown")
-            _is_entry = any(_name_lower.startswith(p) or _name_lower == p for p in _entry_patterns)
-            if _is_entry:
-                block_lines.append(f"{indent}  [likely entry point — wired externally, not dead]")
-            elif not sym.exported and _dead_code_confidence(sym, graph) >= 40:
-                warnings.append("POSSIBLY DEAD — 0 callers, not exported (run dead_code mode to confirm)")
-        # Test-only callers: symbol has callers but ALL are test files.
-        # Production code never calls this — likely test helper or fixture, not real API.
-        if depth == 0:
-            _callers = graph.callers_of(sym.id)
-            if len(_callers) >= 2 and all(_is_test_file(c.file_path) for c in _callers):
-                warnings.append("TEST-ONLY CALLERS — not called from production code")
-        # Circular import: if the seed's file is in a circular import chain, flag it.
-        # Agents need to know this to avoid making the cycle worse or getting confused
-        # about why re-imports behave unexpectedly.
-        if depth == 0 and graph.root:
-            _cycles = graph.detect_circular_imports()
-            for _cycle in _cycles:
-                if sym.file_path in _cycle:
-                    _names = [fp.rsplit("/", 1)[-1] for fp in _cycle]
-                    warnings.append(f"CIRCULAR IMPORT — {' → '.join(_names)}")
-                    break
-        if warnings:
-            block_lines.append(f"{indent}  ⚠ {', '.join(warnings)}")
-
-        def _caller_priority(c: "Symbol") -> int:
-            path_lower = c.file_path.lower()
-            return 0 if query_tokens and any(tok in path_lower for tok in query_tokens) else 1
-
-        from ..git import file_last_modified_days as _fld  # noqa: PLC0415
-
-        def _stale_annotation(file_path: str) -> str:
-            if file_path not in staleness_cache:
-                staleness_cache[file_path] = _fld(graph.root, file_path)
-            days = staleness_cache[file_path]
-            if days is None or days <= 30:
-                return ""
-            if days > 180:
-                return " [stale: 6m+]"
-            return f" [stale: {days}d]"
-
-        callers = graph.callers_of(sym.id)
-        if callers:
-            # S118: For depth-0 seeds, exclude test callers from inline 'called by:'.
-            # Test callers are already shown in 'tested:' and 'scenarios:' lines above.
-            # Filtering them reveals production callers immediately, reduces noise.
-            _callers_for_display = (
-                [c for c in callers if not _is_test_file(c.file_path)]
-                if depth == 0
-                else callers
-            )
-            callers_sorted = sorted(_callers_for_display, key=_caller_priority)
-            kw_callers = [c for c in callers_sorted if _caller_priority(c) == 0]
-            other_callers = [c for c in callers_sorted if _caller_priority(c) != 0]
-            hot_other = [c for c in other_callers if c.file_path in graph.hot_files]
-            cold_other = [c for c in other_callers if c.file_path not in graph.hot_files]
-            max_other = 3 if kw_callers else (8 if depth == 0 else 5)
-            shown_other = (hot_other + cold_other)[:max_other]
-            shown_callers = kw_callers + shown_other
-            shown_count = len(kw_callers) + max_other
-            _total_for_overflow = len(_callers_for_display)
-            caller_strs = []
-            for c in shown_callers:
-                _cl = (callsite_lines or {}).get((c.id, sym.id), [])
-                if len(_cl) == 1:
-                    _line_ann = f" [line {_cl[0]}]"
-                elif len(_cl) >= 2:
-                    _line_ann = f" [lines {_cl[0]}, {_cl[1]}]"
-                else:
-                    _line_ann = ""
-                if c.file_path in graph.hot_files:
-                    caller_strs.append(f"{c.qualified_name}{_line_ann} [hot]")
-                else:
-                    caller_strs.append(c.qualified_name + _line_ann + _stale_annotation(c.file_path))
-            if caller_strs:
-                block_lines.append(f"{indent}  called by: {', '.join(caller_strs)}")
-                if _total_for_overflow > shown_count:
-                    block_lines[-1] += f" (+{_total_for_overflow - shown_count} more)"
-        callees = graph.callees_of(sym.id)
-        if callees:
-            shown = 8 if depth == 0 else 5
-            hot_callees = [c for c in callees if c.file_path in graph.hot_files]
-            cold_callees = [c for c in callees if c.file_path not in graph.hot_files]
-            ordered_callees = (hot_callees + cold_callees)[:shown]
-            callee_strs = []
-            for c in ordered_callees:
-                _hot_ann = " [hot]" if c.file_path in graph.hot_files else ""
-                _cb_ann = ""
-                if depth == 0:
-                    _cb_files = len({
-                        cr.file_path for cr in graph.callers_of(c.id)
-                        if cr.file_path != c.file_path
-                    })
-                    if _cb_files >= 3:
-                        _cb_ann = f" [blast: {_cb_files}]"
-                callee_strs.append(f"{c.qualified_name}{_hot_ann}{_cb_ann}")
-            block_lines.append(f"{indent}  calls: {', '.join(callee_strs)}")
-            if len(callees) > shown:
-                block_lines[-1] += f" (+{len(callees) - shown} more)"
-        if depth == 0:
-            children = graph.children_of(sym.id)
-            if children:
-                _child_strs = []
-                for c in children[:10]:
-                    _c_callers = len(graph.callers_of(c.id))
-                    _c_ann = f" ({_c_callers})" if _c_callers >= 1 else ""
-                    _child_strs.append(f"{c.kind.value[:4]} {c.name}{_c_ann}")
-                block_lines.append(f"{indent}  contains: {', '.join(_child_strs)}")
-
-            # Implementors: classes/traits that extend or implement this symbol.
-            # Shown only for CLASS/INTERFACE seeds to surface the inheritance fanout.
-            if sym.kind in (SymbolKind.CLASS, SymbolKind.INTERFACE):
-                _subtypes = graph.subtypes_of(sym.id)
-                if _subtypes:
-                    _sub_strs = [
-                        f"{s.qualified_name} ({s.file_path.rsplit('/', 1)[-1]}:{s.line_start})"
-                        for s in _subtypes[:8]
-                    ]
-                    _overflow_sub = len(_subtypes) - 8
-                    _sub_line = f"{indent}  implementors: {', '.join(_sub_strs)}"
-                    if _overflow_sub > 0:
-                        _sub_line += f" (+{_overflow_sub} more)"
-                    block_lines.append(_sub_line)
-
-            # Similar functions: other functions sharing ≥2 callees with this seed.
-            # Helps agents find related implementations that may need parallel changes.
-            if sym.kind in (SymbolKind.FUNCTION, SymbolKind.METHOD):
-                # Exclude class/type constructors — ubiquitous and create false positives
-                _seed_callees = {
-                    cid for cid in graph._callees.get(sym.id, [])
-                    if cid in graph.symbols and graph.symbols[cid].kind.value not in ("class", "type_alias", "enum")
-                }
-                if len(_seed_callees) >= 2:
-                    _overlap: dict[str, int] = {}
-                    for _callee_id in _seed_callees:
-                        for _sibling_id in graph._callers.get(_callee_id, []):
-                            if _sibling_id != sym.id:
-                                _sib = graph.symbols.get(_sibling_id)
-                                if _sib and _sib.kind.value in ("function", "method"):
-                                    _overlap[_sibling_id] = _overlap.get(_sibling_id, 0) + 1
-                    _similar = [
-                        (cnt, graph.symbols[sid])
-                        for sid, cnt in _overlap.items()
-                        if cnt >= 2 and sid in graph.symbols
-                    ]
-                    if _similar:
-                        _similar.sort(key=lambda x: -x[0])
-                        _sim_strs = [
-                            f"{s.qualified_name} ({s.file_path.rsplit('/', 1)[-1]}:{s.line_start}, {n} shared)"
-                            for n, s in _similar[:4]
-                        ]
-                        block_lines.append(f"{indent}  similar: {', '.join(_sim_strs)}")
+        block_lines += _build_children_block(sym, graph, indent)
     return block_lines
+
 
 
 
