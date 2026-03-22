@@ -1,13 +1,14 @@
 import { useState, useEffect, type RefObject } from "react";
-import { Copy, Check, Save, Search, ThumbsUp, ThumbsDown, X, ChevronDown, ChevronRight, WrapText } from "lucide-react";
+import { Copy, Check, ThumbsUp, ThumbsDown, X, ChevronDown, ChevronRight } from "lucide-react";
+import type { ModeInfo } from "./modes";
+import { formatAge } from "./modes";
+import { ArgsInput } from "./ArgsInput";
+import { OutputPanelHeader } from "./OutputPanelHeader";
 
 const FONT_SIZE_MIN = 9;
 const FONT_SIZE_MAX = 16;
 const FONT_SIZE_DEFAULT = 11;
 const FONT_SIZE_KEY = "tempo_output_font_size";
-import type { ModeInfo } from "./modes";
-import { formatAge } from "./modes";
-import { ArgsInput } from "./ArgsInput";
 
 interface OutputPanelProps {
   activeModeInfo: ModeInfo | undefined;
@@ -54,11 +55,6 @@ function parseKitSections(output: string): KitSection[] {
     mode,
     content: (parts[i + 1] || "").trim(),
   })).filter(s => s.content.length > 0);
-}
-
-function estimateTokens(text: string): string {
-  const count = Math.round(text.length / 4);
-  return count >= 1000 ? `~${(count / 1000).toFixed(1)}k tokens` : `~${count} tokens`;
 }
 
 function HighlightedOutput({ text, query, style }: { text: string; query: string; style: React.CSSProperties }) {
@@ -152,89 +148,26 @@ export function OutputPanel(props: OutputPanelProps) {
 
   return (
     <div className="cell" style={{ flex: 1 }}>
-      <div className="cell-head">
-        <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-          {label}
-          {isKitMode && (
-            <span style={{
-              fontSize: 8, fontWeight: 700, letterSpacing: "0.08em",
-              padding: "1px 5px", borderRadius: 3,
-              background: "var(--accent-dim, rgba(99,102,241,0.18))",
-              color: "var(--accent, #818cf8)",
-              textTransform: "uppercase",
-            }}>
-              KIT
-            </span>
-          )}
-        </span>
-        <div style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
-          {modeOutput && (
-            <>
-              <button className="btn btn-ghost" onClick={onFilterToggle} style={{ padding: "2px 6px", fontSize: 10 }} title="Filter output (⌘F)" aria-label="Filter output (⌘F)">
-                <Search size={10} aria-hidden="true" />
-              </button>
-              <button className="btn btn-ghost" onClick={onSave} style={{ padding: "2px 6px", fontSize: 10 }} title="Save to .tempo/" aria-label="Save output to .tempo/">
-                <Save size={10} aria-hidden="true" />
-              </button>
-            </>
-          )}
-          {modeOutput && (
-            <>
-              <button
-                className="btn btn-ghost"
-                onClick={() => changeFontSize(-1)}
-                disabled={fontSize <= FONT_SIZE_MIN}
-                title={`Decrease font size (${fontSize}px)`}
-                aria-label="Decrease output font size"
-                style={{ padding: "2px 5px", fontSize: 9, opacity: fontSize <= FONT_SIZE_MIN ? 0.3 : 1, fontFamily: "var(--font-mono)", letterSpacing: "-0.5px" }}
-              >
-                A-
-              </button>
-              <button
-                className="btn btn-ghost"
-                onClick={() => changeFontSize(1)}
-                disabled={fontSize >= FONT_SIZE_MAX}
-                title={`Increase font size (${fontSize}px)`}
-                aria-label="Increase output font size"
-                style={{ padding: "2px 5px", fontSize: 9, opacity: fontSize >= FONT_SIZE_MAX ? 0.3 : 1, fontFamily: "var(--font-mono)", letterSpacing: "-0.5px" }}
-              >
-                A+
-              </button>
-              <button
-                className="btn btn-ghost"
-                onClick={() => {
-                  const next = !wrapEnabled;
-                  setWrapEnabled(next);
-                  localStorage.setItem("tempo_output_wrap", String(next));
-                }}
-                title={wrapEnabled ? "Disable line wrap" : "Enable line wrap"}
-                aria-label={wrapEnabled ? "Disable line wrap" : "Enable line wrap"}
-                aria-pressed={wrapEnabled}
-                style={{ padding: "2px 6px", fontSize: 10, opacity: wrapEnabled ? 1 : 0.45 }}
-              >
-                <WrapText size={10} aria-hidden="true" />
-              </button>
-            </>
-          )}
-          {modeOutput && (
-            <span style={{ fontSize: "0.75rem", color: "var(--text-tertiary)", marginRight: "0.25rem", alignSelf: "center", fontFamily: "var(--font-mono)" }}>
-              {estimateTokens(modeOutput)}
-            </span>
-          )}
-          <button
-            className="btn btn-ghost"
-            onClick={onCopy}
-            disabled={!modeOutput}
-            title={!modeOutput ? "Run a mode first" : "Copy output"}
-            aria-label={copied ? "Copied" : "Copy output"}
-            style={{ padding: "2px 6px", fontSize: 10, opacity: !modeOutput ? 0.35 : 1 }}
-          >
-            {copied
-              ? <><Check size={10} aria-hidden="true" /><span style={{ marginLeft: 3 }}>Copied!</span></>
-              : <Copy size={10} aria-hidden="true" />}
-          </button>
-        </div>
-      </div>
+      <OutputPanelHeader
+        label={label}
+        isKitMode={isKitMode}
+        modeOutput={modeOutput}
+        copied={copied}
+        wrapEnabled={wrapEnabled}
+        fontSize={fontSize}
+        fontSizeMin={FONT_SIZE_MIN}
+        fontSizeMax={FONT_SIZE_MAX}
+        onFilterToggle={onFilterToggle}
+        onSave={onSave}
+        onFontDecrease={() => changeFontSize(-1)}
+        onFontIncrease={() => changeFontSize(1)}
+        onWrapToggle={() => {
+          const next = !wrapEnabled;
+          setWrapEnabled(next);
+          localStorage.setItem("tempo_output_wrap", String(next));
+        }}
+        onCopy={onCopy}
+      />
       <div className="cell-body">
         {activeModeInfo?.desc && (
           <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 8, lineHeight: 1.5 }}>
