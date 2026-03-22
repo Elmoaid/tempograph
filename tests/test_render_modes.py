@@ -18,6 +18,7 @@ from tempograph.render import (
     _is_test_file,
 )
 from tempograph.render.dead import _file_effort_badge
+from tempograph.render.hotspots import _collect_hotspots_signals
 from tempograph.git import is_git_repo
 from tempograph.types import Symbol, SymbolKind, Language
 
@@ -206,6 +207,60 @@ class TestRenderHotspots:
         # Even an empty graph shouldn't crash
         g = _build(tmp_path, {"empty.py": "# no symbols\n"})
         assert isinstance(render_hotspots(g), str)
+
+
+# ── S1018 hot cascade signal ──────────────────────────────────────────────────
+
+class TestHotCascadeSignal:
+    def _make_sym(self, sym_id: str, file_path: str) -> "Symbol":
+        return Symbol(
+            id=sym_id,
+            name=sym_id.split("::")[-1],
+            qualified_name=sym_id.split("::")[-1],
+            kind=SymbolKind.FUNCTION,
+            language=Language.PYTHON,
+            file_path=file_path,
+            line_start=1,
+            line_end=10,
+        )
+
+    def _safe_graph(self, hot_files: set[str], importers: list[str]) -> "MagicMock":
+        """Build a minimal MagicMock graph that won't crash _collect_hotspots_signals."""
+        graph = MagicMock()
+        graph.hot_files = hot_files
+        graph.importers_of.return_value = importers
+        # Stub out attributes that other signals access to avoid TypeError comparisons
+        graph.files.get.return_value = None  # FileInfo lookups return None → signals skip
+        graph.symbols.values.return_value = []  # No symbols → complexity/caller signals skip
+        graph.callers_of.return_value = []
+        graph.callees_of.return_value = []
+        graph.root = None
+        return graph
+
+    def test_hot_cascade_fires_when_2plus_hot_importers(self):
+        # core.py is the top hotspot; service_a.py and service_b.py import it and are hot
+        top_sym = self._make_sym("core.py::build", "core.py")
+        scores = [(100.0, top_sym)]
+        graph = self._safe_graph(
+            hot_files={"core.py", "service_a.py", "service_b.py"},
+            importers=["service_a.py", "service_b.py", "cold_consumer.py"],
+        )
+        result = _collect_hotspots_signals(graph, scores, {}, {}, set(), 20)
+        combined = "\n".join(result)
+        assert "hot cascade" in combined
+        assert "service_a" in combined or "service_b" in combined
+
+    def test_hot_cascade_suppressed_when_fewer_than_2_hot_importers(self):
+        # Only 1 hot importer — below threshold of 2
+        top_sym = self._make_sym("core.py::build", "core.py")
+        scores = [(100.0, top_sym)]
+        graph = self._safe_graph(
+            hot_files={"core.py", "service_a.py"},
+            importers=["service_a.py", "cold_consumer.py"],
+        )
+        result = _collect_hotspots_signals(graph, scores, {}, {}, set(), 20)
+        combined = "\n".join(result)
+        assert "hot cascade" not in combined
 
 
 # ── render_dead_code ──────────────────────────────────────────────────────────
