@@ -1,4 +1,4 @@
-import { Copy, Check, Save, Search, WrapText, FolderCheck } from "lucide-react";
+import { Copy, Check, Save, Search, WrapText, FolderCheck, GitCompare } from "lucide-react";
 
 interface OutputPanelHeaderProps {
   label: string;
@@ -10,11 +10,14 @@ interface OutputPanelHeaderProps {
   fontSizeMin: number;
   fontSizeMax: number;
   saved: boolean;
+  hasPrevOutput: boolean;
+  diffMode: boolean;
   onFilterToggle: () => void;
   onSave: () => void;
   onFontDecrease: () => void;
   onFontIncrease: () => void;
   onWrapToggle: () => void;
+  onDiffToggle: () => void;
   onCopy: () => void;
 }
 
@@ -33,11 +36,14 @@ export function OutputPanelHeader({
   fontSize,
   fontSizeMin,
   fontSizeMax,
+  hasPrevOutput,
+  diffMode,
   onFilterToggle,
   onSave,
   onFontDecrease,
   onFontIncrease,
   onWrapToggle,
+  onDiffToggle,
   onCopy,
 }: OutputPanelHeaderProps) {
   return (
@@ -68,6 +74,18 @@ export function OutputPanelHeader({
             >
               <Search size={10} aria-hidden="true" />
             </button>
+            {hasPrevOutput && (
+              <button
+                className="btn btn-ghost"
+                onClick={onDiffToggle}
+                style={{ padding: "2px 6px", fontSize: 10, opacity: diffMode ? 1 : 0.45 }}
+                title={diffMode ? "Diff mode: ON — showing changes from last run" : "Diff mode: OFF — click to compare with last run"}
+                aria-label={diffMode ? "Disable diff mode" : "Enable diff mode"}
+                aria-pressed={diffMode}
+              >
+                <GitCompare size={10} aria-hidden="true" />
+              </button>
+            )}
             <button
               className="btn btn-ghost"
               onClick={onSave}
