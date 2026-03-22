@@ -174,3 +174,55 @@ class TestMultiSymbolFocus:
             out = render_focused(graph, "authenticate | authenticate")
         # Should appear exactly once as a seed (depth 0), not duplicated
         assert out.count("● function authenticate") == 1
+
+
+class TestFocusDeadCallerAnnotation:
+    """S43: ghost callers annotated [dead?] when caller has 0 callers itself."""
+
+    def _make_graph_with_callers(self, tmp_path, caller_has_callers: bool):
+        target = Symbol(
+            id="core.py::process",
+            name="process", qualified_name="process",
+            kind=SymbolKind.FUNCTION, language=Language.PYTHON,
+            file_path="core.py", line_start=1, line_end=10, exported=True,
+        )
+        ghost = Symbol(
+            id="util.py::ghost_fn",
+            name="ghost_fn", qualified_name="ghost_fn",
+            kind=SymbolKind.FUNCTION, language=Language.PYTHON,
+            file_path="util.py", line_start=1, line_end=5, exported=False,
+        )
+        caller_of_ghost = Symbol(
+            id="app.py::main",
+            name="main", qualified_name="main",
+            kind=SymbolKind.FUNCTION, language=Language.PYTHON,
+            file_path="app.py", line_start=1, line_end=5, exported=False,
+        )
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=ghost.id, target_id=target.id),
+        ]
+        if caller_has_callers:
+            edges.append(Edge(kind=EdgeKind.CALLS, source_id=caller_of_ghost.id, target_id=ghost.id))
+        syms = [target, ghost]
+        if caller_has_callers:
+            syms.append(caller_of_ghost)
+        return _make_graph(tmp_path, edges, syms)
+
+    def test_dead_caller_annotation_fires(self, tmp_path):
+        """Ghost caller (0 callers, not exported) gets [dead?] and unreachable summary."""
+        from unittest.mock import patch
+        from tempograph.render import render_focused
+        graph = self._make_graph_with_callers(tmp_path, caller_has_callers=False)
+        with patch("tempograph.git.file_last_modified_days", return_value=5):
+            out = render_focused(graph, "process")
+        assert "[dead?]" in out
+        assert "unreachable" in out
+
+    def test_dead_caller_annotation_absent_when_caller_is_live(self, tmp_path):
+        """If the caller has its own callers, no [dead?] annotation."""
+        from unittest.mock import patch
+        from tempograph.render import render_focused
+        graph = self._make_graph_with_callers(tmp_path, caller_has_callers=True)
+        with patch("tempograph.git.file_last_modified_days", return_value=5):
+            out = render_focused(graph, "process")
+        assert "[dead?]" not in out
