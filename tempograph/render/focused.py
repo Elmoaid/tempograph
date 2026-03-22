@@ -1324,6 +1324,17 @@ def _build_callers_block(
     shown_callers = kw_callers + (hot_other + cold_other)[:max_other]
     shown_count = len(kw_callers) + max_other
     _total_for_overflow = len(_callers_for_display)
+
+    # Ghost caller detection (depth=0 only): callers that have no callers themselves
+    # and are not exported = they contribute zero production reach.
+    # Cap lookup at 30 to avoid O(n) graph walks on hub symbols.
+    _ghost_ids: set[str] = set()
+    if depth == 0:
+        _capped = _callers_for_display[:30]
+        for _gc in _capped:
+            if not _gc.exported and not graph.callers_of(_gc.id):
+                _ghost_ids.add(_gc.id)
+
     caller_strs = []
     for c in shown_callers:
         _cl = (callsite_lines or {}).get((c.id, sym.id), [])
@@ -1336,11 +1347,20 @@ def _build_callers_block(
         if c.file_path in graph.hot_files:
             caller_strs.append(f"{c.qualified_name}{_line_ann} [hot]")
         else:
-            caller_strs.append(c.qualified_name + _line_ann + _stale_annotation(c.file_path))
+            _dead_ann = " [dead?]" if c.id in _ghost_ids else ""
+            caller_strs.append(c.qualified_name + _line_ann + _stale_annotation(c.file_path) + _dead_ann)
     if caller_strs:
         lines.append(f"{indent}  called by: {', '.join(caller_strs)}")
         if _total_for_overflow > shown_count:
             lines[-1] += f" (+{_total_for_overflow - shown_count} more)"
+        # Summarize ghost callers if any were shown
+        _shown_ghost_count = sum(1 for c in shown_callers if c.id in _ghost_ids)
+        if _shown_ghost_count:
+            _live_shown = len(shown_callers) - _shown_ghost_count
+            lines.append(
+                f"{indent}    ↳ {_shown_ghost_count} caller(s) are themselves unreachable"
+                f" — effective reach: {_live_shown} of {len(shown_callers)} shown"
+            )
     return lines
 
 
