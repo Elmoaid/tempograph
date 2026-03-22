@@ -48,6 +48,7 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
           modeArgs={vm.modeArgs}
           modeRunning={vm.modeRunning}
           modeOutput={vm.modeOutput}
+          prevOutput={vm.prevOutput}
           elapsed={vm.elapsed}
           outputTs={vm.outputTs}
           runDuration={vm.runDuration}
