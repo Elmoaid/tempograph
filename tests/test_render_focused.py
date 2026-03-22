@@ -285,3 +285,101 @@ class TestFocusApexPath:
             out = render_focused(graph, "helper")
         # No apex line when caller chain is test-only
         assert "apex:" not in out
+
+
+class TestFocusCochangeCohort:
+    """Tests for the co-change cohort section (S46).
+
+    The cohort section shows files that historically co-change with the seed file
+    but are NOT already visible in the BFS focus output — pure git-coupling signal.
+    """
+
+    def _sym(self, name, file_path):
+        return Symbol(
+            id=f"{file_path}::{name}", name=name, qualified_name=name,
+            kind=SymbolKind.FUNCTION, language=Language.PYTHON,
+            file_path=file_path, line_start=1, line_end=10, exported=True,
+        )
+
+    def test_cohort_appears_when_cochanged_files_not_in_bfs(self, tmp_path):
+        """Cohort shows files with ≥3 co-changes that are absent from the BFS output."""
+        from unittest.mock import patch
+        from tempograph.render.focused import _render_cochange_cohort_section
+        from tempograph.types import Tempo
+
+        graph = Tempo(root=str(tmp_path))
+        seen = {"seed.py"}  # files already shown in focus
+        cochange_data = [
+            {"path": "storage.py", "count": 12},
+            {"path": "cache.py", "count": 8},
+        ]
+        with patch("tempograph.git.cochange_pairs", return_value=cochange_data):
+            result = _render_cochange_cohort_section(graph, ["seed.py"], seen)
+
+        assert "Co-change cohort" in result
+        assert "storage.py" in result
+        assert "12 times" in result
+        assert "cache.py" in result
+        assert "8 times" in result
+
+    def test_cohort_filters_files_already_in_bfs(self, tmp_path):
+        """Files already visible in BFS are excluded from the cohort."""
+        from unittest.mock import patch
+        from tempograph.render.focused import _render_cochange_cohort_section
+        from tempograph.types import Tempo
+
+        graph = Tempo(root=str(tmp_path))
+        # storage.py is already in the focus BFS output
+        seen = {"seed.py", "storage.py"}
+        cochange_data = [
+            {"path": "storage.py", "count": 12},  # in seen → filtered out
+            {"path": "cache.py", "count": 8},     # not in seen → shown
+        ]
+        with patch("tempograph.git.cochange_pairs", return_value=cochange_data):
+            result = _render_cochange_cohort_section(graph, ["seed.py"], seen)
+
+        assert "storage.py" not in result
+        assert "cache.py" in result
+
+    def test_cohort_empty_when_all_cochanged_files_in_bfs(self, tmp_path):
+        """No cohort section when all co-changed files are already in the BFS output."""
+        from unittest.mock import patch
+        from tempograph.render.focused import _render_cochange_cohort_section
+        from tempograph.types import Tempo
+
+        graph = Tempo(root=str(tmp_path))
+        seen = {"seed.py", "storage.py", "cache.py"}
+        cochange_data = [
+            {"path": "storage.py", "count": 12},
+            {"path": "cache.py", "count": 8},
+        ]
+        with patch("tempograph.git.cochange_pairs", return_value=cochange_data):
+            result = _render_cochange_cohort_section(graph, ["seed.py"], seen)
+
+        assert result == ""
+
+    def test_cohort_empty_when_no_cochanged_files(self, tmp_path):
+        """No cohort section when cochange_pairs returns empty list."""
+        from unittest.mock import patch
+        from tempograph.render.focused import _render_cochange_cohort_section
+        from tempograph.types import Tempo
+
+        graph = Tempo(root=str(tmp_path))
+        with patch("tempograph.git.cochange_pairs", return_value=[]):
+            result = _render_cochange_cohort_section(graph, ["seed.py"], set())
+
+        assert result == ""
+
+    def test_cohort_capped_at_five(self, tmp_path):
+        """Cohort shows at most 5 files even if cochange_pairs returns more."""
+        from unittest.mock import patch
+        from tempograph.render.focused import _render_cochange_cohort_section
+        from tempograph.types import Tempo
+
+        graph = Tempo(root=str(tmp_path))
+        cochange_data = [{"path": f"file{i}.py", "count": 10 - i} for i in range(8)]
+        with patch("tempograph.git.cochange_pairs", return_value=cochange_data):
+            result = _render_cochange_cohort_section(graph, ["seed.py"], set())
+
+        shown = [line for line in result.splitlines() if "file" in line and "times" in line]
+        assert len(shown) <= 5

@@ -443,6 +443,39 @@ def _render_cochange_section(graph, seed_file_paths: list[str]) -> str:
     return ""
 
 
+def _render_cochange_cohort_section(
+    graph, seed_file_paths: list[str], seen_files: set[str]
+) -> str:
+    """Build the 'Co-change cohort:' section — files historically co-edited with the
+    seed file that are NOT already shown in the focus BFS output (S46).
+
+    Unlike _render_cochange_section (no seen_files filter) and
+    _render_cochange_orbit_section (recency-weighted), this section uses raw commit
+    counts and filters seen_files — surfacing structurally coupled files that BFS
+    missed (no direct call edges) even when coupling is old/stale.
+
+    Only shown if ≥1 qualifying file exists (min 3 co-changes, not in seen_files).
+    Cap at 5 files.
+    """
+    if not graph.root or not seed_file_paths:
+        return ""
+    try:
+        from ..git import cochange_pairs
+        pairs = cochange_pairs(graph.root, seed_file_paths[0], n=10, min_count=3)
+        if not pairs:
+            return ""
+        basename = Path(seed_file_paths[0]).name
+        filtered = [p for p in pairs if p["path"] not in seen_files][:5]
+        if not filtered:
+            return ""
+        parts = [f"\nCo-change cohort (files often edited alongside {basename}):"]
+        for p in filtered:
+            parts.append(f"  {p['path']} (co-changed {p['count']} times)")
+        return "\n".join(parts)
+    except Exception:
+        return ""
+
+
 def _render_all_callers_section(
     graph, seeds: list, callsite_lines: dict, token_count: int = 0, max_tokens: int = 0
 ) -> str:
@@ -3643,10 +3676,10 @@ def _signals_fn_focus_props_a(
     return lines
 
 
-def _signals_fn_focus_props_b(
+def _signals_fn_props_b_entry(
     graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
 ) -> list[str]:
-    """S804–S894: focus property signals (entry point, deprecated, no-caller, etc)."""
+    """S804–S852: entry/module/structural property signals."""
     lines: list[str] = []
     # S804: Entry point focus — focused symbol is a well-known entry point name.
     # Entry point functions initialize the entire application; changing them can break
@@ -3790,6 +3823,14 @@ def _signals_fn_focus_props_b(
                 f" — callers using operators (+, ==, < etc.) implicitly invoke this method"
             )
 
+    return lines
+
+
+def _signals_fn_props_b_oop(
+    graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """S858–S894: OOP/access/caller property signals."""
+    lines: list[str] = []
     # S858: Abstract method focus — focused method lives in an abstract/base class.
     # Abstract methods define contracts that all subclasses must implement; changing their
     # signatures requires updating every concrete implementation in the hierarchy.
@@ -3907,6 +3948,14 @@ def _signals_fn_focus_props_b(
                 f" — file appears deprecated; check if functionality has been migrated before modifying"
             )
 
+    return lines
+
+
+def _signals_fn_props_b_method(
+    graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """S900–S942: method/membership/visibility property signals."""
+    lines: list[str] = []
     # S900: Property focus — focused symbol is a property or computed getter.
     # Properties are transparent to callers but may have hidden side effects;
     # agents should verify no mutation or expensive computation occurs in getter bodies.
@@ -4039,6 +4088,14 @@ def _signals_fn_focus_props_b(
                     f" — high parameter count; each caller must pass all args; signature changes break all call sites"
                 )
 
+    return lines
+
+
+def _signals_fn_props_b_coupling(
+    graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """S948–S1014: isolation/coupling/pattern property signals."""
+    lines: list[str] = []
     # S948: All-private class — focused class has no public methods (all methods start with _).
     # An all-private class has no intentional external interface; callers may be accessing
     # internal methods directly, creating undocumented coupling that's fragile to refactors.
@@ -4247,6 +4304,18 @@ def _signals_fn_focus_props_b(
     return lines
 
 
+def _signals_fn_focus_props_b(
+    graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """S804–S1014: focus property signals (dispatcher to sub-helpers)."""
+    lines: list[str] = []
+    lines += _signals_fn_props_b_entry(graph, _seed_syms, token_count, max_tokens)
+    lines += _signals_fn_props_b_oop(graph, _seed_syms, token_count, max_tokens)
+    lines += _signals_fn_props_b_method(graph, _seed_syms, token_count, max_tokens)
+    lines += _signals_fn_props_b_coupling(graph, _seed_syms, token_count, max_tokens)
+    return lines
+
+
 def _signals_focused_fn_advanced(
     graph: Tempo, *, _seed_syms: list, token_count: int, max_tokens: int,
 ) -> list[str]:
@@ -4384,6 +4453,11 @@ def _render_context_sections(
     if cochange_section:
         lines.append(cochange_section)
         token_count += count_tokens(cochange_section)
+
+    cohort_section = _render_cochange_cohort_section(graph, seed_file_paths, seen_files)
+    if cohort_section:
+        lines.append(cohort_section)
+        token_count += count_tokens(cohort_section)
 
     _tcov_lines = _signals_focused_test_coverage(
         graph, ordered=ordered, token_count=token_count, max_tokens=max_tokens,
