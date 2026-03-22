@@ -1,9 +1,6 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { FolderOpen } from "lucide-react";
-import {
-  runTempo, readConfig, writeConfig, listNotes, readFile, readTelemetry,
-  gitInfo, listDir, getHomeDir,
-} from "./tempo";
+import { getHomeDir } from "./tempo";
 import { ClaudePanel } from "./ClaudePanel";
 import { ModeRunner } from "./ModeRunner";
 import { QualityPanel } from "./QualityPanel";
@@ -14,9 +11,7 @@ import { TopBar } from "./TopBar";
 import { WorkspaceTabs } from "./WorkspaceTabs";
 import { InfoPanel } from "./InfoPanel";
 import { SnapshotPanel } from "./SnapshotPanel";
-import type { PluginInfo } from "./PluginPanel";
-import type { TempoResult } from "../App";
-import type { WorkspaceData, DirEntry, NoteEntry } from "./workspaceTypes";
+import { useWorkspaceData } from "../hooks/useWorkspaceData";
 
 interface Props {
   repoPath: string;
@@ -29,153 +24,31 @@ interface Props {
   onToggleTheme: () => void;
 }
 
-function parsePlugins(output: string): PluginInfo[] {
-  return output.split("\n").map(line => {
-    const m = line.match(/^\s*(?:\[([x ])\]|([●○]))\s+(\w+)\s*[-—]\s*(.+)/);
-    if (!m) return null;
-    return { enabled: m[1] === "x" || m[2] === "●", name: m[3], description: m[4].trim() };
-  }).filter(Boolean) as PluginInfo[];
-}
-
 function parseStats(output: string) {
   const m = output.match(/(\d+)\s+files.*?(\d+)\s+symbols.*?([\d,]+)\s+lines/s);
   return m ? { files: m[1], symbols: m[2], lines: m[3] } : null;
 }
 
 export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addWorkspace, removeWorkspace, theme, onToggleTheme }: Props) {
-  const [loading, setLoading] = useState(false);
   const [showClaude, setShowClaude] = useState(false);
   const [showSnapshots, setShowSnapshots] = useState(false);
   const [homeDir, setHomeDir] = useState("");
   const [rightHidden, setRightHidden] = useState(() =>
     localStorage.getItem("tempo-right-hidden") === "true"
   );
-  const [configDirty, setConfigDirty] = useState(false);
-  const [noteContent, setNoteContent] = useState<string | null>(null);
-  const [noteName, setNoteName] = useState("");
-  const [fileBrowserPath, setFileBrowserPath] = useState("");
-  const [fileBrowserEntries, setFileBrowserEntries] = useState<DirEntry[]>([]);
-  const [fileViewContent, setFileViewContent] = useState<string | null>(null);
-  const [fileViewName, setFileViewName] = useState("");
-
-  const cacheRef = useRef<Record<string, WorkspaceData>>({});
   const emptyInputRef = useRef<HTMLInputElement>(null);
 
-  const getWsData = useCallback((path: string): WorkspaceData => {
-    return cacheRef.current[path] || { overview: null, quality: null, learning: null, tokens: null, plugins: [], notes: [], telemetry: "", config: {}, git: "", loaded: false };
-  }, []);
-
-  const setWsData = useCallback((path: string, data: Partial<WorkspaceData>) => {
-    cacheRef.current[path] = { ...getWsData(path), ...data };
-  }, [getWsData]);
-
-  const loadAll = useCallback(async (path: string, force = false) => {
-    if (!path) return;
-    if (!force && cacheRef.current[path]?.loaded) return;
-    setLoading(true);
-    setNoteContent(null);
-
-    const safe = async <T,>(fn: () => Promise<T>, fallback: T): Promise<T> => {
-      try { return await fn(); } catch { return fallback; }
-    };
-    const emptyResult: TempoResult = { success: false, output: "", mode: "" };
-
-    const cfgResult = await safe(() => readConfig(path), { success: false, data: {}, path: "", error: "" });
-    const cfgData = (cfgResult as { success: boolean; data: Record<string, unknown> }).success
-      ? ((cfgResult as { data: Record<string, unknown> }).data || {}) : {};
-    const excludeArgs: string[] = [];
-    const excludeDirs = cfgData.exclude_dirs;
-    if (Array.isArray(excludeDirs) && excludeDirs.length > 0) {
-      excludeArgs.push("--exclude", excludeDirs.join(","));
-    }
-
-    const [ov, q, l, t, pl, nt, tel, gi] = await Promise.all([
-      safe(() => runTempo(path, "overview", excludeArgs), emptyResult),
-      safe(() => runTempo(path, "quality", excludeArgs), emptyResult),
-      safe(() => runTempo(path, "learn", excludeArgs), emptyResult),
-      safe(() => runTempo(path, "token_stats", excludeArgs), emptyResult),
-      safe(() => runTempo(path, "plugins", excludeArgs), emptyResult),
-      safe(() => listNotes(path), []),
-      safe(() => readTelemetry(path), emptyResult),
-      safe(() => gitInfo(path), emptyResult),
-    ]);
-
-    cacheRef.current[path] = {
-      overview: ov,
-      quality: q,
-      learning: l,
-      tokens: t,
-      plugins: parsePlugins(pl.output || ""),
-      notes: (Array.isArray(nt) ? nt : []) as NoteEntry[],
-      telemetry: (tel as TempoResult).output || "",
-      config: cfgData as Record<string, unknown>,
-      git: (gi as TempoResult).output || "",
-      loaded: true,
-    };
-    setFileBrowserPath(path);
-    const entries = await listDir(path);
-    setFileBrowserEntries(Array.isArray(entries) ? entries as DirEntry[] : []);
-    setFileViewContent(null);
-    setLoading(false);
-  }, []);
-
-  useEffect(() => {
-    if (repoPath) loadAll(repoPath);
-  }, [repoPath, loadAll]);
+  const {
+    loading, ws, configDirty,
+    noteContent, noteName, fileBrowserPath, fileBrowserEntries, fileViewContent, fileViewName,
+    loadAll, togglePlugin, saveConfig, updateConfig,
+    openNote, handleNoteCreated, browseTo, viewFile,
+    clearNoteContent, clearFileView,
+  } = useWorkspaceData(repoPath);
 
   useEffect(() => {
     getHomeDir().then(setHomeDir);
   }, []);
-
-  const ws = getWsData(repoPath);
-
-  const togglePlugin = async (name: string, on: boolean) => {
-    const disabled: string[] = (ws.config.disabled_plugins as string[]) || [];
-    const enabled: string[] = (ws.config.enabled_plugins as string[]) || [];
-    const newConfig = {
-      ...ws.config,
-      disabled_plugins: on ? [...disabled.filter((n) => n !== name), name] : disabled.filter((n) => n !== name),
-      enabled_plugins: on ? enabled.filter((n) => n !== name) : [...enabled.filter((n) => n !== name), name],
-    };
-    setWsData(repoPath, { config: newConfig });
-    await writeConfig(repoPath, newConfig);
-    const pl = await runTempo(repoPath, "plugins");
-    setWsData(repoPath, { plugins: parsePlugins(pl.output) });
-  };
-
-  const saveConfig = async () => {
-    await writeConfig(repoPath, ws.config);
-    setConfigDirty(false);
-  };
-
-  const updateConfig = (key: string, val: unknown) => {
-    setWsData(repoPath, { config: { ...ws.config, [key]: val } });
-    setConfigDirty(true);
-  };
-
-  const openNote = async (path: string, name: string) => {
-    const r = await readFile(path);
-    setNoteContent(r.output);
-    setNoteName(name);
-  };
-
-  const handleNoteCreated = async () => {
-    const nt = await listNotes(repoPath);
-    setWsData(repoPath, { notes: (nt || []) as NoteEntry[] });
-  };
-
-  const browseTo = async (dirPath: string) => {
-    setFileBrowserPath(dirPath);
-    setFileViewContent(null);
-    const entries = await listDir(dirPath);
-    setFileBrowserEntries(Array.isArray(entries) ? entries as DirEntry[] : []);
-  };
-
-  const viewFile = async (filePath: string, name: string) => {
-    const r = await readFile(filePath);
-    setFileViewContent(r.output);
-    setFileViewName(name);
-  };
 
   const stats = ws.overview ? parseStats(ws.overview.output) : null;
 
@@ -236,7 +109,7 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
         workspaces={workspaces}
         activeIdx={activeIdx}
         loading={loading}
-        onSelect={(i) => { setActiveIdx(i); setNoteContent(null); }}
+        onSelect={(i) => { setActiveIdx(i); clearNoteContent(); }}
         onRemove={removeWorkspace}
         onAdd={addWorkspace}
       />
@@ -283,8 +156,8 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
             noteContent={noteContent}
             noteName={noteName}
             onOpenNote={openNote}
-            onNoteBack={() => setNoteContent(null)}
-            onFileViewBack={() => setFileViewContent(null)}
+            onNoteBack={clearNoteContent}
+            onFileViewBack={clearFileView}
             onBrowseTo={browseTo}
             onViewFile={viewFile}
             onNoteCreated={handleNoteCreated}

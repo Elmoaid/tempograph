@@ -1,9 +1,10 @@
-import { useState, useEffect, type RefObject } from "react";
-import { Copy, Check, ThumbsUp, ThumbsDown, X, ChevronDown, ChevronRight } from "lucide-react";
+import { useState, type RefObject } from "react";
+import { Copy, Check, ThumbsUp, ThumbsDown, X } from "lucide-react";
 import type { ModeInfo } from "./modes";
 import { formatAge } from "./modes";
 import { ArgsInput } from "./ArgsInput";
 import { OutputPanelHeader } from "./OutputPanelHeader";
+import { KitSectionAccordion } from "./KitSectionAccordion";
 
 const FONT_SIZE_MIN = 9;
 const FONT_SIZE_MAX = 16;
@@ -48,7 +49,7 @@ interface KitSection {
   content: string;
 }
 
-function parseKitSections(output: string): KitSection[] {
+function parseKitSections(output: string): Array<{ mode: string; content: string }> {
   // Kit output format: "── MODE ──\ncontent\n\n── MODE2 ──\ncontent2"
   const parts = output.split(/^──\s+\w+\s+──$/m);
   const headers = [...output.matchAll(/^──\s+(\w+)\s+──$/mg)].map(m => m[1]);
@@ -84,22 +85,6 @@ function HighlightedOutput({ text, query, style }: { text: string; query: string
   );
 }
 
-const EXPANDED_KEY = (activeMode: string) => `tempo-kit-expanded-${activeMode}`;
-
-function loadExpanded(activeMode: string, modes: string[]): Set<string> {
-  try {
-    const raw = localStorage.getItem(EXPANDED_KEY(activeMode));
-    if (raw) return new Set(JSON.parse(raw) as string[]);
-  } catch { /* ignore */ }
-  return new Set(modes); // default: all expanded
-}
-
-function saveExpanded(activeMode: string, expanded: Set<string>) {
-  try {
-    localStorage.setItem(EXPANDED_KEY(activeMode), JSON.stringify([...expanded]));
-  } catch { /* ignore */ }
-}
-
 export function OutputPanel(props: OutputPanelProps) {
   const {
     activeModeInfo, activeMode, modeArgs, modeRunning, modeOutput,
@@ -114,7 +99,6 @@ export function OutputPanel(props: OutputPanelProps) {
   const kitSections = isKitMode && filteredOutput ? parseKitSections(filteredOutput) : [];
   const hasKitSections = isKitMode && kitSections.length > 0;
 
-  const [expandedModes, setExpandedModes] = useState<Set<string>>(new Set());
   const [wrapEnabled, setWrapEnabled] = useState(() => localStorage.getItem("tempo_output_wrap") !== "false");
   const [fontSize, setFontSize] = useState<number>(() => {
     const saved = parseInt(localStorage.getItem(FONT_SIZE_KEY) || "", 10);
@@ -125,22 +109,6 @@ export function OutputPanel(props: OutputPanelProps) {
     setFontSize(prev => {
       const next = Math.max(FONT_SIZE_MIN, Math.min(FONT_SIZE_MAX, prev + delta));
       localStorage.setItem(FONT_SIZE_KEY, String(next));
-      return next;
-    });
-  };
-
-  // Load expanded state from localStorage when kit mode or sections change
-  useEffect(() => {
-    if (!hasKitSections) return;
-    setExpandedModes(loadExpanded(activeMode, kitSections.map(s => s.mode)));
-  }, [activeMode, hasKitSections]);
-
-  const toggleSection = (mode: string) => {
-    setExpandedModes(prev => {
-      const next = new Set(prev);
-      if (next.has(mode)) next.delete(mode);
-      else next.add(mode);
-      saveExpanded(activeMode, next);
       return next;
     });
   };
@@ -233,47 +201,12 @@ export function OutputPanel(props: OutputPanelProps) {
               </div>
             )}
             {hasKitSections ? (
-              <div
-                role="region"
-                aria-label="Kit mode output"
-                style={{ overflow: "auto", maxHeight: "calc(100% - 64px)", display: "flex", flexDirection: "column", gap: 4 }}
-              >
-                {kitSections.map(({ mode, content }) => {
-                  const expanded = expandedModes.has(mode);
-                  return (
-                    <div key={mode} style={{ border: "1px solid var(--border)", borderRadius: 4, overflow: "hidden" }}>
-                      <button
-                        onClick={() => toggleSection(mode)}
-                        aria-expanded={expanded}
-                        style={{
-                          width: "100%", display: "flex", alignItems: "center", gap: 6,
-                          padding: "4px 8px", background: "var(--bg-secondary)",
-                          border: "none", cursor: "pointer", textAlign: "left",
-                          color: "var(--text-secondary)", fontSize: 10, fontWeight: 600,
-                          letterSpacing: "0.06em", textTransform: "uppercase",
-                          fontFamily: "var(--font-mono)",
-                        }}
-                        onMouseEnter={(e) => (e.currentTarget.style.background = "var(--bg-hover)")}
-                        onMouseLeave={(e) => (e.currentTarget.style.background = "var(--bg-secondary)")}
-                      >
-                        {expanded
-                          ? <ChevronDown size={10} aria-hidden="true" />
-                          : <ChevronRight size={10} aria-hidden="true" />
-                        }
-                        {mode}
-                        <span style={{ marginLeft: "auto", fontSize: 8, opacity: 0.5, fontWeight: 400, textTransform: "none", letterSpacing: 0 }}>
-                          ~{Math.round(content.length / 4).toLocaleString()} tok
-                        </span>
-                      </button>
-                      {expanded && (
-                        <pre className="output" style={{ margin: 0, borderRadius: 0, maxHeight: 300, overflow: "auto", whiteSpace: wrapEnabled ? "pre-wrap" : "pre", fontSize }}>
-                          {content}
-                        </pre>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
+              <KitSectionAccordion
+                kitSections={kitSections}
+                activeMode={activeMode}
+                wrapEnabled={wrapEnabled}
+                fontSize={fontSize}
+              />
             ) : (
               <HighlightedOutput
                 text={filteredOutput}
