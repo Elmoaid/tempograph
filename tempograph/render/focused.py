@@ -3643,10 +3643,10 @@ def _signals_fn_focus_props_a(
     return lines
 
 
-def _signals_fn_focus_props_b(
+def _signals_fn_props_b_entry(
     graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
 ) -> list[str]:
-    """S804–S894: focus property signals (entry point, deprecated, no-caller, etc)."""
+    """S804–S852: entry/module/structural property signals."""
     lines: list[str] = []
     # S804: Entry point focus — focused symbol is a well-known entry point name.
     # Entry point functions initialize the entire application; changing them can break
@@ -3790,6 +3790,14 @@ def _signals_fn_focus_props_b(
                 f" — callers using operators (+, ==, < etc.) implicitly invoke this method"
             )
 
+    return lines
+
+
+def _signals_fn_props_b_oop(
+    graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """S858–S894: OOP/access/caller property signals."""
+    lines: list[str] = []
     # S858: Abstract method focus — focused method lives in an abstract/base class.
     # Abstract methods define contracts that all subclasses must implement; changing their
     # signatures requires updating every concrete implementation in the hierarchy.
@@ -3907,6 +3915,14 @@ def _signals_fn_focus_props_b(
                 f" — file appears deprecated; check if functionality has been migrated before modifying"
             )
 
+    return lines
+
+
+def _signals_fn_props_b_method(
+    graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """S900–S942: method/membership/visibility property signals."""
+    lines: list[str] = []
     # S900: Property focus — focused symbol is a property or computed getter.
     # Properties are transparent to callers but may have hidden side effects;
     # agents should verify no mutation or expensive computation occurs in getter bodies.
@@ -4039,6 +4055,14 @@ def _signals_fn_focus_props_b(
                     f" — high parameter count; each caller must pass all args; signature changes break all call sites"
                 )
 
+    return lines
+
+
+def _signals_fn_props_b_coupling(
+    graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """S948–S1014: isolation/coupling/pattern property signals."""
+    lines: list[str] = []
     # S948: All-private class — focused class has no public methods (all methods start with _).
     # An all-private class has no intentional external interface; callers may be accessing
     # internal methods directly, creating undocumented coupling that's fragile to refactors.
@@ -4244,6 +4268,18 @@ def _signals_fn_focus_props_b(
                 f" — focusing on test code; find the implementation under test for the production logic"
             )
 
+    return lines
+
+
+def _signals_fn_focus_props_b(
+    graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """S804–S1014: focus property signals (dispatcher to sub-helpers)."""
+    lines: list[str] = []
+    lines += _signals_fn_props_b_entry(graph, _seed_syms, token_count, max_tokens)
+    lines += _signals_fn_props_b_oop(graph, _seed_syms, token_count, max_tokens)
+    lines += _signals_fn_props_b_method(graph, _seed_syms, token_count, max_tokens)
+    lines += _signals_fn_props_b_coupling(graph, _seed_syms, token_count, max_tokens)
     return lines
 
 
