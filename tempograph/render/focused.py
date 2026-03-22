@@ -1189,6 +1189,84 @@ def _build_seed_callee_chain_line(
     return lines
 
 
+def _build_seed_apex_line(
+    sym: "Symbol",
+    graph: "Tempo",
+    indent: str,
+) -> list[str]:
+    """BFS upward through callers to find the nearest apex symbol (S45).
+
+    An apex is a symbol with zero non-test callers — it sits at the top of a
+    call chain. Distance to apex tells agents how deeply embedded this symbol is:
+
+      'apex: main [1 hop]'   → one level below the CLI entry, change carefully
+      'apex: self [entry]'   → this IS an entry point (nothing non-test calls it)
+      'apex: app.run [3 hops]' → 3 levels deep, safer to refactor
+      'apex: 5+ hops'        → very deeply buried, safest to change
+
+    Only fires for functions/methods at depth=0 (the queried symbol).
+    Suppressed when all callers are test files (no non-test chain to find).
+    Cost: BFS capped at depth=5 with global visited-node limit of 150.
+    """
+    if sym.kind.value not in ("function", "method"):
+        return []
+
+    non_test_callers = [c for c in graph.callers_of(sym.id) if not _is_test_file(c.file_path)]
+
+    if not non_test_callers:
+        # No non-test callers — either a true entry point or only called from tests
+        all_callers = graph.callers_of(sym.id)
+        if not all_callers:
+            # Truly uncalled (dead or CLI entry) — call it an entry point
+            return [f"{indent}  apex: self [entry]"]
+        # Only called from tests — suppress (no interesting chain to show)
+        return []
+
+    # BFS upward through non-test callers to find the nearest apex
+    from collections import deque  # noqa: PLC0415
+    MAX_DEPTH = 5
+    MAX_FAN = 8      # fan-out limit per node (avoids O(n²) on hub symbols)
+    MAX_VISITED = 150  # global cap to bound total work
+
+    seen: set[str] = {sym.id}
+    # Each queue entry: (sym_id, depth, symbol_name)
+    q: deque[tuple[str, int, str]] = deque()
+    for c in non_test_callers[:MAX_FAN]:
+        if c.id not in seen:
+            seen.add(c.id)
+            q.append((c.id, 1, c.name))
+
+    best: tuple[int, str] | None = None  # (depth, apex_name)
+
+    while q and len(seen) < MAX_VISITED:
+        curr_id, depth, curr_name = q.popleft()
+        curr_sym = graph.symbols.get(curr_id)
+        if curr_sym is None:
+            continue
+
+        curr_callers = [c for c in graph.callers_of(curr_id) if not _is_test_file(c.file_path)]
+
+        if not curr_callers:
+            # curr_sym has no non-test callers → it's an apex
+            if best is None or depth < best[0]:
+                best = (depth, curr_name)
+            continue  # don't expand past an apex
+
+        if depth >= MAX_DEPTH:
+            continue  # too deep; stop expanding
+
+        for c in curr_callers[:MAX_FAN]:
+            if c.id not in seen:
+                seen.add(c.id)
+                q.append((c.id, depth + 1, c.name))
+
+    if best is None:
+        return [f"{indent}  apex: {MAX_DEPTH}+ hops"]
+
+    hop_word = "hop" if best[0] == 1 else "hops"
+    return [f"{indent}  apex: {best[1]} [{best[0]} {hop_word}]"]
+
+
 # ---------------------------------------------------------------------------
 # _build_symbol_block_lines helper: structural section builders
 # ---------------------------------------------------------------------------
@@ -1488,6 +1566,7 @@ def _build_symbol_block_lines(
         block_lines += _build_seed_todo_lines(sym, graph, indent)
         block_lines += _build_seed_effects_lines(sym, graph, indent)
         block_lines += _build_seed_callee_chain_line(sym, graph, indent)
+        block_lines += _build_seed_apex_line(sym, graph, indent)
     if sym.signature and depth < 2:
         block_lines.append(f"{indent}  sig: {sym.signature[:150]}")
     if sym.doc and depth == 0:
