@@ -3498,6 +3498,26 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             f" — abandoned schema evolution paths; schema version table may be inconsistent with actual schema"
         )
 
+    # S1019: Dead routers — unused route_/register_route/add_route/register_ prefixed functions.
+    # Dead routing functions indicate removed URL or RPC endpoint registrations;
+    # callers attempting those paths will get 404s or unregistered handler errors.
+    _route_prefixes1019 = ("route_", "add_route", "register_route", "register_", "add_url", "add_view", "add_endpoint")
+    _dead_routers1019 = [
+        s for s in dead
+        if s.kind.value in ("function", "method")
+        and s.parent_id is None
+        and not _is_test_file(s.file_path)
+        and any(s.name.lower().startswith(p) for p in _route_prefixes1019)
+    ]
+    if _dead_routers1019:
+        _route_names1019 = ", ".join(s.name for s in _dead_routers1019[:3])
+        if len(_dead_routers1019) > 3:
+            _route_names1019 += f" +{len(_dead_routers1019) - 3} more"
+        lines.append(
+            f"dead routers: {len(_dead_routers1019)} unused routing function(s) ({_route_names1019})"
+            f" — removed endpoint registrations; requests to those paths may now return 404 or unregistered errors"
+        )
+
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
         lines.append(f"  {len(high)} high, {len(medium)} medium, {len(low)} low confidence")

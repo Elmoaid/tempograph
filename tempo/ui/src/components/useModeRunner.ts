@@ -15,6 +15,7 @@ export interface ModeRunnerState {
   modeOutput: string;
   modeRunning: boolean;
   copied: boolean;
+  saved: boolean;
   paletteOpen: boolean;
   historyOpen: boolean;
   history: string[];
@@ -85,6 +86,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   const [modeOutput, setModeOutput] = useState("");
   const [modeRunning, setModeRunning] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [saved, setSaved] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState<string[]>(() => loadHistory(localStorage.getItem(lastModeKey(repoPath)) || "overview"));
@@ -251,8 +253,8 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     const label = activeKit ? `kit-${activeKit}` : activeMode;
     const outPath = `${repoPath}/.tempo/output-${label}-${Date.now()}.txt`;
     await saveOutput(outPath, modeOutput);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
   };
 
   const submitFeedback = async (helpful: boolean) => {
@@ -291,6 +293,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     modeOutput,
     modeRunning,
     copied,
+    saved,
     paletteOpen,
     historyOpen,
     history,

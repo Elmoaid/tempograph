@@ -1190,7 +1190,6 @@ def _signals_structure_a(
 ) -> list[str]:
     """Structural signals: file isolation, module layout, entry-point patterns."""
     lines: list[str] = []
-    lines: list[str] = []
 
     # Lone files: source files with both 0 outgoing imports AND 0 incoming importers.
     # Completely structurally isolated — either dead utility modules or entry points not yet wired.
@@ -3660,6 +3659,22 @@ def _signals_async_oop_d(graph: Tempo) -> list[str]:
             f"mixed languages: {len(_lang_counts1009)} languages detected ({_lang_list1009})"
             f" — multi-language repo; cross-language call boundaries are harder to trace for agents"
         )
+
+    # S1015: Dominant file — a single source file holds more than half of all source symbols.
+    # Extreme symbol concentration signals a monolithic module; all agent queries are likely
+    # to converge on that file, which becomes a change bottleneck for unrelated work.
+    _src_syms1015 = [s for s in graph.symbols.values() if not _is_test_file(s.file_path)]
+    if _src_syms1015:
+        _file_counts1015: dict[str, int] = {}
+        for _s1015 in _src_syms1015:
+            _file_counts1015[_s1015.file_path] = _file_counts1015.get(_s1015.file_path, 0) + 1
+        _top_file1015, _top_count1015 = max(_file_counts1015.items(), key=lambda x: x[1])
+        if _top_count1015 > len(_src_syms1015) // 2 and len(_file_counts1015) >= 2:
+            _pct1015 = int(100 * _top_count1015 / len(_src_syms1015))
+            lines.append(
+                f"dominant file: {_top_file1015.rsplit('/', 1)[-1]} holds {_pct1015}% of all source symbols"
+                f" — monolithic module; all changes converge here, blocking parallel work"
+            )
 
     return lines
 
