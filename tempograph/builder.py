@@ -119,12 +119,11 @@ def build_graph(
         _hot_future = _hot_executor.submit(_get_hot_files, str(root))
         _hot_executor.shutdown(wait=False)
 
-    for file_path, rel_path in _walk_files(root, ignore_dirs, ignore_files, include_patterns, exclude_patterns, exclude_dirs):
-        ext = file_path.suffix.lower()
+    for file_path_str, rel_path, ext in _walk_files(root, ignore_dirs, ignore_files, include_patterns, exclude_patterns, exclude_dirs):
         language = EXTENSION_TO_LANGUAGE.get(ext, Language.UNKNOWN)
 
         try:
-            stat = file_path.stat()
+            stat = os.stat(file_path_str)
             if stat.st_size > MAX_FILE_SIZE:
                 continue
         except (OSError, PermissionError):
@@ -138,7 +137,8 @@ def build_graph(
             continue
 
         try:
-            source = file_path.read_bytes()
+            with open(file_path_str, "rb") as _f:
+                source = _f.read()
         except (OSError, PermissionError):
             continue
 
@@ -501,7 +501,9 @@ def _walk_files(
                 if any(fnmatch.fnmatch(rel, p) for p in exclude_patterns):
                     continue
 
-            yield Path(dirpath, filename), rel
+            # Yield string path + ext (already computed) — avoids Path object creation
+            # and the subsequent pathlib property chains (.suffix, .stat, __fspath__, __str__).
+            yield os.path.join(dirpath, filename), rel, ext
 
 
 _RESOLVE_KINDS = frozenset([EdgeKind.CALLS, EdgeKind.RENDERS, EdgeKind.INHERITS, EdgeKind.IMPLEMENTS])
