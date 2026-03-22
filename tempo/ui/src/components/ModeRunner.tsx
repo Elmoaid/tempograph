@@ -64,6 +64,11 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
           feedbackMode={vm.feedbackMode}
           argsInputRef={vm.argsInputRef}
           filterInputRef={vm.filterInputRef}
+          searchInputRef={vm.searchInputRef}
+          searchText={vm.searchText}
+          searchActive={vm.searchActive}
+          searchMatchCount={vm.searchMatchCount}
+          searchCurrentMatch={vm.searchCurrentMatch}
           onArgsChange={vm.setModeArgs}
           onHistoryOpen={vm.setHistoryOpen}
           onHistorySelect={vm.onHistorySelect}
@@ -73,6 +78,9 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
           onFilterToggle={vm.onFilterToggle}
           onFilterChange={vm.setOutputFilter}
           onFilterClose={vm.onFilterClose}
+          onSearchChange={vm.onSearchChange}
+          onSearchClose={vm.onSearchClose}
+          onSearchNavigate={vm.onSearchNavigate}
           onFeedback={vm.submitFeedback}
         />
       </div>
