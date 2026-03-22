@@ -132,10 +132,10 @@ class TestFileCommitCounts:
         assert result == {}
 
     def test_known_active_file_has_count(self):
-        # Use n_commits=500 — repo grows fast, 100 is too shallow after S-wave additions
+        # render/hotspots.py is heavily modified in recent history (150+ commits in last 500)
         result = file_commit_counts(TEMPOGRAPH_ROOT, n_commits=500)
-        assert "tempograph/parser.py" in result
-        assert result["tempograph/parser.py"] > 0
+        assert "tempograph/render/hotspots.py" in result
+        assert result["tempograph/render/hotspots.py"] > 0
 
 
 # ── changed_files_branch ──────────────────────────────────────────────────────
