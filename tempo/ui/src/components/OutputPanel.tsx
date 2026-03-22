@@ -20,6 +20,7 @@ interface OutputPanelProps {
   outputTs: number | null;
   runDuration: number | null;
   copied: boolean;
+  saved: boolean;
   filterVisible: boolean;
   outputFilter: string;
   filteredOutput: string;
@@ -106,7 +107,7 @@ export function OutputPanel(props: OutputPanelProps) {
     filteredOutput, filterMatchCount, history, historyOpen, feedbackGiven,
     argsInputRef, filterInputRef,
     onArgsChange, onHistoryOpen, onHistorySelect, onRun, onCopy, onSave,
-    onFilterToggle, onFilterChange, onFilterClose, onFeedback,
+    onFilterToggle, onFilterChange, onFilterClose, onFeedback, saved,
   } = props;
 
   const isKitMode = activeMode.startsWith("kit:");
@@ -159,6 +160,7 @@ export function OutputPanel(props: OutputPanelProps) {
         fontSizeMax={FONT_SIZE_MAX}
         onFilterToggle={onFilterToggle}
         onSave={onSave}
+        saved={saved}
         onFontDecrease={() => changeFontSize(-1)}
         onFontIncrease={() => changeFontSize(1)}
         onWrapToggle={() => {

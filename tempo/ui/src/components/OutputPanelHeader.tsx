@@ -1,4 +1,4 @@
-import { Copy, Check, Save, Search, WrapText } from "lucide-react";
+import { Copy, Check, Save, Search, WrapText, FolderCheck } from "lucide-react";
 
 interface OutputPanelHeaderProps {
   label: string;
@@ -9,6 +9,7 @@ interface OutputPanelHeaderProps {
   fontSize: number;
   fontSizeMin: number;
   fontSizeMax: number;
+  saved: boolean;
   onFilterToggle: () => void;
   onSave: () => void;
   onFontDecrease: () => void;
@@ -27,6 +28,7 @@ export function OutputPanelHeader({
   isKitMode,
   modeOutput,
   copied,
+  saved,
   wrapEnabled,
   fontSize,
   fontSizeMin,
@@ -70,10 +72,12 @@ export function OutputPanelHeader({
               className="btn btn-ghost"
               onClick={onSave}
               style={{ padding: "2px 6px", fontSize: 10 }}
-              title="Save to .tempo/"
-              aria-label="Save output to .tempo/"
+              title={saved ? "Saved to .tempo/" : "Save to .tempo/"}
+              aria-label={saved ? "Saved to .tempo/" : "Save output to .tempo/"}
             >
-              <Save size={10} aria-hidden="true" />
+              {saved
+                ? <><FolderCheck size={10} aria-hidden="true" /><span style={{ marginLeft: 3 }}>Saved!</span></>
+                : <Save size={10} aria-hidden="true" />}
             </button>
             <button
               className="btn btn-ghost"
