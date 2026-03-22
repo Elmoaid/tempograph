@@ -2978,5 +2978,28 @@ def _collect_hotspots_signals(
                 f" — hotspot concentration; a single regression here degrades two critical paths simultaneously"
             )
 
+    # S1018: Hot cascade — top hotspot file is imported by other hot files.
+    # When the top hotspot's importers are themselves hot (actively churning), a change
+    # here doesn't just ripple to cold files — it disrupts files already being modified,
+    # raising the risk of merge conflicts and concurrent regression.
+    # Only shown when 2+ hot importers exist (single overlap could be coincidence).
+    if scores and graph.hot_files:
+        _top_fp1018 = scores[0][1].file_path
+        if not _is_test_file(_top_fp1018):
+            _importers1018 = graph.importers_of(_top_fp1018)
+            _hot_importers1018 = [
+                fp for fp in _importers1018
+                if fp in graph.hot_files and not _is_test_file(fp)
+            ]
+            if len(_hot_importers1018) >= 2:
+                _hi_names = [fp.rsplit("/", 1)[-1] for fp in sorted(_hot_importers1018)[:3]]
+                _hi_str = ", ".join(_hi_names)
+                if len(_hot_importers1018) > 3:
+                    _hi_str += f" +{len(_hot_importers1018) - 3} more"
+                out.append(
+                    f"\nhot cascade: {_top_fp1018.rsplit('/', 1)[-1]} is imported by {len(_hot_importers1018)} hot files"
+                    f" ({_hi_str}) — a change here disrupts files already in active churn"
+                )
+
     return out
 

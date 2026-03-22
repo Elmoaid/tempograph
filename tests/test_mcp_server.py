@@ -27088,14 +27088,16 @@ class TestUtilityModuleBlastS566:
         from tempograph.render.blast import render_blast_radius
         from tempograph.builder import build_graph
 
-        # utils.py with only 2 importers — below threshold
-        (tmp_path / "utils.py").write_text("def fmt(x): return str(x)\n")
+        # myutils.py with only 2 importers — below S566 threshold (>= 5).
+        # Using "myutils.py" (not "utils.py") avoids S626 which fires for exact
+        # "utils.py" filename regardless of importer count.
+        (tmp_path / "myutils.py").write_text("def fmt(x): return str(x)\n")
         for i in range(2):
             (tmp_path / f"svc_{i}.py").write_text(
-                f"from utils import fmt\ndef run_{i}(): return fmt({i})\n"
+                f"from myutils import fmt\ndef run_{i}(): return fmt({i})\n"
             )
         g = build_graph(str(tmp_path), use_cache=False)
-        out = render_blast_radius(g, file_path="utils.py")
+        out = render_blast_radius(g, file_path="myutils.py")
         assert "utility module blast" not in out, (
             f"'utility module blast' must not appear for utils with only 2 importers; got:\n{out}"
         )
