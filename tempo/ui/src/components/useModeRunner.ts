@@ -14,6 +14,7 @@ export interface ModeRunnerState {
   kitBuilderOpen: boolean;
   modeArgs: string;
   modeOutput: string;
+  prevOutput: string | null;
   modeRunning: boolean;
   copied: boolean;
   saved: boolean;
@@ -85,6 +86,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   const [kitBuilderOpen, setKitBuilderOpen] = useState(false);
   const [modeArgs, setModeArgs] = useState("");
   const [modeOutput, setModeOutput] = useState("");
+  const [prevOutput, setPrevOutput] = useState<string | null>(null);
   const [modeRunning, setModeRunning] = useState(false);
   const [copied, setCopied] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -153,6 +155,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     setModeArgs("");
     setHistoryOpen(false);
     resetFilter();
+    setPrevOutput(null);
     setHistory(loadHistory(mode));
     const cached = outputCache.current.get(mode);
     setModeOutput(cached ?? "");
@@ -169,6 +172,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     setModeArgs("");
     setHistoryOpen(false);
     resetFilter();
+    setPrevOutput(null);
     const cacheKey = `kit:${kitId}`;
     const cached = outputCache.current.get(cacheKey);
     setModeOutput(cached ?? "");
@@ -218,7 +222,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   // Auto-run overview on mount
   useEffect(() => { runModeRef.current?.(); }, []);
 
-  const { runMode } = useRunMode({
+  const { runMode: _runMode } = useRunMode({
     repoPath,
     excludeDirs,
     activeMode,
@@ -237,6 +241,10 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     setCachedModes,
     setHistory,
   });
+  const runMode = useCallback(async () => {
+    if (modeOutput) setPrevOutput(modeOutput);
+    return _runMode();
+  }, [_runMode, modeOutput]);
   runModeRef.current = runMode;
 
   const copyOutput = () => {
@@ -278,6 +286,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     kitBuilderOpen,
     modeArgs,
     modeOutput,
+    prevOutput,
     modeRunning,
     copied,
     saved,
