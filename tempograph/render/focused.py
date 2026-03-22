@@ -1028,6 +1028,85 @@ def _build_seed_test_lines(
     return lines
 
 
+def _build_seed_name_test_lines(
+    sym: "Symbol",
+    graph: "Tempo",
+    indent: str,
+) -> list[str]:
+    """Build supplementary test coverage via name-pattern + import detection (S47).
+
+    Finds coverage that may not appear in the call graph:
+    - Test functions named test_<seed_name>[_*] in any test file (naming convention)
+    - Test files that import the seed's file (import-level coupling)
+
+    Only emits when NET-NEW coverage is found (not already shown by caller-based
+    _build_seed_test_lines). No negative signal — absent = unknown.
+    Skips symbols that ARE test functions.
+    """
+    if _is_test_file(sym.file_path):
+        return []
+    if sym.kind.value not in ("function", "method", "class"):
+        return []
+
+    seed_name = sym.name.lower()
+    prefix = f"test_{seed_name}"
+
+    # Path 1: name-matching — find test_<seed_name>[_*] functions in test files
+    name_matches: dict[str, list[str]] = {}  # basename -> [func_names]
+    for s in graph.symbols.values():
+        if not _is_test_file(s.file_path):
+            continue
+        if s.kind.value not in ("function", "method", "test"):
+            continue
+        sname = s.name.lower()
+        if sname == prefix or sname.startswith(prefix + "_"):
+            basename = s.file_path.rsplit("/", 1)[-1]
+            name_matches.setdefault(basename, []).append(s.name)
+
+    # Path 2: import-based — test files that import the seed's source file
+    import_basenames: set[str] = {
+        fp.rsplit("/", 1)[-1]
+        for fp in graph.importers_of(sym.file_path)
+        if _is_test_file(fp)
+    }
+
+    # Files already shown by caller-based _build_seed_test_lines — skip duplicates
+    caller_basenames: set[str] = {
+        c.file_path.rsplit("/", 1)[-1]
+        for c in graph.callers_of(sym.id)
+        if _is_test_file(c.file_path)
+    }
+
+    # Merge: name-matched files + import-only files not already in name_matches
+    all_new: dict[str, list[str]] = {
+        bn: fns for bn, fns in name_matches.items()
+        if bn not in caller_basenames
+    }
+    for bn in import_basenames:
+        if bn not in all_new and bn not in caller_basenames:
+            all_new[bn] = []  # import-based, no specific function names
+
+    if not all_new:
+        return []
+
+    # Build compact output: cap at 2 files, 3 function names each
+    parts: list[str] = []
+    for bn, fns in sorted(all_new.items())[:2]:
+        if fns:
+            fn_str = ", ".join(sorted(fns)[:3])
+            if len(fns) > 3:
+                fn_str += f" +{len(fns) - 3} more"
+            parts.append(f"{bn} ({fn_str})")
+        else:
+            parts.append(bn)
+
+    line = f"{indent}  tests found: {'; '.join(parts)}"
+    if len(all_new) > 2:
+        line += f" +{len(all_new) - 2} more"
+
+    return [line]
+
+
 def _build_seed_method_ctx_lines(
     sym: "Symbol",
     graph: "Tempo",
@@ -1594,6 +1673,7 @@ def _build_symbol_block_lines(
     if depth == 0:
         block_lines += _build_seed_identity_lines(sym, graph, recursive_label, indent)
         block_lines += _build_seed_test_lines(sym, graph, indent)
+        block_lines += _build_seed_name_test_lines(sym, graph, indent)  # S47: name+import coverage
         block_lines += _build_seed_method_ctx_lines(sym, graph, indent)
         block_lines += _build_seed_git_ctx_lines(sym, graph, staleness_cache, indent)
         block_lines += _build_seed_todo_lines(sym, graph, indent)
