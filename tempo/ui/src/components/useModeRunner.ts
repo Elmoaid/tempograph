@@ -1,9 +1,10 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { runTempo, saveOutput, reportFeedback, readFile } from "./tempo";
-import { MODES, loadHistory, saveHistory } from "./modes";
+import { MODES, loadHistory } from "./modes";
 import { BUILTIN_KITS, type KitInfo } from "./kits";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { useRunMode } from "../hooks/useRunMode";
+import { useOutputFilter } from "../hooks/useOutputFilter";
 
 export interface ModeRunnerState {
   activeMode: string;
@@ -93,9 +94,6 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   const feedbackGiven = useRef<Map<string, boolean>>(new Map<string, boolean>());
   const [feedbackMode, setFeedbackMode] = useState<string | null>(null);
   const argsInputRef = useRef<HTMLInputElement>(null);
-  const [outputFilter, setOutputFilter] = useState("");
-  const [filterVisible, setFilterVisible] = useState(false);
-  const filterInputRef = useRef<HTMLInputElement>(null);
   const outputCache = useRef<Map<string, string>>(new Map());
   const outputTsCache = useRef<Map<string, number>>(new Map());
   const [cachedModes, setCachedModes] = useState<Set<string>>(new Set());
@@ -108,17 +106,18 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   const activeModeInfo = buildActiveModeInfo(activeKit, activeMode, customKits);
   const allKits = [...BUILTIN_KITS, ...customKits];
 
-  const filteredOutput = useMemo(() => {
-    if (!outputFilter.trim() || !modeOutput) return modeOutput;
-    const q = outputFilter.toLowerCase();
-    return modeOutput.split("\n").filter(line => line.toLowerCase().includes(q)).join("\n");
-  }, [modeOutput, outputFilter]);
-
-  const filterMatchCount = useMemo(() => {
-    if (!outputFilter.trim() || !modeOutput) return null;
-    const q = outputFilter.toLowerCase();
-    return modeOutput.split("\n").filter(l => l.toLowerCase().includes(q)).length;
-  }, [modeOutput, outputFilter]);
+  const {
+    outputFilter,
+    setOutputFilter,
+    filterVisible,
+    setFilterVisible,
+    filterInputRef,
+    filteredOutput,
+    filterMatchCount,
+    onFilterToggle,
+    onFilterClose,
+    resetFilter,
+  } = useOutputFilter(modeOutput);
 
   const loadCustomKits = useCallback(() => {
     if (!repoPath) return;
@@ -153,8 +152,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     localStorage.setItem(lastModeKey(repoPath), mode);
     setModeArgs("");
     setHistoryOpen(false);
-    setOutputFilter("");
-    setFilterVisible(false);
+    resetFilter();
     setHistory(loadHistory(mode));
     const cached = outputCache.current.get(mode);
     setModeOutput(cached ?? "");
@@ -170,8 +168,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     setActiveMode("kit");
     setModeArgs("");
     setHistoryOpen(false);
-    setOutputFilter("");
-    setFilterVisible(false);
+    resetFilter();
     const cacheKey = `kit:${kitId}`;
     const cached = outputCache.current.get(cacheKey);
     setModeOutput(cached ?? "");
@@ -270,16 +267,6 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     setModeArgs(q);
     setHistoryOpen(false);
     setTimeout(() => runModeRef.current?.(), 0);
-  };
-
-  const onFilterToggle = () => {
-    setFilterVisible(v => !v);
-    setTimeout(() => filterInputRef.current?.focus(), 50);
-  };
-
-  const onFilterClose = () => {
-    setFilterVisible(false);
-    setOutputFilter("");
   };
 
   return {
