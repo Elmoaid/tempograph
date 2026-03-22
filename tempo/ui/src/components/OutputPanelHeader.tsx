@@ -69,8 +69,8 @@ export function OutputPanelHeader({
               className="btn btn-ghost"
               onClick={onFilterToggle}
               style={{ padding: "2px 6px", fontSize: 10 }}
-              title="Filter output (⌘F)"
-              aria-label="Filter output (⌘F)"
+              title="Filter lines"
+              aria-label="Filter output lines"
             >
               <Search size={10} aria-hidden="true" />
             </button>
