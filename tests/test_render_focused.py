@@ -383,3 +383,85 @@ class TestFocusCochangeCohort:
 
         shown = [line for line in result.splitlines() if "file" in line and "times" in line]
         assert len(shown) <= 5
+
+
+class TestBuildSeedNameTestLines:
+    """Tests for _build_seed_name_test_lines (S47): name-pattern + import-based coverage."""
+
+    def _fn_sym(self, name, file_path, line_start=1):
+        return Symbol(
+            id=f"{file_path}::{name}", name=name, qualified_name=name,
+            kind=SymbolKind.FUNCTION, language=Language.PYTHON,
+            file_path=file_path, line_start=line_start, line_end=line_start + 10,
+            exported=True,
+        )
+
+    def test_found_by_name_match(self, tmp_path):
+        """Name-matched test_<seed_name> function in test file → emits 'tests found:' line."""
+        from tempograph.render.focused import _build_seed_name_test_lines
+
+        seed = self._fn_sym("process_data", "module.py")
+        test_fn = self._fn_sym("test_process_data", "test_module.py")
+        graph = _make_graph(tmp_path, edges=[], symbols=[seed, test_fn])
+
+        result = _build_seed_name_test_lines(seed, graph, "")
+        assert result, "Expected a 'tests found:' line"
+        assert "tests found:" in result[0]
+        assert "test_module.py" in result[0]
+        assert "test_process_data" in result[0]
+
+    def test_found_by_import_only(self, tmp_path):
+        """Test file imports seed file but has no name-matched function → still emits line."""
+        from tempograph.render.focused import _build_seed_name_test_lines
+
+        seed = self._fn_sym("my_func", "module.py")
+        # No test_my_func symbol — just import edge
+        graph = _make_graph(tmp_path, edges=[
+            Edge(kind=EdgeKind.IMPORTS, source_id="tests/test_module.py", target_id="module.py"),
+        ], symbols=[seed])
+
+        result = _build_seed_name_test_lines(seed, graph, "")
+        assert result, "Expected a 'tests found:' line from import-based detection"
+        assert "tests found:" in result[0]
+        assert "test_module.py" in result[0]
+
+    def test_skips_test_function(self, tmp_path):
+        """Symbol in a test file is skipped — it IS a test, not something being tested."""
+        from tempograph.render.focused import _build_seed_name_test_lines
+
+        test_sym = self._fn_sym("test_something", "test_foo.py")
+        graph = _make_graph(tmp_path, edges=[], symbols=[test_sym])
+
+        result = _build_seed_name_test_lines(test_sym, graph, "")
+        assert result == []
+
+    def test_no_duplicate_when_already_caller(self, tmp_path):
+        """Files already shown by caller-based _build_seed_test_lines are excluded."""
+        from tempograph.render.focused import _build_seed_name_test_lines
+
+        seed = self._fn_sym("my_func", "module.py")
+        # test_fn is both a name match AND a caller of seed
+        test_fn = self._fn_sym("test_my_func", "test_module.py")
+        graph = _make_graph(tmp_path, edges=[
+            Edge(kind=EdgeKind.CALLS, source_id="test_module.py::test_my_func", target_id="module.py::my_func"),
+        ], symbols=[seed, test_fn])
+
+        result = _build_seed_name_test_lines(seed, graph, "")
+        # test_module.py is already in caller_basenames → no output
+        assert result == []
+
+    def test_caps_at_three_function_names(self, tmp_path):
+        """When 5 test functions match, output shows first 3 + '+N more' suffix."""
+        from tempograph.render.focused import _build_seed_name_test_lines
+
+        seed = self._fn_sym("compute", "math.py")
+        test_fns = [
+            self._fn_sym(f"test_compute_{i}", "test_math.py", line_start=10 + i)
+            for i in range(5)
+        ]
+        graph = _make_graph(tmp_path, edges=[], symbols=[seed] + test_fns)
+
+        result = _build_seed_name_test_lines(seed, graph, "")
+        assert result, "Expected a 'tests found:' line"
+        line = result[0]
+        assert "+2 more" in line, f"Expected '+2 more' cap indicator in: {line!r}"
