@@ -1638,6 +1638,7 @@ def _build_callees_block(
         _hot_ann = " [hot]" if c.file_path in graph.hot_files else ""
         _cx_ann = ""
         _cb_ann = ""
+        _sole_ann = ""
         if depth == 0:
             # S49: annotate callees with high complexity so agents see the iceberg
             if c.complexity > 15 and c.kind.value in ("function", "method"):
@@ -1645,10 +1646,32 @@ def _build_callees_block(
             _cb_files = len({cr.file_path for cr in graph.callers_of(c.id) if cr.file_path != c.file_path})
             if _cb_files >= 3:
                 _cb_ann = f" [blast: {_cb_files}]"
-        callee_strs.append(f"{c.qualified_name}{_cx_ann}{_hot_ann}{_cb_ann}")
+            # S51: flag sole-use callees — only called from this seed (excluding tests).
+            # If you refactor the seed, these become instantly orphaned.
+            if c.kind.value in ("function", "method"):
+                _prod_callers = [
+                    cr for cr in graph.callers_of(c.id)
+                    if not _is_test_file(cr.file_path)
+                ]
+                if len(_prod_callers) == 1 and _prod_callers[0].id == sym.id:
+                    _sole_ann = " [sole-use]"
+        callee_strs.append(f"{c.qualified_name}{_cx_ann}{_hot_ann}{_cb_ann}{_sole_ann}")
     lines.append(f"{indent}  calls: {', '.join(callee_strs)}")
     if len(callees) > shown:
         lines[-1] += f" (+{len(callees) - shown} more)"
+    # S52: hot callee instability — ≥2 non-test callees in hot_files = volatile territory.
+    # Agent editing a seed that calls 2+ recently-changed functions is walking on thin ice.
+    if depth == 0 and graph.hot_files:
+        _hot_non_test = [
+            c for c in callees
+            if c.file_path in graph.hot_files and not _is_test_file(c.file_path)
+        ]
+        if len(_hot_non_test) >= 2:
+            _names = [c.name for c in _hot_non_test[:3]]
+            _suffix = "..." if len(_hot_non_test) > 3 else ""
+            lines.append(
+                f"{indent}  \u21b3 instability: {len(_hot_non_test)} hot callees ({', '.join(_names)}{_suffix})"
+            )
     return lines
 
 
@@ -1996,10 +2019,10 @@ def _signals_focused_complexity(
 # ---------------------------------------------------------------------------
 # Signal group helper: structure
 # ---------------------------------------------------------------------------
-def _signals_focused_structure(
+def _signals_focused_structure_file(
     graph: Tempo, *, _seed_syms: list, token_count: int, max_tokens: int,
 ) -> list[str]:
-    """Focused-mode signals: structure."""
+    """File-level structure signals: siblings, sibling count, export ratio."""
     lines: list[str] = []
     # File siblings: other notable symbols in the primary seed's file.
     # Shows agents what else is in the file without requiring a blast query.
@@ -2038,6 +2061,36 @@ def _signals_focused_structure(
             if _fn_count132 >= 8:
                 lines.append(f"\nsibling count: {_fn_count132} fns in {_prim132.file_path.rsplit('/', 1)[-1]}")
 
+    # S136: Export ratio — fraction of fn/method symbols in the primary seed's file that are exported.
+    # Low ratio (< 30%) = mostly internal module. High ratio (> 80%) = public API file.
+    # Helps agents know whether changes leak into the public interface or stay internal.
+    # Only shown when the file has 4+ fn/method symbols (too noisy for tiny files).
+    if _seed_syms and token_count < max_tokens - 40:
+        _prim136 = _seed_syms[0]
+        _fi136 = graph.files.get(_prim136.file_path)
+        if _fi136:
+            _fns136 = [
+                graph.symbols[sid] for sid in _fi136.symbols
+                if sid in graph.symbols
+                and graph.symbols[sid].kind.value in ("function", "method")
+            ]
+            if len(_fns136) >= 4:
+                _exp136 = sum(1 for s in _fns136 if s.exported)
+                _pct136 = int(_exp136 / len(_fns136) * 100)
+                _fname136 = _prim136.file_path.rsplit("/", 1)[-1]
+                if _pct136 >= 80:
+                    lines.append(f"\nexport ratio: {_exp136}/{len(_fns136)} fns public in {_fname136} — all-public API file")
+                elif _pct136 <= 25:
+                    lines.append(f"\nexport ratio: {_exp136}/{len(_fns136)} fns public in {_fname136} — mostly internal module")
+
+    return lines
+
+
+def _signals_focused_structure_params(
+    graph: Tempo, *, _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """Parameter-shape structure signals: S141 (param count), S234 (long param list), S362 (overloaded)."""
+    lines: list[str] = []
     # S141: Param count — seed function has many parameters (>= 6), which is a design smell.
     # Too many parameters = violation of single responsibility or missing abstraction.
     # Extracts count from the signature string via comma-counting heuristic.
@@ -2068,28 +2121,6 @@ def _signals_focused_structure(
                         _n_params141 -= 1
                     if _n_params141 >= 6:
                         lines.append(f"\nparam count: {_n_params141} — consider a config object or split the function")
-
-    # S136: Export ratio — fraction of fn/method symbols in the primary seed's file that are exported.
-    # Low ratio (< 30%) = mostly internal module. High ratio (> 80%) = public API file.
-    # Helps agents know whether changes leak into the public interface or stay internal.
-    # Only shown when the file has 4+ fn/method symbols (too noisy for tiny files).
-    if _seed_syms and token_count < max_tokens - 40:
-        _prim136 = _seed_syms[0]
-        _fi136 = graph.files.get(_prim136.file_path)
-        if _fi136:
-            _fns136 = [
-                graph.symbols[sid] for sid in _fi136.symbols
-                if sid in graph.symbols
-                and graph.symbols[sid].kind.value in ("function", "method")
-            ]
-            if len(_fns136) >= 4:
-                _exp136 = sum(1 for s in _fns136 if s.exported)
-                _pct136 = int(_exp136 / len(_fns136) * 100)
-                _fname136 = _prim136.file_path.rsplit("/", 1)[-1]
-                if _pct136 >= 80:
-                    lines.append(f"\nexport ratio: {_exp136}/{len(_fns136)} fns public in {_fname136} — all-public API file")
-                elif _pct136 <= 25:
-                    lines.append(f"\nexport ratio: {_exp136}/{len(_fns136)} fns public in {_fname136} — mostly internal module")
 
     # S234: Long parameter list — focused fn/method has >= 5 parameters.
     # Many parameters = hard to call correctly, often signals missing data objects.
@@ -2140,6 +2171,20 @@ def _signals_focused_structure(
                             f" — difficult to call correctly; consider a config object or builder pattern"
                         )
 
+    return lines
+
+
+def _signals_focused_structure(
+    graph: Tempo, *, _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """Focused-mode signals: structure."""
+    lines: list[str] = []
+    lines.extend(_signals_focused_structure_file(
+        graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
+    ))
+    lines.extend(_signals_focused_structure_params(
+        graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
+    ))
     return lines
 
 
@@ -2271,12 +2316,12 @@ def _signals_focused_class_hierarchy(
 
 
 # ---------------------------------------------------------------------------
-# Signal group helper: class_patterns
+# Signal group helper: class_patterns — sub-helpers
 # ---------------------------------------------------------------------------
-def _signals_focused_class_patterns(
+def _signals_focused_class_patterns_inheritance(
     graph: Tempo, *, _seed_syms: list, token_count: int, max_tokens: int,
 ) -> list[str]:
-    """Focused-mode signals: class_patterns."""
+    """Focused-mode signals: class_patterns — inheritance signals (S287, S334)."""
     lines: list[str] = []
     # S287: Method override — focused method has the same name as a method in a parent class.
     # Overriding methods must maintain the parent's contract (Liskov Substitution Principle).
@@ -2303,42 +2348,6 @@ def _signals_focused_class_patterns(
                         )
                         break
 
-
-    # S253: Fat class — focused symbol is a class with 10+ methods/properties.
-    # Large classes often violate SRP; consider splitting into smaller components.
-    # Only shown when focused symbol is a class and has 10+ child methods.
-    if _seed_syms and token_count < max_tokens - 30:
-        _prim253 = next((s for s in _seed_syms if s.kind.value == "class"), None)
-        if _prim253 and _prim253.kind.value == "class":
-            _children253 = graph.children_of(_prim253.id)
-            _methods253 = [c for c in _children253 if c.kind.value in ("method", "function")]
-            if len(_methods253) >= 10:
-                lines.append(
-                    f"\nfat class: {_prim253.name} has {len(_methods253)} methods"
-                    f" — large class; consider splitting into focused components"
-                )
-
-
-    # S275: Orphaned class — focused class has 0 callers from outside its own file.
-    # An exported class that nobody uses externally is either dead code or
-    # intentionally kept for extension (interface/base); clarify which.
-    if _seed_syms and token_count < max_tokens - 30:
-        _prim275 = next((s for s in _seed_syms if s.kind.value == "class"), None)
-        if _prim275:
-            _ext_callers275 = [
-                c for c in graph.callers_of(_prim275.id)
-                if c.file_path != _prim275.file_path
-            ]
-            _method_has_ext_callers275 = any(
-                any(c.file_path != _prim275.file_path for c in graph.callers_of(child.id))
-                for child in graph.children_of(_prim275.id)
-            )
-            if not _ext_callers275 and not _method_has_ext_callers275 and _prim275.exported:
-                lines.append(
-                    f"\norphaned class: {_prim275.name} is exported but has no external callers"
-                    f" — may be dead code or an unused base class"
-                )
-
     # S334: Interface method — focused method is declared in a class with 3+ abstract methods.
     # Interface methods define contracts; any change to parameters or return type is a
     # breaking change for all implementors, not just direct callers.
@@ -2360,6 +2369,48 @@ def _signals_focused_class_patterns(
                         f" ({len(_sibling_methods334)} abstract methods)"
                         f" — contract change; all implementations must be updated"
                     )
+
+    return lines
+
+
+def _signals_focused_class_patterns_size(
+    graph: Tempo, *, _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """Focused-mode signals: class_patterns — size and isolation signals (S253, S275, S356)."""
+    lines: list[str] = []
+    # S253: Fat class — focused symbol is a class with 10+ methods/properties.
+    # Large classes often violate SRP; consider splitting into smaller components.
+    # Only shown when focused symbol is a class and has 10+ child methods.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim253 = next((s for s in _seed_syms if s.kind.value == "class"), None)
+        if _prim253 and _prim253.kind.value == "class":
+            _children253 = graph.children_of(_prim253.id)
+            _methods253 = [c for c in _children253 if c.kind.value in ("method", "function")]
+            if len(_methods253) >= 10:
+                lines.append(
+                    f"\nfat class: {_prim253.name} has {len(_methods253)} methods"
+                    f" — large class; consider splitting into focused components"
+                )
+
+    # S275: Orphaned class — focused class has 0 callers from outside its own file.
+    # An exported class that nobody uses externally is either dead code or
+    # intentionally kept for extension (interface/base); clarify which.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim275 = next((s for s in _seed_syms if s.kind.value == "class"), None)
+        if _prim275:
+            _ext_callers275 = [
+                c for c in graph.callers_of(_prim275.id)
+                if c.file_path != _prim275.file_path
+            ]
+            _method_has_ext_callers275 = any(
+                any(c.file_path != _prim275.file_path for c in graph.callers_of(child.id))
+                for child in graph.children_of(_prim275.id)
+            )
+            if not _ext_callers275 and not _method_has_ext_callers275 and _prim275.exported:
+                lines.append(
+                    f"\norphaned class: {_prim275.name} is exported but has no external callers"
+                    f" — may be dead code or an unused base class"
+                )
 
     # S356: God method — focused method lives in a class with 20+ total methods.
     # God classes accumulate responsibilities until no single developer can hold them in their head;
@@ -2387,150 +2438,177 @@ def _signals_focused_class_patterns(
 
 
 # ---------------------------------------------------------------------------
-# Signal group helper: coupling
+# Signal group helper: class_patterns
 # ---------------------------------------------------------------------------
-def _signals_focused_coupling(
+def _signals_focused_class_patterns(
     graph: Tempo, *, _seed_syms: list, token_count: int, max_tokens: int,
 ) -> list[str]:
-    """Focused-mode signals: coupling."""
+    """Focused-mode signals: class_patterns."""
     lines: list[str] = []
-    # S186: Cross-file callee — the focused symbol calls functions in 3+ distinct external files.
-    # Reaching out to many files means this fn is a coordination point; changes ripple widely.
-    # Only shown when seed is a fn/method with callees in 3+ different files.
-    if _seed_syms and token_count < max_tokens - 30:
-        _prim186 = _seed_syms[0]
-        if _prim186.kind.value in ("function", "method"):
-            _callee_files186 = {
-                c.file_path for c in graph.callees_of(_prim186.id)
-                if c.file_path != _prim186.file_path
-            }
-            if len(_callee_files186) >= 3:
-                _cf_names186 = [fp.rsplit("/", 1)[-1] for fp in sorted(_callee_files186)[:3]]
-                _cf_str186 = ", ".join(_cf_names186)
-                if len(_callee_files186) > 3:
-                    _cf_str186 += f" +{len(_callee_files186) - 3} more"
-                lines.append(
-                    f"\ncross-file callee: {_prim186.name} calls into {len(_callee_files186)} files"
-                    f" ({_cf_str186}) — coordination fn, changes ripple to many modules"
-                )
-
-    # S272: High callee fan-out — focused function calls 5+ distinct external functions.
-    # High fan-out increases coupling surface: changes to any callee may ripple back.
-    # Also makes the function harder to test in isolation (many dependencies to mock).
-    if _seed_syms and token_count < max_tokens - 30:
-        _prim272 = _seed_syms[0]
-        if _prim272.kind.value in ("function", "method"):
-            _callees272 = [
-                c for c in graph.callees_of(_prim272.id)
-                if c.file_path != _prim272.file_path
-            ]
-            _unique272 = {c.name for c in _callees272}
-            if len(_unique272) >= 5:
-                lines.append(
-                    f"\nhigh fan-out: {_prim272.name} calls {len(_unique272)} distinct external fns"
-                    f" — many dependencies; consider dependency injection for testability"
-                )
+    lines.extend(_signals_focused_class_patterns_inheritance(
+        graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
+    ))
+    lines.extend(_signals_focused_class_patterns_size(
+        graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
+    ))
+    return lines
 
 
-    # S314: High caller count — focused symbol is called from 10+ distinct files.
-    # Symbols with very high caller counts are de-facto stable APIs;
-    # even minor behavior changes (not just signatures) can break unknown callers.
-    if _seed_syms and token_count < max_tokens - 30:
-        _prim314 = _seed_syms[0]
-        _callers314 = graph.callers_of(_prim314.id)
-        _caller_files314 = {c.file_path for c in _callers314 if c.file_path != _prim314.file_path}
-        if len(_caller_files314) >= 10:
+# ---------------------------------------------------------------------------
+# Signal group helper: coupling
+# ---------------------------------------------------------------------------
+def _signals_focused_coupling_fanout(
+    graph: Tempo, *, _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """Coupling signals: outgoing call fan-out (S186, S272)."""
+    lines: list[str] = []
+    if not (_seed_syms and token_count < max_tokens - 30):
+        return lines
+    _prim = _seed_syms[0]
+    if _prim.kind.value not in ("function", "method"):
+        return lines
+
+    # S186: Cross-file callee — calls functions in 3+ distinct external files.
+    _callee_files = {
+        c.file_path for c in graph.callees_of(_prim.id)
+        if c.file_path != _prim.file_path
+    }
+    if len(_callee_files) >= 3:
+        _cf_names = [fp.rsplit("/", 1)[-1] for fp in sorted(_callee_files)[:3]]
+        _cf_str = ", ".join(_cf_names)
+        if len(_callee_files) > 3:
+            _cf_str += f" +{len(_callee_files) - 3} more"
+        lines.append(
+            f"\ncross-file callee: {_prim.name} calls into {len(_callee_files)} files"
+            f" ({_cf_str}) — coordination fn, changes ripple to many modules"
+        )
+
+    # S272: High callee fan-out — calls 5+ distinct external functions.
+    _callees = [c for c in graph.callees_of(_prim.id) if c.file_path != _prim.file_path]
+    _unique = {c.name for c in _callees}
+    if len(_unique) >= 5:
+        lines.append(
+            f"\nhigh fan-out: {_prim.name} calls {len(_unique)} distinct external fns"
+            f" — many dependencies; consider dependency injection for testability"
+        )
+
+    return lines
+
+
+def _signals_focused_coupling_callers(
+    graph: Tempo, *, _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """Coupling signals: incoming callers and re-export visibility (S314, S309)."""
+    lines: list[str] = []
+    if not (_seed_syms and token_count < max_tokens - 30):
+        return lines
+    _prim = _seed_syms[0]
+
+    # S314: High caller count — called from 10+ distinct files.
+    _callers = graph.callers_of(_prim.id)
+    _caller_files = {c.file_path for c in _callers if c.file_path != _prim.file_path}
+    if len(_caller_files) >= 10:
+        lines.append(
+            f"\nhigh caller count: {_prim.name} called from {len(_caller_files)} files"
+            f" — de-facto stable API; behavior changes break callers even without signature change"
+        )
+
+    # S309: Re-exported symbol — also exported from an __init__ or index file.
+    if _prim.exported:
+        _reexport = [
+            s for s in graph.symbols.values()
+            if s.name == _prim.name
+            and s.file_path != _prim.file_path
+            and s.exported
+            and (
+                s.file_path.endswith("__init__.py")
+                or s.file_path.rsplit("/", 1)[-1].startswith("index.")
+            )
+        ]
+        if _reexport:
+            _facade_name = _reexport[0].file_path.rsplit("/", 1)[-1]
             lines.append(
-                f"\nhigh caller count: {_prim314.name} called from {len(_caller_files314)} files"
-                f" — de-facto stable API; behavior changes break callers even without signature change"
+                f"\nre-exported: {_prim.name} also exported from {_facade_name}"
+                f" — dual blast radius; importers of the facade are also affected"
             )
 
-    # S210: Cochange partners outside static graph — files that co-change with the seed
-    # file in git history but have NO import/call edge to it (hidden coupling).
-    # Git history catches runtime coupling, config coupling, and test fixture coupling
-    # that static analysis misses entirely.
-    # Only shown when 2+ such hidden co-editors exist with >= 3 co-changes each.
-    if _seed_syms and graph.root and token_count < max_tokens - 30:
+    return lines
+
+
+def _signals_focused_coupling_hidden(
+    graph: Tempo, *, _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """Coupling signals: non-obvious/hidden coupling (S210 cochange, S266 circular)."""
+    lines: list[str] = []
+    if not (_seed_syms and token_count < max_tokens - 30):
+        return lines
+    _prim = _seed_syms[0]
+
+    # S210: Cochange partners outside static graph — hidden coupling via git history.
+    if graph.root:
         try:
-            from ..git import cochange_pairs as _cp210, is_git_repo as _igr210
-            from ..types import EdgeKind as _EK210
-            if _igr210(graph.root):
-                _seed_fp210 = _seed_syms[0].file_path
-                # Files connected via any static edge to the seed file
-                _static_neighbors210: set[str] = set()
-                for _e210 in graph.edges:
-                    if _e210.kind in (_EK210.CALLS, _EK210.IMPORTS):
-                        _src210 = _e210.source_id.split("::")[0]
-                        _tgt210 = _e210.target_id.split("::")[0]
-                        if _src210 == _seed_fp210:
-                            _static_neighbors210.add(_tgt210)
-                        elif _tgt210 == _seed_fp210:
-                            _static_neighbors210.add(_src210)
-                _pairs210 = _cp210(graph.root, _seed_fp210, n=10)
-                _hidden210 = [
-                    p for p in _pairs210
-                    if p["path"] not in _static_neighbors210
-                    and p["path"] != _seed_fp210
+            from ..git import cochange_pairs as _cp, is_git_repo as _igr
+            from ..types import EdgeKind as _EK
+            if _igr(graph.root):
+                _seed_fp = _prim.file_path
+                _static_neighbors: set[str] = set()
+                for _e in graph.edges:
+                    if _e.kind in (_EK.CALLS, _EK.IMPORTS):
+                        _src = _e.source_id.split("::")[0]
+                        _tgt = _e.target_id.split("::")[0]
+                        if _src == _seed_fp:
+                            _static_neighbors.add(_tgt)
+                        elif _tgt == _seed_fp:
+                            _static_neighbors.add(_src)
+                _pairs = _cp(graph.root, _seed_fp, n=10)
+                _hidden = [
+                    p for p in _pairs
+                    if p["path"] not in _static_neighbors
+                    and p["path"] != _seed_fp
                     and not _is_test_file(p["path"])
                     and p["count"] >= 3
                 ]
-                if len(_hidden210) >= 2:
-                    _h210_names = [p["path"].rsplit("/", 1)[-1] for p in _hidden210[:3]]
-                    _h210_str = ", ".join(_h210_names)
-                    if len(_hidden210) > 3:
-                        _h210_str += f" +{len(_hidden210) - 3} more"
+                if len(_hidden) >= 2:
+                    _h_names = [p["path"].rsplit("/", 1)[-1] for p in _hidden[:3]]
+                    _h_str = ", ".join(_h_names)
+                    if len(_hidden) > 3:
+                        _h_str += f" +{len(_hidden) - 3} more"
                     lines.append(
-                        f"\ncochange partners (not in call graph): {_h210_str}"
+                        f"\ncochange partners (not in call graph): {_h_str}"
                         f" — co-edit history suggests hidden coupling"
                     )
         except Exception:
             pass
 
     # S266: Circular call — focused symbol and one of its callees also call back to it.
-    # Circular calls create hidden coupling and make execution order unpredictable;
-    # they can cause infinite loops under certain conditions.
-    if _seed_syms and token_count < max_tokens - 30:
-        _prim260 = _seed_syms[0]
-        if _prim260.kind.value in ("function", "method"):
-            _callers260 = {c.id for c in graph.callers_of(_prim260.id)}
-            _callees260 = {c.id for c in graph.callees_of(_prim260.id)}
-            _mutual260 = _callers260 & _callees260
-            if _mutual260:
-                _mutual_name260 = next(
-                    (graph.symbols[sid].name for sid in _mutual260 if sid in graph.symbols),
-                    None
-                )
-                if _mutual_name260:
-                    lines.append(
-                        f"\ncircular call: {_prim260.name} ↔ {_mutual_name260} call each other"
-                        f" — mutual dependency; changes must maintain protocol on both sides"
-                    )
-
-
-    # S309: Re-exported symbol — focused symbol is also exported from an __init__ or index file.
-    # Re-exported symbols have two blast radii: direct imports from the definition file
-    # and indirect imports via the facade/index module.
-    if _seed_syms and token_count < max_tokens - 30:
-        _prim309 = _seed_syms[0]
-        if _prim309.exported:
-            _reexport309 = [
-                s for s in graph.symbols.values()
-                if s.name == _prim309.name
-                and s.file_path != _prim309.file_path
-                and s.exported
-                and (
-                    s.file_path.endswith("__init__.py")
-                    or s.file_path.rsplit("/", 1)[-1].startswith("index.")
-                )
-            ]
-            if _reexport309:
-                _facade_name309 = _reexport309[0].file_path.rsplit("/", 1)[-1]
+    if _prim.kind.value in ("function", "method"):
+        _callers_ids = {c.id for c in graph.callers_of(_prim.id)}
+        _callees_ids = {c.id for c in graph.callees_of(_prim.id)}
+        _mutual = _callers_ids & _callees_ids
+        if _mutual:
+            _mutual_name = next(
+                (graph.symbols[sid].name for sid in _mutual if sid in graph.symbols),
+                None
+            )
+            if _mutual_name:
                 lines.append(
-                    f"\nre-exported: {_prim309.name} also exported from {_facade_name309}"
-                    f" — dual blast radius; importers of the facade are also affected"
+                    f"\ncircular call: {_prim.name} ↔ {_mutual_name} call each other"
+                    f" — mutual dependency; changes must maintain protocol on both sides"
                 )
 
     return lines
+
+
+def _signals_focused_coupling(
+    graph: Tempo, *, _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """Focused-mode signals: coupling."""
+    _kw = dict(_seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens)
+    return (
+        _signals_focused_coupling_fanout(graph, **_kw)
+        + _signals_focused_coupling_callers(graph, **_kw)
+        + _signals_focused_coupling_hidden(graph, **_kw)
+    )
 
 
 # ---------------------------------------------------------------------------
