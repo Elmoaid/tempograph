@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, type RefObject } from "react";
 import { Play, Loader2, ChevronDown } from "lucide-react";
+import { MODE_HINTS } from "./modeHints";
 
 interface ArgsInputProps {
   value: string;
@@ -8,6 +9,7 @@ interface ArgsInputProps {
   placeholder: string;
   argsInputRef: RefObject<HTMLInputElement>;
   modeRunning: boolean;
+  activeMode: string;
   onChange: (v: string) => void;
   onRun: () => void;
   onHistoryOpen: (v: boolean) => void;
@@ -15,11 +17,14 @@ interface ArgsInputProps {
 }
 
 export function ArgsInput({
-  value, history, historyOpen, placeholder, argsInputRef, modeRunning,
+  value, history, historyOpen, placeholder, argsInputRef, modeRunning, activeMode,
   onChange, onRun, onHistoryOpen, onHistorySelect,
 }: ArgsInputProps) {
   const [historyIdx, setHistoryIdx] = useState(-1);
+  const [isFocused, setIsFocused] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  const hint = activeMode.startsWith("kit:") ? "(no args needed)" : MODE_HINTS[activeMode];
 
   const closeHistory = () => { onHistoryOpen(false); setHistoryIdx(-1); };
 
@@ -68,7 +73,8 @@ export function ArgsInput({
   };
 
   return (
-    <div ref={containerRef} style={{ display: "flex", gap: 6, marginBottom: 8, position: "relative" }}>
+    <div style={{ marginBottom: 8 }}>
+    <div ref={containerRef} style={{ display: "flex", gap: 6, position: "relative" }}>
       <div style={{ flex: 1, position: "relative", display: "flex" }}>
         <input
           ref={argsInputRef}
@@ -81,6 +87,8 @@ export function ArgsInput({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           onKeyDown={handleKeyDown}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => setIsFocused(false)}
           style={{ width: "100%", borderTopRightRadius: history.length > 0 ? 0 : undefined, borderBottomRightRadius: history.length > 0 ? 0 : undefined }}
         />
         {history.length > 0 && (
@@ -147,6 +155,20 @@ export function ArgsInput({
           : <><Play size={11} aria-hidden="true" /> Run</>
         }
       </button>
+    </div>
+    {isFocused && !value && hint && (
+      <div style={{
+        fontSize: 10,
+        color: "var(--text-tertiary)",
+        opacity: 0.7,
+        fontFamily: "var(--font-mono)",
+        marginTop: 3,
+        paddingLeft: 2,
+        letterSpacing: "0.01em",
+      }}>
+        {hint}
+      </div>
+    )}
     </div>
   );
 }
