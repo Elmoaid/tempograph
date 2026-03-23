@@ -1615,12 +1615,16 @@ def _build_callees_block(
     callee_strs = []
     for c in ordered_callees:
         _hot_ann = " [hot]" if c.file_path in graph.hot_files else ""
+        _cx_ann = ""
         _cb_ann = ""
         if depth == 0:
+            # S49: annotate callees with high complexity so agents see the iceberg
+            if c.complexity > 15 and c.kind.value in ("function", "method"):
+                _cx_ann = f" (cx={c.complexity})"
             _cb_files = len({cr.file_path for cr in graph.callers_of(c.id) if cr.file_path != c.file_path})
             if _cb_files >= 3:
                 _cb_ann = f" [blast: {_cb_files}]"
-        callee_strs.append(f"{c.qualified_name}{_hot_ann}{_cb_ann}")
+        callee_strs.append(f"{c.qualified_name}{_cx_ann}{_hot_ann}{_cb_ann}")
     lines.append(f"{indent}  calls: {', '.join(callee_strs)}")
     if len(callees) > shown:
         lines[-1] += f" (+{len(callees) - shown} more)"
