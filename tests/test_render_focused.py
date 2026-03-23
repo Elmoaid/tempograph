@@ -819,3 +819,79 @@ class TestFocusCallerDomainDiversity:
         result = _build_callers_block(seed, 0, graph, [], {}, None, "")
         full = "\n".join(result)
         assert "cross-cutting" not in full, f"2 domains should not trigger cross-cutting; got:\n{full}"
+
+
+class TestKwCallersCap:
+    """S32: kw_callers capped at 8 to prevent hub symbols generating unreadable caller lists."""
+
+    def _fn_sym(self, name, file_path, line_start=1):
+        return Symbol(
+            id=f"{file_path}::{name}",
+            name=name,
+            qualified_name=name,
+            kind=SymbolKind.FUNCTION,
+            language=Language.PYTHON,
+            file_path=file_path,
+            line_start=line_start,
+            line_end=line_start + 10,
+            exported=True,
+        )
+
+    def _make_caller(self, name, file_path):
+        return Symbol(
+            id=f"{file_path}::{name}",
+            name=name,
+            qualified_name=name,
+            kind=SymbolKind.FUNCTION,
+            language=Language.PYTHON,
+            file_path=file_path,
+            line_start=1,
+            line_end=10,
+            exported=True,
+        )
+
+    def test_kw_callers_capped_at_8(self, tmp_path):
+        """15 keyword-matching callers → only 8 shown + '+7 more' overflow."""
+        from tempograph.render.focused import _build_callers_block
+
+        seed = self._fn_sym("count_tokens", "tempograph/render/_utils.py")
+        kw_callers = [
+            self._make_caller(f"render_fn_{i}", "tempograph/render/focused.py")
+            for i in range(15)
+        ]
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=c.id, target_id=seed.id)
+            for c in kw_callers
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + kw_callers)
+
+        result = _build_callers_block(seed, 0, graph, ["render"], {}, None, "")
+        full = "\n".join(result)
+        assert "called by:" in full
+        # 15 total, 8 kw shown. shown_count = 8 + max_other(3) = 11, overflow = 15-11 = 4.
+        assert "+4 more" in full, f"Expected '+4 more' overflow; got:\n{full}"
+        shown_before_overflow = full.split("called by:")[1].split("+")[0]
+        caller_count = shown_before_overflow.count("render_fn_")
+        assert caller_count == 8, f"Expected 8 kw_callers shown, got {caller_count};\n{full}"
+
+    def test_fewer_than_8_kw_callers_all_shown(self, tmp_path):
+        """5 keyword callers → all 5 shown (under cap, no truncation)."""
+        from tempograph.render.focused import _build_callers_block
+
+        seed = self._fn_sym("helper", "tempograph/render/_utils.py")
+        kw_callers = [
+            self._make_caller(f"render_fn_{i}", "tempograph/render/focused.py")
+            for i in range(5)
+        ]
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=c.id, target_id=seed.id)
+            for c in kw_callers
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + kw_callers)
+
+        result = _build_callers_block(seed, 0, graph, ["render"], {}, None, "")
+        full = "\n".join(result)
+        assert "called by:" in full
+        assert "more" not in full, f"Should not overflow with only 5 callers; got:\n{full}"
+        caller_count = full.count("render_fn_")
+        assert caller_count == 5, f"Expected 5 callers shown, got {caller_count};\n{full}"

@@ -1554,6 +1554,10 @@ def _build_callers_block(
     hot_other = [c for c in other_callers if c.file_path in graph.hot_files]
     cold_other = [c for c in other_callers if c.file_path not in graph.hot_files]
     max_other = 3 if kw_callers else (8 if depth == 0 else 5)
+    # Cap kw_callers to prevent hub symbols with 100+ keyword-matching callers
+    # from producing unreadable called_by lines. Freed budget used for more BFS symbols.
+    # Bench: -3.4% tokens across 20 queries; -10% for render/* queries at cap.
+    kw_callers = kw_callers[:8]
     shown_callers = kw_callers + (hot_other + cold_other)[:max_other]
     shown_count = len(kw_callers) + max_other
     _total_for_overflow = len(_callers_for_display)
