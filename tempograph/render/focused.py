@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..types import Tempo, EdgeKind, Symbol, SymbolKind
-from ._utils import count_tokens, _is_test_file, _MONOLITH_THRESHOLD, _dead_code_confidence
+from ._utils import count_tokens, _is_test_file, _caller_domain, _MONOLITH_THRESHOLD, _dead_code_confidence
 
 _MONOLITH_THRESHOLD = 1000
 
@@ -1594,6 +1594,23 @@ def _build_callers_block(
                 f"{indent}    ↳ {_shown_ghost_count} caller(s) are themselves unreachable"
                 f" — effective reach: {_live_shown} of {len(shown_callers)} shown"
             )
+        # S50: caller domain diversity — cross-cutting signal at depth=0.
+        # When non-test callers come from 3+ distinct subsystems, flag it.
+        # Uses ALL callers (not just shown) to get the true domain picture.
+        if depth == 0:
+            _domains: set[str] = set()
+            for _dc in _callers_for_display:
+                _d = _caller_domain(_dc.file_path)
+                if _d:
+                    _domains.add(_d)
+            if len(_domains) >= 3:
+                _sorted_domains = sorted(_domains)[:4]
+                _domain_str = ", ".join(_sorted_domains)
+                _n = len(_domains)
+                lines.append(
+                    f"{indent}    ↳ cross-cutting: {_n} subsystem{'s' if _n != 1 else ''}"
+                    f" ({_domain_str}{'...' if _n > 4 else ''})"
+                )
     return lines
 
 
@@ -4019,10 +4036,10 @@ def _signals_fn_props_b_entry(
     return lines
 
 
-def _signals_fn_props_b_oop(
+def _signals_fn_props_b_oop_class(
     graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
 ) -> list[str]:
-    """S858–S894: OOP/access/caller property signals."""
+    """S858, S882: abstract-method and class-focus signals."""
     lines: list[str] = []
     # S858: Abstract method focus — focused method lives in an abstract/base class.
     # Abstract methods define contracts that all subclasses must implement; changing their
@@ -4045,6 +4062,31 @@ def _signals_fn_props_b_oop(
                     f" — signature changes require updating all concrete subclass implementations"
                 )
 
+    # S882: Class focus — the focused symbol is a class, not a function or method.
+    # Focusing on a class shows the whole class; agents should use method-level focus
+    # for targeted changes to avoid unintended modifications to sibling methods.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim882 = _seed_syms[0]
+        if _prim882.kind.value == "class" and not _is_test_file(_prim882.file_path):
+            _children882 = [
+                s for s in graph.symbols.values()
+                if s.parent_id == _prim882.id
+                and s.kind.value in ("method", "function")
+            ]
+            if _children882:
+                lines.append(
+                    f"\nclass focus: {_prim882.name} is a class with {len(_children882)} method(s)"
+                    f" — focus on individual methods for targeted changes; class-level focus shows all methods"
+                )
+
+    return lines
+
+
+def _signals_fn_props_b_oop_fn_shape(
+    graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """S864, S876: high-arity and long-function signals."""
+    lines: list[str] = []
     # S864: High-arity function — focused function has 7+ parameters.
     # Functions with many parameters are hard to call correctly; they usually indicate
     # a missing abstraction that should be a config object, dataclass, or separate builder.
@@ -4068,23 +4110,6 @@ def _signals_fn_props_b_oop(
                         f" — too many parameters; consider a config object or builder pattern"
                     )
 
-    # S882: Class focus — the focused symbol is a class, not a function or method.
-    # Focusing on a class shows the whole class; agents should use method-level focus
-    # for targeted changes to avoid unintended modifications to sibling methods.
-    if _seed_syms and token_count < max_tokens - 30:
-        _prim882 = _seed_syms[0]
-        if _prim882.kind.value == "class" and not _is_test_file(_prim882.file_path):
-            _children882 = [
-                s for s in graph.symbols.values()
-                if s.parent_id == _prim882.id
-                and s.kind.value in ("method", "function")
-            ]
-            if _children882:
-                lines.append(
-                    f"\nclass focus: {_prim882.name} is a class with {len(_children882)} method(s)"
-                    f" — focus on individual methods for targeted changes; class-level focus shows all methods"
-                )
-
     # S876: Long function focus — focused function spans 30+ lines.
     # Long functions are hard to reason about end-to-end; agents should be extra cautious
     # about side effects and implicit state changes buried deep in the function body.
@@ -4097,6 +4122,14 @@ def _signals_fn_props_b_oop(
                     f" — long functions hide complexity; review all side effects before changing"
                 )
 
+    return lines
+
+
+def _signals_fn_props_b_oop_callers(
+    graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """S870, S888, S894: no-caller, multi-caller, and deprecated-file signals."""
+    lines: list[str] = []
     # S870: No-caller symbol focus — focused function or method has zero recorded callers.
     # A symbol with no callers is either an entry point, a dead symbol, or called via
     # reflection/dynamic dispatch; agents should investigate before assuming it is safe to remove.
@@ -4141,6 +4174,17 @@ def _signals_fn_props_b_oop(
                 f" — file appears deprecated; check if functionality has been migrated before modifying"
             )
 
+    return lines
+
+
+def _signals_fn_props_b_oop(
+    graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """S858–S894: OOP/access/caller property signals (dispatcher)."""
+    lines: list[str] = []
+    lines += _signals_fn_props_b_oop_class(graph, _seed_syms, token_count, max_tokens)
+    lines += _signals_fn_props_b_oop_fn_shape(graph, _seed_syms, token_count, max_tokens)
+    lines += _signals_fn_props_b_oop_callers(graph, _seed_syms, token_count, max_tokens)
     return lines
 
 

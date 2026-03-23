@@ -684,3 +684,138 @@ class TestFocusCalleeCxAnnotation:
         assert result, "Expected calls line"
         calls_line = result[0]
         assert "(cx=" not in calls_line, f"Class-kind callee should not have cx annotation; got: {calls_line!r}"
+
+
+class TestCallerDomain:
+    """Unit tests for _caller_domain helper (S50)."""
+
+    def test_standard_module(self):
+        from tempograph.render._utils import _caller_domain
+        assert _caller_domain("tempograph/server.py") == "server"
+
+    def test_subpackage_uses_second_level(self):
+        from tempograph.render._utils import _caller_domain
+        assert _caller_domain("tempograph/render/focused.py") == "render"
+
+    def test_dunder_main_becomes_cli(self):
+        from tempograph.render._utils import _caller_domain
+        assert _caller_domain("tempograph/__main__.py") == "cli"
+
+    def test_root_level_file(self):
+        from tempograph.render._utils import _caller_domain
+        assert _caller_domain("server.py") == "server"
+
+    def test_ui_package(self):
+        from tempograph.render._utils import _caller_domain
+        assert _caller_domain("tempo/ui/src/App.tsx") == "ui"
+
+
+class TestFocusCallerDomainDiversity:
+    """S50: cross-cutting annotation when callers span 3+ distinct subsystems."""
+
+    def _fn_sym(self, name, file_path, line_start=1):
+        return Symbol(
+            id=f"{file_path}::{name}",
+            name=name,
+            qualified_name=name,
+            kind=SymbolKind.FUNCTION,
+            language=Language.PYTHON,
+            file_path=file_path,
+            line_start=line_start,
+            line_end=line_start + 10,
+            exported=True,
+        )
+
+    def _make_caller(self, name, file_path):
+        return Symbol(
+            id=f"{file_path}::{name}",
+            name=name,
+            qualified_name=name,
+            kind=SymbolKind.FUNCTION,
+            language=Language.PYTHON,
+            file_path=file_path,
+            line_start=1,
+            line_end=10,
+            exported=True,
+        )
+
+    def test_cross_cutting_shown_when_3_domains(self, tmp_path):
+        """Callers from server/, render/, and cli → 'cross-cutting' annotation."""
+        from tempograph.render.focused import _build_callers_block
+
+        seed = self._fn_sym("build_graph", "tempograph/builder.py")
+        callers = [
+            self._make_caller("focus_handler", "tempograph/server.py"),
+            self._make_caller("main_cli", "tempograph/__main__.py"),
+            self._make_caller("render_focused", "tempograph/render/focused.py"),
+        ]
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=c.id, target_id=seed.id)
+            for c in callers
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + callers)
+
+        result = _build_callers_block(seed, 0, graph, [], {}, None, "")
+        full = "\n".join(result)
+        assert "cross-cutting" in full, f"Expected 'cross-cutting' for 3 distinct domains; got:\n{full}"
+        assert "3 subsystems" in full, f"Expected '3 subsystems'; got:\n{full}"
+
+    def test_cross_cutting_absent_when_same_domain(self, tmp_path):
+        """All callers from same domain (render/) → no cross-cutting annotation."""
+        from tempograph.render.focused import _build_callers_block
+
+        seed = self._fn_sym("count_tokens", "tempograph/render/_utils.py")
+        callers = [
+            self._make_caller("render_focused", "tempograph/render/focused.py"),
+            self._make_caller("render_diff", "tempograph/render/diff.py"),
+            self._make_caller("render_blast", "tempograph/render/blast.py"),
+        ]
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=c.id, target_id=seed.id)
+            for c in callers
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + callers)
+
+        result = _build_callers_block(seed, 0, graph, [], {}, None, "")
+        full = "\n".join(result)
+        assert "cross-cutting" not in full, f"Should not show cross-cutting for same domain; got:\n{full}"
+
+    def test_cross_cutting_absent_at_depth1(self, tmp_path):
+        """Cross-cutting annotation only fires at depth=0, not depth=1."""
+        from tempograph.render.focused import _build_callers_block
+
+        seed = self._fn_sym("helper", "tempograph/builder.py")
+        callers = [
+            self._make_caller("fn_a", "tempograph/server.py"),
+            self._make_caller("fn_b", "tempograph/__main__.py"),
+            self._make_caller("fn_c", "tempograph/render/focused.py"),
+        ]
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=c.id, target_id=seed.id)
+            for c in callers
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + callers)
+
+        result = _build_callers_block(seed, 1, graph, [], {}, None, "")
+        full = "\n".join(result)
+        assert "cross-cutting" not in full, f"Depth=1 should not show cross-cutting; got:\n{full}"
+
+    def test_two_domains_not_flagged(self, tmp_path):
+        """Two distinct domains is not enough — need 3+ to fire."""
+        from tempograph.render.focused import _build_callers_block
+
+        seed = self._fn_sym("process", "tempograph/builder.py")
+        callers = [
+            self._make_caller("fn_a", "tempograph/server.py"),
+            self._make_caller("fn_b", "tempograph/server.py"),  # same domain, different caller
+            self._make_caller("fn_c", "tempograph/render/focused.py"),
+        ]
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=c.id, target_id=seed.id)
+            for c in callers
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + callers)
+
+        result = _build_callers_block(seed, 0, graph, [], {}, None, "")
+        full = "\n".join(result)
+        assert "cross-cutting" not in full, f"2 domains should not trigger cross-cutting; got:\n{full}"
