@@ -1144,27 +1144,27 @@ class TestShouldInject:
 
 
 class TestShouldInjectV5:
-    """Tests for should_inject_v5() baseline-conditional gating function (v5)."""
+    """Tests for should_inject_v5() — gate removed, always injects."""
 
     def test_pred0_injects(self):
-        """pred=0 → inject (baseline fully uncertain)."""
+        """pred=0 → inject (always inject regardless of count)."""
         from bench.changelocal.context import should_inject_v5
         assert should_inject_v5(0) is True
 
     def test_pred1_injects(self):
-        """pred=1 → inject (baseline weakly uncertain)."""
+        """pred=1 → inject (always inject regardless of count)."""
         from bench.changelocal.context import should_inject_v5
         assert should_inject_v5(1) is True
 
-    def test_pred2_skips(self):
-        """pred=2 → skip (threshold is <2, so exactly 2 skips)."""
+    def test_pred2_injects(self):
+        """pred=2 → inject (gate removed; previously skipped at pred<2 threshold)."""
         from bench.changelocal.context import should_inject_v5
-        assert should_inject_v5(2) is False
+        assert should_inject_v5(2) is True
 
-    def test_pred5_skips(self):
-        """pred=5 → skip (baseline confident, far above threshold)."""
+    def test_pred5_injects(self):
+        """pred=5 → inject (gate removed; always inject regardless of baseline confidence)."""
         from bench.changelocal.context import should_inject_v5
-        assert should_inject_v5(5) is False
+        assert should_inject_v5(5) is True
 
 
 class TestIsPathFallbackOnly:
