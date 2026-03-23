@@ -1379,6 +1379,51 @@ def _build_seed_apex_line(
     return [f"{indent}  apex: {best[1]} [{best[0]} {hop_word}]"]
 
 
+def _build_fan_out_line(
+    sym: "Symbol",
+    graph: "Tempo",
+    indent: str,
+) -> list[str]:
+    """S48: Fan-out risk indicator for depth-0 seeds.
+
+    Counts outgoing calls from sym that cross file boundaries (call targets in a
+    different file). Classifies by number of unique target files:
+      - HIGH  ≥ 8 unique target files
+      - MEDIUM 4-7 unique target files
+      - LOW/NONE < 4 unique target files → suppressed (not worth the noise)
+
+    Helps agents see cascade-prone refactor targets before they start.
+    Skipped for test files and test functions.
+    """
+    # Only functions/methods at depth=0
+    if sym.kind.value not in ("function", "method"):
+        return []
+    # Skip test files and test functions (they call everything by design)
+    if _is_test_file(sym.file_path):
+        return []
+    if sym.name.startswith("test_"):
+        return []
+
+    # Count cross-file outgoing calls via the indexed callees API
+    cross_file_callees = [
+        c for c in graph.callees_of(sym.id)
+        if c.file_path != sym.file_path
+    ]
+    if not cross_file_callees:
+        return []
+
+    target_files = {c.file_path for c in cross_file_callees}
+    unique_module_count = len(target_files)
+    total_calls = len(cross_file_callees)
+
+    if unique_module_count < 4:
+        return []  # LOW — not worth mentioning
+
+    level = "HIGH" if unique_module_count >= 8 else "MEDIUM"
+    mod_word = "module" if unique_module_count == 1 else "modules"
+    return [f"{indent}  fan-out: {level} ({total_calls} calls to {unique_module_count} {mod_word})"]
+
+
 # ---------------------------------------------------------------------------
 # _build_symbol_block_lines helper: structural section builders
 # ---------------------------------------------------------------------------
@@ -1680,6 +1725,7 @@ def _build_symbol_block_lines(
         block_lines += _build_seed_effects_lines(sym, graph, indent)
         block_lines += _build_seed_callee_chain_line(sym, graph, indent)
         block_lines += _build_seed_apex_line(sym, graph, indent)
+        block_lines += _build_fan_out_line(sym, graph, indent)
     if sym.signature and depth < 2:
         block_lines.append(f"{indent}  sig: {sym.signature[:150]}")
     if sym.doc and depth == 0:
