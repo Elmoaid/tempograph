@@ -7,7 +7,7 @@ name = "tempograph"
 version = "0.6.0"
 description = "Code graph context engine for AI coding agents — structural dependency graph with adaptive injection"
 readme = "README.md"
-license = {file = "LICENSE"}
+license = {text = "BSL-1.1"}
 authors = [
     {name = "Elmo", email = "elmoaid@gmail.com"},
 ]
@@ -16,7 +16,7 @@ keywords = ["code-graph", "ai-agents", "context", "mcp", "tree-sitter", "code-an
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: Other/Proprietary License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -71,6 +71,21 @@ Issues = "https://github.com/Elmoaid/tempograph/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["tempograph", "tempo"]
+exclude = [
+    "tempo/ui",
+]
+
+[tool.hatch.build.targets.sdist]
+exclude = [
+    "tempo/ui",
+    ".worktrees",
+    ".tempograph",
+    ".claude",
+    "notes",
+    "plans",
+    "bench",
+    "dist",
+]
 
 [tool.pytest.ini_options]
 norecursedirs = ["archive", "bench", "node_modules", ".git", "tempo/ui", "dist", ".tempograph", ".worktrees", ".claude"]
