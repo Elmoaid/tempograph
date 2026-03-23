@@ -3755,10 +3755,10 @@ def _signals_fn_props_a_module(
     return lines
 
 
-def _signals_fn_props_a_scope(
+def _signals_fn_props_a_scope_isolation(
     graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
 ) -> list[str]:
-    """S768/S774/S780/S786/S792/S798: export/isolation/naming/dunder/long property signals."""
+    """S768/S774/S780: exported-uncalled, near-isolated, multi-file symbol signals."""
     lines: list[str] = []
     # S768: Exported but uncalled — focused symbol is exported but has no cross-file callers.
     # A public symbol with no callers may be dead code, a pending API, or only consumed
@@ -3820,6 +3820,14 @@ def _signals_fn_props_a_scope(
                 f" — name collision risk; callers may import the wrong implementation"
             )
 
+    return lines
+
+
+def _signals_fn_props_a_scope_conventions(
+    graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """S786/S792/S798: dunder method, long function, underscore-but-exported signals."""
+    lines: list[str] = []
     # S786: Dunder method focus — focused symbol is a dunder (special) method.
     # Dunder methods define Python protocol behavior (__init__, __call__, __iter__, etc.);
     # changing them affects how the object participates in Python's built-in operations.
@@ -3873,6 +3881,16 @@ def _signals_fn_props_a_scope(
                 )
 
     return lines
+
+
+def _signals_fn_props_a_scope(
+    graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """S768/S774/S780/S786/S792/S798: export/isolation/naming/dunder/long property signals."""
+    return (
+        _signals_fn_props_a_scope_isolation(graph, _seed_syms, token_count, max_tokens)
+        + _signals_fn_props_a_scope_conventions(graph, _seed_syms, token_count, max_tokens)
+    )
 
 
 def _signals_fn_focus_props_a(
