@@ -3056,10 +3056,10 @@ def _signals_fn_oop(
     return lines
 
 
-def _signals_fn_signature(
+def _signals_fn_signature_return(
     graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
 ) -> list[str]:
-    """S422/S457/S464/S508/S513/S519/S531/S546/S552/S564/S581/S702: signature and type signals."""
+    """S422/S513/S546/S552: return-type signals (union, generator, optional, async)."""
     lines: list[str] = []
     if not _seed_syms or token_count >= max_tokens - 30:
         return lines
@@ -3073,36 +3073,6 @@ def _signals_fn_signature(
             f"\nunion return type: {_prim.name} returns Optional/Union type"
             f" — callers must handle None/variant; document when None is returned and why"
         )
-    # S457: High parameter count
-    _raw = sig.split("(", 1)[-1].rstrip("):")
-    _params = [p.strip() for p in _raw.split(",") if p.strip() and p.strip() not in ("self", "cls", "*", "**kwargs", "*args")]
-    if len(_params) >= 6:
-        lines.append(
-            f"\nhigh parameter count: {_prim.name} takes {len(_params)} parameters"
-            f" — hard to call and test; consider a parameter object or splitting the function"
-        )
-    # S464: Property method
-    _is_prop = (
-        "@property" in sig.lower() or ".setter" in sig.lower() or ".deleter" in sig.lower()
-        or (_prim.name.startswith("get_") and _prim.parent_id and _prim.parent_id in graph.symbols)
-    )
-    if not _is_prop:
-        _callers464 = graph.callers_of(_prim.id)
-        _is_prop = _prim.name.startswith(("get_", "set_", "is_", "has_")) and len(_callers464) >= 3
-    if _is_prop:
-        lines.append(
-            f"\nproperty method: {_prim.name} is a getter/setter"
-            f" — attribute-style callers are invisible to call-edge analysis; grep for usages before renaming"
-        )
-    # S508: Untyped exported function
-    if _prim.exported and not _is_test_file(_prim.file_path) and "->" not in sig:
-        _callers508 = list(graph.callers_of(_prim.id))
-        _raw_callers = getattr(graph, "_callers", {}).get(_prim.id, [])
-        if len(_callers508) + len(_raw_callers) >= 3:
-            lines.append(
-                f"\nuntyped export: {_prim.name} is exported with {len(_callers508) + len(_raw_callers)} caller(s)"
-                f" but has no return type annotation — callers rely on implicit return type"
-            )
     # S513: Generator function (return hint)
     _gen_hints = ("-> iterator", "-> generator", "-> iterable", "-> asynciterator", "-> asyncgenerator")
     if any(h in sig.lower() for h in _gen_hints):
@@ -3110,27 +3080,6 @@ def _signals_fn_signature(
             f"\ngenerator function: {_prim.name} returns a lazy iterator"
             f" — callers must iterate or explicitly close it; converting to list changes memory + latency profile"
         )
-    # S519: Callback/handler function (name-based)
-    if not _is_test_file(_prim.file_path):
-        _name519 = _prim.name.lower()
-        _is_cb519 = (
-            any(_name519.startswith(p) for p in ("on_", "handle_"))
-            or any(_name519.endswith(s) for s in ("_handler", "_callback", "_cb", "_listener"))
-        )
-        if _is_cb519:
-            lines.append(
-                f"\ncallback/handler: {_prim.name} is named as an event handler"
-                f" — called indirectly via event dispatch; static call graph may miss callers"
-            )
-    # S531: Mutable default argument
-    if not _is_test_file(_prim.file_path) and sig:
-        _param531 = sig.split("(", 1)[1].rsplit(")", 1)[0] if "(" in sig else ""
-        _mutable_markers531 = ("=[]", "={}", "=set()", "=list()", "=dict()")
-        if any(m in _param531.replace(" ", "") for m in _mutable_markers531):
-            lines.append(
-                f"\nmutable default: {_prim.name} uses a mutable default argument"
-                f" — shared across all calls; mutations in one call silently affect future calls"
-            )
     # S546: Optional return type
     _has_optional546 = (
         "Optional[" in sig
@@ -3148,6 +3097,37 @@ def _signals_fn_signature(
             f"\nasync function: {_prim.name} is async — every caller must await it"
             f" or run via asyncio.run(); forgetting await silently returns a coroutine object"
         )
+    return lines
+
+
+def _signals_fn_signature_params(
+    graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """S457/S531/S564/S581/S702: parameter-shape signals (high arity, mutable default, variadic)."""
+    lines: list[str] = []
+    if not _seed_syms or token_count >= max_tokens - 30:
+        return lines
+    _prim = next((s for s in _seed_syms if s.kind.value in ("function", "method")), None)
+    if not _prim:
+        return lines
+    sig = _prim.signature or ""
+    # S457: High parameter count
+    _raw = sig.split("(", 1)[-1].rstrip("):")
+    _params = [p.strip() for p in _raw.split(",") if p.strip() and p.strip() not in ("self", "cls", "*", "**kwargs", "*args")]
+    if len(_params) >= 6:
+        lines.append(
+            f"\nhigh parameter count: {_prim.name} takes {len(_params)} parameters"
+            f" — hard to call and test; consider a parameter object or splitting the function"
+        )
+    # S531: Mutable default argument
+    if not _is_test_file(_prim.file_path) and sig:
+        _param531 = sig.split("(", 1)[1].rsplit(")", 1)[0] if "(" in sig else ""
+        _mutable_markers531 = ("=[]", "={}", "=set()", "=list()", "=dict()")
+        if any(m in _param531.replace(" ", "") for m in _mutable_markers531):
+            lines.append(
+                f"\nmutable default: {_prim.name} uses a mutable default argument"
+                f" — shared across all calls; mutations in one call silently affect future calls"
+            )
     # S564: Variadic function (*args/**kwargs)
     if not _is_test_file(_prim.file_path) and sig:
         _param564 = sig.split("(", 1)[1].rsplit(")", 1)[0] if "(" in sig else ""
@@ -3189,16 +3169,70 @@ def _signals_fn_signature(
     return lines
 
 
-def _signals_fn_conventions(
+def _signals_fn_signature_kind(
     graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
 ) -> list[str]:
-    """S470/S476/S482/S488/S494/S537/S558/S593/S636/S654: naming and convention signals."""
+    """S464/S508/S519: function-kind signals (property method, untyped export, callback/handler)."""
     lines: list[str] = []
     if not _seed_syms or token_count >= max_tokens - 30:
         return lines
-    _prim = next((s for s in _seed_syms if s.kind.value in ("function", "method", "class")), None)
+    _prim = next((s for s in _seed_syms if s.kind.value in ("function", "method")), None)
     if not _prim:
         return lines
+    sig = _prim.signature or ""
+    # S464: Property method
+    _is_prop = (
+        "@property" in sig.lower() or ".setter" in sig.lower() or ".deleter" in sig.lower()
+        or (_prim.name.startswith("get_") and _prim.parent_id and _prim.parent_id in graph.symbols)
+    )
+    if not _is_prop:
+        _callers464 = graph.callers_of(_prim.id)
+        _is_prop = _prim.name.startswith(("get_", "set_", "is_", "has_")) and len(_callers464) >= 3
+    if _is_prop:
+        lines.append(
+            f"\nproperty method: {_prim.name} is a getter/setter"
+            f" — attribute-style callers are invisible to call-edge analysis; grep for usages before renaming"
+        )
+    # S508: Untyped exported function
+    if _prim.exported and not _is_test_file(_prim.file_path) and "->" not in sig:
+        _callers508 = list(graph.callers_of(_prim.id))
+        _raw_callers = getattr(graph, "_callers", {}).get(_prim.id, [])
+        if len(_callers508) + len(_raw_callers) >= 3:
+            lines.append(
+                f"\nuntyped export: {_prim.name} is exported with {len(_callers508) + len(_raw_callers)} caller(s)"
+                f" but has no return type annotation — callers rely on implicit return type"
+            )
+    # S519: Callback/handler function (name-based)
+    if not _is_test_file(_prim.file_path):
+        _name519 = _prim.name.lower()
+        _is_cb519 = (
+            any(_name519.startswith(p) for p in ("on_", "handle_"))
+            or any(_name519.endswith(s) for s in ("_handler", "_callback", "_cb", "_listener"))
+        )
+        if _is_cb519:
+            lines.append(
+                f"\ncallback/handler: {_prim.name} is named as an event handler"
+                f" — called indirectly via event dispatch; static call graph may miss callers"
+            )
+    return lines
+
+
+def _signals_fn_signature(
+    graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """S422/S457/S464/S508/S513/S519/S531/S546/S552/S564/S581/S702: signature and type signals."""
+    lines: list[str] = []
+    lines += _signals_fn_signature_return(graph, _seed_syms, token_count, max_tokens)
+    lines += _signals_fn_signature_params(graph, _seed_syms, token_count, max_tokens)
+    lines += _signals_fn_signature_kind(graph, _seed_syms, token_count, max_tokens)
+    return lines
+
+
+def _signals_fn_conventions_naming(
+    graph: "Tempo", _seed_syms: list, _prim: object,
+) -> list[str]:
+    """S470/S558/S593/S654: name-quality signals (deprecated, builtin shadow, generic name)."""
+    lines: list[str] = []
     # S470: Deprecated function
     _dep_markers = ("deprecated", "legacy", "old_", "_old", "_deprecated", "_legacy", "compat_")
     if any(m in _prim.name.lower() for m in _dep_markers):
@@ -3208,6 +3242,42 @@ def _signals_fn_conventions(
             f" with {len(_callers)} active caller(s)"
             f" — verify migration to replacement is complete before removing"
         )
+    # S558: Deprecated name
+    _dep_markers558 = ("deprecated", "old_", "_old", "legacy", "_v1", "v1_", "obsolete")
+    _lname558 = _seed_syms[0].name.lower()
+    if any(m in _lname558 for m in _dep_markers558):
+        lines.append(
+            f"\ndeprecated name: {_seed_syms[0].name} contains a deprecation marker"
+            f" — callers are accruing technical debt; migrate to the replacement before removal"
+        )
+    # S593: Builtin shadow
+    if (
+        _seed_syms[0].name in _BUILTINS593
+        and _seed_syms[0].kind.value in ("function", "method", "class")
+        and not _is_test_file(_seed_syms[0].file_path)
+    ):
+        lines.append(
+            f"\nbuiltin shadow: {_seed_syms[0].name} shadows a Python builtin"
+            f" — callers that expect the builtin will silently use this instead; rename to avoid confusion"
+        )
+    # S654: Generic name
+    if (
+        not _is_test_file(_seed_syms[0].file_path)
+        and _seed_syms[0].kind.value in ("function", "method", "class")
+        and _seed_syms[0].name.lower() in _GENERIC_NAMES654
+    ):
+        lines.append(
+            f"\ngeneric name: '{_seed_syms[0].name}' is a common, non-specific symbol name"
+            f" — hard to grep and refactor; consider a domain-specific name that signals intent"
+        )
+    return lines
+
+
+def _signals_fn_conventions_behavior(
+    graph: "Tempo", _seed_syms: list,
+) -> list[str]:
+    """S476/S482/S488/S494: thread-safety, mixin, operator overload, and factory signals."""
+    lines: list[str] = []
     # S476/S482: Thread-safe and mixin (fn/method only)
     _prim_fn = next((s for s in _seed_syms if s.kind.value in ("function", "method")), None)
     if _prim_fn:
@@ -3264,6 +3334,14 @@ def _signals_fn_conventions(
                 f"\nfactory function: {_prim_fac.name} is a factory with {len(_callers_fac)} caller(s)"
                 f" — changing return type or validation silently breaks all construction sites"
             )
+    return lines
+
+
+def _signals_fn_conventions_scope(
+    graph: "Tempo", _seed_syms: list,
+) -> list[str]:
+    """S537/S636: module scope and visibility signals (private module export, init-file symbol)."""
+    lines: list[str] = []
     # S537: Private module export
     _prim_any = _seed_syms[0]
     if _prim_any.exported and not _is_test_file(_prim_any.file_path):
@@ -3277,24 +3355,6 @@ def _signals_fn_conventions(
                 f"\nprivate module: {_prim_any.name} is exported from a private file"
                 f" ({_basename537}) — public symbol in private module is confusing; move or re-export via __init__.py"
             )
-    # S558: Deprecated name
-    _dep_markers558 = ("deprecated", "old_", "_old", "legacy", "_v1", "v1_", "obsolete")
-    _lname558 = _seed_syms[0].name.lower()
-    if any(m in _lname558 for m in _dep_markers558):
-        lines.append(
-            f"\ndeprecated name: {_seed_syms[0].name} contains a deprecation marker"
-            f" — callers are accruing technical debt; migrate to the replacement before removal"
-        )
-    # S593: Builtin shadow
-    if (
-        _seed_syms[0].name in _BUILTINS593
-        and _seed_syms[0].kind.value in ("function", "method", "class")
-        and not _is_test_file(_seed_syms[0].file_path)
-    ):
-        lines.append(
-            f"\nbuiltin shadow: {_seed_syms[0].name} shadows a Python builtin"
-            f" — callers that expect the builtin will silently use this instead; rename to avoid confusion"
-        )
     # S636: Init-file symbol
     _prim636 = _seed_syms[0]
     if (
@@ -3306,16 +3366,22 @@ def _signals_fn_conventions(
             f"\ninit-file symbol: {_prim636.name} is in __init__.py ({len(_importers636)} package importer(s))"
             f" — part of the package public API; changes affect all package consumers"
         )
-    # S654: Generic name
-    if (
-        not _is_test_file(_seed_syms[0].file_path)
-        and _seed_syms[0].kind.value in ("function", "method", "class")
-        and _seed_syms[0].name.lower() in _GENERIC_NAMES654
-    ):
-        lines.append(
-            f"\ngeneric name: '{_seed_syms[0].name}' is a common, non-specific symbol name"
-            f" — hard to grep and refactor; consider a domain-specific name that signals intent"
-        )
+    return lines
+
+
+def _signals_fn_conventions(
+    graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """S470/S476/S482/S488/S494/S537/S558/S593/S636/S654: naming and convention signals."""
+    lines: list[str] = []
+    if not _seed_syms or token_count >= max_tokens - 30:
+        return lines
+    _prim = next((s for s in _seed_syms if s.kind.value in ("function", "method", "class")), None)
+    if not _prim:
+        return lines
+    lines += _signals_fn_conventions_naming(graph, _seed_syms, _prim)
+    lines += _signals_fn_conventions_behavior(graph, _seed_syms)
+    lines += _signals_fn_conventions_scope(graph, _seed_syms)
     return lines
 
 
