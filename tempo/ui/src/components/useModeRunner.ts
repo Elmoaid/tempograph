@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { runTempo, saveOutput, reportFeedback, readFile } from "./tempo";
-import { MODES, loadHistory } from "./modes";
+import { MODES, loadHistory, saveRecentCommand } from "./modes";
 import { BUILTIN_KITS, type KitInfo } from "./kits";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { useRunMode } from "../hooks/useRunMode";
@@ -268,8 +268,9 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   });
   const runMode = useCallback(async () => {
     if (modeOutput) setPrevOutput(modeOutput);
+    saveRecentCommand(activeMode, modeArgs);
     return _runMode();
-  }, [_runMode, modeOutput]);
+  }, [_runMode, modeOutput, activeMode, modeArgs]);
   runModeRef.current = runMode;
 
   const copyOutput = () => {
