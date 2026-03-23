@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..types import Tempo, EdgeKind, Symbol, SymbolKind
-from ._utils import count_tokens, _is_test_file, _MONOLITH_THRESHOLD, _dead_code_confidence
+from ._utils import count_tokens, _is_test_file, _caller_domain, _MONOLITH_THRESHOLD, _dead_code_confidence
 
 _MONOLITH_THRESHOLD = 1000
 
@@ -1594,6 +1594,23 @@ def _build_callers_block(
                 f"{indent}    ↳ {_shown_ghost_count} caller(s) are themselves unreachable"
                 f" — effective reach: {_live_shown} of {len(shown_callers)} shown"
             )
+        # S50: caller domain diversity — cross-cutting signal at depth=0.
+        # When non-test callers come from 3+ distinct subsystems, flag it.
+        # Uses ALL callers (not just shown) to get the true domain picture.
+        if depth == 0:
+            _domains: set[str] = set()
+            for _dc in _callers_for_display:
+                _d = _caller_domain(_dc.file_path)
+                if _d:
+                    _domains.add(_d)
+            if len(_domains) >= 3:
+                _sorted_domains = sorted(_domains)[:4]
+                _domain_str = ", ".join(_sorted_domains)
+                _n = len(_domains)
+                lines.append(
+                    f"{indent}    ↳ cross-cutting: {_n} subsystem{'s' if _n != 1 else ''}"
+                    f" ({_domain_str}{'...' if _n > 4 else ''})"
+                )
     return lines
 
 
