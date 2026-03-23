@@ -2915,10 +2915,10 @@ def _signals_fn_oop_class_prop(
     return lines
 
 
-def _signals_fn_oop_fn_patterns(
-    graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
+def _signals_fn_oop_abstract_proto(
+    graph: "Tempo", _seed_syms: list,
 ) -> list[str]:
-    """S428/S434/S440/S446/S451/S475: abstract, factory, callback, global-state, protocol, generator signals."""
+    """S428/S451: abstract method and protocol/interface method signals."""
     lines: list[str] = []
     _prim = next((s for s in _seed_syms if s.kind.value in ("function", "method")), None)
     if not _prim:
@@ -2939,6 +2939,29 @@ def _signals_fn_oop_fn_patterns(
                     f" with {len(_subclass_impls)} concrete implementation(s)"
                     f" — changes will cascade to all concrete classes; review each subclass"
                 )
+    # S451: Protocol/interface method
+    _prim_m = next((s for s in _seed_syms if s.kind.value == "method"), None)
+    if _prim_m and _prim_m.parent_id:
+        _parent_m = graph.symbols.get(_prim_m.parent_id)
+        _proto_kws = ("protocol", "interface", "abc", "abstract", "mixin", "base")
+        if _parent_m and any(kw in _parent_m.name.lower() for kw in _proto_kws):
+            _impls = [s for s in graph.symbols.values()
+                      if s.name == _prim_m.name and s.kind.value == "method"
+                      and s.id != _prim_m.id and s.parent_id != _prim_m.parent_id]
+            if _impls:
+                lines.append(
+                    f"\nprotocol method: {_prim_m.name} is defined in {_parent_m.name}"
+                    f" with {len(_impls)} known implementation(s)"
+                    f" — signature changes break all conforming types; update every implementation"
+                )
+    return lines
+
+
+def _signals_fn_oop_behavioral(
+    graph: "Tempo", _prim: object,
+) -> list[str]:
+    """S434/S440/S446/S475: factory, callback, global-state, generator signals."""
+    lines: list[str] = []
     # S434: Factory function pattern
     _factory_prefixes = ("create_", "make_", "build_", "factory_", "new_", "get_instance_")
     if any(_prim.name.lower().startswith(p) for p in _factory_prefixes):
@@ -2972,21 +2995,6 @@ def _signals_fn_oop_fn_patterns(
             f"\nglobal state mutation: {_prim.name} modifies shared state"
             f" — concurrent callers see each other's side effects; isolate state before refactoring"
         )
-    # S451: Protocol/interface method
-    _prim_m = next((s for s in _seed_syms if s.kind.value == "method"), None)
-    if _prim_m and _prim_m.parent_id:
-        _parent_m = graph.symbols.get(_prim_m.parent_id)
-        _proto_kws = ("protocol", "interface", "abc", "abstract", "mixin", "base")
-        if _parent_m and any(kw in _parent_m.name.lower() for kw in _proto_kws):
-            _impls = [s for s in graph.symbols.values()
-                      if s.name == _prim_m.name and s.kind.value == "method"
-                      and s.id != _prim_m.id and s.parent_id != _prim_m.parent_id]
-            if _impls:
-                lines.append(
-                    f"\nprotocol method: {_prim_m.name} is defined in {_parent_m.name}"
-                    f" with {len(_impls)} known implementation(s)"
-                    f" — signature changes break all conforming types; update every implementation"
-                )
     # S475: Generator/iterator function
     _gen_prefixes = ("iter_", "generate_", "stream_", "yield_", "produce_", "enumerate_")
     if any(_prim.name.lower().startswith(p) for p in _gen_prefixes):
@@ -2997,6 +3005,16 @@ def _signals_fn_oop_fn_patterns(
                 f" — callers must iterate or convert to list; replacing with list changes memory semantics"
             )
     return lines
+
+
+def _signals_fn_oop_fn_patterns(
+    graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """S428/S434/S440/S446/S451/S475: abstract, factory, callback, global-state, protocol, generator signals."""
+    _prim = next((s for s in _seed_syms if s.kind.value in ("function", "method")), None)
+    if not _prim:
+        return []
+    return _signals_fn_oop_abstract_proto(graph, _seed_syms) + _signals_fn_oop_behavioral(graph, _prim)
 
 
 def _signals_fn_oop(
