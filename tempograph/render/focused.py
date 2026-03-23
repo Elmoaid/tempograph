@@ -2019,10 +2019,10 @@ def _signals_focused_complexity(
 # ---------------------------------------------------------------------------
 # Signal group helper: structure
 # ---------------------------------------------------------------------------
-def _signals_focused_structure(
+def _signals_focused_structure_file(
     graph: Tempo, *, _seed_syms: list, token_count: int, max_tokens: int,
 ) -> list[str]:
-    """Focused-mode signals: structure."""
+    """File-level structure signals: siblings, sibling count, export ratio."""
     lines: list[str] = []
     # File siblings: other notable symbols in the primary seed's file.
     # Shows agents what else is in the file without requiring a blast query.
@@ -2061,6 +2061,36 @@ def _signals_focused_structure(
             if _fn_count132 >= 8:
                 lines.append(f"\nsibling count: {_fn_count132} fns in {_prim132.file_path.rsplit('/', 1)[-1]}")
 
+    # S136: Export ratio — fraction of fn/method symbols in the primary seed's file that are exported.
+    # Low ratio (< 30%) = mostly internal module. High ratio (> 80%) = public API file.
+    # Helps agents know whether changes leak into the public interface or stay internal.
+    # Only shown when the file has 4+ fn/method symbols (too noisy for tiny files).
+    if _seed_syms and token_count < max_tokens - 40:
+        _prim136 = _seed_syms[0]
+        _fi136 = graph.files.get(_prim136.file_path)
+        if _fi136:
+            _fns136 = [
+                graph.symbols[sid] for sid in _fi136.symbols
+                if sid in graph.symbols
+                and graph.symbols[sid].kind.value in ("function", "method")
+            ]
+            if len(_fns136) >= 4:
+                _exp136 = sum(1 for s in _fns136 if s.exported)
+                _pct136 = int(_exp136 / len(_fns136) * 100)
+                _fname136 = _prim136.file_path.rsplit("/", 1)[-1]
+                if _pct136 >= 80:
+                    lines.append(f"\nexport ratio: {_exp136}/{len(_fns136)} fns public in {_fname136} — all-public API file")
+                elif _pct136 <= 25:
+                    lines.append(f"\nexport ratio: {_exp136}/{len(_fns136)} fns public in {_fname136} — mostly internal module")
+
+    return lines
+
+
+def _signals_focused_structure_params(
+    graph: Tempo, *, _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """Parameter-shape structure signals: S141 (param count), S234 (long param list), S362 (overloaded)."""
+    lines: list[str] = []
     # S141: Param count — seed function has many parameters (>= 6), which is a design smell.
     # Too many parameters = violation of single responsibility or missing abstraction.
     # Extracts count from the signature string via comma-counting heuristic.
@@ -2091,28 +2121,6 @@ def _signals_focused_structure(
                         _n_params141 -= 1
                     if _n_params141 >= 6:
                         lines.append(f"\nparam count: {_n_params141} — consider a config object or split the function")
-
-    # S136: Export ratio — fraction of fn/method symbols in the primary seed's file that are exported.
-    # Low ratio (< 30%) = mostly internal module. High ratio (> 80%) = public API file.
-    # Helps agents know whether changes leak into the public interface or stay internal.
-    # Only shown when the file has 4+ fn/method symbols (too noisy for tiny files).
-    if _seed_syms and token_count < max_tokens - 40:
-        _prim136 = _seed_syms[0]
-        _fi136 = graph.files.get(_prim136.file_path)
-        if _fi136:
-            _fns136 = [
-                graph.symbols[sid] for sid in _fi136.symbols
-                if sid in graph.symbols
-                and graph.symbols[sid].kind.value in ("function", "method")
-            ]
-            if len(_fns136) >= 4:
-                _exp136 = sum(1 for s in _fns136 if s.exported)
-                _pct136 = int(_exp136 / len(_fns136) * 100)
-                _fname136 = _prim136.file_path.rsplit("/", 1)[-1]
-                if _pct136 >= 80:
-                    lines.append(f"\nexport ratio: {_exp136}/{len(_fns136)} fns public in {_fname136} — all-public API file")
-                elif _pct136 <= 25:
-                    lines.append(f"\nexport ratio: {_exp136}/{len(_fns136)} fns public in {_fname136} — mostly internal module")
 
     # S234: Long parameter list — focused fn/method has >= 5 parameters.
     # Many parameters = hard to call correctly, often signals missing data objects.
@@ -2163,6 +2171,20 @@ def _signals_focused_structure(
                             f" — difficult to call correctly; consider a config object or builder pattern"
                         )
 
+    return lines
+
+
+def _signals_focused_structure(
+    graph: Tempo, *, _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """Focused-mode signals: structure."""
+    lines: list[str] = []
+    lines.extend(_signals_focused_structure_file(
+        graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
+    ))
+    lines.extend(_signals_focused_structure_params(
+        graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
+    ))
     return lines
 
 
