@@ -582,3 +582,105 @@ class TestFocusFanOutRisk:
         assert result == [], (
             f"Same-file calls must not inflate module count; got: {result}"
         )
+
+
+# ---------------------------------------------------------------------------
+# S49: _build_callees_block — callee complexity (cx) annotation at depth=0
+# ---------------------------------------------------------------------------
+
+class TestFocusCalleeCxAnnotation:
+    """Verify S49 callee cx annotation in focus mode _build_callees_block (depth=0 only)."""
+
+    def _fn_sym(self, name, file_path, cx=0, line_start=1):
+        return Symbol(
+            id=f"{file_path}::{name}",
+            name=name,
+            qualified_name=name,
+            kind=SymbolKind.FUNCTION,
+            language=Language.PYTHON,
+            file_path=file_path,
+            line_start=line_start,
+            line_end=line_start + 10,
+            exported=True,
+            complexity=cx,
+        )
+
+    def test_high_cx_callee_annotated(self, tmp_path):
+        """Callee with cx > 15 gets (cx=N) annotation at depth=0."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("dispatcher", "core.py", cx=3)
+        callee = self._fn_sym("build_graph", "builder.py", cx=47)
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=callee.id)]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, callee])
+
+        result = _build_callees_block(seed, 0, graph, "")
+        assert result, "Expected calls line"
+        calls_line = result[0]
+        assert "(cx=47)" in calls_line, f"Expected '(cx=47)' in: {calls_line!r}"
+
+    def test_low_cx_callee_not_annotated(self, tmp_path):
+        """Callee with cx ≤ 15 does NOT get cx annotation (avoids noise)."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("process", "app.py", cx=5)
+        callee = self._fn_sym("small_helper", "utils.py", cx=3)
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=callee.id)]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, callee])
+
+        result = _build_callees_block(seed, 0, graph, "")
+        assert result, "Expected calls line"
+        calls_line = result[0]
+        assert "(cx=" not in calls_line, f"Low-cx callee should not have cx annotation; got: {calls_line!r}"
+
+    def test_zero_cx_callee_not_annotated(self, tmp_path):
+        """Callee with cx=0 (unknown) does NOT get cx annotation."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("main", "main.py", cx=0)
+        callee = self._fn_sym("run", "runner.py", cx=0)
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=callee.id)]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, callee])
+
+        result = _build_callees_block(seed, 0, graph, "")
+        assert result, "Expected calls line"
+        assert "(cx=" not in result[0], f"Zero-cx callee should not have cx annotation; got: {result[0]!r}"
+
+    def test_depth1_no_cx_annotation(self, tmp_path):
+        """At depth=1, callees do NOT get cx annotation (depth=0 only)."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("child", "child.py", cx=2)
+        callee = self._fn_sym("heavy_fn", "heavy.py", cx=60)
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=callee.id)]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, callee])
+
+        result = _build_callees_block(seed, 1, graph, "")
+        assert result, "Expected calls line at depth=1"
+        calls_line = result[0]
+        assert "(cx=" not in calls_line, f"Depth=1 callee should not have cx annotation; got: {calls_line!r}"
+
+    def test_class_callee_no_cx_annotation(self, tmp_path):
+        """Class-kind callees do NOT get cx annotation (only function/method)."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("factory", "factory.py", cx=5)
+        callee = Symbol(
+            id="models.py::BigModel",
+            name="BigModel",
+            qualified_name="BigModel",
+            kind=SymbolKind.CLASS,
+            language=Language.PYTHON,
+            file_path="models.py",
+            line_start=1,
+            line_end=200,
+            exported=True,
+            complexity=50,  # complex class, but not a function
+        )
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=callee.id)]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, callee])
+
+        result = _build_callees_block(seed, 0, graph, "")
+        assert result, "Expected calls line"
+        calls_line = result[0]
+        assert "(cx=" not in calls_line, f"Class-kind callee should not have cx annotation; got: {calls_line!r}"
