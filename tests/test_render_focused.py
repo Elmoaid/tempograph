@@ -1124,3 +1124,113 @@ class TestFocusHotCalleeInstability:
         result = _build_callees_block(seed, 1, graph, "")
         assert len(result) == 1, "depth=1 should not emit instability"
         assert "instability" not in result[0]
+
+
+# S53: _build_callees_block — depth=1 hot-first callee ordering
+# --------------------------------------------------------------
+
+
+class TestFocusCalleeRecencyDepth1:
+    """S53: depth=1 callees are ordered hot-first (recently-modified files surface to top)."""
+
+    def _fn_sym(self, name, file_path):
+        return Symbol(
+            id=f"{file_path}::{name}",
+            name=name,
+            qualified_name=name,
+            kind=SymbolKind.FUNCTION,
+            language=Language.PYTHON,
+            file_path=file_path,
+            line_start=1,
+            line_end=20,
+            exported=False,
+            complexity=0,
+        )
+
+    def test_hot_callee_first_at_depth1(self, tmp_path):
+        """At depth=1 a hot callee sorts before a cold one."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("middleware", "mid.py")
+        cold = self._fn_sym("stable_util", "utils.py")
+        hot = self._fn_sym("new_parser", "parser.py")
+        # cold is added to edges first — without ordering it would appear first
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=cold.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=hot.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, cold, hot])
+        graph.hot_files = {"parser.py"}
+
+        result = _build_callees_block(seed, 1, graph, "")
+        assert result, "should produce a calls line"
+        calls_line = result[0]
+        assert "new_parser" in calls_line
+        assert "stable_util" in calls_line
+        hot_pos = calls_line.index("new_parser")
+        cold_pos = calls_line.index("stable_util")
+        assert hot_pos < cold_pos, f"hot callee should precede cold at depth=1; line: {calls_line!r}"
+
+    def test_hot_callees_get_hot_annotation_at_depth1(self, tmp_path):
+        """Hot callees at depth=1 still receive the [hot] annotation."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("handler", "handler.py")
+        hot_callee = self._fn_sym("fresh_fn", "fresh.py")
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=hot_callee.id)]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, hot_callee])
+        graph.hot_files = {"fresh.py"}
+
+        result = _build_callees_block(seed, 1, graph, "")
+        assert result, "should produce a calls line"
+        assert "[hot]" in result[0], f"hot callee should carry [hot] annotation at depth=1; got {result[0]!r}"
+
+    def test_multiple_hot_callees_all_precede_cold(self, tmp_path):
+        """Multiple hot callees all appear before cold callees at depth=1."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("orchestrator", "orch.py")
+        cold_a = self._fn_sym("old_helper", "old_a.py")
+        cold_b = self._fn_sym("legacy_fn", "old_b.py")
+        hot_a = self._fn_sym("new_loader", "hot_a.py")
+        hot_b = self._fn_sym("new_writer", "hot_b.py")
+        # cold callees added to edges first
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=cold_a.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=cold_b.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=hot_a.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=hot_b.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, cold_a, cold_b, hot_a, hot_b])
+        graph.hot_files = {"hot_a.py", "hot_b.py"}
+
+        result = _build_callees_block(seed, 1, graph, "")
+        calls_line = result[0]
+        hot_a_pos = calls_line.index("new_loader")
+        hot_b_pos = calls_line.index("new_writer")
+        cold_a_pos = calls_line.index("old_helper")
+        cold_b_pos = calls_line.index("legacy_fn")
+        assert hot_a_pos < cold_a_pos, "hot_a should precede cold_a"
+        assert hot_b_pos < cold_a_pos, "hot_b should precede cold_a"
+        assert hot_a_pos < cold_b_pos, "hot_a should precede cold_b"
+        assert hot_b_pos < cold_b_pos, "hot_b should precede cold_b"
+
+    def test_no_hot_files_order_unchanged(self, tmp_path):
+        """With empty hot_files all callees stay in insertion order at depth=1."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("root_fn", "root.py")
+        c1 = self._fn_sym("alpha_fn", "alpha.py")
+        c2 = self._fn_sym("beta_fn", "beta.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c1.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c2.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1, c2])
+        # hot_files intentionally empty
+
+        result = _build_callees_block(seed, 1, graph, "")
+        calls_line = result[0]
+        assert "alpha_fn" in calls_line
+        assert "beta_fn" in calls_line
+        assert "[hot]" not in calls_line, "no [hot] annotations when hot_files is empty"
