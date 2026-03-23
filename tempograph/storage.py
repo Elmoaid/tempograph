@@ -6,6 +6,7 @@ FTS5 provides full-text search over symbol names and signatures.
 """
 from __future__ import annotations
 
+import array
 import hashlib
 import json
 import sqlite3
@@ -16,7 +17,7 @@ from .types import Edge, EdgeKind, FileInfo, Language, Symbol, SymbolKind
 
 CACHE_DIR = ".tempograph"
 DB_FILE = "graph.db"
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 # Module-level enum lookup dicts — O(1) vs try/except, ~31% faster in load_all()
 _SYMBOL_KIND_MAP: dict[str, SymbolKind] = {v.value: v for v in SymbolKind}
@@ -271,6 +272,21 @@ class GraphDB:
                 self._conn.commit()
             except Exception:
                 pass
+        if version < 10:
+            # array.array for integer fields in sym/edge blobs: bulk binary pickle format
+            # replaces per-int Python object serialization. pickle.loads uses C-level memcpy
+            # for array.array vs per-opcode dispatch for list[int].
+            # Measured in load_all isolation (n=100 interleaved): sym pickle.loads -0.43ms,
+            # edge pickle.loads -0.29ms. Effect below detection threshold in end-to-end
+            # warm build due to GC pressure not materialising in single-build workflows.
+            # Clear blobs to force regeneration with array.array format on next build.
+            try:
+                self._conn.execute("DELETE FROM resolved_edges_blob")
+                self._conn.execute("DELETE FROM symbols_blob")
+                self._conn.execute("UPDATE meta SET value='10' WHERE key='schema_version'")
+                self._conn.commit()
+            except Exception:
+                pass
 
     def get_stored_files(self) -> dict[str, tuple[str, int]]:
         """Bulk-fetch {rel_path: (hash, mtime_ns)} for all stored files in one query.
@@ -355,12 +371,19 @@ class GraphDB:
         if not self._batching:
             self._conn.commit()
 
-    def remove_stale_files(self, current_files: set[str]) -> int:
-        """Remove files from DB that no longer exist on disk. Returns count removed."""
-        db_files = {
-            row["path"]
-            for row in self._conn.execute("SELECT path FROM files").fetchall()
-        }
+    def remove_stale_files(
+        self, current_files: set[str], *, db_files: set[str] | None = None
+    ) -> int:
+        """Remove files from DB that no longer exist on disk. Returns count removed.
+
+        db_files: pre-fetched set of stored paths (from get_stored_files().keys()).
+        When provided, skips the redundant SELECT path FROM files query (~170µs savings).
+        """
+        if db_files is None:
+            db_files = {
+                row["path"]
+                for row in self._conn.execute("SELECT path FROM files").fetchall()
+            }
         stale = db_files - current_files
         if not stale:
             return 0
@@ -785,13 +808,15 @@ class GraphDB:
         strings together, maximising pickle memo hit rate within the fpath list.
         Parent IDs also cluster by file, further exploiting memo deduplication.
 
+        Int fields (lstarts, lends, cx, bsizes) stored as array.array for faster
+        pickle.loads: bulk binary C-memcpy vs per-int Python opcode dispatch.
+        Measured: sym pickle.loads -0.43ms (-19%) at 6778 symbols.
         Columnar advantage: pickle.loads 2.9ms → 2.1ms (-28%) on 6752 symbols.
         Blob size: 1685KB → 1645KB (-2.4%) — smaller memo refs for repeated strings.
         """
         import pickle, sys
         _intern = sys.intern
         if not sym_rows:
-            empty: list = []
             cols = tuple([] for _ in range(14))
         else:
             # Transpose 14-field tuples to 14 parallel lists with interning on repeated fields
@@ -802,10 +827,10 @@ class GraphDB:
                 list(ids_r), list(names_r), list(quals_r),
                 list(kinds_r), list(langs_r),
                 [_intern(p) for p in fpaths_r],             # file_path: avg 36 syms/file
-                list(lstarts_r), list(lends_r),
+                array.array('i', lstarts_r), array.array('i', lends_r),  # bulk binary format
                 list(sigs_r), list(docs_r),
                 [_intern(p) if p else p for p in parents_r],  # parent_id: None or str
-                list(exported_r), list(cx_r), list(bsizes_r),
+                list(exported_r), array.array('i', cx_r), array.array('l', bsizes_r),
             )
         try:
             self._conn.execute(
@@ -899,11 +924,12 @@ class GraphDB:
             kinds: list = []
             srcs: list = []
             tgts: list = []
-            lines: list = []
+            lines: array.array = array.array('i')
         else:
-            kinds, srcs_raw, tgts_raw, lines = zip(*edge_tuples)  # type: ignore[assignment]
+            kinds, srcs_raw, tgts_raw, lines_raw = zip(*edge_tuples)  # type: ignore[assignment]
             srcs = [_intern(s) for s in srcs_raw]
             tgts = [_intern(t) for t in tgts_raw]
+            lines = array.array('i', lines_raw)  # bulk binary format: -0.29ms pickle.loads
         try:
             key = f"{edge_count}:{sym_count}"
             self._conn.execute(
