@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Clock } from "lucide-react";
 import type { ModeInfo, RecentCommand } from "./modes";
 import { loadRecentCommands } from "./modes";
@@ -14,6 +14,31 @@ const GROUP_LABELS: Record<string, string> = {
   navigate: "Navigate",
   ai: "AI-Powered",
 };
+
+interface FuzzyMatch {
+  score: number;
+  indices: number[]; // indices in label string
+}
+
+function fuzzyMatch(query: string, target: string): FuzzyMatch | null {
+  const q = query.toLowerCase();
+  const t = target.toLowerCase();
+  const indices: number[] = [];
+  let qi = 0, score = 0, streak = 0;
+  for (let ti = 0; ti < t.length && qi < q.length; ti++) {
+    if (q[qi] === t[ti]) {
+      indices.push(ti);
+      score += 1 + streak;
+      streak++;
+      qi++;
+    } else {
+      streak = 0;
+    }
+  }
+  if (qi < q.length) return null;
+  if (indices[0] === 0) score += 10; // prefix bonus
+  return { score, indices };
+}
 
 export function CommandPalette({ modes, onSelect, onClose }: Props) {
   const [query, setQuery] = useState("");
@@ -31,10 +56,25 @@ export function CommandPalette({ modes, onSelect, onClose }: Props) {
 
   useEffect(() => { setSelected(0); }, [query]);
 
-  // Build flat list for keyboard navigation
-  const filtered = query
-    ? modes.filter(m => m.label.toLowerCase().includes(query.toLowerCase()) || m.mode.includes(query.toLowerCase()))
-    : modes;
+  // Build flat list for keyboard navigation — fuzzy when query set, all modes otherwise
+  const fuzzyResults = query
+    ? modes.flatMap(m => {
+        const labelResult = fuzzyMatch(query, m.label);
+        const modeResult = fuzzyMatch(query, m.mode);
+        const best = labelResult && modeResult
+          ? (labelResult.score >= modeResult.score ? labelResult : modeResult)
+          : (labelResult ?? modeResult);
+        if (!best) return [];
+        // Always use label indices for highlighting
+        const labelMatch = fuzzyMatch(query, m.label);
+        return [{ m, score: best.score, labelIndices: labelMatch?.indices ?? [] }];
+      }).sort((a, b) => b.score - a.score)
+    : null;
+
+  const filtered = fuzzyResults ? fuzzyResults.map(r => r.m) : modes;
+  const matchMap = fuzzyResults
+    ? new Map(fuzzyResults.map(r => [r.m.mode, r.labelIndices]))
+    : new Map<string, number[]>();
 
   // In empty-query state, items = recent entries + all modes (for keyboard nav index)
   const showRecent = !query && recent.length > 0;
@@ -150,7 +190,7 @@ export function CommandPalette({ modes, onSelect, onClose }: Props) {
             </>
           )}
 
-          {/* Grouped modes (empty query) */}
+          {/* Grouped modes (empty query) or flat fuzzy results */}
           {groups
             ? groups.map(group => (
                 <div key={group.key}>
@@ -158,14 +198,14 @@ export function CommandPalette({ modes, onSelect, onClose }: Props) {
                   {group.items.map(m => {
                     const idx = modeIndexOffset(m);
                     const isSelected = idx === selected;
-                    return <ModeItem key={m.mode} m={m} isSelected={isSelected} onHover={() => setSelected(idx)} onSelect={() => { onSelect(m.mode); onClose(); }} />;
+                    return <ModeItem key={m.mode} m={m} isSelected={isSelected} onHover={() => setSelected(idx)} onSelect={() => { onSelect(m.mode); onClose(); }} matchIndices={[]} />;
                   })}
                 </div>
               ))
             : filtered.map((m, i) => {
                 const idx = recentCount + i;
                 const isSelected = idx === selected;
-                return <ModeItem key={m.mode} m={m} isSelected={isSelected} onHover={() => setSelected(idx)} onSelect={() => { onSelect(m.mode); onClose(); }} />;
+                return <ModeItem key={m.mode} m={m} isSelected={isSelected} onHover={() => setSelected(idx)} onSelect={() => { onSelect(m.mode); onClose(); }} matchIndices={matchMap.get(m.mode) ?? []} />;
               })
           }
 
@@ -202,7 +242,26 @@ function GroupHeader({ label }: { label: string }) {
   );
 }
 
-function ModeItem({ m, isSelected, onHover, onSelect }: { m: ModeInfo; isSelected: boolean; onHover: () => void; onSelect: () => void }) {
+function highlightLabel(label: string, indices: number[]): React.ReactNode {
+  if (!indices.length) return label;
+  const indexSet = new Set(indices);
+  const parts: React.ReactNode[] = [];
+  for (let i = 0; i < label.length; i++) {
+    if (indexSet.has(i)) {
+      parts.push(
+        <mark key={i} style={{ background: "var(--accent-muted)", color: "var(--accent-hover)", borderRadius: 2, padding: "0 1px" }}>{label[i]}</mark>
+      );
+    } else {
+      // Merge consecutive non-highlighted chars
+      const last = parts[parts.length - 1];
+      if (typeof last === "string") { parts[parts.length - 1] = last + label[i]; }
+      else { parts.push(label[i]); }
+    }
+  }
+  return <>{parts}</>;
+}
+
+function ModeItem({ m, isSelected, onHover, onSelect, matchIndices }: { m: ModeInfo; isSelected: boolean; onHover: () => void; onSelect: () => void; matchIndices: number[] }) {
   return (
     <div
       id={`cmd-opt-${m.mode}`}
@@ -218,7 +277,7 @@ function ModeItem({ m, isSelected, onHover, onSelect }: { m: ModeInfo; isSelecte
       onClick={onSelect}
     >
       <m.icon size={14} aria-hidden="true" />
-      <span style={{ flex: 1 }}>{m.label}</span>
+      <span style={{ flex: 1 }}>{highlightLabel(m.label, matchIndices)}</span>
       <span style={{ fontSize: 10, color: "var(--text-tertiary)", background: "var(--bg-active)", padding: "1px 6px", borderRadius: 3 }} aria-hidden="true">{m.tag}</span>
     </div>
   );
