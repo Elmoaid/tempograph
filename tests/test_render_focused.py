@@ -465,3 +465,120 @@ class TestBuildSeedNameTestLines:
         assert result, "Expected a 'tests found:' line"
         line = result[0]
         assert "+2 more" in line, f"Expected '+2 more' cap indicator in: {line!r}"
+
+# ---------------------------------------------------------------------------
+# S48: _build_fan_out_line — cross-file call fan-out risk indicator
+# ---------------------------------------------------------------------------
+
+class TestFocusFanOutRisk:
+    """Verify S48 fan-out risk indicator in focus mode (depth=0 seeds)."""
+
+    def _fn_sym(self, name, file_path, line_start=1):
+        return Symbol(
+            id=f"{file_path}::{name}",
+            name=name,
+            qualified_name=name,
+            kind=SymbolKind.FUNCTION,
+            language=Language.PYTHON,
+            file_path=file_path,
+            line_start=line_start,
+            line_end=line_start + 10,
+            exported=True,
+        )
+
+    def _callee(self, name, file_path, line_start=1):
+        return Symbol(
+            id=f"{file_path}::{name}",
+            name=name,
+            qualified_name=name,
+            kind=SymbolKind.FUNCTION,
+            language=Language.PYTHON,
+            file_path=file_path,
+            line_start=line_start,
+            line_end=line_start + 5,
+            exported=True,
+        )
+
+    def test_high_fan_out_shown(self, tmp_path):
+        """Function calling into 8 distinct external modules → 'fan-out: HIGH'."""
+        from tempograph.render.focused import _build_fan_out_line
+
+        seed = self._fn_sym("orchestrate", "core.py")
+        callees = [self._callee(f"helper_{i}", f"mod_{i}.py") for i in range(8)]
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c.id)
+            for c in callees
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + callees)
+
+        result = _build_fan_out_line(seed, graph, "")
+        assert result, "Expected fan-out line for 8 cross-file callees"
+        assert "fan-out: HIGH" in result[0], f"Expected 'fan-out: HIGH'; got: {result[0]!r}"
+        assert "8 modules" in result[0], f"Expected '8 modules' in: {result[0]!r}"
+
+    def test_medium_fan_out_shown(self, tmp_path):
+        """Function calling into 5 distinct external modules → 'fan-out: MEDIUM'."""
+        from tempograph.render.focused import _build_fan_out_line
+
+        seed = self._fn_sym("dispatch", "router.py")
+        callees = [self._callee(f"handler_{i}", f"handler_{i}.py") for i in range(5)]
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c.id)
+            for c in callees
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + callees)
+
+        result = _build_fan_out_line(seed, graph, "")
+        assert result, "Expected fan-out line for 5 cross-file callees"
+        assert "fan-out: MEDIUM" in result[0], f"Expected 'fan-out: MEDIUM'; got: {result[0]!r}"
+        assert "5 modules" in result[0], f"Expected '5 modules' in: {result[0]!r}"
+
+    def test_low_fan_out_not_shown(self, tmp_path):
+        """Function calling into 3 distinct files → no fan-out line (LOW = suppressed)."""
+        from tempograph.render.focused import _build_fan_out_line
+
+        seed = self._fn_sym("process", "worker.py")
+        callees = [self._callee(f"util_{i}", f"util_{i}.py") for i in range(3)]
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c.id)
+            for c in callees
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + callees)
+
+        result = _build_fan_out_line(seed, graph, "")
+        assert result == [], f"Expected no fan-out line for 3 cross-file callees; got: {result}"
+
+    def test_test_function_skipped(self, tmp_path):
+        """Function named test_* is suppressed even with high fan-out."""
+        from tempograph.render.focused import _build_fan_out_line
+
+        seed = self._fn_sym("test_orchestrate", "tests/test_core.py")
+        callees = [self._callee(f"helper_{i}", f"mod_{i}.py") for i in range(10)]
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c.id)
+            for c in callees
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + callees)
+
+        result = _build_fan_out_line(seed, graph, "")
+        assert result == [], f"Test function should not emit fan-out line; got: {result}"
+
+    def test_same_file_calls_excluded(self, tmp_path):
+        """Calls to symbols in the same file don't count toward module count."""
+        from tempograph.render.focused import _build_fan_out_line
+
+        seed = self._fn_sym("run", "app.py")
+        # 3 external callees + 10 same-file callees
+        ext_callees = [self._callee(f"ext_{i}", f"ext_{i}.py") for i in range(3)]
+        same_callees = [self._callee(f"internal_{i}", "app.py", line_start=50 + i) for i in range(10)]
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c.id)
+            for c in ext_callees + same_callees
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + ext_callees + same_callees)
+
+        result = _build_fan_out_line(seed, graph, "")
+        # Only 3 external files — should be suppressed (LOW)
+        assert result == [], (
+            f"Same-file calls must not inflate module count; got: {result}"
+        )
