@@ -1659,6 +1659,19 @@ def _build_callees_block(
     lines.append(f"{indent}  calls: {', '.join(callee_strs)}")
     if len(callees) > shown:
         lines[-1] += f" (+{len(callees) - shown} more)"
+    # S52: hot callee instability — ≥2 non-test callees in hot_files = volatile territory.
+    # Agent editing a seed that calls 2+ recently-changed functions is walking on thin ice.
+    if depth == 0 and graph.hot_files:
+        _hot_non_test = [
+            c for c in callees
+            if c.file_path in graph.hot_files and not _is_test_file(c.file_path)
+        ]
+        if len(_hot_non_test) >= 2:
+            _names = [c.name for c in _hot_non_test[:3]]
+            _suffix = "..." if len(_hot_non_test) > 3 else ""
+            lines.append(
+                f"{indent}  \u21b3 instability: {len(_hot_non_test)} hot callees ({', '.join(_names)}{_suffix})"
+            )
     return lines
 
 
