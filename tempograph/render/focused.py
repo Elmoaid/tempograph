@@ -4266,65 +4266,83 @@ def _signals_fn_props_b_method(
     return lines
 
 
+def _signals_fn_coupling_class_private(graph: "Tempo", _prim: object) -> list[str]:
+    """S948: All-private class — no public method interface."""
+    if _prim.kind.value != "class" or _is_test_file(_prim.file_path):
+        return []
+    _methods = [
+        s for s in graph.symbols.values()
+        if s.parent_id == _prim.id and s.kind.value in ("method", "function")
+    ]
+    _public_methods = [m for m in _methods if not m.name.startswith("_")]
+    if _methods and not _public_methods:
+        return [
+            f"\nall-private class: {_prim.name} has {len(_methods)} method(s) but none are public"
+            f" — no intended external interface; direct access to private methods is fragile coupling"
+        ]
+    return []
+
+
+def _signals_fn_coupling_class_override(graph: "Tempo", _prim: object) -> list[str]:
+    """S966: Override candidate — same method name in multiple classes."""
+    if (
+        _prim.kind.value != "method"
+        or _prim.parent_id is None
+        or _is_test_file(_prim.file_path)
+    ):
+        return []
+    _siblings = [
+        s for s in graph.symbols.values()
+        if s.kind.value == "method"
+        and s.name == _prim.name
+        and s.file_path == _prim.file_path
+        and s.parent_id != _prim.parent_id
+        and s.parent_id is not None
+    ]
+    if _siblings:
+        _cls_names = ", ".join(s.qualified_name.rsplit(".", 1)[0] for s in _siblings[:2])
+        return [
+            f"\noverride candidate: {_prim.name} also defined in {_cls_names}"
+            f" — shared method name across classes; changes may need mirroring for consistent behavior"
+        ]
+    return []
+
+
+def _signals_fn_coupling_class_interface(graph: "Tempo", _prim: object) -> list[str]:
+    """S1002: Interface method — implicit interface pattern across 3+ classes."""
+    if (
+        _prim.kind.value != "method"
+        or _prim.parent_id is None
+        or _is_test_file(_prim.file_path)
+    ):
+        return []
+    _same_name = [
+        s for s in graph.symbols.values()
+        if s.kind.value == "method"
+        and s.name == _prim.name
+        and s.parent_id is not None
+        and not _is_test_file(s.file_path)
+    ]
+    _classes = len({s.parent_id for s in _same_name})
+    if _classes >= 3:
+        return [
+            f"\ninterface method: {_prim.name} is defined in {_classes} classes"
+            f" — implicit interface pattern; changes must maintain contract across all implementations"
+        ]
+    return []
+
+
 def _signals_fn_coupling_class(
     graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
 ) -> list[str]:
     """S948/S966/S1002: all-private class, override candidate, interface method signals."""
-    lines: list[str] = []
     if not _seed_syms or token_count >= max_tokens - 30:
-        return lines
+        return []
     _prim = _seed_syms[0]
-    # S948: All-private class
-    if _prim.kind.value == "class" and not _is_test_file(_prim.file_path):
-        _methods = [
-            s for s in graph.symbols.values()
-            if s.parent_id == _prim.id and s.kind.value in ("method", "function")
-        ]
-        _public_methods = [m for m in _methods if not m.name.startswith("_")]
-        if _methods and not _public_methods:
-            lines.append(
-                f"\nall-private class: {_prim.name} has {len(_methods)} method(s) but none are public"
-                f" — no intended external interface; direct access to private methods is fragile coupling"
-            )
-    # S966: Override candidate
-    if (
-        _prim.kind.value == "method"
-        and _prim.parent_id is not None
-        and not _is_test_file(_prim.file_path)
-    ):
-        _siblings = [
-            s for s in graph.symbols.values()
-            if s.kind.value == "method"
-            and s.name == _prim.name
-            and s.file_path == _prim.file_path
-            and s.parent_id != _prim.parent_id
-            and s.parent_id is not None
-        ]
-        if _siblings:
-            _cls_names = ", ".join(s.qualified_name.rsplit(".", 1)[0] for s in _siblings[:2])
-            lines.append(
-                f"\noverride candidate: {_prim.name} also defined in {_cls_names}"
-                f" — shared method name across classes; changes may need mirroring for consistent behavior"
-            )
-    # S1002: Interface method
-    if (
-        _prim.kind.value == "method"
-        and _prim.parent_id is not None
-        and not _is_test_file(_prim.file_path)
-    ):
-        _same_name = [
-            s for s in graph.symbols.values()
-            if s.kind.value == "method"
-            and s.name == _prim.name
-            and s.parent_id is not None
-            and not _is_test_file(s.file_path)
-        ]
-        _classes = len({s.parent_id for s in _same_name})
-        if _classes >= 3:
-            lines.append(
-                f"\ninterface method: {_prim.name} is defined in {_classes} classes"
-                f" — implicit interface pattern; changes must maintain contract across all implementations"
-            )
+    lines: list[str] = []
+    lines += _signals_fn_coupling_class_private(graph, _prim)
+    lines += _signals_fn_coupling_class_override(graph, _prim)
+    lines += _signals_fn_coupling_class_interface(graph, _prim)
     return lines
 
 
