@@ -2191,10 +2191,10 @@ def _signals_focused_structure(
 # ---------------------------------------------------------------------------
 # Signal group helper: class_hierarchy
 # ---------------------------------------------------------------------------
-def _signals_focused_class_hierarchy(
+def _signals_focused_class_hierarchy_size(
     graph: Tempo, *, _seed_syms: list, token_count: int, max_tokens: int,
 ) -> list[str]:
-    """Focused-mode signals: class_hierarchy."""
+    """Class hierarchy signals: class method count (S150)."""
     lines: list[str] = []
     # S150: Class method count — when seed is a class, show total method count.
     # Large classes (>= 8 methods) often violate single responsibility.
@@ -2208,7 +2208,14 @@ def _signals_focused_class_hierarchy(
             ]
             if len(_methods150) >= 8:
                 lines.append(f"\nclass size: {len(_methods150)} methods — large class, consider decomposition")
+    return lines
 
+
+def _signals_focused_class_hierarchy_depth(
+    graph: Tempo, *, _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """Class hierarchy signals: inheritance depth (S155, S293)."""
+    lines: list[str] = []
     # S155: Inheritance depth — BFS up INHERITS edges from seed class to count chain depth.
     # Deep chains (>= 3 levels) indicate high coupling to base class behavior.
     # Only shown when seed is a class and inheritance depth >= 3.
@@ -2236,29 +2243,6 @@ def _signals_focused_class_hierarchy(
                     break
             if _inh_depth >= 3:
                 lines.append(f"\ninheritance depth: {_inh_depth} levels — deep hierarchy, high base-class coupling")
-
-    # S228: Class symbol focused — the focused symbol is a class; show subclass count.
-    # Classes with subclasses have contracts that affect all inheritors; changes propagate down.
-    # Only shown when seed is a class with >= 1 subclass in the graph.
-    if _seed_syms and token_count < max_tokens - 30:
-        _prim228 = _seed_syms[0]
-        if _prim228.kind.value == "class":
-            from ..types import EdgeKind as _EK228
-            _subclasses228 = [
-                graph.symbols[e.source_id]
-                for e in graph.edges
-                if e.kind.value == "inherits" and e.target_id == _prim228.id
-                and e.source_id in graph.symbols
-            ]
-            if _subclasses228:
-                _sub_names228 = [s.name for s in _subclasses228[:3]]
-                _sub_str228 = ", ".join(_sub_names228)
-                if len(_subclasses228) > 3:
-                    _sub_str228 += f" +{len(_subclasses228) - 3} more"
-                lines.append(
-                    f"\nclass with subclasses: {len(_subclasses228)} subclass(es) ({_sub_str228})"
-                    f" — interface changes break all inheritors"
-                )
 
     # S293: Deep inheritance — focused class inherits from a chain 3+ levels deep.
     # Deep hierarchies are hard to reason about; changes at the top cascade silently
@@ -2289,6 +2273,36 @@ def _signals_focused_class_hierarchy(
                     f"\ndeep inheritance: {_prim293.name} is {_depth293} levels deep"
                     f" ({_chain_str293}) — deep hierarchy; prefer composition"
                 )
+    return lines
+
+
+def _signals_focused_class_hierarchy_bases(
+    graph: Tempo, *, _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """Class hierarchy signals: subclass count and multiple inheritance (S228, S320)."""
+    lines: list[str] = []
+    # S228: Class symbol focused — the focused symbol is a class; show subclass count.
+    # Classes with subclasses have contracts that affect all inheritors; changes propagate down.
+    # Only shown when seed is a class with >= 1 subclass in the graph.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim228 = _seed_syms[0]
+        if _prim228.kind.value == "class":
+            from ..types import EdgeKind as _EK228
+            _subclasses228 = [
+                graph.symbols[e.source_id]
+                for e in graph.edges
+                if e.kind.value == "inherits" and e.target_id == _prim228.id
+                and e.source_id in graph.symbols
+            ]
+            if _subclasses228:
+                _sub_names228 = [s.name for s in _subclasses228[:3]]
+                _sub_str228 = ", ".join(_sub_names228)
+                if len(_subclasses228) > 3:
+                    _sub_str228 += f" +{len(_subclasses228) - 3} more"
+                lines.append(
+                    f"\nclass with subclasses: {len(_subclasses228)} subclass(es) ({_sub_str228})"
+                    f" — interface changes break all inheritors"
+                )
 
     # S320: Multiple inheritance — focused class inherits from 2+ distinct base classes.
     # Multiple inheritance (mixin-heavy or diamond) creates fragile MRO dependencies;
@@ -2311,7 +2325,23 @@ def _signals_focused_class_hierarchy(
                     f" {len(_bases320)} bases ({', '.join(_base_names320)})"
                     f" — MRO-sensitive; reordering bases changes behavior"
                 )
+    return lines
 
+
+def _signals_focused_class_hierarchy(
+    graph: Tempo, *, _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """Focused-mode signals: class_hierarchy."""
+    lines: list[str] = []
+    lines.extend(_signals_focused_class_hierarchy_size(
+        graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
+    ))
+    lines.extend(_signals_focused_class_hierarchy_depth(
+        graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
+    ))
+    lines.extend(_signals_focused_class_hierarchy_bases(
+        graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
+    ))
     return lines
 
 
