@@ -267,6 +267,7 @@ export function OutputPanel(props: OutputPanelProps) {
           placeholder={activeModeInfo?.hint || "arguments (optional)"}
           argsInputRef={argsInputRef}
           modeRunning={modeRunning}
+          activeMode={activeMode}
           onChange={onArgsChange}
           onRun={onRun}
           onHistoryOpen={onHistoryOpen}
