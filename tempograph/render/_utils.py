@@ -30,6 +30,24 @@ def _is_test_file(file_path: str) -> bool:
         or any(name.endswith(sfx) for sfx in _TEST_FILE_SUFFIXES)
     )
 
+def _caller_domain(file_path: str) -> str:
+    """Extract a meaningful subsystem name from a file path.
+
+    Strips one level of packaging to expose the actual module identity:
+      tempograph/server.py      → server
+      tempograph/render/focused.py → render
+      tempograph/__main__.py    → cli
+      tempo/ui/src/App.tsx      → ui
+      bench/changelocal/x.py   → changelocal
+      root_file.py              → root_file
+    """
+    parts = file_path.split("/")
+    if len(parts) == 1:
+        return parts[0].rsplit(".", 1)[0]
+    raw = parts[1].rsplit(".", 1)[0]
+    return "cli" if raw == "__main__" else raw
+
+
 def _dead_code_confidence(sym: Symbol, graph: Tempo) -> int:
     """Score 0-100: how confident we are this symbol is truly dead."""
     score = 0
