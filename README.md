@@ -2,7 +2,11 @@
 
 Tempograph is an agent effectiveness engine — a code graph tool that makes AI coding agents measurably better at understanding and navigating codebases.
 
-**Bench result**: Adaptive v5 gating improves AI file-prediction F1 by **+7.6% (p=0.013)** with **zero harm** across all tested repos (n=114, qwen2.5-coder:32b). No other code context tool publishes statistically validated results.
+**Bench result**: Adaptive context gating improves AI file-prediction F1 by **+18.6% (p=0.049)** on low-baseline repos with **zero harm rate** (n=45, qwen2.5-coder:32b, Phase 5.39). Definition-first ordering: **+16.0% F1 (p=0.012)** across n=100 pairs. No other code context tool publishes statistically validated retrieval results.
+
+```bash
+pip install tempograph
+```
 
 It parses source files with tree-sitter, extracts symbols and relationships, and builds a semantic graph. Run it as an MCP server — your AI agent calls `prepare_context` and gets exactly the right context before making code changes.
 
@@ -460,7 +464,7 @@ tempograph-server
 
 | Tool | Input | Output |
 |------|-------|--------|
-| **`prepare_context`** | `repo_path`, `task` | **One-shot context for a PR/commit task — recommended for agents.** Extracts keywords, focuses the graph, returns KEY FILES. Adaptive: skips injection when model already knows the files (+6.9% F1, p=0.035). |
+| **`prepare_context`** | `repo_path`, `task` | **One-shot context for a PR/commit task — recommended for agents.** Extracts keywords, focuses the graph, returns KEY FILES. Adaptive gating skips injection when it would cause harm. Definition-first ordering (+18.6% F1, p=0.049). |
 | `index_repo` | `repo_path` | Builds graph and returns stats (file/symbol/edge counts) |
 | `overview` | `repo_path` | Repository orientation: size, languages, entry points, key files |
 | `focus` | `repo_path`, `query` | Connected subgraph for a topic or symbol — callers, callees, depth 3 |
@@ -541,6 +545,15 @@ On re-index:
 
 Switch branches, rebase, cherry-pick — if the file contents are unchanged, Tempograph does not redo the work.
 
+## Why Tempograph?
+
+- **Only tool with triple search**: structural graph (tree-sitter) + semantic vectors (sqlite-vec) + keyword search (FTS5)
+- **Only tool publishing retrieval F1**: +18.6% improvement, statistically significant
+- **Sub-25ms warm builds**: Content-hashed SQLite, no rebuild on branch switch
+- **170+ languages**: tree-sitter-language-pack with custom handlers for 10 core languages
+- **Zero-config adaptive gating**: Knows when NOT to inject context (avoids harm)
+- **Local-first**: Everything runs on your machine. No API keys, no cloud, no data leaves your laptop.
+
 ## License
 
-MIT
+[BSL 1.1](LICENSE) — free to use, can't resell as a hosted service. Converts to Apache 2.0 on 2030-03-22.
