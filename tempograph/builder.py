@@ -206,7 +206,7 @@ def build_graph(
     # Load entire graph from DB in one shot
     _edges_pre_resolved = False
     if db:
-        db.remove_stale_files(current_files)
+        db.remove_stale_files(current_files, db_files=set(stored_files.keys()))
         db.end_batch()
         files, symbols, edges, _edges_pre_resolved = db.load_all(lazy_edges=lazy_edges)
         graph.files = files
