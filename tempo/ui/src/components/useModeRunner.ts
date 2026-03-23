@@ -87,6 +87,7 @@ function buildActiveModeInfo(activeKit: string | null, activeMode: string, custo
 }
 
 const lastModeKey = (path: string) => `tempo-last-mode-${path}`;
+const modeArgsKey = (path: string, modeOrKit: string) => `tempo-mode-args-${path}-${modeOrKit}`;
 
 export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRunnerState & ModeRunnerActions {
   const [activeMode, setActiveMode] = useState(() => localStorage.getItem(lastModeKey(repoPath)) || "overview");
@@ -94,7 +95,10 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   const [sidebarTab, setSidebarTab] = useState<"kits" | "modes">("kits");
   const [customKits, setCustomKits] = useState<KitInfo[]>([]);
   const [kitBuilderOpen, setKitBuilderOpen] = useState(false);
-  const [modeArgs, setModeArgs] = useState("");
+  const [modeArgs, setModeArgs] = useState(() => {
+    const initMode = localStorage.getItem(lastModeKey(repoPath)) || "overview";
+    return localStorage.getItem(modeArgsKey(repoPath, initMode)) || "";
+  });
   const [modeOutput, setModeOutput] = useState("");
   const [prevOutput, setPrevOutput] = useState<string | null>(null);
   const [modeRunning, setModeRunning] = useState(false);
@@ -171,10 +175,12 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   const runModeRef = useRef<(() => void) | null>(null);
 
   const switchMode = (mode: string) => {
+    // Persist args for the mode we're leaving
+    localStorage.setItem(modeArgsKey(repoPath, activeKit ? `kit:${activeKit}` : activeMode), modeArgs);
     setActiveKit(null);
     setActiveMode(mode);
     localStorage.setItem(lastModeKey(repoPath), mode);
-    setModeArgs("");
+    setModeArgs(localStorage.getItem(modeArgsKey(repoPath, mode)) || "");
     setHistoryOpen(false);
     resetFilter();
     setPrevOutput(null);
@@ -189,9 +195,11 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   };
 
   const switchKit = (kitId: string) => {
+    // Persist args for the mode/kit we're leaving
+    localStorage.setItem(modeArgsKey(repoPath, activeKit ? `kit:${activeKit}` : activeMode), modeArgs);
     setActiveKit(kitId);
     setActiveMode("kit");
-    setModeArgs("");
+    setModeArgs(localStorage.getItem(modeArgsKey(repoPath, `kit:${kitId}`)) || "");
     setHistoryOpen(false);
     resetFilter();
     setPrevOutput(null);
