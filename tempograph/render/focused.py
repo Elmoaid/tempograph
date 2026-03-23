@@ -3228,16 +3228,11 @@ def _signals_fn_signature(
     return lines
 
 
-def _signals_fn_conventions(
-    graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
+def _signals_fn_conventions_naming(
+    graph: "Tempo", _seed_syms: list, _prim: object,
 ) -> list[str]:
-    """S470/S476/S482/S488/S494/S537/S558/S593/S636/S654: naming and convention signals."""
+    """S470/S558/S593/S654: name-quality signals (deprecated, builtin shadow, generic name)."""
     lines: list[str] = []
-    if not _seed_syms or token_count >= max_tokens - 30:
-        return lines
-    _prim = next((s for s in _seed_syms if s.kind.value in ("function", "method", "class")), None)
-    if not _prim:
-        return lines
     # S470: Deprecated function
     _dep_markers = ("deprecated", "legacy", "old_", "_old", "_deprecated", "_legacy", "compat_")
     if any(m in _prim.name.lower() for m in _dep_markers):
@@ -3247,6 +3242,42 @@ def _signals_fn_conventions(
             f" with {len(_callers)} active caller(s)"
             f" — verify migration to replacement is complete before removing"
         )
+    # S558: Deprecated name
+    _dep_markers558 = ("deprecated", "old_", "_old", "legacy", "_v1", "v1_", "obsolete")
+    _lname558 = _seed_syms[0].name.lower()
+    if any(m in _lname558 for m in _dep_markers558):
+        lines.append(
+            f"\ndeprecated name: {_seed_syms[0].name} contains a deprecation marker"
+            f" — callers are accruing technical debt; migrate to the replacement before removal"
+        )
+    # S593: Builtin shadow
+    if (
+        _seed_syms[0].name in _BUILTINS593
+        and _seed_syms[0].kind.value in ("function", "method", "class")
+        and not _is_test_file(_seed_syms[0].file_path)
+    ):
+        lines.append(
+            f"\nbuiltin shadow: {_seed_syms[0].name} shadows a Python builtin"
+            f" — callers that expect the builtin will silently use this instead; rename to avoid confusion"
+        )
+    # S654: Generic name
+    if (
+        not _is_test_file(_seed_syms[0].file_path)
+        and _seed_syms[0].kind.value in ("function", "method", "class")
+        and _seed_syms[0].name.lower() in _GENERIC_NAMES654
+    ):
+        lines.append(
+            f"\ngeneric name: '{_seed_syms[0].name}' is a common, non-specific symbol name"
+            f" — hard to grep and refactor; consider a domain-specific name that signals intent"
+        )
+    return lines
+
+
+def _signals_fn_conventions_behavior(
+    graph: "Tempo", _seed_syms: list,
+) -> list[str]:
+    """S476/S482/S488/S494: thread-safety, mixin, operator overload, and factory signals."""
+    lines: list[str] = []
     # S476/S482: Thread-safe and mixin (fn/method only)
     _prim_fn = next((s for s in _seed_syms if s.kind.value in ("function", "method")), None)
     if _prim_fn:
@@ -3303,6 +3334,14 @@ def _signals_fn_conventions(
                 f"\nfactory function: {_prim_fac.name} is a factory with {len(_callers_fac)} caller(s)"
                 f" — changing return type or validation silently breaks all construction sites"
             )
+    return lines
+
+
+def _signals_fn_conventions_scope(
+    graph: "Tempo", _seed_syms: list,
+) -> list[str]:
+    """S537/S636: module scope and visibility signals (private module export, init-file symbol)."""
+    lines: list[str] = []
     # S537: Private module export
     _prim_any = _seed_syms[0]
     if _prim_any.exported and not _is_test_file(_prim_any.file_path):
@@ -3316,24 +3355,6 @@ def _signals_fn_conventions(
                 f"\nprivate module: {_prim_any.name} is exported from a private file"
                 f" ({_basename537}) — public symbol in private module is confusing; move or re-export via __init__.py"
             )
-    # S558: Deprecated name
-    _dep_markers558 = ("deprecated", "old_", "_old", "legacy", "_v1", "v1_", "obsolete")
-    _lname558 = _seed_syms[0].name.lower()
-    if any(m in _lname558 for m in _dep_markers558):
-        lines.append(
-            f"\ndeprecated name: {_seed_syms[0].name} contains a deprecation marker"
-            f" — callers are accruing technical debt; migrate to the replacement before removal"
-        )
-    # S593: Builtin shadow
-    if (
-        _seed_syms[0].name in _BUILTINS593
-        and _seed_syms[0].kind.value in ("function", "method", "class")
-        and not _is_test_file(_seed_syms[0].file_path)
-    ):
-        lines.append(
-            f"\nbuiltin shadow: {_seed_syms[0].name} shadows a Python builtin"
-            f" — callers that expect the builtin will silently use this instead; rename to avoid confusion"
-        )
     # S636: Init-file symbol
     _prim636 = _seed_syms[0]
     if (
@@ -3345,16 +3366,22 @@ def _signals_fn_conventions(
             f"\ninit-file symbol: {_prim636.name} is in __init__.py ({len(_importers636)} package importer(s))"
             f" — part of the package public API; changes affect all package consumers"
         )
-    # S654: Generic name
-    if (
-        not _is_test_file(_seed_syms[0].file_path)
-        and _seed_syms[0].kind.value in ("function", "method", "class")
-        and _seed_syms[0].name.lower() in _GENERIC_NAMES654
-    ):
-        lines.append(
-            f"\ngeneric name: '{_seed_syms[0].name}' is a common, non-specific symbol name"
-            f" — hard to grep and refactor; consider a domain-specific name that signals intent"
-        )
+    return lines
+
+
+def _signals_fn_conventions(
+    graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """S470/S476/S482/S488/S494/S537/S558/S593/S636/S654: naming and convention signals."""
+    lines: list[str] = []
+    if not _seed_syms or token_count >= max_tokens - 30:
+        return lines
+    _prim = next((s for s in _seed_syms if s.kind.value in ("function", "method", "class")), None)
+    if not _prim:
+        return lines
+    lines += _signals_fn_conventions_naming(graph, _seed_syms, _prim)
+    lines += _signals_fn_conventions_behavior(graph, _seed_syms)
+    lines += _signals_fn_conventions_scope(graph, _seed_syms)
     return lines
 
 
