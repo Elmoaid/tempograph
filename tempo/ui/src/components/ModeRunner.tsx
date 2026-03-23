@@ -18,7 +18,12 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
       {vm.paletteOpen && (
         <CommandPalette
           modes={MODES}
-          onSelect={(mode) => { vm.switchMode(mode); vm.setSidebarTab("modes"); setTimeout(() => vm.argsInputRef.current?.focus(), 50); }}
+          onSelect={(mode, args) => {
+            vm.switchMode(mode);
+            if (args) vm.setModeArgs(args);
+            vm.setSidebarTab("modes");
+            setTimeout(() => vm.argsInputRef.current?.focus(), 50);
+          }}
           onClose={() => vm.setPaletteOpen(false)}
         />
       )}
