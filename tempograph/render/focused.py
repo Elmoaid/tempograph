@@ -1547,9 +1547,7 @@ def _build_callers_block(
     def _is_kw(c: "Symbol") -> bool:
         return bool(query_tokens and any(tok in c.file_path.lower() for tok in query_tokens))
 
-    _callers_for_display = (
-        [c for c in callers if not _is_test_file(c.file_path)] if depth == 0 else callers
-    )
+    _callers_for_display = [c for c in callers if not _is_test_file(c.file_path)]
     callers_sorted = sorted(_callers_for_display, key=lambda c: 0 if _is_kw(c) else 1)
     kw_callers = [c for c in callers_sorted if _is_kw(c)]
     other_callers = [c for c in callers_sorted if not _is_kw(c)]
