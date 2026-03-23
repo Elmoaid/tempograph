@@ -1,10 +1,11 @@
-import { useState, type RefObject } from "react";
+import { useState, useEffect, type RefObject } from "react";
 import { Copy, Check, ThumbsUp, ThumbsDown, X } from "lucide-react";
 import type { ModeInfo } from "./modes";
 import { formatAge } from "./modes";
 import { ArgsInput } from "./ArgsInput";
 import { OutputPanelHeader } from "./OutputPanelHeader";
 import { KitSectionAccordion } from "./KitSectionAccordion";
+import { OutputSearchBar } from "./OutputSearchBar";
 
 const FONT_SIZE_MIN = 9;
 const FONT_SIZE_MAX = 16;
@@ -33,6 +34,11 @@ interface OutputPanelProps {
   feedbackMode: string | null;
   argsInputRef: RefObject<HTMLInputElement>;
   filterInputRef: RefObject<HTMLInputElement>;
+  searchInputRef: RefObject<HTMLInputElement>;
+  searchText: string;
+  searchActive: boolean;
+  searchMatchCount: number;
+  searchCurrentMatch: number;
   onArgsChange: (v: string) => void;
   onHistoryOpen: (v: boolean) => void;
   onHistorySelect: (q: string) => void;
@@ -42,6 +48,9 @@ interface OutputPanelProps {
   onFilterToggle: () => void;
   onFilterChange: (v: string) => void;
   onFilterClose: () => void;
+  onSearchChange: (text: string) => void;
+  onSearchClose: () => void;
+  onSearchNavigate: (dir: "next" | "prev") => void;
   onFeedback: (helpful: boolean) => void;
 }
 
@@ -60,10 +69,35 @@ function parseKitSections(output: string): Array<{ mode: string; content: string
   })).filter(s => s.content.length > 0);
 }
 
-function HighlightedOutput({ text, query, style }: { text: string; query: string; style: React.CSSProperties }) {
-  if (!query.trim()) return <pre className="output" role="region" aria-label="Mode output" aria-live="polite" style={style}>{text}</pre>;
-  const lowerQ = query.toLowerCase();
+function HighlightedOutput({
+  text, query, searchText, currentSearchMatch, style,
+}: {
+  text: string;
+  query: string;
+  searchText?: string;
+  currentSearchMatch?: number;
+  style: React.CSSProperties;
+}) {
+  // Scroll to active search match when it changes
+  useEffect(() => {
+    if (!searchText?.trim() || !currentSearchMatch) return;
+    const el = document.getElementById(`osm-${currentSearchMatch}`);
+    el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [searchText, currentSearchMatch]);
+
+  // Search highlighting takes priority over filter highlighting
+  const activeQuery = searchText?.trim() ? searchText : query;
+  const isSearch = Boolean(searchText?.trim());
+
+  if (!activeQuery.trim()) {
+    return <pre className="output" role="region" aria-label="Mode output" aria-live="polite" style={style}>{text}</pre>;
+  }
+
+  const lowerQ = activeQuery.toLowerCase();
+  const qLen = activeQuery.length;
   const lines = text.split("\n");
+  let matchIndex = 0;
+
   return (
     <pre className="output" role="region" aria-label="Mode output" aria-live="polite" style={style}>
       {lines.map((line, i) => {
@@ -73,12 +107,26 @@ function HighlightedOutput({ text, query, style }: { text: string; query: string
           const idx = rest.toLowerCase().indexOf(lowerQ);
           if (idx === -1) { parts.push(rest); break; }
           if (idx > 0) parts.push(rest.slice(0, idx));
+          matchIndex++;
+          const isActive = isSearch && matchIndex === currentSearchMatch;
           parts.push(
-            <mark key={parts.length} style={{ background: "var(--accent-dim, rgba(99,102,241,0.25))", color: "inherit", borderRadius: 2, padding: "0 1px" }}>
-              {rest.slice(idx, idx + query.length)}
+            <mark
+              key={parts.length}
+              id={isSearch ? `osm-${matchIndex}` : undefined}
+              style={{
+                background: isSearch
+                  ? isActive ? "#ffd700" : "rgba(255,215,0,0.35)"
+                  : "var(--accent-dim, rgba(99,102,241,0.25))",
+                color: isActive ? "#000" : "inherit",
+                borderRadius: 2,
+                padding: "0 1px",
+                outline: isActive ? "1px solid #ffd700" : "none",
+              }}
+            >
+              {rest.slice(idx, idx + qLen)}
             </mark>
           );
-          rest = rest.slice(idx + query.length);
+          rest = rest.slice(idx + qLen);
         }
         return <span key={i}>{parts}{i < lines.length - 1 ? "\n" : ""}</span>;
       })}
@@ -137,8 +185,11 @@ export function OutputPanel(props: OutputPanelProps) {
     elapsed, outputTs, runDuration, copied, filterVisible, outputFilter,
     filteredOutput, filterMatchCount, history, historyOpen, feedbackGiven,
     argsInputRef, filterInputRef,
+    searchInputRef, searchText, searchActive, searchMatchCount, searchCurrentMatch,
     onArgsChange, onHistoryOpen, onHistorySelect, onRun, onCopy, onSave,
-    onFilterToggle, onFilterChange, onFilterClose, onFeedback, saved,
+    onFilterToggle, onFilterChange, onFilterClose,
+    onSearchChange, onSearchClose, onSearchNavigate,
+    onFeedback, saved,
   } = props;
 
   const isKitMode = activeMode.startsWith("kit:");
@@ -192,6 +243,17 @@ export function OutputPanel(props: OutputPanelProps) {
         }}
         onCopy={onCopy}
       />
+      {searchActive && (
+        <OutputSearchBar
+          searchText={searchText}
+          matchCount={searchMatchCount}
+          currentMatch={searchCurrentMatch}
+          searchInputRef={searchInputRef}
+          onChange={onSearchChange}
+          onNavigate={onSearchNavigate}
+          onClose={onSearchClose}
+        />
+      )}
       <div className="cell-body">
         {activeModeInfo?.desc && (
           <div style={{ fontSize: 10, color: "var(--text-tertiary)", marginBottom: 8, lineHeight: 1.5 }}>
@@ -271,6 +333,8 @@ export function OutputPanel(props: OutputPanelProps) {
               <HighlightedOutput
                 text={filteredOutput}
                 query={filterVisible ? outputFilter : ""}
+                searchText={searchActive ? searchText : ""}
+                currentSearchMatch={searchActive ? searchCurrentMatch : 0}
                 style={{ maxHeight: activeMode === "prepare" ? "calc(100% - 96px)" : "calc(100% - 64px)", overflow: "auto", whiteSpace: wrapEnabled ? "pre-wrap" : "pre", fontSize, margin: 0 }}
               />
             )}

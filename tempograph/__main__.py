@@ -171,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("repo", help="Path to the repository root")
     parser.add_argument(
         "--mode", "-m",
-        choices=("overview", "map", "symbols", "focus", "lookup", "blast", "diff", "hotspots", "deps", "dead", "arch", "stats", "prepare", "skills", "report", "serve"),
+        choices=("overview", "map", "symbols", "focus", "lookup", "blast", "diff", "hotspots", "deps", "dead", "arch", "stats", "prepare", "skills", "report", "serve", "ambient"),
         default="overview",
         help="Rendering mode (default: overview)",
     )
@@ -183,6 +183,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-log", action="store_true", help="Disable usage logging")
     parser.add_argument("--exclude", "-x", help="Comma-separated directory prefixes to exclude (e.g. archive,bench/results)")
     parser.add_argument("--task-type", help="Explicit task type for L2 learning (e.g. refactor, debug, feature, review)")
+    parser.add_argument("--hot-only", action="store_true", default=True,
+                        help="Ambient mode: only generate context for dirs changed in last 30d (default: True)")
+    parser.add_argument("--all-dirs", action="store_true",
+                        help="Ambient mode: generate context for ALL dirs, not just hot ones")
     parser.add_argument("--kit", "-k", metavar="KIT",
                         help="Run a composable kit workflow. Use --kit list to show all kits.")
     parser.add_argument("--embed", action="store_true",
@@ -338,6 +342,16 @@ def main(argv: list[str] | None = None) -> int:
             log_usage(repo, source="cli", mode=f"kit:{args.kit}", query=args.query,
                       symbols=stats["symbols"], tokens=tokens,
                       duration_ms=int(elapsed * 1000), empty=is_empty_result(output))
+        return 0
+
+    # Ambient mode: write per-directory LOD-1 context files
+    if args.mode == "ambient":
+        from .ambient import generate_ambient, write_ambient, CONTEXT_FILENAME as _CTXF
+        hot_only = not args.all_dirs
+        contents = generate_ambient(graph, repo, hot_only=hot_only)
+        write_ambient(contents, repo)
+        dirs_written = len(contents)
+        print(f"Wrote {_CTXF} to {dirs_written} director{'y' if dirs_written == 1 else 'ies'}")
         return 0
 
     def _diff_files(args, repo_root: str) -> list[str]:

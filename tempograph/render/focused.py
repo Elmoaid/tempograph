@@ -1028,6 +1028,85 @@ def _build_seed_test_lines(
     return lines
 
 
+def _build_seed_name_test_lines(
+    sym: "Symbol",
+    graph: "Tempo",
+    indent: str,
+) -> list[str]:
+    """Build supplementary test coverage via name-pattern + import detection (S47).
+
+    Finds coverage that may not appear in the call graph:
+    - Test functions named test_<seed_name>[_*] in any test file (naming convention)
+    - Test files that import the seed's file (import-level coupling)
+
+    Only emits when NET-NEW coverage is found (not already shown by caller-based
+    _build_seed_test_lines). No negative signal — absent = unknown.
+    Skips symbols that ARE test functions.
+    """
+    if _is_test_file(sym.file_path):
+        return []
+    if sym.kind.value not in ("function", "method", "class"):
+        return []
+
+    seed_name = sym.name.lower()
+    prefix = f"test_{seed_name}"
+
+    # Path 1: name-matching — find test_<seed_name>[_*] functions in test files
+    name_matches: dict[str, list[str]] = {}  # basename -> [func_names]
+    for s in graph.symbols.values():
+        if not _is_test_file(s.file_path):
+            continue
+        if s.kind.value not in ("function", "method", "test"):
+            continue
+        sname = s.name.lower()
+        if sname == prefix or sname.startswith(prefix + "_"):
+            basename = s.file_path.rsplit("/", 1)[-1]
+            name_matches.setdefault(basename, []).append(s.name)
+
+    # Path 2: import-based — test files that import the seed's source file
+    import_basenames: set[str] = {
+        fp.rsplit("/", 1)[-1]
+        for fp in graph.importers_of(sym.file_path)
+        if _is_test_file(fp)
+    }
+
+    # Files already shown by caller-based _build_seed_test_lines — skip duplicates
+    caller_basenames: set[str] = {
+        c.file_path.rsplit("/", 1)[-1]
+        for c in graph.callers_of(sym.id)
+        if _is_test_file(c.file_path)
+    }
+
+    # Merge: name-matched files + import-only files not already in name_matches
+    all_new: dict[str, list[str]] = {
+        bn: fns for bn, fns in name_matches.items()
+        if bn not in caller_basenames
+    }
+    for bn in import_basenames:
+        if bn not in all_new and bn not in caller_basenames:
+            all_new[bn] = []  # import-based, no specific function names
+
+    if not all_new:
+        return []
+
+    # Build compact output: cap at 2 files, 3 function names each
+    parts: list[str] = []
+    for bn, fns in sorted(all_new.items())[:2]:
+        if fns:
+            fn_str = ", ".join(sorted(fns)[:3])
+            if len(fns) > 3:
+                fn_str += f" +{len(fns) - 3} more"
+            parts.append(f"{bn} ({fn_str})")
+        else:
+            parts.append(bn)
+
+    line = f"{indent}  tests found: {'; '.join(parts)}"
+    if len(all_new) > 2:
+        line += f" +{len(all_new) - 2} more"
+
+    return [line]
+
+
 def _build_seed_method_ctx_lines(
     sym: "Symbol",
     graph: "Tempo",
@@ -1594,6 +1673,7 @@ def _build_symbol_block_lines(
     if depth == 0:
         block_lines += _build_seed_identity_lines(sym, graph, recursive_label, indent)
         block_lines += _build_seed_test_lines(sym, graph, indent)
+        block_lines += _build_seed_name_test_lines(sym, graph, indent)  # S47: name+import coverage
         block_lines += _build_seed_method_ctx_lines(sym, graph, indent)
         block_lines += _build_seed_git_ctx_lines(sym, graph, staleness_cache, indent)
         block_lines += _build_seed_todo_lines(sym, graph, indent)
@@ -3163,10 +3243,10 @@ def _signals_fn_conventions(
     return lines
 
 
-def _signals_fn_quality(
+def _signals_fn_quality_a(
     graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
 ) -> list[str]:
-    """S281/S350/S501/S525/S587/S599/S600/S606/S612/S618/S624/S642/S648/S660/S666/S672/S678/S696: quality signals."""
+    """S281/S350/S501/S525/S587/S599: caller/usage/purity quality signals."""
     lines: list[str] = []
     if not _seed_syms or token_count >= max_tokens - 30:
         return lines
@@ -3229,6 +3309,17 @@ def _signals_fn_quality(
             f"\nno callers: {_prim.name} has zero callers in the graph"
             f" — entry point, dead code, or dynamically dispatched; verify intent before removing"
         )
+    return lines
+
+
+def _signals_fn_quality_b(
+    graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """S600/S606/S612/S618/S624/S642: deprecation/size/scope/structure quality signals."""
+    lines: list[str] = []
+    if not _seed_syms or token_count >= max_tokens - 30:
+        return lines
+    _prim = _seed_syms[0]
     # S600: Deprecated callers
     if _prim.kind.value in ("function", "method", "class") and not _is_test_file(_prim.file_path):
         _callers600 = graph.callers_of(_prim.id)
@@ -3294,6 +3385,17 @@ def _signals_fn_quality(
                 f" and {len(_callees642)} callees"
                 f" — cross-layer connector; changes cascade upstream AND downstream"
             )
+    return lines
+
+
+def _signals_fn_quality_c(
+    graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """S648/S660/S666/S672/S678/S696: naming/density/fan-out/hotspot quality signals."""
+    lines: list[str] = []
+    if not _seed_syms or token_count >= max_tokens - 30:
+        return lines
+    _prim = _seed_syms[0]
     # S648: Name collision (defined in multiple non-test files)
     if (
         not _is_test_file(_prim.file_path)
@@ -3378,12 +3480,21 @@ def _signals_fn_quality(
     return lines
 
 
-
-
-def _signals_fn_focus_props_a(
+def _signals_fn_quality(
     graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
 ) -> list[str]:
-    """S708–S803: focus property signals (widely-used class, test file, arity, etc)."""
+    """S281/S350/S501/S525/S587/S599/S600/S606/S612/S618/S624/S642/S648/S660/S666/S672/S678/S696: quality signals."""
+    lines: list[str] = []
+    lines += _signals_fn_quality_a(graph, _seed_syms, token_count, max_tokens)
+    lines += _signals_fn_quality_b(graph, _seed_syms, token_count, max_tokens)
+    lines += _signals_fn_quality_c(graph, _seed_syms, token_count, max_tokens)
+    return lines
+
+
+def _signals_fn_props_a_class(
+    graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """S708/S714/S720/S726/S732: class/test/deprecation/hierarchy property signals."""
     lines: list[str] = []
     # S708: Widely-used class — focused method's parent class is imported in 5+ files.
     # A method inside a widely-imported class has amplified blast radius;
@@ -3476,6 +3587,14 @@ def _signals_fn_focus_props_a(
                     f" — god class candidate; consider splitting into focused collaborators"
                 )
 
+    return lines
+
+
+def _signals_fn_props_a_module(
+    graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """S738/S744/S750/S756/S762: module/visibility/async/classmethod property signals."""
+    lines: list[str] = []
     # S738: Module-level variable — focused symbol is a global variable/constant imported widely.
     # Mutable module-level state shared across many files creates hidden coupling;
     # any change to the value ripples to every importer without a clear interface contract.
@@ -3561,6 +3680,14 @@ def _signals_fn_focus_props_a(
                 f" adding or removing async changes all call sites"
             )
 
+    return lines
+
+
+def _signals_fn_props_a_scope(
+    graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """S768/S774/S780/S786/S792/S798: export/isolation/naming/dunder/long property signals."""
+    lines: list[str] = []
     # S768: Exported but uncalled — focused symbol is exported but has no cross-file callers.
     # A public symbol with no callers may be dead code, a pending API, or only consumed
     # via dynamic access (getattr, plugin loading) — worth verifying before removing.
@@ -3673,6 +3800,17 @@ def _signals_fn_focus_props_a(
                     f" — encapsulation violation; consider making it public or restricting callers"
                 )
 
+    return lines
+
+
+def _signals_fn_focus_props_a(
+    graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """S708–S803: focus property signals (dispatcher to sub-helpers)."""
+    lines: list[str] = []
+    lines += _signals_fn_props_a_class(graph, _seed_syms, token_count, max_tokens)
+    lines += _signals_fn_props_a_module(graph, _seed_syms, token_count, max_tokens)
+    lines += _signals_fn_props_a_scope(graph, _seed_syms, token_count, max_tokens)
     return lines
 
 
