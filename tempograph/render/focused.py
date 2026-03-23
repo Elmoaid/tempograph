@@ -3869,14 +3869,12 @@ def _signals_fn_focus_props_a(
     return lines
 
 
-def _signals_fn_props_b_entry(
+def _signals_fn_props_b_entry_fn_type(
     graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
 ) -> list[str]:
-    """S804–S852: entry/module/structural property signals."""
+    """S804–S852 fn-type subset: entry/deprecated/zero-arg/generator/operator signals."""
     lines: list[str] = []
     # S804: Entry point focus — focused symbol is a well-known entry point name.
-    # Entry point functions initialize the entire application; changing them can break
-    # startup sequencing, CLI argument parsing, and any framework-level setup.
     if _seed_syms and token_count < max_tokens - 30:
         _prim804 = _seed_syms[0]
         _ep_names804 = frozenset(("main", "run", "start", "app", "entry", "create_app", "cli", "serve"))
@@ -3892,8 +3890,6 @@ def _signals_fn_props_b_entry(
             )
 
     # S810: Deprecated symbol focus — focused symbol has a deprecation notice in its docstring.
-    # Deprecated symbols signal intentional abandonment; callers should migrate to the replacement.
-    # Changing deprecated code is risky because the migration path is already prescribed.
     if _seed_syms and token_count < max_tokens - 30:
         _prim810 = _seed_syms[0]
         _doc810 = (_prim810.doc or "").lower()
@@ -3904,8 +3900,6 @@ def _signals_fn_props_b_entry(
             )
 
     # S816: Zero-argument function focus — focused function takes no parameters at all.
-    # Parameter-free functions can only read from global/module state or constants;
-    # they are implicitly coupled to their environment and hard to test in isolation.
     if _seed_syms and token_count < max_tokens - 30:
         _prim816 = _seed_syms[0]
         if (
@@ -3921,50 +3915,7 @@ def _signals_fn_props_b_entry(
                     f" — implicitly couples to global/module state; hard to test in isolation"
                 )
 
-    # S822: Dense module focus — focused symbol lives in a file with 10+ top-level symbols.
-    # Dense modules accumulate responsibilities over time; the focused symbol may be hard
-    # to find and modify without understanding the full module context.
-    if _seed_syms and token_count < max_tokens - 30:
-        _prim822 = _seed_syms[0]
-        if not _is_test_file(_prim822.file_path):
-            _fi822 = graph.files.get(_prim822.file_path)
-            if _fi822:
-                _top_syms822 = [
-                    sid for sid in _fi822.symbols
-                    if sid in graph.symbols and graph.symbols[sid].parent_id is None
-                ]
-                if len(_top_syms822) >= 10:
-                    lines.append(
-                        f"\ndense module: {_prim822.file_path.rsplit('/', 1)[-1]} has {len(_top_syms822)} top-level symbols"
-                        f" — large module accumulating responsibilities; consider splitting"
-                    )
-
-    # S828: Long name focus — focused symbol has an unusually long name (30+ chars).
-    # Very long names often indicate over-specific responsibilities or naming by accident;
-    # they make callers verbose and are harder to refactor consistently.
-    if _seed_syms and token_count < max_tokens - 30:
-        _prim828 = _seed_syms[0]
-        if len(_prim828.name) >= 30 and not _is_test_file(_prim828.file_path):
-            lines.append(
-                f"\nlong symbol name: {_prim828.name} has {len(_prim828.name)} characters"
-                f" — overly specific name; callers become verbose and renaming is error-prone"
-            )
-
-    # S834: Deep path focus — focused symbol lives 4+ directories deep in the file tree.
-    # Deeply nested symbols indicate complex module hierarchies; navigating to them
-    # requires understanding multiple package levels, increasing onboarding friction.
-    if _seed_syms and token_count < max_tokens - 30:
-        _prim834 = _seed_syms[0]
-        _depth834 = len(_prim834.file_path.replace("\\", "/").split("/")) - 1
-        if _depth834 >= 4 and not _is_test_file(_prim834.file_path):
-            lines.append(
-                f"\ndeep path: {_prim834.name} is {_depth834} levels deep in the directory tree"
-                f" — deeply nested symbol; difficult to discover and increases import path verbosity"
-            )
-
     # S840: Generator function focus — focused function is named as a generator (iter_/generate_/yield_).
-    # Generator-prefixed functions have iterator protocol semantics; callers must handle
-    # exhaustion and cannot call them like ordinary functions returning a value.
     if _seed_syms and token_count < max_tokens - 30:
         _prim840 = _seed_syms[0]
         _gen_prefixes840 = ("generate_", "iter_", "yield_", "gen_", "stream_")
@@ -3978,25 +3929,7 @@ def _signals_fn_props_b_entry(
                 f" — callers must iterate or wrap in list(); cannot be called like a plain function"
             )
 
-    # S846: Many children focus — focused symbol has 10+ child symbols.
-    # A class or module with many children is likely a God object or catch-all namespace;
-    # callers depend on all its children implicitly, making it a high-impact change target.
-    if _seed_syms and token_count < max_tokens - 30:
-        _prim846 = _seed_syms[0]
-        if not _is_test_file(_prim846.file_path):
-            _children846 = [
-                s for s in graph.symbols.values()
-                if s.parent_id == _prim846.id
-            ]
-            if len(_children846) >= 10:
-                lines.append(
-                    f"\nmany children: {_prim846.name} has {len(_children846)} child symbols"
-                    f" — large namespace; callers depend on many internal symbols, increasing coupling"
-                )
-
     # S852: Operator overload focus — focused method overloads a Python operator.
-    # Operator-overloaded methods change the semantics of standard operators for instances;
-    # callers using + / == / < etc. are implicitly coupled to this method's behavior.
     if _seed_syms and token_count < max_tokens - 30:
         _prim852 = _seed_syms[0]
         _op_dunders852 = frozenset({
@@ -4016,6 +3949,73 @@ def _signals_fn_props_b_entry(
                 f" — callers using operators (+, ==, < etc.) implicitly invoke this method"
             )
 
+    return lines
+
+
+def _signals_fn_props_b_entry_structural(
+    graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """S822–S846 structural subset: dense-module/long-name/deep-path/many-children signals."""
+    lines: list[str] = []
+    # S822: Dense module focus — focused symbol lives in a file with 10+ top-level symbols.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim822 = _seed_syms[0]
+        if not _is_test_file(_prim822.file_path):
+            _fi822 = graph.files.get(_prim822.file_path)
+            if _fi822:
+                _top_syms822 = [
+                    sid for sid in _fi822.symbols
+                    if sid in graph.symbols and graph.symbols[sid].parent_id is None
+                ]
+                if len(_top_syms822) >= 10:
+                    lines.append(
+                        f"\ndense module: {_prim822.file_path.rsplit('/', 1)[-1]} has {len(_top_syms822)} top-level symbols"
+                        f" — large module accumulating responsibilities; consider splitting"
+                    )
+
+    # S828: Long name focus — focused symbol has an unusually long name (30+ chars).
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim828 = _seed_syms[0]
+        if len(_prim828.name) >= 30 and not _is_test_file(_prim828.file_path):
+            lines.append(
+                f"\nlong symbol name: {_prim828.name} has {len(_prim828.name)} characters"
+                f" — overly specific name; callers become verbose and renaming is error-prone"
+            )
+
+    # S834: Deep path focus — focused symbol lives 4+ directories deep in the file tree.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim834 = _seed_syms[0]
+        _depth834 = len(_prim834.file_path.replace("\\", "/").split("/")) - 1
+        if _depth834 >= 4 and not _is_test_file(_prim834.file_path):
+            lines.append(
+                f"\ndeep path: {_prim834.name} is {_depth834} levels deep in the directory tree"
+                f" — deeply nested symbol; difficult to discover and increases import path verbosity"
+            )
+
+    # S846: Many children focus — focused symbol has 10+ child symbols.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim846 = _seed_syms[0]
+        if not _is_test_file(_prim846.file_path):
+            _children846 = [
+                s for s in graph.symbols.values()
+                if s.parent_id == _prim846.id
+            ]
+            if len(_children846) >= 10:
+                lines.append(
+                    f"\nmany children: {_prim846.name} has {len(_children846)} child symbols"
+                    f" — large namespace; callers depend on many internal symbols, increasing coupling"
+                )
+
+    return lines
+
+
+def _signals_fn_props_b_entry(
+    graph: "Tempo", _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """S804–S852: entry/module/structural property signals (dispatcher)."""
+    lines: list[str] = []
+    lines += _signals_fn_props_b_entry_fn_type(graph, _seed_syms, token_count, max_tokens)
+    lines += _signals_fn_props_b_entry_structural(graph, _seed_syms, token_count, max_tokens)
     return lines
 
 
