@@ -996,3 +996,131 @@ class TestFocusSoleUseCallee:
         assert result, "Expected calls line"
         # callee has 1 production caller (seed) → sole-use
         assert "[sole-use]" in result[0], f"Expected [sole-use] for single-caller callee; got: {result[0]!r}"
+
+
+class TestFocusHotCalleeInstability:
+    """S52: emit instability warning when ≥2 non-test callees live in hot_files."""
+
+    def _fn_sym(self, name, file_path):
+        return Symbol(
+            id=f"{file_path}::{name}",
+            name=name,
+            qualified_name=name,
+            kind=SymbolKind.FUNCTION,
+            language=Language.PYTHON,
+            file_path=file_path,
+            line_start=1,
+            line_end=20,
+            exported=False,
+            complexity=0,
+        )
+
+    def test_no_hot_callees_no_instability(self, tmp_path):
+        """No hot_files set → no instability line."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("run", "app.py")
+        c1 = self._fn_sym("alpha", "mod_a.py")
+        c2 = self._fn_sym("beta", "mod_b.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c1.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c2.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1, c2])
+        # hot_files is empty (default)
+        result = _build_callees_block(seed, 0, graph, "")
+        assert len(result) == 1, "Only calls line, no instability"
+        assert "instability" not in result[0]
+
+    def test_one_hot_callee_no_instability(self, tmp_path):
+        """1 hot callee → threshold not met, no instability line."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("run", "app.py")
+        c1 = self._fn_sym("hot_one", "hot.py")
+        c2 = self._fn_sym("cold_one", "cold.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c1.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c2.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1, c2])
+        graph.hot_files = {"hot.py"}
+
+        result = _build_callees_block(seed, 0, graph, "")
+        assert len(result) == 1, "1 hot callee should not fire instability"
+        assert "instability" not in result[0]
+
+    def test_two_hot_callees_fires(self, tmp_path):
+        """≥2 hot callees → instability line appears."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("run", "app.py")
+        c1 = self._fn_sym("hot_a", "hot_a.py")
+        c2 = self._fn_sym("hot_b", "hot_b.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c1.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c2.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1, c2])
+        graph.hot_files = {"hot_a.py", "hot_b.py"}
+
+        result = _build_callees_block(seed, 0, graph, "")
+        assert len(result) == 2, f"Expected calls + instability lines; got {result!r}"
+        instability_line = result[1]
+        assert "instability" in instability_line
+        assert "2 hot callees" in instability_line
+        assert "hot_a" in instability_line
+        assert "hot_b" in instability_line
+
+    def test_four_hot_callees_truncated(self, tmp_path):
+        """4 hot callees → shows 3 names then '...'."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("run", "app.py")
+        callees = [self._fn_sym(f"fn_{i}", f"hot_{i}.py") for i in range(4)]
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c.id) for c in callees]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + callees)
+        graph.hot_files = {f"hot_{i}.py" for i in range(4)}
+
+        result = _build_callees_block(seed, 0, graph, "")
+        assert len(result) == 2
+        instability_line = result[1]
+        assert "4 hot callees" in instability_line
+        assert "..." in instability_line
+
+    def test_test_file_callee_not_counted(self, tmp_path):
+        """Test file callees don't count toward instability threshold."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("run", "app.py")
+        hot_prod = self._fn_sym("real_dep", "hot_prod.py")
+        hot_test = self._fn_sym("test_helper", "tests/test_hot.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=hot_prod.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=hot_test.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, hot_prod, hot_test])
+        graph.hot_files = {"hot_prod.py", "tests/test_hot.py"}
+
+        result = _build_callees_block(seed, 0, graph, "")
+        # Only 1 non-test hot callee → no instability
+        assert len(result) == 1, f"Test callee must not count; got {result!r}"
+        assert "instability" not in result[0]
+
+    def test_depth1_no_instability(self, tmp_path):
+        """Instability warning only fires at depth=0."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("inner", "inner.py")
+        c1 = self._fn_sym("dep_a", "hot_a.py")
+        c2 = self._fn_sym("dep_b", "hot_b.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c1.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c2.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1, c2])
+        graph.hot_files = {"hot_a.py", "hot_b.py"}
+
+        result = _build_callees_block(seed, 1, graph, "")
+        assert len(result) == 1, "depth=1 should not emit instability"
+        assert "instability" not in result[0]
