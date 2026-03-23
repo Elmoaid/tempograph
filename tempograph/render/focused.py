@@ -2316,12 +2316,12 @@ def _signals_focused_class_hierarchy(
 
 
 # ---------------------------------------------------------------------------
-# Signal group helper: class_patterns
+# Signal group helper: class_patterns — sub-helpers
 # ---------------------------------------------------------------------------
-def _signals_focused_class_patterns(
+def _signals_focused_class_patterns_inheritance(
     graph: Tempo, *, _seed_syms: list, token_count: int, max_tokens: int,
 ) -> list[str]:
-    """Focused-mode signals: class_patterns."""
+    """Focused-mode signals: class_patterns — inheritance signals (S287, S334)."""
     lines: list[str] = []
     # S287: Method override — focused method has the same name as a method in a parent class.
     # Overriding methods must maintain the parent's contract (Liskov Substitution Principle).
@@ -2348,42 +2348,6 @@ def _signals_focused_class_patterns(
                         )
                         break
 
-
-    # S253: Fat class — focused symbol is a class with 10+ methods/properties.
-    # Large classes often violate SRP; consider splitting into smaller components.
-    # Only shown when focused symbol is a class and has 10+ child methods.
-    if _seed_syms and token_count < max_tokens - 30:
-        _prim253 = next((s for s in _seed_syms if s.kind.value == "class"), None)
-        if _prim253 and _prim253.kind.value == "class":
-            _children253 = graph.children_of(_prim253.id)
-            _methods253 = [c for c in _children253 if c.kind.value in ("method", "function")]
-            if len(_methods253) >= 10:
-                lines.append(
-                    f"\nfat class: {_prim253.name} has {len(_methods253)} methods"
-                    f" — large class; consider splitting into focused components"
-                )
-
-
-    # S275: Orphaned class — focused class has 0 callers from outside its own file.
-    # An exported class that nobody uses externally is either dead code or
-    # intentionally kept for extension (interface/base); clarify which.
-    if _seed_syms and token_count < max_tokens - 30:
-        _prim275 = next((s for s in _seed_syms if s.kind.value == "class"), None)
-        if _prim275:
-            _ext_callers275 = [
-                c for c in graph.callers_of(_prim275.id)
-                if c.file_path != _prim275.file_path
-            ]
-            _method_has_ext_callers275 = any(
-                any(c.file_path != _prim275.file_path for c in graph.callers_of(child.id))
-                for child in graph.children_of(_prim275.id)
-            )
-            if not _ext_callers275 and not _method_has_ext_callers275 and _prim275.exported:
-                lines.append(
-                    f"\norphaned class: {_prim275.name} is exported but has no external callers"
-                    f" — may be dead code or an unused base class"
-                )
-
     # S334: Interface method — focused method is declared in a class with 3+ abstract methods.
     # Interface methods define contracts; any change to parameters or return type is a
     # breaking change for all implementors, not just direct callers.
@@ -2405,6 +2369,48 @@ def _signals_focused_class_patterns(
                         f" ({len(_sibling_methods334)} abstract methods)"
                         f" — contract change; all implementations must be updated"
                     )
+
+    return lines
+
+
+def _signals_focused_class_patterns_size(
+    graph: Tempo, *, _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """Focused-mode signals: class_patterns — size and isolation signals (S253, S275, S356)."""
+    lines: list[str] = []
+    # S253: Fat class — focused symbol is a class with 10+ methods/properties.
+    # Large classes often violate SRP; consider splitting into smaller components.
+    # Only shown when focused symbol is a class and has 10+ child methods.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim253 = next((s for s in _seed_syms if s.kind.value == "class"), None)
+        if _prim253 and _prim253.kind.value == "class":
+            _children253 = graph.children_of(_prim253.id)
+            _methods253 = [c for c in _children253 if c.kind.value in ("method", "function")]
+            if len(_methods253) >= 10:
+                lines.append(
+                    f"\nfat class: {_prim253.name} has {len(_methods253)} methods"
+                    f" — large class; consider splitting into focused components"
+                )
+
+    # S275: Orphaned class — focused class has 0 callers from outside its own file.
+    # An exported class that nobody uses externally is either dead code or
+    # intentionally kept for extension (interface/base); clarify which.
+    if _seed_syms and token_count < max_tokens - 30:
+        _prim275 = next((s for s in _seed_syms if s.kind.value == "class"), None)
+        if _prim275:
+            _ext_callers275 = [
+                c for c in graph.callers_of(_prim275.id)
+                if c.file_path != _prim275.file_path
+            ]
+            _method_has_ext_callers275 = any(
+                any(c.file_path != _prim275.file_path for c in graph.callers_of(child.id))
+                for child in graph.children_of(_prim275.id)
+            )
+            if not _ext_callers275 and not _method_has_ext_callers275 and _prim275.exported:
+                lines.append(
+                    f"\norphaned class: {_prim275.name} is exported but has no external callers"
+                    f" — may be dead code or an unused base class"
+                )
 
     # S356: God method — focused method lives in a class with 20+ total methods.
     # God classes accumulate responsibilities until no single developer can hold them in their head;
@@ -2428,6 +2434,23 @@ def _signals_focused_class_patterns(
                     f" — god class; {_prim356.name} shares state with many siblings; hard to test in isolation"
                 )
 
+    return lines
+
+
+# ---------------------------------------------------------------------------
+# Signal group helper: class_patterns
+# ---------------------------------------------------------------------------
+def _signals_focused_class_patterns(
+    graph: Tempo, *, _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """Focused-mode signals: class_patterns."""
+    lines: list[str] = []
+    lines.extend(_signals_focused_class_patterns_inheritance(
+        graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
+    ))
+    lines.extend(_signals_focused_class_patterns_size(
+        graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
+    ))
     return lines
 
 
