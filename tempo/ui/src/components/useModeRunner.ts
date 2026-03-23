@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { runTempo, saveOutput, reportFeedback, readFile } from "./tempo";
 import { MODES, loadHistory, saveRecentCommand } from "./modes";
 import { BUILTIN_KITS, type KitInfo } from "./kits";
@@ -288,12 +289,18 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   };
 
   const handleSaveOutput = async () => {
-    if (!modeOutput || !repoPath) return;
+    if (!modeOutput) return;
     const label = activeKit ? `kit-${activeKit}` : activeMode;
-    const outPath = `${repoPath}/.tempo/output-${label}-${Date.now()}.txt`;
-    await saveOutput(outPath, modeOutput);
+    const date = new Date().toISOString().slice(0, 10);
+    const defaultName = `tempograph-${label}-${date}.txt`;
+    const chosenPath = await saveDialog({
+      defaultPath: defaultName,
+      filters: [{ name: "Text", extensions: ["txt"] }],
+    });
+    if (!chosenPath) return;
+    await saveOutput(chosenPath, modeOutput);
     setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    setTimeout(() => setSaved(false), 1500);
   };
 
   const submitFeedback = async (helpful: boolean) => {

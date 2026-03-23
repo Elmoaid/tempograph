@@ -90,8 +90,8 @@ export function OutputPanelHeader({
               className="btn btn-ghost"
               onClick={onSave}
               style={{ padding: "2px 6px", fontSize: 10 }}
-              title={saved ? "Saved to .tempo/" : "Save to .tempo/"}
-              aria-label={saved ? "Saved to .tempo/" : "Save output to .tempo/"}
+              title={saved ? "Saved!" : "Save output to file…"}
+              aria-label={saved ? "Saved!" : "Save output to file"}
             >
               {saved
                 ? <><FolderCheck size={10} aria-hidden="true" /><span style={{ marginLeft: 3 }}>Saved!</span></>
