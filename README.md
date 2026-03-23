@@ -556,4 +556,4 @@ Switch branches, rebase, cherry-pick — if the file contents are unchanged, Tem
 
 ## License
 
-MIT
+[BSL 1.1](LICENSE) — free to use, can't resell as a hosted service. Converts to Apache 2.0 on 2030-03-22.
