@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from pathlib import Path
-
+import functools
 import tiktoken
 
 from ..types import Tempo, Symbol, SymbolKind
@@ -21,9 +20,10 @@ _DISPATCH_PATTERNS = ("handle_", "on_", "test_", "route", "command", "hook", "mi
 _TEST_FILE_SUFFIXES = (".test.ts", ".test.tsx", ".test.js", ".spec.ts", ".spec.tsx", ".spec.js")
 
 
+@functools.lru_cache(maxsize=4096)
 def _is_test_file(file_path: str) -> bool:
     """Return True if file_path looks like a test/spec file."""
-    name = Path(file_path).name
+    name = file_path.rsplit("/", 1)[-1]
     return (
         (name.startswith("test_") and name.endswith(".py"))
         or name.endswith("_test.py")
