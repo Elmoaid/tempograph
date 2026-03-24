@@ -2540,34 +2540,8 @@ def _signals_diff_graph_c(
             )
 
 
-def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: int = 6000) -> str:
-    """Given changed files, render everything an agent needs: affected symbols,
-    external callers, importers, component tree impact, and blast radius."""
-    lines = [f"Diff context for {len(changed_files)} changed file(s):", ""]
-
-    # Normalize paths
-    normalized = set()
-    for f in changed_files:
-        if f in graph.files:
-            normalized.add(f)
-        else:
-            for fp in graph.files:
-                if fp.endswith(f) or fp.endswith("/" + f):
-                    normalized.add(fp)
-                    break
-
-    _signals_diff_pre_a(graph, changed_files, normalized, lines)
-    _signals_diff_pre_b(graph, changed_files, normalized, lines)
-    if not normalized:
-        return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
-
-    affected_symbols: list[Symbol] = []
-    for fp in sorted(normalized):
-        fi = graph.files[fp]
-        syms = [graph.symbols[sid] for sid in fi.symbols if sid in graph.symbols]
-        affected_symbols.extend(syms)
-
-    # Load per-file velocity for annotation (graceful fallback if not a git repo).
+def _load_diff_velocity(graph: Tempo) -> tuple[dict[str, float], dict[str, int]]:
+    """Load per-file velocity and churn counts from git. Returns empty dicts on failure."""
     _vel: dict[str, float] = {}
     _churn_counts: dict[str, int] = {}
     if graph.root:
@@ -2578,38 +2552,36 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 _churn_counts = _fcc(graph.root)
         except Exception:
             pass
+    return _vel, _churn_counts
 
-    # S72: Symbols touched summary — total symbols + exported count across all changed files.
-    # Gives agents immediate scope: "23 symbols touched (8 exported)" vs. just file count.
-    _all_changed_syms = [
-        graph.symbols[sid]
-        for fp in normalized
-        for sid in graph.files[fp].symbols
-        if sid in graph.symbols and not _is_test_file(fp)
-    ]
-    if _all_changed_syms:
-        _exp_count = sum(1 for s in _all_changed_syms if s.exported)
-        _sym_summary = f"{len(_all_changed_syms)} symbols touched"
+
+def _render_diff_summary(
+    graph: Tempo,
+    normalized: set[str],
+    all_changed_syms: list[Symbol],
+    lines: list[str],
+) -> None:
+    """Append S72/S77/S80 overview signals, S104 scope spread, and file-blast risk summary."""
+    # S72: Symbols touched summary
+    if all_changed_syms:
+        _exp_count = sum(1 for s in all_changed_syms if s.exported)
+        _sym_summary = f"{len(all_changed_syms)} symbols touched"
         if _exp_count:
             _sym_summary += f" ({_exp_count} exported)"
         lines.append(_sym_summary)
-        # S77: List exported symbols from changed non-test files — direct API surface view.
-        # Shows agents WHICH exported symbols are in the diff (not just how many).
-        # Only shown when 2-8 exported symbols (fewer = obvious, more = too noisy).
-        _exported_syms = [s for s in _all_changed_syms if s.exported and s.kind.value in ("function", "method", "class", "interface")]
+        # S77: List exported symbols from changed non-test files
+        _exported_syms = [s for s in all_changed_syms if s.exported and s.kind.value in ("function", "method", "class", "interface")]
         if 2 <= len(_exported_syms) <= 8:
             _exp_names = [s.name for s in _exported_syms]
             lines.append(f"Exported: {', '.join(_exp_names)}")
-        # S80: Global change risk verdict — top-level signal before file details.
-        # Combines blast radius and exported-with-callers count.
-        # Agents use this as a quick go/no-go before reviewing change details.
+        # S80: Global change risk verdict
         _total_blast_files = len({
             i for fp in normalized
             for i in graph.importers_of(fp)
             if i != fp and i in graph.files
         })
         _exported_with_callers = sum(
-            1 for s in _all_changed_syms
+            1 for s in all_changed_syms
             if s.exported and any(c.file_path not in normalized for c in graph.callers_of(s.id))
         )
         _risk_score = _total_blast_files + _exported_with_callers * 3
@@ -2618,7 +2590,7 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
         elif _risk_score >= 6:
             _risk_label = "MEDIUM"
         else:
-            _risk_label = None  # low risk: don't emit — absence of warning is the signal
+            _risk_label = None
         if _risk_label is not None:
             _risk_detail_parts = []
             if _exported_with_callers:
@@ -2629,9 +2601,7 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             lines.append(f"change risk: {_risk_label}{_risk_detail}")
             lines.append("")
 
-    # S104: Scope spread — count of distinct top-level directories in the diff.
-    # Cross-module diffs (touching 3+ separate directories) need broader review.
-    # Only shown when 3+ distinct module directories are touched.
+    # S104: Scope spread
     _diff_dirs = {
         fp.split("/")[0] if "/" in fp else "."
         for fp in normalized
@@ -2644,8 +2614,7 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             _dir_str += f" +{len(_diff_dirs) - 5} more"
         lines.append(f"scope: {len(_diff_dirs)} modules ({_dir_str})")
 
-    # Risk summary: top changed files by blast radius, so agents can prioritize review.
-    # Only shown when 2+ changed files with blast >= 2; single-file diffs skip this.
+    # Risk summary: top changed files by blast radius
     _risk_blast = sorted(
         [
             (len({i for i in graph.importers_of(fp) if i != fp and i in graph.files}), fp)
@@ -2659,22 +2628,28 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
         lines.append(f"Risk: {', '.join(_risk_parts)}")
         lines.append("")
 
+
+def _render_diff_file_list(
+    graph: Tempo,
+    normalized: set[str],
+    vel: dict[str, float],
+    churn_counts: dict[str, int],
+    lines: list[str],
+) -> None:
+    """Append the 'Changed files:' section with velocity, blast, and per-file risk annotations."""
     lines.append("Changed files:")
     for fp in sorted(normalized):
         fi = graph.files[fp]
-        _v = _vel.get(fp, 0.0)
+        _v = vel.get(fp, 0.0)
         _vel_ann = f" [{_v:.0f}x/wk]" if _v >= 2.0 else ""
-        # Blast count: how many external files import this changed file.
-        # Inline signal — agents see risk per file without reading the importer list.
         _blast_n = len({i for i in graph.importers_of(fp) if i != fp and i in graph.files})
         _blast_ann = f" [blast: {_blast_n}]" if _blast_n >= 2 else ""
         lines.append(f"  {fp} ({fi.line_count} lines, {len(fi.symbols)} symbols){_vel_ann}{_blast_ann}")
-        # Change risk score: callers (blast radius) + churn (commit frequency)
         _callers_count = sum(
             len({c.file_path for c in graph.callers_of(sid) if c.file_path != fp})
             for sid in fi.symbols if sid in graph.symbols
         )
-        _churn = _churn_counts.get(fp, 0)
+        _churn = churn_counts.get(fp, 0)
         _risk = _callers_count + _churn * 2
         if _risk >= 12:
             lines.append(f"  change risk: HIGH (callers: {_callers_count}, churn: {_churn})")
@@ -2682,6 +2657,18 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             lines.append(f"  change risk: MEDIUM (callers: {_callers_count}, churn: {_churn})")
     lines.append("")
 
+
+def _render_diff_dep_tests(
+    graph: Tempo,
+    normalized: set[str],
+    affected_symbols: list[Symbol],
+    all_changed_syms: list[Symbol],
+    max_tokens: int,
+    token_count: int,
+    lines: list[str],
+) -> int:
+    """Append external deps, importers, component tree, tests, untested, co-change sections.
+    Returns updated token_count."""
     # Exported symbols with external callers (breaking change risk)
     external_deps: list[tuple[Symbol, list[Symbol]]] = []
     for sym in affected_symbols:
@@ -2691,8 +2678,6 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
         ext_callers = [c for c in callers if c.file_path not in normalized]
         if ext_callers:
             external_deps.append((sym, ext_callers))
-
-    token_count = count_tokens("\n".join(lines))
 
     if external_deps and token_count < max_tokens - 200:
         lines.append("EXTERNAL DEPENDENCIES (breaking change risk):")
@@ -2732,15 +2717,14 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 for renderer in graph.renderers_of(sym.id):
                     if renderer.file_path not in normalized:
                         render_impact.append(f"  {renderer.qualified_name} ({renderer.file_path}) renders {sym.name}")
-
         if render_impact:
             lines.append("Component tree impact:")
             for ri in render_impact[:5]:
                 lines.append(ri)
             lines.append("")
             token_count = count_tokens("\n".join(lines))
-    # Tests to run: test files that directly call symbols from the changed file(s).
-    # Sorted by call count — most-covered test files first.
+
+    # Tests to run
     if token_count < max_tokens - 60:
         _test_caller_counts: dict[str, int] = {}
         for sym in affected_symbols:
@@ -2758,14 +2742,11 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             lines.append("")
             token_count = count_tokens("\n".join(lines))
 
-    # S212: Untested changes — changed non-test symbols with zero test callers.
-    # "Tests to run" shows which test files have coverage; this shows which SPECIFIC changed
-    # symbols have NONE. Complements coverage view: known coverage vs. known gap.
-    # Only shown for functions/methods/classes (constants/variables aren't directly testable).
-    if _all_changed_syms and token_count < max_tokens - 60:
+    # S212: Untested changes
+    if all_changed_syms and token_count < max_tokens - 60:
         _callable_kinds = {"function", "method", "class"}
         _untested_changed: list[str] = []
-        for _uc_sym in _all_changed_syms:
+        for _uc_sym in all_changed_syms:
             if _uc_sym.kind.value not in _callable_kinds:
                 continue
             _has_test_caller = any(_is_test_file(c.file_path) for c in graph.callers_of(_uc_sym.id))
@@ -2783,13 +2764,11 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             lines.append("")
             token_count = count_tokens("\n".join(lines))
 
-    # Co-change partners missing from diff.
-    # Warns the agent when a file that historically co-changes with a changed file is absent —
-    # classic sign of an incomplete changeset (e.g. touched auth.py but not session.py).
+    # Co-change partners missing from diff
     if graph.root and token_count < max_tokens - 80:
         try:
             from ..git import cochange_pairs as _cpairs
-            _missing: dict[str, int] = {}  # partner_path → count (deduped)
+            _missing: dict[str, int] = {}
             for fp in sorted(normalized):
                 for p in _cpairs(graph.root, fp, n=5, min_count=5):
                     partner = p["path"]
@@ -2808,6 +2787,18 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
         except Exception:
             pass
 
+    return token_count
+
+
+def _render_diff_key_symbols(
+    graph: Tempo,
+    normalized: set[str],
+    affected_symbols: list[Symbol],
+    max_tokens: int,
+    token_count: int,
+    lines: list[str],
+) -> None:
+    """Append key symbols section and unchanged-tests warning."""
     if max_tokens - token_count > 500:
         lines.append("Key symbols in changed files:")
         for sym in affected_symbols:
@@ -2815,8 +2806,6 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
                 continue
             if sym.parent_id and sym.kind == SymbolKind.FUNCTION:
                 continue
-            # Cross-file caller count: tells agents how widely this symbol is used.
-            # Changes to high-caller symbols need broader review + testing.
             _cross_callers = len({c.file_path for c in graph.callers_of(sym.id) if c.file_path != sym.file_path})
             _caller_ann = f" [callers: {_cross_callers}]" if _cross_callers > 0 else ""
             entry = f"  {sym.kind.value} {sym.qualified_name}{_caller_ann} L{sym.line_start}-{sym.line_end}"
@@ -2830,7 +2819,6 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             token_count += entry_tokens
 
     # Unchanged tests: source files in the diff whose matching test file was NOT changed.
-    # Signals to agents that test updates may be needed alongside the code change.
     _unchanged_tests: list[str] = []
     for _fp in normalized:
         if _is_test_file(_fp):
@@ -2851,6 +2839,47 @@ def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: i
             _ut_str += f" +{len(_unchanged_tests) - 3} more"
         lines.append(f"Unchanged tests: {_ut_str} — consider updating")
 
+
+def render_diff_context(graph: Tempo, changed_files: list[str], *, max_tokens: int = 6000) -> str:
+    """Given changed files, render everything an agent needs: affected symbols,
+    external callers, importers, component tree impact, and blast radius."""
+    lines = [f"Diff context for {len(changed_files)} changed file(s):", ""]
+
+    # Normalize paths
+    normalized = set()
+    for f in changed_files:
+        if f in graph.files:
+            normalized.add(f)
+        else:
+            for fp in graph.files:
+                if fp.endswith(f) or fp.endswith("/" + f):
+                    normalized.add(fp)
+                    break
+
+    _signals_diff_pre_a(graph, changed_files, normalized, lines)
+    _signals_diff_pre_b(graph, changed_files, normalized, lines)
+    if not normalized:
+        return "\n".join(lines) if len(lines) > 2 else f"None of the changed files found in graph: {changed_files}"
+
+    affected_symbols: list[Symbol] = []
+    for fp in sorted(normalized):
+        fi = graph.files[fp]
+        syms = [graph.symbols[sid] for sid in fi.symbols if sid in graph.symbols]
+        affected_symbols.extend(syms)
+
+    _vel, _churn_counts = _load_diff_velocity(graph)
+    _all_changed_syms = [
+        graph.symbols[sid]
+        for fp in normalized
+        for sid in graph.files[fp].symbols
+        if sid in graph.symbols and not _is_test_file(fp)
+    ]
+
+    _render_diff_summary(graph, normalized, _all_changed_syms, lines)
+    _render_diff_file_list(graph, normalized, _vel, _churn_counts, lines)
+    token_count = count_tokens("\n".join(lines))
+    token_count = _render_diff_dep_tests(graph, normalized, affected_symbols, _all_changed_syms, max_tokens, token_count, lines)
+    _render_diff_key_symbols(graph, normalized, affected_symbols, max_tokens, token_count, lines)
     _signals_diff_graph_a(graph, changed_files, normalized, _all_changed_syms, lines)
     _signals_diff_graph_b(graph, changed_files, normalized, lines)
     _signals_diff_graph_c(graph, changed_files, normalized, lines)
