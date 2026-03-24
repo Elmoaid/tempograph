@@ -1633,6 +1633,12 @@ def _build_callees_block(
     hot_callees = [c for c in callees if c.file_path in graph.hot_files]
     cold_callees = [c for c in callees if c.file_path not in graph.hot_files]
     ordered_callees = (hot_callees + cold_callees)[:shown]
+    # S55: pre-compute whether seed has test callers — [untested] only meaningful when seed is tested.
+    _seed_test_callers = (
+        [cr for cr in graph.callers_of(sym.id) if _is_test_file(cr.file_path)]
+        if depth == 0 else []
+    )
+    _seed_is_tested = len(_seed_test_callers) > 0
     callee_strs = []
     for c in ordered_callees:
         _hot_ann = " [hot]" if c.file_path in graph.hot_files else ""
@@ -1640,6 +1646,7 @@ def _build_callees_block(
         _cb_ann = ""
         _sole_ann = ""
         _recursive_ann = ""
+        _untested_ann = ""
         if depth == 0:
             # S49: annotate callees with high complexity so agents see the iceberg
             if c.complexity > 15 and c.kind.value in ("function", "method"):
@@ -1659,7 +1666,17 @@ def _build_callees_block(
             # S54: flag self-call — recursive functions need base-case awareness when modified.
             if c.id == sym.id:
                 _recursive_ann = " [recursive]"
-        callee_strs.append(f"{c.qualified_name}{_cx_ann}{_hot_ann}{_cb_ann}{_sole_ann}{_recursive_ann}")
+            # S55: flag callees with zero test callers — test blind spots for the agent.
+            # Only fires when the seed itself is tested; otherwise every callee would show [untested]
+            # and the signal collapses to noise.
+            if (
+                _seed_is_tested
+                and c.kind.value in ("function", "method")
+                and not _is_test_file(c.file_path)
+                and not any(_is_test_file(cr.file_path) for cr in graph.callers_of(c.id))
+            ):
+                _untested_ann = " [untested]"
+        callee_strs.append(f"{c.qualified_name}{_cx_ann}{_hot_ann}{_cb_ann}{_sole_ann}{_recursive_ann}{_untested_ann}")
     lines.append(f"{indent}  calls: {', '.join(callee_strs)}")
     if len(callees) > shown:
         lines[-1] += f" (+{len(callees) - shown} more)"
