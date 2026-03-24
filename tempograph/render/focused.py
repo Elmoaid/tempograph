@@ -1696,6 +1696,25 @@ def _build_callees_block(
             lines.append(
                 f"{indent}  \u21b3 instability: {len(_hot_non_test)} hot callees ({', '.join(_names)}{_suffix})"
             )
+    # S56: coverage gap summary — when seed is tested but ≥2 eligible callees have zero test callers.
+    # Per-callee [untested] annotation already fires, but agents still need to count. This summary
+    # makes the coverage gap immediately scannable: "6/8 callees untested" is alarming at a glance.
+    if depth == 0 and _seed_is_tested:
+        _eligible = [
+            c for c in callees
+            if c.kind.value in ("function", "method") and not _is_test_file(c.file_path)
+        ]
+        _untested_cov = [
+            c for c in _eligible
+            if not any(_is_test_file(cr.file_path) for cr in graph.callers_of(c.id))
+        ]
+        if len(_untested_cov) >= 2:
+            _cov_names = [c.name for c in _untested_cov[:3]]
+            _cov_suffix = "..." if len(_untested_cov) > 3 else ""
+            lines.append(
+                f"{indent}  \u21b3 coverage gap: {len(_untested_cov)}/{len(_eligible)} callees untested"
+                f" ({', '.join(_cov_names)}{_cov_suffix})"
+            )
     return lines
 
 
