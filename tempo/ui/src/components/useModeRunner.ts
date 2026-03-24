@@ -50,7 +50,7 @@ export interface ModeRunnerActions {
   setKitBuilderOpen: (open: boolean) => void;
   setModeArgs: (args: string) => void;
   setHistoryOpen: (open: boolean) => void;
-  setPaletteOpen: (open: boolean) => void;
+  setPaletteOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
   setOutputFilter: (filter: string) => void;
   setFilterVisible: (visible: boolean | ((v: boolean) => boolean)) => void;
   switchMode: (mode: string) => void;

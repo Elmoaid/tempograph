@@ -45,6 +45,7 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
           onKitSelect={vm.switchKit}
           onModeSelect={vm.switchMode}
           onCreateKit={() => vm.setKitBuilderOpen(true)}
+          onTogglePalette={() => vm.setPaletteOpen(p => !p)}
         />
 
         <OutputPanel
