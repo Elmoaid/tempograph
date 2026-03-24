@@ -12,6 +12,8 @@ interface Props {
   onKitSelect: (kitId: string) => void;
   onModeSelect: (mode: string) => void;
   onCreateKit?: () => void;
+  onTogglePalette?: () => void;
+  onToggleHelp?: () => void;
 }
 
 export function SidebarTabs({
@@ -24,6 +26,8 @@ export function SidebarTabs({
   onKitSelect,
   onModeSelect,
   onCreateKit,
+  onTogglePalette,
+  onToggleHelp,
 }: Props) {
   return (
     <div className="cell" style={{ flex: "0 0 auto", maxHeight: "45%" }}>
@@ -87,6 +91,27 @@ export function SidebarTabs({
         >
           All Modes
         </button>
+        {onTogglePalette && (
+          <button
+            onClick={onTogglePalette}
+            title="Command palette (⌘K)"
+            aria-label="Open command palette"
+            style={{
+              padding: "8px 10px",
+              border: "none",
+              background: "var(--bg-tertiary)",
+              color: "var(--text-tertiary)",
+              fontSize: 10,
+              fontFamily: "var(--font-mono)",
+              lineHeight: 1,
+              cursor: "pointer",
+              borderBottom: "1px solid var(--border-subtle)",
+              transition: "color 0.1s",
+            }}
+            onMouseEnter={e => (e.currentTarget.style.color = "var(--accent-hover)")}
+            onMouseLeave={e => (e.currentTarget.style.color = "var(--text-tertiary)")}
+          >⌘K</button>
+        )}
       </div>
 
       {/* Tab content */}
@@ -143,6 +168,27 @@ export function SidebarTabs({
           ))
         )}
       </div>
+      {onToggleHelp && (
+        <div style={{ borderTop: "1px solid var(--border-subtle)", display: "flex", justifyContent: "center", padding: "3px 0" }}>
+          <button
+            onClick={onToggleHelp}
+            title="Keyboard shortcuts (?)"
+            aria-label="Show keyboard shortcuts"
+            style={{
+              background: "none",
+              border: "none",
+              color: "var(--text-tertiary)",
+              fontSize: 12,
+              cursor: "pointer",
+              opacity: 0.5,
+              padding: "2px 8px",
+              fontFamily: "var(--font-mono)",
+            }}
+            onMouseEnter={e => (e.currentTarget.style.opacity = "0.9")}
+            onMouseLeave={e => (e.currentTarget.style.opacity = "0.5")}
+          >?</button>
+        </div>
+      )}
     </div>
   );
 }

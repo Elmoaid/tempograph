@@ -15,6 +15,11 @@ def _signals_blast_core_a(
     external_callers: dict,
     lines: list[str]
 ) -> None:
+    # Precompute edge subsets once — avoids 5 repeated full scans of graph.edges (30700 edges).
+    # inherits: 31 edges out of 30700; outgoing imports from file: ~20 edges out of 30700.
+    _a_inherits = [e for e in graph.edges if e.kind.value == "inherits"]
+    _a_out_imports = [e for e in graph.edges if e.kind.value == "imports" and e.source_id == file_path]
+
     # S99: Peak exposure — the exported symbol with the most cross-file callers.
     # When a file has many exported symbols, agents need to know WHICH one carries the most risk.
     # Only shown when 2+ exported symbols exist and the peak has >= 3 cross-file callers.
@@ -149,8 +154,8 @@ def _signals_blast_core_a(
         _s145_class_names: list[str] = []
         for _cls145 in _s145_classes:
             _sub_count = sum(
-                1 for e in graph.edges
-                if e.kind == EdgeKind.INHERITS and e.target_id == _cls145.id
+                1 for e in _a_inherits
+                if e.target_id == _cls145.id
             )
             if _sub_count >= 1:
                 _total_subclasses145 += _sub_count
@@ -164,10 +169,8 @@ def _signals_blast_core_a(
     # changes to any upstream propagate here, AND any change here propagates to all importers.
     # Highest blast-amplification pattern. Only shown when 5+ distinct imports found.
     _s138_imports_from = sorted({
-        e.target_id for e in graph.edges
-        if e.kind == EdgeKind.IMPORTS
-        and e.source_id == file_path
-        and e.target_id in graph.files
+        e.target_id for e in _a_out_imports
+        if e.target_id in graph.files
         and not _is_test_file(e.target_id)
         and e.target_id != file_path
     })
@@ -373,11 +376,10 @@ def _signals_blast_core_a(
     }
     if len(_s219_unique_callers) >= 4 and _s219_exp_ids:
         _s219_counts: dict[str, int] = {}
-        for _e219 in graph.edges:
-            if _e219.kind is EdgeKind.CALLS and _e219.target_id in _s219_exp_ids:
-                _fp219 = _e219.source_id.split("::")[0]
-                if _fp219 != file_path and not _is_test_file(_fp219):
-                    _s219_counts[_e219.target_id] = _s219_counts.get(_e219.target_id, 0) + 1
+        for _sym_id219 in _s219_exp_ids:
+            for _caller219 in graph.callers_of(_sym_id219):
+                if _caller219.file_path != file_path and not _is_test_file(_caller219.file_path):
+                    _s219_counts[_sym_id219] = _s219_counts.get(_sym_id219, 0) + 1
         if _s219_counts:
             _s219_total = sum(_s219_counts.values())
             _s219_top_id, _s219_top_n = max(_s219_counts.items(), key=lambda kv: kv[1])
@@ -431,10 +433,9 @@ def _signals_blast_core_a(
         # Also detect via INHERITS edges: if any other class inherits from classes in this file
         _s246_this_class_ids = {s.id for s in _s246_class_syms}
         _s246_subclasses: list[str] = []
-        for _e246 in graph.edges:
+        for _e246 in _a_inherits:
             if (
-                _e246.kind.value == "inherits"
-                and _e246.target_id in _s246_this_class_ids
+                _e246.target_id in _s246_this_class_ids
                 and _e246.source_id.split("::")[0] != file_path
             ):
                 _s246_subclasses.append(_e246.source_id.split("::")[-1])
@@ -446,8 +447,8 @@ def _signals_blast_core_a(
         # Count subclasses across the graph
         _s246_all_ids = {s.id for s in _s246_mixin_classes}
         _s246_n_subs = sum(
-            1 for _e in graph.edges
-            if _e.kind.value == "inherits" and _e.target_id in _s246_all_ids
+            1 for _e in _a_inherits
+            if _e.target_id in _s246_all_ids
             and _e.source_id.split("::")[0] != file_path
         )
         if _s246_n_subs >= 1:
@@ -511,11 +512,7 @@ def _signals_blast_core_a(
     # S256: High fan-out blast — blast target imports from many other modules.
     # A file with wide dependencies is harder to refactor in isolation; changes
     # often require updates across all its upstream dependencies.
-    _s256_imports = [
-        e for e in graph.edges
-        if e.kind.value == "imports" and e.source_id == file_path
-    ]
-    _s256_import_count = len({e.target_id for e in _s256_imports})
+    _s256_import_count = len({e.target_id for e in _a_out_imports})
     if _s256_import_count >= 6:
         lines.append(
             f"high fan-out: imports from {_s256_import_count} modules"
@@ -527,11 +524,7 @@ def _signals_blast_core_a(
     # Leaf modules are the easiest to extract, test, or replace in isolation.
     # Positive signal: shown when blast target has 3+ symbols but zero import edges out.
     if symbols:
-        _s263_outgoing = [
-            e for e in graph.edges
-            if e.kind.value == "imports" and e.source_id == file_path
-        ]
-        if not _s263_outgoing and len(symbols) >= 3:
+        if not _a_out_imports and len(symbols) >= 3:
             lines.append(
                 f"leaf module: no outgoing imports"
                 f" — self-contained; safe to extract, mock, or replace in isolation"
@@ -676,6 +669,9 @@ def _signals_blast_core_b(
     render_targets: set,
     lines: list[str]
 ) -> None:
+    # Precompute outgoing imports once — avoids repeated full scans of graph.edges (30700 edges).
+    _b_out_imports = [e for e in graph.edges if e.kind.value == "imports" and e.source_id == file_path]
+
     # S311: Deprecated API blast — target file name or path contains deprecated/legacy/compat.
     # Deprecated code is often kept alive by undocumented callers; changes break them silently
     # because consumers assume the API is stable despite the "deprecated" label.
@@ -808,24 +804,15 @@ def _signals_blast_core_b(
     # S371: Utility belt blast — blast target has 15+ exported symbols each imported by different files.
     # A utility belt file is essentially an undifferentiated bag of helpers; it's hard to know
     # which helpers are truly safe to modify without understanding all consumer patterns.
-    _s371_file_syms = [s for s in graph.symbols.values() if s.file_path == file_path]
+    _s371_file_syms = symbols  # already pre-computed by dispatcher
     if len(_s371_file_syms) >= 15 and len(importers) >= 5:
         # Check that multiple importers each use different symbols (breadth of usage)
         _s371_sym_ids = {s.id for s in _s371_file_syms}
         _s371_importer_syms: dict[str, set[str]] = {}
-        for _e371 in graph.edges:
-            if (_e371.kind.value == "calls"
-                    and _e371.source_id in {
-                        s.id for s in graph.symbols.values()
-                        if not _is_test_file(s.file_path)
-                    }
-                    and _e371.target_id in _s371_sym_ids):
-                _src_file371 = next(
-                    (s.file_path for s in graph.symbols.values() if s.id == _e371.source_id),
-                    None
-                )
-                if _src_file371 and _src_file371 != file_path:
-                    _s371_importer_syms.setdefault(_src_file371, set()).add(_e371.target_id)
+        for _sym_id371 in _s371_sym_ids:
+            for _caller371 in graph.callers_of(_sym_id371):
+                if _caller371.file_path != file_path and not _is_test_file(_caller371.file_path):
+                    _s371_importer_syms.setdefault(_caller371.file_path, set()).add(_sym_id371)
         if len(_s371_importer_syms) >= 4:
             lines.append(
                 f"utility belt: {len(_s371_file_syms)} symbols in {file_path.rsplit('/', 1)[-1]}"
@@ -960,10 +947,7 @@ def _signals_blast_core_b(
     # can silently break downstream importers that rely on the package-level name.
     _fp407 = file_path.rsplit("/", 1)[-1].lower()
     _is_init407 = _fp407 in ("__init__.py", "index.js", "index.ts", "index.tsx")
-    _init_import_edges407 = [
-        e for e in graph.edges
-        if e.kind.value == "imports" and e.source_id == file_path
-    ]
+    _init_import_edges407 = _b_out_imports
     _init_dir407 = file_path.rsplit("/", 1)[0] if "/" in file_path else ""
     _init_package_size407 = sum(
         1 for fp in graph.files
@@ -980,7 +964,7 @@ def _signals_blast_core_b(
     # S413: Symbol-dense blast — blast target file has 30+ symbols (classes, functions, constants).
     # A file with many symbols is a de facto utility hub; each symbol is a potential blast
     # propagation point, and the full impact of any change is proportional to total symbol count.
-    _s413_all_syms = [s for s in graph.symbols.values() if s.file_path == file_path]
+    _s413_all_syms = symbols  # already pre-computed by dispatcher
     if len(_s413_all_syms) >= 30:
         _kinds413 = {}
         for s in _s413_all_syms:
@@ -1044,9 +1028,8 @@ def _signals_blast_core_b(
     # any change can trigger import errors at runtime (especially in Python) and
     # makes refactoring extremely fragile since both files must change together.
     _s437_outbound_files = {
-        e.target_id for e in graph.edges
-        if e.kind.value == "imports" and e.source_id == file_path
-        and e.target_id != file_path
+        e.target_id for e in _b_out_imports
+        if e.target_id != file_path
     }
     _s437_circular = [fp for fp in _s437_outbound_files if file_path in graph.importers_of(fp)]
     if _s437_circular:
@@ -1066,11 +1049,9 @@ def _signals_blast_core_b(
     _s443_exported = [s for s in symbols if s.exported]
     _s443_consumer_files: set[str] = set()
     for _sym443 in _s443_exported:
-        for _e443 in graph.edges:
-            if _e443.kind.value == "calls" and _e443.target_id == _sym443.id:
-                _caller443 = graph.symbols.get(_e443.source_id)
-                if _caller443 and _caller443.file_path != file_path:
-                    _s443_consumer_files.add(_caller443.file_path)
+        for _caller443 in graph.callers_of(_sym443.id):
+            if _caller443.file_path != file_path:
+                _s443_consumer_files.add(_caller443.file_path)
     if len(_s443_consumer_files) >= 5:
         lines.append(
             f"public API file: {len(_s443_exported)} exported symbol(s)"
@@ -1152,11 +1133,10 @@ def _signals_blast_core_b(
     # Bridge files couple two otherwise-independent modules; removing or splitting them
     # breaks both sides simultaneously, requiring coordinated changes across the boundary.
     _s479_outbound_dirs: set[str] = set()
-    for _e479 in graph.edges:
-        if _e479.kind.value == "imports" and _e479.source_id == file_path:
-            _dir479 = _e479.target_id.rsplit("/", 1)[0] if "/" in _e479.target_id else ""
-            if _dir479 and _dir479 != (file_path.rsplit("/", 1)[0] if "/" in file_path else ""):
-                _s479_outbound_dirs.add(_dir479)
+    for _e479 in _b_out_imports:
+        _dir479 = _e479.target_id.rsplit("/", 1)[0] if "/" in _e479.target_id else ""
+        if _dir479 and _dir479 != (file_path.rsplit("/", 1)[0] if "/" in file_path else ""):
+            _s479_outbound_dirs.add(_dir479)
     _s479_inbound_dirs: set[str] = set()
     for _imp479 in importers:
         _dir479 = _imp479.rsplit("/", 1)[0] if "/" in _imp479 else ""
@@ -1218,8 +1198,8 @@ def _signals_blast_core_b(
     # Leaf files are the farthest point in the dependency chain; their changes cannot
     # propagate via imports, but any change still requires local testing of all symbols.
     _s504_outbound = {
-        e.target_id for e in graph.edges
-        if e.kind.value == "imports" and e.source_id == file_path and e.target_id != file_path
+        e.target_id for e in _b_out_imports
+        if e.target_id != file_path
     }
     if _s504_outbound and not importers:
         lines.append(
@@ -1236,6 +1216,9 @@ def _signals_blast_core_c(
     importers: list[str],
     lines: list[str]
 ) -> None:
+    # Precompute outgoing imports once — avoids 2 repeated full scans of graph.edges.
+    _b_out_imports = [e for e in graph.edges if e.kind.value == "imports" and e.source_id == file_path]
+
     # S511: Single-consumer blast — blast target is only imported by exactly one other file.
     # Files with a single consumer are easier to refactor (only one caller to update),
     # but they often encode a tight coupling that prevents reuse across the codebase.
@@ -1301,18 +1284,12 @@ def _signals_blast_core_c(
     # Python partially evaluates circular imports so attribute access order during init matters.
     _s539_fp_norm = file_path.replace("\\", "/")
     _s539_outbound = {
-        e.target_id.replace("\\", "/") for e in graph.edges
-        if e.kind.value == "imports"
-        and e.source_id.replace("\\", "/") == _s539_fp_norm
-        and e.target_id.replace("\\", "/") != _s539_fp_norm
+        e.target_id.replace("\\", "/") for e in _b_out_imports
+        if e.target_id.replace("\\", "/") != _s539_fp_norm
     }
-    _s539_cycle_partners = [
-        dep for dep in _s539_outbound
-        if _s539_fp_norm in {
-            e.target_id.replace("\\", "/") for e in graph.edges
-            if e.kind.value == "imports" and e.source_id.replace("\\", "/") == dep
-        }
-    ]
+    # Reverse-direction check: use indexed importers_of() instead of full edge scan
+    _s539_reverse_importers = {fp.replace("\\", "/") for fp in graph.importers_of(file_path)}
+    _s539_cycle_partners = [dep for dep in _s539_outbound if dep in _s539_reverse_importers]
     if _s539_cycle_partners:
         _cycle_name539 = _s539_cycle_partners[0].rsplit("/", 1)[-1]
         lines.append(
@@ -1494,11 +1471,7 @@ def _signals_blast_core_c(
     # A module with many more importers than dependencies is a pure hub — it aggregates
     # nothing but is heavily consumed; any change ripples widely with no upstream buffer.
     _fanin632 = len([fp for fp in importers if not _is_test_file(fp)])
-    _fanout632 = len({
-        e.target_id for e in graph.edges
-        if e.kind.value == "imports"
-        and e.source_id == _fp589
-    })
+    _fanout632 = len({e.target_id for e in _b_out_imports})
     if _fanin632 >= 5 and _fanin632 >= _fanout632 * 3:
         lines.append(
             f"import hub: {_fp589.rsplit('/', 1)[-1]} has {_fanin632} importers but only {_fanout632} dependencies"
@@ -1539,10 +1512,7 @@ def _signals_blast_core_c(
     # S650: Mutual import — blast target and at least one of its importers import each other.
     # Bidirectional file-level imports create a circular dependency; this prevents
     # clean module separation and can cause import errors in some Python patterns.
-    _import_targets650 = {
-        e.target_id for e in graph.edges
-        if e.kind.value == "imports" and e.source_id == _fp589
-    }
+    _import_targets650 = {e.target_id for e in _b_out_imports}
     _mutual650 = [
         fp for fp in importers
         if not _is_test_file(fp)
@@ -2340,11 +2310,11 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
         # Build index: importer_file → [caller symbol names that call INTO blast target]
         _target_sym_ids = set(fi.symbols)
         _importer_users: dict[str, list[str]] = {}
-        for edge in graph.edges:
-            if edge.kind is EdgeKind.CALLS and edge.target_id in _target_sym_ids:
-                caller = graph.symbols.get(edge.source_id)
-                if caller and caller.file_path in set(importers):
-                    _importer_users.setdefault(caller.file_path, []).append(caller.name)
+        _importer_file_set = set(importers)
+        for _sym_id_imp in _target_sym_ids:
+            for _caller_imp in graph.callers_of(_sym_id_imp):
+                if _caller_imp.file_path in _importer_file_set:
+                    _importer_users.setdefault(_caller_imp.file_path, []).append(_caller_imp.name)
         _all_test_fps = {fp for fp in graph.files if _is_test_file(fp)}
         _src_importers = [imp for imp in importers if not _is_test_file(imp)]
         # Sort by call count descending: most-dependent callers appear first.
@@ -2515,11 +2485,10 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
 
     # S74: "Imports from" — direct source dependencies of the blast target file.
     # Rounds out the picture: shows what THIS file depends on, not just who depends on it.
+    _d_out_imports = [e for e in graph.edges if e.kind.value == "imports" and e.source_id == file_path]
     _deps_of_target = sorted({
-        e.target_id for e in graph.edges
-        if e.kind == EdgeKind.IMPORTS
-        and e.source_id == file_path
-        and e.target_id in graph.files
+        e.target_id for e in _d_out_imports
+        if e.target_id in graph.files
         and not _is_test_file(e.target_id)
         and e.target_id != file_path
     })
