@@ -1896,10 +1896,10 @@ def _signals_focused_test(
 # ---------------------------------------------------------------------------
 # Signal group helper: complexity
 # ---------------------------------------------------------------------------
-def _signals_focused_complexity(
+def _signals_focused_complexity_call_graph(
     graph: Tempo, *, _seed_syms: list, token_count: int, max_tokens: int,
 ) -> list[str]:
-    """Focused-mode signals: complexity."""
+    """S120 call depth + S103 cross-file callees."""
     lines: list[str] = []
     # S120: Call depth — longest call chain from seed down to a leaf (no callees).
     # Measures how deep the seed reaches before hitting dead-end functions.
@@ -1935,6 +1935,14 @@ def _signals_focused_complexity(
         if len(_cf_callee_files) >= 3:
             lines.append(f"\ncross-file callees: {_cf_callee_count} fns in {len(_cf_callee_files)} files")
 
+    return lines
+
+
+def _signals_focused_complexity_callee_quality(
+    graph: Tempo, *, _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """S192 callee complexity + S180 complex hub."""
+    lines: list[str] = []
     # S192: Callee complexity — the focused symbol's external callees have high average complexity.
     # Calling into complex functions means cognitive load is high even for simple-looking fns.
     # Only shown when avg complexity of external callees >= 5 and 3+ external callees with cx data.
@@ -1969,6 +1977,14 @@ def _signals_focused_complexity(
                     f" — high-complexity function used everywhere, refactor candidate"
                 )
 
+    return lines
+
+
+def _signals_focused_complexity_size(
+    graph: Tempo, *, _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """S168 large fn in file + S303 long function + S416 large function body."""
+    lines: list[str] = []
     # S168: Large fn — the primary symbol is among the largest in its file (>= 50 lines).
     # Large functions are hard to reason about and test; they often hide multiple responsibilities.
     # Only shown when seed is a fn/method, line_count >= 50, and it's the largest in its file.
@@ -2014,6 +2030,23 @@ def _signals_focused_complexity(
                 )
 
     return lines
+
+
+def _signals_focused_complexity(
+    graph: Tempo, *, _seed_syms: list, token_count: int, max_tokens: int,
+) -> list[str]:
+    """Focused-mode signals: complexity."""
+    return (
+        _signals_focused_complexity_call_graph(
+            graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
+        )
+        + _signals_focused_complexity_callee_quality(
+            graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
+        )
+        + _signals_focused_complexity_size(
+            graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
