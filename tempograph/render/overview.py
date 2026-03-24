@@ -453,6 +453,18 @@ def _signals_coupling_structure(
     """Module-level structure: orphan modules, barrel files, coupling density, circulars."""
     lines: list[str] = []
 
+    # Pre-compute test file set once — avoids 1M+ repeated pathlib.Path.name calls.
+    _test_fps: set[str] = {fp for fp in graph.files if _is_test_file(fp)}
+
+    # Pre-compute IMPORTS edge counts per non-test source file in one O(N_edges) pass.
+    # Reused by S227 and S258 to avoid O(N_files × N_edges) nested loops.
+    _src_import_counts: dict[str, int] = {}
+    for _e_pre in graph.edges:
+        if _e_pre.kind == EdgeKind.IMPORTS:
+            _src = _e_pre.source_id
+            if _src in graph.files and _src not in _test_fps:
+                _src_import_counts[_src] = _src_import_counts.get(_src, 0) + 1
+
     # S129: Orphan modules — top-level dirs not imported from outside.
     if len(modules) >= 3:
         _orphan_mods: list[str] = []
@@ -479,7 +491,7 @@ def _signals_coupling_structure(
             continue
         if _e146.source_id not in graph.files or _e146.target_id not in graph.files:
             continue
-        if _is_test_file(_e146.source_id) or _is_test_file(_e146.target_id):
+        if _e146.source_id in _test_fps or _e146.target_id in _test_fps:
             continue
         if _e146.source_id == _e146.target_id:
             continue
@@ -495,10 +507,10 @@ def _signals_coupling_structure(
     # S185: Circular deps — pairs of source files that mutually import each other.
     _s185_fp_imports: dict[str, set[str]] = {}
     for _fp185b in graph.files:
-        if _is_test_file(_fp185b):
+        if _fp185b in _test_fps:
             continue
         for _imp185a in graph.importers_of(_fp185b):
-            if _imp185a in graph.files and not _is_test_file(_imp185a) and _imp185a != _fp185b:
+            if _imp185a in graph.files and _imp185a not in _test_fps and _imp185a != _fp185b:
                 _s185_fp_imports.setdefault(_imp185a, set()).add(_fp185b)
     _s185_circular: set[tuple[str, str]] = set()
     for _fp185a, _imports185 in _s185_fp_imports.items():
@@ -517,16 +529,9 @@ def _signals_coupling_structure(
         )
 
     # S227: High coupling — average number of imports per source file >= 5.
-    _s227_src_fps = [fp for fp in graph.files if not _is_test_file(fp)]
+    _s227_src_fps = [fp for fp in graph.files if fp not in _test_fps]
     if len(_s227_src_fps) >= 5:
-        _s227_import_counts = [
-            sum(
-                1 for e in graph.edges
-                if e.kind.value == "imports" and e.source_id.split("::")[0] == _fp227
-            )
-            for _fp227 in _s227_src_fps
-        ]
-        _avg227 = sum(_s227_import_counts) / len(_s227_import_counts)
+        _avg227 = sum(_src_import_counts.get(fp, 0) for fp in _s227_src_fps) / len(_s227_src_fps)
         if _avg227 >= 5:
             lines.append(
                 f"high coupling: avg {_avg227:.1f} imports/file across {len(_s227_src_fps)}"
@@ -536,13 +541,10 @@ def _signals_coupling_structure(
     # S258: High coupling density — avg imports-per-file > 5 for 10+ code files.
     _s258_code_files = [
         fp for fp in graph.files
-        if not _is_test_file(fp) and graph.files[fp].language.value in _CODE_LANGS
+        if fp not in _test_fps and graph.files[fp].language.value in _CODE_LANGS
     ]
     if len(_s258_code_files) >= 10:
-        _s258_total_imports = sum(
-            1 for e in graph.edges
-            if e.kind.value == "imports" and not _is_test_file(e.source_id)
-        )
+        _s258_total_imports = sum(_src_import_counts.values())
         _s258_avg = _s258_total_imports / len(_s258_code_files)
         if _s258_avg >= 5:
             lines.append(
@@ -553,12 +555,12 @@ def _signals_coupling_structure(
     # S265: Flat structure — 8+ source files all at root level with no subdirectories.
     _s259_root_src = [
         fp for fp in graph.files
-        if "/" not in fp and not _is_test_file(fp)
+        if "/" not in fp and fp not in _test_fps
         and graph.files[fp].language.value in _CODE_LANGS
     ]
     _s259_all_src = [
         fp for fp in graph.files
-        if not _is_test_file(fp) and graph.files[fp].language.value in _CODE_LANGS
+        if fp not in _test_fps and graph.files[fp].language.value in _CODE_LANGS
     ]
     if len(_s259_root_src) >= 8 and len(_s259_root_src) == len(_s259_all_src):
         lines.append(
@@ -569,13 +571,10 @@ def _signals_coupling_structure(
     # S286: Shallow module graph — avg < 1 import/file among 8+ code files.
     _s286_src = [
         fp for fp in graph.files
-        if not _is_test_file(fp) and graph.files[fp].language.value in _CODE_LANGS
+        if fp not in _test_fps and graph.files[fp].language.value in _CODE_LANGS
     ]
     if len(_s286_src) >= 8:
-        _s286_import_edges = sum(
-            1 for e in graph.edges
-            if e.kind.value == "imports" and not _is_test_file(e.source_id)
-        )
+        _s286_import_edges = sum(_src_import_counts.values())
         _s286_avg = _s286_import_edges / len(_s286_src)
         if _s286_avg < 1.0:
             lines.append(
@@ -586,7 +585,7 @@ def _signals_coupling_structure(
     # S342: Circular imports detected via symbol-level edges.
     _s342_import_edges: dict[str, set[str]] = {}
     for _e342 in graph.edges:
-        if _e342.kind.value == "imports":
+        if _e342.kind == EdgeKind.IMPORTS:
             _src342 = graph.symbols.get(_e342.source_id)
             _tgt342 = graph.symbols.get(_e342.target_id)
             if _src342 and _tgt342 and _src342.file_path != _tgt342.file_path:
@@ -1706,11 +1705,16 @@ def _signals_structure_b(graph: Tempo) -> list[str]:
 def _signals_structure_c(graph: Tempo) -> list[str]:
     """Structural signals: quality metrics — stubs, exports, constants, methods."""
     lines: list[str] = []
+
+    # Pre-compute test file set and called symbol IDs once to avoid O(N²) edge scans.
+    _test_fps_c: set[str] = {fp for fp in graph.files if _is_test_file(fp)}
+    _called_ids: set[str] = {e.target_id for e in graph.edges if e.kind == EdgeKind.CALLS}
+
     # S355: Test-only codebase — no source files found outside of test files.
     # A repo with only test files and no source is likely a test-only slice or
     # a misconfigured project; signals that the tempograph graph may be incomplete.
     _s355_all_files = [fp for fp in graph.files if graph.files[fp].language.value in _CODE_LANGS]
-    _s355_test_files = [fp for fp in _s355_all_files if _is_test_file(fp)]
+    _s355_test_files = [fp for fp in _s355_all_files if fp in _test_fps_c]
     if len(_s355_all_files) >= 3 and len(_s355_test_files) == len(_s355_all_files):
         lines.append(
             f"test-only: all {len(_s355_all_files)} code files are test files"
@@ -1723,7 +1727,7 @@ def _signals_structure_c(graph: Tempo) -> list[str]:
     # navigating 4+ levels to find a file slows onboarding and refactor discovery.
     _s379_src_fps = [
         fp for fp in graph.files
-        if not _is_test_file(fp) and graph.files[fp].language.value in _CODE_LANGS
+        if fp not in _test_fps_c and graph.files[fp].language.value in _CODE_LANGS
     ]
     if len(_s379_src_fps) >= 10:
         _s379_deep = [fp for fp in _s379_src_fps if fp.count("/") >= 3]
@@ -1740,7 +1744,7 @@ def _signals_structure_c(graph: Tempo) -> list[str]:
     # each unused export creates maintenance burden and risk of unintended consumers.
     _s385_exported = [
         s for s in graph.symbols.values()
-        if s.exported and not _is_test_file(s.file_path)
+        if s.exported and s.file_path not in _test_fps_c
         and s.kind.value in ("function", "method", "class")
         and s.file_path in graph.files
         and graph.files[s.file_path].language.value in _CODE_LANGS
@@ -1748,8 +1752,7 @@ def _signals_structure_c(graph: Tempo) -> list[str]:
     if len(_s385_exported) >= 15:
         _s385_uncalled = [
             s for s in _s385_exported
-            if not any(e.target_id == s.id and e.kind.value == "calls" for e in graph.edges)
-            and not graph.importers_of(s.file_path)
+            if s.id not in _called_ids and not graph.importers_of(s.file_path)
         ]
         if len(_s385_uncalled) / len(_s385_exported) >= 0.30:
             _pct385 = int(100 * len(_s385_uncalled) / len(_s385_exported))
@@ -1765,19 +1768,19 @@ def _signals_structure_c(graph: Tempo) -> list[str]:
     _s397_async_syms = {
         s.id for s in graph.symbols.values()
         if s.kind.value in ("function", "method")
-        and not _is_test_file(s.file_path)
+        and s.file_path not in _test_fps_c
         and s.signature.startswith("async ")
     }
     _s397_sync_syms = {
         s.id for s in graph.symbols.values()
         if s.kind.value in ("function", "method")
-        and not _is_test_file(s.file_path)
+        and s.file_path not in _test_fps_c
         and not s.signature.startswith("async ")
     }
     # Find sync calling async (cross-boundary call)
     _s397_cross_calls = [
         e for e in graph.edges
-        if e.kind.value == "calls"
+        if e.kind == EdgeKind.CALLS
         and e.source_id in _s397_sync_syms
         and e.target_id in _s397_async_syms
     ]
@@ -1791,8 +1794,8 @@ def _signals_structure_c(graph: Tempo) -> list[str]:
     # A codebase with no tests has no regression protection; any change can silently break
     # behavior that previously worked. This is a critical quality signal.
     _s391_all_code = [fp for fp in graph.files if graph.files[fp].language.value in _CODE_LANGS]
-    _s391_tests = [fp for fp in _s391_all_code if _is_test_file(fp)]
-    _s391_src = [fp for fp in _s391_all_code if not _is_test_file(fp)]
+    _s391_tests = [fp for fp in _s391_all_code if fp in _test_fps_c]
+    _s391_src = [fp for fp in _s391_all_code if fp not in _test_fps_c]
     if len(_s391_src) >= 3 and len(_s391_tests) == 0:
         lines.append(
             f"no tests: 0 test files detected across {len(_s391_src)} source files"
@@ -1805,7 +1808,7 @@ def _signals_structure_c(graph: Tempo) -> list[str]:
     _s403_src_files = [
         fp for fp in graph.files
         if graph.files[fp].language.value in _CODE_LANGS
-        and not _is_test_file(fp)
+        and fp not in _test_fps_c
     ]
     if len(_s403_src_files) >= 4:
         _s403_total_lines = sum(
@@ -1828,7 +1831,7 @@ def _signals_structure_c(graph: Tempo) -> list[str]:
     # or has magic values scattered across modules rather than centralized config.
     _s409_src_syms = [
         s for s in graph.symbols.values()
-        if not _is_test_file(s.file_path)
+        if s.file_path not in _test_fps_c
     ]
     _s409_const_syms = [
         s for s in _s409_src_syms
@@ -2813,8 +2816,7 @@ def _signals_async_oop_c(graph: Tempo) -> list[str]:
     # they add noise to import paths and confuse agents trying to understand the codebase.
     _empty_src703 = [
         fp for fp in graph.files
-        if not _is_test_file(fp)
-        and not any(s.file_path == fp for s in graph.symbols.values())
+        if not _is_test_file(fp) and not graph.files[fp].symbols
     ]
     if len(_empty_src703) >= 2:
         lines.append(
