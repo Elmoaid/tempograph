@@ -1234,3 +1234,84 @@ class TestFocusCalleeRecencyDepth1:
         assert "alpha_fn" in calls_line
         assert "beta_fn" in calls_line
         assert "[hot]" not in calls_line, "no [hot] annotations when hot_files is empty"
+
+
+class TestFocusRecursiveCallee:
+    """S54: [recursive] annotation and summary line when a depth-0 seed calls itself."""
+
+    def _fn_sym(self, name, file_path="mod.py"):
+        return Symbol(
+            id=f"{file_path}::{name}",
+            name=name,
+            qualified_name=name,
+            kind=SymbolKind.FUNCTION,
+            language=Language.PYTHON,
+            file_path=file_path,
+            line_start=1,
+            line_end=20,
+            exported=False,
+            complexity=0,
+        )
+
+    def test_self_call_gets_recursive_annotation(self, tmp_path):
+        """A callee that is the seed itself gets [recursive] in the calls line."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("recurse")
+        other = self._fn_sym("helper", "util.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=seed.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=other.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, other])
+        result = _build_callees_block(seed, 0, graph, "")
+        calls_line = result[0]
+        assert "[recursive]" in calls_line, f"Expected [recursive] annotation; got: {calls_line!r}"
+        assert "recurse" in calls_line
+
+    def test_recursive_summary_line_appears(self, tmp_path):
+        """A recursive seed emits a ↳ recursive summary line at depth=0."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("depth_search")
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=seed.id)]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed])
+        result = _build_callees_block(seed, 0, graph, "")
+        joined = "\n".join(result)
+        assert "recursive" in joined, f"Expected recursive summary line; got:\n{joined}"
+        assert "base case" in joined, f"Expected base case hint; got:\n{joined}"
+
+    def test_non_recursive_callee_no_annotation(self, tmp_path):
+        """A callee with a different id gets no [recursive] annotation."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("orchestrate")
+        callee = self._fn_sym("worker", "worker.py")
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=callee.id)]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, callee])
+        result = _build_callees_block(seed, 0, graph, "")
+        joined = "\n".join(result)
+        assert "[recursive]" not in joined
+        assert "recursive" not in joined
+
+    def test_recursive_annotation_absent_at_depth1(self, tmp_path):
+        """At depth=1 a self-calling callee does NOT receive [recursive] annotation."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("inner")
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=seed.id)]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed])
+        result = _build_callees_block(seed, 1, graph, "")
+        joined = "\n".join(result)
+        assert "[recursive]" not in joined, f"No [recursive] at depth=1; got:\n{joined}"
+        assert "base case" not in joined
+
+    def test_recursive_summary_absent_at_depth1(self, tmp_path):
+        """The ↳ recursive summary line is suppressed at depth=1."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("recurse_shallow")
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=seed.id)]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed])
+        result = _build_callees_block(seed, 1, graph, "")
+        assert all("recursive" not in line for line in result), f"No summary at depth=1; got:\n{result}"
