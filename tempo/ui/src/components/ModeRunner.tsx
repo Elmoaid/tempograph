@@ -1,6 +1,7 @@
 import { useModeRunner } from "./useModeRunner";
 import { CommandPalette } from "./CommandPalette";
 import { KitBuilder } from "./KitBuilder";
+import { ShortcutHelpOverlay } from "./ShortcutHelpOverlay";
 import { MODES } from "./modes";
 import { SidebarTabs } from "./SidebarTabs";
 import { OutputPanel } from "./OutputPanel";
@@ -34,6 +35,9 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
           onClose={() => vm.setKitBuilderOpen(false)}
         />
       )}
+      {vm.showHelp && (
+        <ShortcutHelpOverlay onClose={() => vm.setHelpOpen(false)} />
+      )}
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         <SidebarTabs
           sidebarTab={vm.sidebarTab}
@@ -46,6 +50,7 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
           onModeSelect={vm.switchMode}
           onCreateKit={() => vm.setKitBuilderOpen(true)}
           onTogglePalette={() => vm.setPaletteOpen(p => !p)}
+          onToggleHelp={() => vm.setHelpOpen(p => !p)}
         />
 
         <OutputPanel
