@@ -13,7 +13,7 @@ interface KeyboardShortcutsConfig {
   closeSearch: () => void;
   openSearch: () => void;
   switchMode: (mode: string) => void;
-  setPaletteOpen: (open: boolean) => void;
+  setPaletteOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
   setKitBuilderOpen: (open: boolean) => void;
   setSidebarTab: (tab: "kits" | "modes") => void;
   setFilterVisible: (updater: boolean | ((v: boolean) => boolean)) => void;
@@ -50,7 +50,7 @@ export function useKeyboardShortcuts({
       if (e.key === "Enter" && !modeRunning) { e.preventDefault(); runModeRef.current?.(); }
       // Cmd/Ctrl+L: focus args input
       if (e.key === "l") { e.preventDefault(); argsInputRef.current?.focus(); argsInputRef.current?.select(); }
-      if (e.key === "k") { e.preventDefault(); setPaletteOpen(true); }
+      if (e.key === "k") { e.preventDefault(); setPaletteOpen(prev => !prev); }
       if (e.key === "n") { e.preventDefault(); setKitBuilderOpen(true); setSidebarTab("kits"); }
       if (e.key === "r" && !modeRunning) { e.preventDefault(); runModeRef.current?.(); }
       // Cmd/Ctrl+F: open output search (find in output)
