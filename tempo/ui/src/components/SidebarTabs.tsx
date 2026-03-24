@@ -13,6 +13,7 @@ interface Props {
   onModeSelect: (mode: string) => void;
   onCreateKit?: () => void;
   onTogglePalette?: () => void;
+  onToggleHelp?: () => void;
 }
 
 export function SidebarTabs({
@@ -26,6 +27,7 @@ export function SidebarTabs({
   onModeSelect,
   onCreateKit,
   onTogglePalette,
+  onToggleHelp,
 }: Props) {
   return (
     <div className="cell" style={{ flex: "0 0 auto", maxHeight: "45%" }}>
@@ -166,6 +168,27 @@ export function SidebarTabs({
           ))
         )}
       </div>
+      {onToggleHelp && (
+        <div style={{ borderTop: "1px solid var(--border-subtle)", display: "flex", justifyContent: "center", padding: "3px 0" }}>
+          <button
+            onClick={onToggleHelp}
+            title="Keyboard shortcuts (?)"
+            aria-label="Show keyboard shortcuts"
+            style={{
+              background: "none",
+              border: "none",
+              color: "var(--text-tertiary)",
+              fontSize: 12,
+              cursor: "pointer",
+              opacity: 0.5,
+              padding: "2px 8px",
+              fontFamily: "var(--font-mono)",
+            }}
+            onMouseEnter={e => (e.currentTarget.style.opacity = "0.9")}
+            onMouseLeave={e => (e.currentTarget.style.opacity = "0.5")}
+          >?</button>
+        </div>
+      )}
     </div>
   );
 }
