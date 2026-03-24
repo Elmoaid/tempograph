@@ -176,8 +176,9 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
 
   useEffect(() => { loadCustomKits(); }, [loadCustomKits]);
 
-  // Stable ref so keyboard/auto-run closures always call the latest runMode
+  // Stable refs so keyboard/auto-run closures always call the latest functions
   const runModeRef = useRef<(() => void) | null>(null);
+  const cancelModeRef = useRef<(() => void) | null>(null);
 
   const switchMode = (mode: string) => {
     // Persist args for the mode we're leaving
@@ -237,6 +238,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     searchActive,
     helpOpen: showHelp,
     runModeRef,
+    cancelModeRef,
     argsInputRef,
     filterInputRef,
     clearOutput,
@@ -287,6 +289,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     return _runMode();
   }, [_runMode, modeOutput, activeMode, modeArgs]);
   runModeRef.current = runMode;
+  cancelModeRef.current = cancelMode;
 
   const copyOutput = () => {
     navigator.clipboard.writeText(modeOutput);
