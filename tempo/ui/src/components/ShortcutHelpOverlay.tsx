@@ -1,3 +1,5 @@
+import type { CSSProperties } from "react";
+
 const SHORTCUTS = [
   { key: "⌘K", desc: "Toggle command palette" },
   { key: "⌘1–⌘9", desc: "Switch to mode N" },
@@ -10,7 +12,7 @@ const SHORTCUTS = [
   { key: "?", desc: "Toggle this overlay" },
 ];
 
-const kbdStyle: React.CSSProperties = {
+const kbdStyle: CSSProperties = {
   fontFamily: "var(--font-mono)",
   fontSize: 11,
   padding: "2px 6px",
@@ -23,7 +25,7 @@ const kbdStyle: React.CSSProperties = {
   flexShrink: 0,
 };
 
-const kbdInlineStyle: React.CSSProperties = {
+const kbdInlineStyle: CSSProperties = {
   fontFamily: "var(--font-mono)",
   fontSize: 10,
   padding: "1px 4px",
