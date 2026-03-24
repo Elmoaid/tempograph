@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { GitBranch, Folder, ChevronRight, PenLine, FileText } from "lucide-react";
+import { GitBranch, Folder, ChevronRight, PenLine, FileText, Layers } from "lucide-react";
 import { writeNote } from "./tempo";
+import { useAmbientStatus } from "../hooks/useAmbientStatus";
 import type { WorkspaceData, DirEntry, NoteEntry } from "./workspaceTypes";
 
 interface FeedbackSummary {
@@ -53,6 +54,7 @@ export function InfoPanel({
   const [creatingNote, setCreatingNote] = useState(false);
   const [newNoteName, setNewNoteName] = useState("");
   const [newNoteContent, setNewNoteContent] = useState("");
+  const { status: ambientStatus, generate: generateAmbient } = useAmbientStatus(repoPath);
 
   const handleCreateNote = async () => {
     if (!newNoteName.trim() || !repoPath) return;
@@ -76,6 +78,29 @@ export function InfoPanel({
           {ws.git ? (
             <pre className="output" style={{ maxHeight: 130, fontSize: 10 }}>{ws.git}</pre>
           ) : <div style={{ color: "var(--text-tertiary)", fontSize: 11 }}>No git data</div>}
+        </div>
+      </div>
+
+      <div className="cell" style={{ flex: "0 0 auto" }}>
+        <div className="cell-head"><Layers size={11} /> Ambient Context</div>
+        <div className="cell-body" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 11 }}>
+          {ambientStatus.exists ? (
+            <span style={{ color: "var(--success)" }}>
+              ready{ambientStatus.timestamp ? ` · ${ambientStatus.timestamp}` : ""}
+            </span>
+          ) : (
+            <>
+              <span style={{ color: "var(--text-tertiary)" }}>not generated</span>
+              <button
+                className="btn btn-ghost"
+                onClick={generateAmbient}
+                disabled={ambientStatus.generating}
+                style={{ padding: "2px 8px", fontSize: 10 }}
+              >
+                {ambientStatus.generating ? "Generating…" : "Generate"}
+              </button>
+            </>
+          )}
         </div>
       </div>
 

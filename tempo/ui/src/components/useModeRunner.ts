@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
+import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { runTempo, saveOutput, reportFeedback, readFile } from "./tempo";
-import { MODES, loadHistory } from "./modes";
+import { MODES, loadHistory, saveRecentCommand } from "./modes";
 import { BUILTIN_KITS, type KitInfo } from "./kits";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { useRunMode } from "../hooks/useRunMode";
@@ -87,6 +88,7 @@ function buildActiveModeInfo(activeKit: string | null, activeMode: string, custo
 }
 
 const lastModeKey = (path: string) => `tempo-last-mode-${path}`;
+const modeArgsKey = (path: string, modeOrKit: string) => `tempo-mode-args-${path}-${modeOrKit}`;
 
 export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRunnerState & ModeRunnerActions {
   const [activeMode, setActiveMode] = useState(() => localStorage.getItem(lastModeKey(repoPath)) || "overview");
@@ -94,7 +96,10 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   const [sidebarTab, setSidebarTab] = useState<"kits" | "modes">("kits");
   const [customKits, setCustomKits] = useState<KitInfo[]>([]);
   const [kitBuilderOpen, setKitBuilderOpen] = useState(false);
-  const [modeArgs, setModeArgs] = useState("");
+  const [modeArgs, setModeArgs] = useState(() => {
+    const initMode = localStorage.getItem(lastModeKey(repoPath)) || "overview";
+    return localStorage.getItem(modeArgsKey(repoPath, initMode)) || "";
+  });
   const [modeOutput, setModeOutput] = useState("");
   const [prevOutput, setPrevOutput] = useState<string | null>(null);
   const [modeRunning, setModeRunning] = useState(false);
@@ -171,10 +176,12 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   const runModeRef = useRef<(() => void) | null>(null);
 
   const switchMode = (mode: string) => {
+    // Persist args for the mode we're leaving
+    localStorage.setItem(modeArgsKey(repoPath, activeKit ? `kit:${activeKit}` : activeMode), modeArgs);
     setActiveKit(null);
     setActiveMode(mode);
     localStorage.setItem(lastModeKey(repoPath), mode);
-    setModeArgs("");
+    setModeArgs(localStorage.getItem(modeArgsKey(repoPath, mode)) || "");
     setHistoryOpen(false);
     resetFilter();
     setPrevOutput(null);
@@ -189,9 +196,11 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   };
 
   const switchKit = (kitId: string) => {
+    // Persist args for the mode/kit we're leaving
+    localStorage.setItem(modeArgsKey(repoPath, activeKit ? `kit:${activeKit}` : activeMode), modeArgs);
     setActiveKit(kitId);
     setActiveMode("kit");
-    setModeArgs("");
+    setModeArgs(localStorage.getItem(modeArgsKey(repoPath, `kit:${kitId}`)) || "");
     setHistoryOpen(false);
     resetFilter();
     setPrevOutput(null);
@@ -268,8 +277,9 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   });
   const runMode = useCallback(async () => {
     if (modeOutput) setPrevOutput(modeOutput);
+    saveRecentCommand(activeMode, modeArgs);
     return _runMode();
-  }, [_runMode, modeOutput]);
+  }, [_runMode, modeOutput, activeMode, modeArgs]);
   runModeRef.current = runMode;
 
   const copyOutput = () => {
@@ -279,12 +289,18 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   };
 
   const handleSaveOutput = async () => {
-    if (!modeOutput || !repoPath) return;
+    if (!modeOutput) return;
     const label = activeKit ? `kit-${activeKit}` : activeMode;
-    const outPath = `${repoPath}/.tempo/output-${label}-${Date.now()}.txt`;
-    await saveOutput(outPath, modeOutput);
+    const date = new Date().toISOString().slice(0, 10);
+    const defaultName = `tempograph-${label}-${date}.txt`;
+    const chosenPath = await saveDialog({
+      defaultPath: defaultName,
+      filters: [{ name: "Text", extensions: ["txt"] }],
+    });
+    if (!chosenPath) return;
+    await saveOutput(chosenPath, modeOutput);
     setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    setTimeout(() => setSaved(false), 1500);
   };
 
   const submitFeedback = async (helpful: boolean) => {

@@ -1,11 +1,11 @@
 import { useState, useEffect, type RefObject } from "react";
-import { Copy, Check, ThumbsUp, ThumbsDown, X } from "lucide-react";
+import { Copy, Check, X } from "lucide-react";
 import type { ModeInfo } from "./modes";
-import { formatAge } from "./modes";
 import { ArgsInput } from "./ArgsInput";
 import { OutputPanelHeader } from "./OutputPanelHeader";
 import { KitSectionAccordion } from "./KitSectionAccordion";
 import { OutputSearchBar } from "./OutputSearchBar";
+import { OutputFooter } from "./OutputFooter";
 
 const FONT_SIZE_MIN = 9;
 const FONT_SIZE_MAX = 16;
@@ -267,6 +267,7 @@ export function OutputPanel(props: OutputPanelProps) {
           placeholder={activeModeInfo?.hint || "arguments (optional)"}
           argsInputRef={argsInputRef}
           modeRunning={modeRunning}
+          activeMode={activeMode}
           onChange={onArgsChange}
           onRun={onRun}
           onHistoryOpen={onHistoryOpen}
@@ -338,28 +339,14 @@ export function OutputPanel(props: OutputPanelProps) {
                 style={{ maxHeight: activeMode === "prepare" ? "calc(100% - 96px)" : "calc(100% - 64px)", overflow: "auto", whiteSpace: wrapEnabled ? "pre-wrap" : "pre", fontSize, margin: 0 }}
               />
             )}
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>
-              <span style={{ fontSize: 9, color: "var(--text-tertiary)", marginRight: 2 }}>Helpful?</span>
-              {feedbackGiven.current.has(activeMode) ? (
-                <span style={{ fontSize: 9, color: "var(--text-tertiary)" }}>
-                  {feedbackGiven.current.get(activeMode) ? "✓ marked helpful" : "✓ marked unhelpful"}
-                </span>
-              ) : (
-                <>
-                  <button className="btn btn-ghost" onClick={() => onFeedback(true)} style={{ padding: "1px 6px", fontSize: 9 }} title="Helpful" aria-label="Mark as helpful">
-                    <ThumbsUp size={9} aria-hidden="true" />
-                  </button>
-                  <button className="btn btn-ghost" onClick={() => onFeedback(false)} style={{ padding: "1px 6px", fontSize: 9 }} title="Not helpful" aria-label="Mark as not helpful">
-                    <ThumbsDown size={9} aria-hidden="true" />
-                  </button>
-                </>
-              )}
-              <span style={{ fontSize: 9, color: "var(--text-tertiary)", marginLeft: "auto", display: "flex", gap: 8 }}>
-                {runDuration !== null && <span title="Run duration" style={{ fontFamily: "var(--font-mono)" }}>{runDuration < 10 ? runDuration.toFixed(1) : Math.round(runDuration)}s</span>}
-                {outputTs && <span title="Time since this output was generated">{formatAge(outputTs)}</span>}
-                <span>~{Math.round(modeOutput.length / 4).toLocaleString()} tok</span>
-              </span>
-            </div>
+            <OutputFooter
+              feedbackGiven={feedbackGiven}
+              activeMode={activeMode}
+              runDuration={runDuration}
+              outputTs={outputTs}
+              outputLength={modeOutput.length}
+              onFeedback={onFeedback}
+            />
           </>
         ) : (
           <div style={{ color: "var(--text-tertiary)", fontSize: 11, padding: 16, textAlign: "center" }}>
