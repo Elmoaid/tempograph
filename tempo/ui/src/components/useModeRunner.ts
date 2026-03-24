@@ -66,6 +66,7 @@ export interface ModeRunnerActions {
   onFilterToggle: () => void;
   onFilterClose: () => void;
   clearOutput: () => void;
+  cancelMode: () => void;
   onSearchOpen: () => void;
   onSearchClose: () => void;
   onSearchChange: (text: string) => void;
@@ -261,7 +262,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   // Auto-run overview on mount
   useEffect(() => { runModeRef.current?.(); }, []);
 
-  const { runMode: _runMode } = useRunMode({
+  const { runMode: _runMode, cancelMode } = useRunMode({
     repoPath,
     excludeDirs,
     activeMode,
@@ -380,6 +381,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     onFilterToggle,
     onFilterClose,
     clearOutput,
+    cancelMode,
     onSearchOpen,
     onSearchClose,
     onSearchChange: setSearchText,
