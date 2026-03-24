@@ -22,6 +22,7 @@ export interface ModeRunnerState {
   saved: boolean;
   paletteOpen: boolean;
   historyOpen: boolean;
+  showHelp: boolean;
   history: string[];
   feedbackMode: string | null;
   outputFilter: string;
@@ -51,6 +52,7 @@ export interface ModeRunnerActions {
   setModeArgs: (args: string) => void;
   setHistoryOpen: (open: boolean) => void;
   setPaletteOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
+  setHelpOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
   setOutputFilter: (filter: string) => void;
   setFilterVisible: (visible: boolean | ((v: boolean) => boolean)) => void;
   switchMode: (mode: string) => void;
@@ -106,6 +108,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   const [copied, setCopied] = useState(false);
   const [saved, setSaved] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [showHelp, setHelpOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState<string[]>(() => loadHistory(localStorage.getItem(lastModeKey(repoPath)) || "overview"));
   const feedbackGiven = useRef<Map<string, boolean>>(new Map<string, boolean>());
@@ -231,6 +234,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     modeOutput,
     historyOpen,
     searchActive,
+    helpOpen: showHelp,
     runModeRef,
     argsInputRef,
     filterInputRef,
@@ -242,6 +246,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     setKitBuilderOpen,
     setSidebarTab,
     setFilterVisible,
+    setHelpOpen,
   });
 
   // Live elapsed counter
@@ -332,6 +337,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     copied,
     saved,
     paletteOpen,
+    showHelp,
     historyOpen,
     history,
     feedbackMode,
@@ -360,6 +366,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     setModeArgs,
     setHistoryOpen,
     setPaletteOpen,
+    setHelpOpen,
     setOutputFilter,
     setFilterVisible,
     switchMode,

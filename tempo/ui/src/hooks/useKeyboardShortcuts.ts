@@ -6,6 +6,7 @@ interface KeyboardShortcutsConfig {
   modeOutput: string;
   historyOpen: boolean;
   searchActive: boolean;
+  helpOpen: boolean;
   runModeRef: React.RefObject<(() => void) | null>;
   argsInputRef: React.RefObject<HTMLInputElement | null>;
   filterInputRef: React.RefObject<HTMLInputElement | null>;
@@ -17,6 +18,7 @@ interface KeyboardShortcutsConfig {
   setKitBuilderOpen: (open: boolean) => void;
   setSidebarTab: (tab: "kits" | "modes") => void;
   setFilterVisible: (updater: boolean | ((v: boolean) => boolean)) => void;
+  setHelpOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
 }
 
 export function useKeyboardShortcuts({
@@ -24,6 +26,7 @@ export function useKeyboardShortcuts({
   modeOutput,
   historyOpen,
   searchActive,
+  helpOpen,
   runModeRef,
   argsInputRef,
   filterInputRef,
@@ -35,13 +38,27 @@ export function useKeyboardShortcuts({
   setKitBuilderOpen,
   setSidebarTab,
   setFilterVisible,
+  setHelpOpen,
 }: KeyboardShortcutsConfig) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      // Escape: close search if active, otherwise clear output
-      if (e.key === "Escape" && !historyOpen) {
-        if (searchActive) { closeSearch(); return; }
-        if (modeOutput) { clearOutput(); return; }
+      // Escape: close help overlay first, then search, then clear output
+      if (e.key === "Escape") {
+        if (helpOpen) { setHelpOpen(false); return; }
+        if (!historyOpen) {
+          if (searchActive) { closeSearch(); return; }
+          if (modeOutput) { clearOutput(); return; }
+        }
+      }
+
+      // ?: toggle shortcut help overlay (guard: skip when input is focused)
+      if (e.key === "?" && !e.metaKey && !e.ctrlKey) {
+        const el = document.activeElement as HTMLElement | null;
+        if (!el || (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA" && !el.isContentEditable)) {
+          e.preventDefault();
+          setHelpOpen(prev => !prev);
+          return;
+        }
       }
 
       if (!e.metaKey && !e.ctrlKey) return;
@@ -60,5 +77,5 @@ export function useKeyboardShortcuts({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [modeRunning, modeOutput, historyOpen, searchActive, clearOutput, closeSearch, openSearch]);
+  }, [modeRunning, modeOutput, historyOpen, searchActive, helpOpen, clearOutput, closeSearch, openSearch, setHelpOpen]);
 }
