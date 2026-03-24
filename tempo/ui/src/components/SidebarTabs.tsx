@@ -12,6 +12,7 @@ interface Props {
   onKitSelect: (kitId: string) => void;
   onModeSelect: (mode: string) => void;
   onCreateKit?: () => void;
+  onTogglePalette?: () => void;
 }
 
 export function SidebarTabs({
@@ -24,6 +25,7 @@ export function SidebarTabs({
   onKitSelect,
   onModeSelect,
   onCreateKit,
+  onTogglePalette,
 }: Props) {
   return (
     <div className="cell" style={{ flex: "0 0 auto", maxHeight: "45%" }}>
@@ -87,6 +89,27 @@ export function SidebarTabs({
         >
           All Modes
         </button>
+        {onTogglePalette && (
+          <button
+            onClick={onTogglePalette}
+            title="Command palette (⌘K)"
+            aria-label="Open command palette"
+            style={{
+              padding: "8px 10px",
+              border: "none",
+              background: "var(--bg-tertiary)",
+              color: "var(--text-tertiary)",
+              fontSize: 10,
+              fontFamily: "var(--font-mono)",
+              lineHeight: 1,
+              cursor: "pointer",
+              borderBottom: "1px solid var(--border-subtle)",
+              transition: "color 0.1s",
+            }}
+            onMouseEnter={e => (e.currentTarget.style.color = "var(--accent-hover)")}
+            onMouseLeave={e => (e.currentTarget.style.color = "var(--text-tertiary)")}
+          >⌘K</button>
+        )}
       </div>
 
       {/* Tab content */}
