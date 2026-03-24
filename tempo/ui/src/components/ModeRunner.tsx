@@ -84,6 +84,7 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
           onHistoryOpen={vm.setHistoryOpen}
           onHistorySelect={vm.onHistorySelect}
           onRun={vm.runMode}
+          onCancel={vm.cancelMode}
           onCopy={vm.copyOutput}
           onSave={vm.handleSaveOutput}
           onFilterToggle={vm.onFilterToggle}
