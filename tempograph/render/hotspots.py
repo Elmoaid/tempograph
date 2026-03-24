@@ -1773,7 +1773,7 @@ def _signals_hotspots_core_b(
 
 
 
-def _signals_hotspots_core_c(
+def _signals_hotspots_core_c_type(
     graph: Tempo,
     scores: list[tuple[float, Symbol]],
     velocity: dict[str, float],
@@ -1841,6 +1841,16 @@ def _signals_hotspots_core_c(
                     f" — base class changes break all subclasses; coordinate updates"
                 )
 
+
+def _signals_hotspots_core_c_shape(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    velocity: dict[str, float],
+    velocity_14: dict[str, float],
+    all_test_fps: set[str],
+    top_n: int,
+    out: list[str],
+) -> None:
     # S529: Long hotspot function — top hotspot has 50+ lines of code.
     # A large, heavily-called function accumulates complexity over time; it is the most-used
     # yet least-testable function in the system — every caller depends on all of its behaviors.
@@ -1999,6 +2009,16 @@ def _signals_hotspots_core_c(
                     f" which has {_fi580_syms} symbols — dense module; changes require large context window"
                 )
 
+
+def _signals_hotspots_core_c_classification(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    velocity: dict[str, float],
+    velocity_14: dict[str, float],
+    all_test_fps: set[str],
+    top_n: int,
+    out: list[str],
+) -> None:
     # S585: Low-complexity hotspot — top hotspot function has cyclomatic complexity < 3.
     # A heavily-called but trivially simple function suggests it's a routing shim or
     # dispatcher; the real complexity lives in its callees, not the hotspot itself.
@@ -2229,6 +2249,16 @@ def _signals_hotspots_core_c(
                 f" — single-file bottleneck; changes here have outsized blast radius"
             )
 
+
+def _signals_hotspots_core_c_callers(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    velocity: dict[str, float],
+    velocity_14: dict[str, float],
+    all_test_fps: set[str],
+    top_n: int,
+    out: list[str],
+) -> None:
     # S676: Test-only callers — top hotspot has callers but all are from test files.
     # A production symbol called exclusively from tests is a test-facing internal;
     # it may be over-exposed API or a sign that tests bypass the intended public interface.
@@ -2405,6 +2435,16 @@ def _signals_hotspots_core_c(
                     f" with no direct test callers — high blast radius, low safety net; add tests"
                 )
 
+
+def _signals_hotspots_core_c_risk(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    velocity: dict[str, float],
+    velocity_14: dict[str, float],
+    all_test_fps: set[str],
+    top_n: int,
+    out: list[str],
+) -> None:
     # S736: Choke point — top hotspot has 5+ callers AND 5+ callees (both high fan-in and fan-out).
     # A choke point is both widely depended-upon and widely depending-on; changes propagate
     # in both directions making it the most fragile position in the call graph.
@@ -2464,6 +2504,22 @@ def _signals_hotspots_core_c(
                     f"\nsingle-caller hotspot: {_top754.name} is the top hotspot but has only 1 cross-file caller"
                     f" ({_cross754[0].name}) — tight coupling; consider inlining or co-locating"
                 )
+
+
+def _signals_hotspots_core_c(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    velocity: dict[str, float],
+    velocity_14: dict[str, float],
+    all_test_fps: set[str],
+    top_n: int,
+    out: list[str],
+) -> None:
+    _signals_hotspots_core_c_type(graph, scores, velocity, velocity_14, all_test_fps, top_n, out)
+    _signals_hotspots_core_c_shape(graph, scores, velocity, velocity_14, all_test_fps, top_n, out)
+    _signals_hotspots_core_c_classification(graph, scores, velocity, velocity_14, all_test_fps, top_n, out)
+    _signals_hotspots_core_c_callers(graph, scores, velocity, velocity_14, all_test_fps, top_n, out)
+    _signals_hotspots_core_c_risk(graph, scores, velocity, velocity_14, all_test_fps, top_n, out)
 
 
 
