@@ -1615,6 +1615,22 @@ def _build_callers_block(
                     f"{indent}    ↳ cross-cutting: {_n} subsystem{'s' if _n != 1 else ''}"
                     f" ({_domain_str}{'...' if _n > 4 else ''})"
                 )
+        # S57: primary caller concentration — inverse of S50 cross-cutting.
+        # When one file accounts for ≥60% of non-test callers (and total ≥4),
+        # the function is effectively owned by that file. Suggests co-location.
+        # Complements S50: S50 catches spread, S57 catches concentration.
+        if depth == 0 and len(_callers_for_display) >= 4:
+            _file_counts: dict[str, int] = {}
+            for _pc in _callers_for_display:
+                _file_counts[_pc.file_path] = _file_counts.get(_pc.file_path, 0) + 1
+            _total_callers = len(_callers_for_display)
+            _dom_file, _dom_count = max(_file_counts.items(), key=lambda x: x[1])
+            if _dom_count / _total_callers >= 0.6 and _dom_file != sym.file_path:
+                _dom_basename = _dom_file.rsplit("/", 1)[-1]
+                lines.append(
+                    f"{indent}    ↳ primary caller: {_dom_basename}"
+                    f" ({_dom_count}/{_total_callers})"
+                )
     return lines
 
 
