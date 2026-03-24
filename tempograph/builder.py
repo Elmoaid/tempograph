@@ -155,7 +155,7 @@ def build_graph(
                     cached_graph.hot_files = {f for f in all_hot if _is_hot_source_file(f)}
                 except Exception:
                     pass
-            db._conn.close()
+            db.close()
             return cached_graph
 
     # Batch all DB writes into one transaction (eliminates N per-file commits → 1).
