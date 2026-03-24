@@ -1426,3 +1426,137 @@ class TestFocusUntestedCallee:
         result = _build_callees_block(seed, 0, graph, "")
         calls_line = result[0]
         assert "[untested]" not in calls_line, f"Class callees get no [untested]; got: {calls_line!r}"
+
+
+class TestFocusCoverageGap:
+    """S56: ↳ coverage gap summary line when ≥2 eligible callees have zero test callers."""
+
+    def _fn_sym(self, name, file_path="mod.py"):
+        return Symbol(
+            id=f"{file_path}::{name}",
+            name=name,
+            qualified_name=name,
+            kind=SymbolKind.FUNCTION,
+            language=Language.PYTHON,
+            file_path=file_path,
+            line_start=1,
+            line_end=10,
+            exported=False,
+            complexity=0,
+        )
+
+    def test_coverage_gap_fires_when_two_untested_callees(self, tmp_path):
+        """Summary line appears when ≥2 eligible callees have zero test callers."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("dispatch", "app.py")
+        callee_a = self._fn_sym("parse_config", "config.py")
+        callee_b = self._fn_sym("load_data", "loader.py")
+        test_seed = self._fn_sym("test_dispatch", "tests/test_app.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=callee_a.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=callee_b.id),
+            Edge(kind=EdgeKind.CALLS, source_id=test_seed.id, target_id=seed.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, callee_a, callee_b, test_seed])
+        result = _build_callees_block(seed, 0, graph, "")
+        joined = "\n".join(result)
+        assert "coverage gap" in joined, f"Expected coverage gap summary; got:\n{joined}"
+        assert "2/2 callees untested" in joined, f"Expected 2/2 ratio; got:\n{joined}"
+
+    def test_coverage_gap_silent_when_only_one_untested_callee(self, tmp_path):
+        """Threshold is ≥2 — a single untested callee is already annotated, no summary needed."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("handler", "app.py")
+        callee = self._fn_sym("do_thing", "util.py")
+        test_seed = self._fn_sym("test_handler", "tests/test_app.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=callee.id),
+            Edge(kind=EdgeKind.CALLS, source_id=test_seed.id, target_id=seed.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, callee, test_seed])
+        result = _build_callees_block(seed, 0, graph, "")
+        joined = "\n".join(result)
+        assert "coverage gap" not in joined, f"Single untested callee must not emit summary; got:\n{joined}"
+
+    def test_coverage_gap_excludes_tested_callees_from_numerator(self, tmp_path):
+        """Callee with its own test is counted in denominator but not numerator."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("process", "app.py")
+        callee_tested = self._fn_sym("validated", "core.py")
+        callee_untested_a = self._fn_sym("raw_parse", "io.py")
+        callee_untested_b = self._fn_sym("write_out", "io.py")
+        test_seed = self._fn_sym("test_process", "tests/test_app.py")
+        test_callee = self._fn_sym("test_validated", "tests/test_core.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=callee_tested.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=callee_untested_a.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=callee_untested_b.id),
+            Edge(kind=EdgeKind.CALLS, source_id=test_seed.id, target_id=seed.id),
+            Edge(kind=EdgeKind.CALLS, source_id=test_callee.id, target_id=callee_tested.id),
+        ]
+        graph = _make_graph(
+            tmp_path,
+            edges=edges,
+            symbols=[seed, callee_tested, callee_untested_a, callee_untested_b, test_seed, test_callee],
+        )
+        result = _build_callees_block(seed, 0, graph, "")
+        joined = "\n".join(result)
+        assert "coverage gap" in joined, f"Expected coverage gap; got:\n{joined}"
+        # 2 untested out of 3 eligible (tested callee is in denominator only)
+        assert "2/3 callees untested" in joined, f"Expected 2/3 ratio; got:\n{joined}"
+
+    def test_coverage_gap_absent_at_depth1(self, tmp_path):
+        """Coverage gap summary is depth=0 only."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("inner", "mod.py")
+        callee_a = self._fn_sym("leaf_a", "util.py")
+        callee_b = self._fn_sym("leaf_b", "util.py")
+        test_fn = self._fn_sym("test_inner", "tests/test_mod.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=callee_a.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=callee_b.id),
+            Edge(kind=EdgeKind.CALLS, source_id=test_fn.id, target_id=seed.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, callee_a, callee_b, test_fn])
+        result = _build_callees_block(seed, 1, graph, "")
+        joined = "\n".join(result)
+        assert "coverage gap" not in joined, f"No coverage gap at depth=1; got:\n{joined}"
+
+    def test_coverage_gap_absent_when_seed_untested(self, tmp_path):
+        """When seed has no test callers, coverage gap is suppressed — same guard as [untested]."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("internal_fn", "lib.py")
+        callee_a = self._fn_sym("sub_a", "lib.py")
+        callee_b = self._fn_sym("sub_b", "lib.py")
+        prod_caller = self._fn_sym("main", "app.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=callee_a.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=callee_b.id),
+            Edge(kind=EdgeKind.CALLS, source_id=prod_caller.id, target_id=seed.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, callee_a, callee_b, prod_caller])
+        result = _build_callees_block(seed, 0, graph, "")
+        joined = "\n".join(result)
+        assert "coverage gap" not in joined, f"Coverage gap must not fire when seed is untested; got:\n{joined}"
+
+    def test_coverage_gap_names_with_ellipsis_on_overflow(self, tmp_path):
+        """When >3 untested callees, names list truncates with '...'."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("hub", "app.py")
+        callees = [self._fn_sym(f"helper_{i}", f"util_{i}.py") for i in range(5)]
+        test_seed = self._fn_sym("test_hub", "tests/test_app.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c.id) for c in callees
+        ] + [Edge(kind=EdgeKind.CALLS, source_id=test_seed.id, target_id=seed.id)]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + callees + [test_seed])
+        result = _build_callees_block(seed, 0, graph, "")
+        joined = "\n".join(result)
+        assert "coverage gap" in joined, f"Expected coverage gap; got:\n{joined}"
+        assert "..." in joined, f"Expected ellipsis for overflow names; got:\n{joined}"
+        assert "5/5 callees untested" in joined, f"Expected 5/5 ratio; got:\n{joined}"
