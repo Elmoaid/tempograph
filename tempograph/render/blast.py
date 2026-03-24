@@ -813,19 +813,17 @@ def _signals_blast_core_b(
         # Check that multiple importers each use different symbols (breadth of usage)
         _s371_sym_ids = {s.id for s in _s371_file_syms}
         _s371_importer_syms: dict[str, set[str]] = {}
+        # Precompute non-test source ids once (avoid O(N_sym) set rebuild per edge)
+        _s371_non_test_src_ids = {
+            s.id for s in graph.symbols.values() if not _is_test_file(s.file_path)
+        }
         for _e371 in graph.edges:
             if (_e371.kind.value == "calls"
-                    and _e371.source_id in {
-                        s.id for s in graph.symbols.values()
-                        if not _is_test_file(s.file_path)
-                    }
+                    and _e371.source_id in _s371_non_test_src_ids
                     and _e371.target_id in _s371_sym_ids):
-                _src_file371 = next(
-                    (s.file_path for s in graph.symbols.values() if s.id == _e371.source_id),
-                    None
-                )
-                if _src_file371 and _src_file371 != file_path:
-                    _s371_importer_syms.setdefault(_src_file371, set()).add(_e371.target_id)
+                _src_sym371 = graph.symbols.get(_e371.source_id)
+                if _src_sym371 and _src_sym371.file_path != file_path:
+                    _s371_importer_syms.setdefault(_src_sym371.file_path, set()).add(_e371.target_id)
         if len(_s371_importer_syms) >= 4:
             lines.append(
                 f"utility belt: {len(_s371_file_syms)} symbols in {file_path.rsplit('/', 1)[-1]}"
@@ -1066,11 +1064,9 @@ def _signals_blast_core_b(
     _s443_exported = [s for s in symbols if s.exported]
     _s443_consumer_files: set[str] = set()
     for _sym443 in _s443_exported:
-        for _e443 in graph.edges:
-            if _e443.kind.value == "calls" and _e443.target_id == _sym443.id:
-                _caller443 = graph.symbols.get(_e443.source_id)
-                if _caller443 and _caller443.file_path != file_path:
-                    _s443_consumer_files.add(_caller443.file_path)
+        for _caller443 in graph.callers_of(_sym443.id):
+            if _caller443.file_path != file_path:
+                _s443_consumer_files.add(_caller443.file_path)
     if len(_s443_consumer_files) >= 5:
         lines.append(
             f"public API file: {len(_s443_exported)} exported symbol(s)"
