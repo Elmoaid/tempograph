@@ -43,6 +43,7 @@ interface OutputPanelProps {
   onHistoryOpen: (v: boolean) => void;
   onHistorySelect: (q: string) => void;
   onRun: () => void;
+  onCancel: () => void;
   onCopy: () => void;
   onSave: () => void;
   onFilterToggle: () => void;
@@ -186,7 +187,7 @@ export function OutputPanel(props: OutputPanelProps) {
     filteredOutput, filterMatchCount, history, historyOpen, feedbackGiven,
     argsInputRef, filterInputRef,
     searchInputRef, searchText, searchActive, searchMatchCount, searchCurrentMatch,
-    onArgsChange, onHistoryOpen, onHistorySelect, onRun, onCopy, onSave,
+    onArgsChange, onHistoryOpen, onHistorySelect, onRun, onCancel, onCopy, onSave,
     onFilterToggle, onFilterChange, onFilterClose,
     onSearchChange, onSearchClose, onSearchNavigate,
     onFeedback, saved,
@@ -283,6 +284,14 @@ export function OutputPanel(props: OutputPanelProps) {
                 {elapsed}s
               </span>
             )}
+            <button
+              className="btn btn-ghost"
+              onClick={onCancel}
+              style={{ marginLeft: 10, fontSize: 10, padding: "2px 8px", verticalAlign: "middle" }}
+              title="Stop waiting for result"
+            >
+              Cancel
+            </button>
           </div>
         ) : modeOutput ? (
           <>
