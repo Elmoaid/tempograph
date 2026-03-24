@@ -102,12 +102,12 @@ export function SidebarTabs({
             />
           ))
         ) : (
-          MODES.map(m => (
+          MODES.map((m, idx) => (
             <button
               key={m.mode}
               role="option"
               aria-selected={!activeKit && activeMode === m.mode}
-              aria-label={`${m.label} (${m.tag})${cachedModes.has(m.mode) ? " — cached" : ""}`}
+              aria-label={`${m.label} (${m.tag})${idx < 9 ? ` — ⌘${idx + 1}` : ""}${cachedModes.has(m.mode) ? " — cached" : ""}`}
               className={`mode-row ${!activeKit && activeMode === m.mode ? "active" : ""}`}
               onClick={() => onModeSelect(m.mode)}
             >
@@ -120,6 +120,23 @@ export function SidebarTabs({
                   flexShrink: 0, marginLeft: "auto", marginRight: 4,
                   opacity: !activeKit && activeMode === m.mode ? 0.7 : 1,
                 }} />
+              )}
+              {idx < 9 && (
+                <span
+                  title={`Keyboard shortcut: ⌘${idx + 1}`}
+                  aria-hidden="true"
+                  style={{
+                    fontSize: 9,
+                    color: "var(--text-tertiary)",
+                    fontFamily: "var(--font-mono)",
+                    opacity: 0.5,
+                    flexShrink: 0,
+                    marginLeft: cachedModes.has(m.mode) ? 2 : "auto",
+                    marginRight: 2,
+                  }}
+                >
+                  ⌘{idx + 1}
+                </span>
               )}
               <span className="mode-row-tag" aria-hidden="true">{m.tag}</span>
             </button>
