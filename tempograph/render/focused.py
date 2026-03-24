@@ -1656,6 +1656,7 @@ def _build_callees_block(
     )
     _seed_is_tested = len(_seed_test_callers) > 0
     callee_strs = []
+    _sole_use_callees: list = []  # S58: track for orphan cascade check
     for c in ordered_callees:
         _hot_ann = " [hot]" if c.file_path in graph.hot_files else ""
         _cx_ann = ""
@@ -1679,6 +1680,7 @@ def _build_callees_block(
                 ]
                 if len(_prod_callers) == 1 and _prod_callers[0].id == sym.id:
                     _sole_ann = " [sole-use]"
+                    _sole_use_callees.append(c)  # S58
             # S54: flag self-call — recursive functions need base-case awareness when modified.
             if c.id == sym.id:
                 _recursive_ann = " [recursive]"
@@ -1730,6 +1732,37 @@ def _build_callees_block(
             lines.append(
                 f"{indent}  \u21b3 coverage gap: {len(_untested_cov)}/{len(_eligible)} callees untested"
                 f" ({', '.join(_cov_names)}{_cov_suffix})"
+            )
+    # S58: orphan cascade — detect sole-use callees that themselves own sole-use sub-callees.
+    # A single [sole-use] marker per callee understates the refactor cascade when those callees
+    # also have private helpers of their own. Show the TOTAL private chain depth.
+    # Scan ALL callees (not just the 8 displayed) so the count reflects the true cascade.
+    # Guard: depth=0 only, ≥2 transitive sole-use sub-callees (avoids trivial 1-level cases).
+    if depth == 0 and _sole_use_callees:
+        # Extend with any non-displayed callees that are also sole-use
+        _shown_ids = {c.id for c in ordered_callees}
+        for _c in callees:
+            if _c.id in _shown_ids or _c.kind.value not in ("function", "method"):
+                continue
+            _pc = [cr for cr in graph.callers_of(_c.id) if not _is_test_file(cr.file_path)]
+            if len(_pc) == 1 and _pc[0].id == sym.id:
+                _sole_use_callees.append(_c)
+    if depth == 0 and _sole_use_callees:
+        _transitive_sole: list = []
+        for _sc in _sole_use_callees:
+            for _sub in graph.callees_of(_sc.id):
+                if _sub.kind.value in ("function", "method") and not _is_test_file(_sub.file_path):
+                    _sub_pc = [cr for cr in graph.callers_of(_sub.id) if not _is_test_file(cr.file_path)]
+                    if len(_sub_pc) == 1 and _sub_pc[0].id == _sc.id:
+                        _transitive_sole.append((_sc.name, _sub.name))
+        if len(_transitive_sole) >= 2:
+            _total_chain = len(_sole_use_callees) + len(_transitive_sole)
+            # Show hub callee names — the sole-use callees that themselves own sub-callees
+            _hub_names = list(dict.fromkeys(n for n, _ in _transitive_sole))[:3]
+            _hub_suffix = "..." if len(_hub_names) < len(dict.fromkeys(n for n, _ in _transitive_sole)) else ""
+            lines.append(
+                f"{indent}  \u21b3 orphan cascade: {_total_chain} private helpers in chain"
+                f" (via {', '.join(_hub_names)}{_hub_suffix}) \u2014 refactor ripples deeper than visible callees"
             )
     return lines
 

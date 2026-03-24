@@ -1687,3 +1687,156 @@ class TestFocusPrimaryCallerConcentration:
         result = _build_callers_block(seed, 1, graph, [], {}, None, "")
         joined = "\n".join(result)
         assert "primary caller" not in joined, f"Should not fire at depth=1; got:\n{joined}"
+
+
+class TestFocusOrphanCascade:
+    """S58: orphan cascade annotation when sole-use callees themselves have sole-use sub-callees."""
+
+    def _fn(self, name, file_path, kind=None):
+        return Symbol(
+            id=f"{file_path}::{name}",
+            name=name,
+            qualified_name=name,
+            kind=kind or SymbolKind.FUNCTION,
+            language=Language.PYTHON,
+            file_path=file_path,
+            line_start=1,
+            line_end=10,
+            exported=True,
+        )
+
+    def test_fires_when_sole_use_callees_have_sub_callees(self, tmp_path):
+        """Seed → A [sole-use] → B, C, D [sole-use of A] → orphan cascade fires."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn("orchestrate", "app/main.py")
+        helper_a = self._fn("_step_a", "app/main.py")
+        sub_b = self._fn("_sub_b", "app/main.py")
+        sub_c = self._fn("_sub_c", "app/main.py")
+        sub_d = self._fn("_sub_d", "app/main.py")
+
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=helper_a.id),
+            Edge(kind=EdgeKind.CALLS, source_id=helper_a.id, target_id=sub_b.id),
+            Edge(kind=EdgeKind.CALLS, source_id=helper_a.id, target_id=sub_c.id),
+            Edge(kind=EdgeKind.CALLS, source_id=helper_a.id, target_id=sub_d.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, helper_a, sub_b, sub_c, sub_d])
+
+        result = _build_callees_block(seed, 0, graph, "")
+        joined = "\n".join(result)
+        assert "orphan cascade" in joined, f"Expected orphan cascade; got:\n{joined}"
+        # 1 direct (helper_a) + 3 transitive (sub_b, sub_c, sub_d) = 4
+        assert "4 private" in joined, f"Expected '4 private'; got:\n{joined}"
+
+    def test_fires_when_multiple_sole_use_callees_cascade(self, tmp_path):
+        """Seed → A [sole-use] → B, C and D [sole-use] → E, F → cascade from two hubs."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn("build_report", "reports/builder.py")
+        hub_a = self._fn("_gather_data", "reports/builder.py")
+        sub_b = self._fn("_fetch_raw", "reports/builder.py")
+        sub_c = self._fn("_clean_raw", "reports/builder.py")
+        hub_d = self._fn("_format_output", "reports/builder.py")
+        sub_e = self._fn("_to_html", "reports/builder.py")
+        sub_f = self._fn("_to_csv", "reports/builder.py")
+
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=hub_a.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=hub_d.id),
+            Edge(kind=EdgeKind.CALLS, source_id=hub_a.id, target_id=sub_b.id),
+            Edge(kind=EdgeKind.CALLS, source_id=hub_a.id, target_id=sub_c.id),
+            Edge(kind=EdgeKind.CALLS, source_id=hub_d.id, target_id=sub_e.id),
+            Edge(kind=EdgeKind.CALLS, source_id=hub_d.id, target_id=sub_f.id),
+        ]
+        graph = _make_graph(
+            tmp_path, edges=edges,
+            symbols=[seed, hub_a, sub_b, sub_c, hub_d, sub_e, sub_f]
+        )
+
+        result = _build_callees_block(seed, 0, graph, "")
+        joined = "\n".join(result)
+        assert "orphan cascade" in joined, f"Expected orphan cascade; got:\n{joined}"
+        # 2 direct (hub_a, hub_d) + 4 transitive = 6
+        assert "6 private" in joined, f"Expected '6 private'; got:\n{joined}"
+
+    def test_absent_when_sole_use_callee_has_only_one_transitive(self, tmp_path):
+        """Seed → A [sole-use] → B [sole-use of A] only — cascade <2 transitive, no fire."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn("run_check", "app/checks.py")
+        helper_a = self._fn("_check_step", "app/checks.py")
+        sub_b = self._fn("_validate_step", "app/checks.py")
+
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=helper_a.id),
+            Edge(kind=EdgeKind.CALLS, source_id=helper_a.id, target_id=sub_b.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, helper_a, sub_b])
+
+        result = _build_callees_block(seed, 0, graph, "")
+        joined = "\n".join(result)
+        assert "orphan cascade" not in joined, f"Should not fire with 1 transitive; got:\n{joined}"
+
+    def test_absent_when_no_sole_use_callees(self, tmp_path):
+        """Callees with multiple callers → no [sole-use] → no cascade."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn("dispatch", "app/router.py")
+        other = self._fn("also_calls", "app/other.py")
+        callee = self._fn("handle_request", "app/handler.py")
+
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=callee.id),
+            Edge(kind=EdgeKind.CALLS, source_id=other.id, target_id=callee.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, other, callee])
+
+        result = _build_callees_block(seed, 0, graph, "")
+        joined = "\n".join(result)
+        assert "orphan cascade" not in joined, f"Should not fire when callee has multiple callers; got:\n{joined}"
+
+    def test_absent_at_depth1(self, tmp_path):
+        """Orphan cascade only fires at depth=0."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn("orchestrate", "app/main.py")
+        helper_a = self._fn("_step_a", "app/main.py")
+        sub_b = self._fn("_sub_b", "app/main.py")
+        sub_c = self._fn("_sub_c", "app/main.py")
+
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=helper_a.id),
+            Edge(kind=EdgeKind.CALLS, source_id=helper_a.id, target_id=sub_b.id),
+            Edge(kind=EdgeKind.CALLS, source_id=helper_a.id, target_id=sub_c.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, helper_a, sub_b, sub_c])
+
+        result = _build_callees_block(seed, 1, graph, "")
+        joined = "\n".join(result)
+        assert "orphan cascade" not in joined, f"Should not fire at depth=1; got:\n{joined}"
+
+    def test_transitive_chain_includes_out_of_view_callees(self, tmp_path):
+        """Cascade counts sole-use callees beyond the 8 displayed — total reflects true chain."""
+        from tempograph.render.focused import _build_callees_block
+
+        # Seed has 9 sole-use callees (exceeds shown=8), each of the first 3 has 2 sole-use sub-callees
+        seed = self._fn("heavy_orchestrator", "app/main.py")
+        helpers = [self._fn(f"_h{i}", "app/main.py") for i in range(9)]
+        sub_callees = []
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=h.id) for h in helpers]
+        # First 3 helpers each get 2 sole-use sub-callees
+        for i in range(3):
+            for j in range(2):
+                sub = self._fn(f"_sub_{i}_{j}", "app/main.py")
+                sub_callees.append(sub)
+                edges.append(Edge(kind=EdgeKind.CALLS, source_id=helpers[i].id, target_id=sub.id))
+
+        all_syms = [seed] + helpers + sub_callees
+        graph = _make_graph(tmp_path, edges=edges, symbols=all_syms)
+
+        result = _build_callees_block(seed, 0, graph, "")
+        joined = "\n".join(result)
+        assert "orphan cascade" in joined, f"Should fire even with callees beyond shown=8; got:\n{joined}"
+        # 9 direct + 6 transitive = 15
+        assert "15 private" in joined, f"Expected '15 private' (9+6); got:\n{joined}"
