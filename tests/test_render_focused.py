@@ -1315,3 +1315,114 @@ class TestFocusRecursiveCallee:
         graph = _make_graph(tmp_path, edges=edges, symbols=[seed])
         result = _build_callees_block(seed, 1, graph, "")
         assert all("recursive" not in line for line in result), f"No summary at depth=1; got:\n{result}"
+
+
+class TestFocusUntestedCallee:
+    """S55: [untested] annotation on callees with zero test callers when seed is tested."""
+
+    def _fn_sym(self, name, file_path="mod.py"):
+        return Symbol(
+            id=f"{file_path}::{name}",
+            name=name,
+            qualified_name=name,
+            kind=SymbolKind.FUNCTION,
+            language=Language.PYTHON,
+            file_path=file_path,
+            line_start=1,
+            line_end=10,
+            exported=False,
+            complexity=0,
+        )
+
+    def test_untested_callee_annotated_when_seed_is_tested(self, tmp_path):
+        """Callee with no test callers gets [untested] when seed has test callers."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("orchestrate", "app.py")
+        callee = self._fn_sym("helper", "util.py")
+        test_fn = self._fn_sym("test_orchestrate", "tests/test_app.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=callee.id),
+            Edge(kind=EdgeKind.CALLS, source_id=test_fn.id, target_id=seed.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, callee, test_fn])
+        result = _build_callees_block(seed, 0, graph, "")
+        calls_line = result[0]
+        assert "[untested]" in calls_line, f"Expected [untested]; got: {calls_line!r}"
+
+    def test_tested_callee_not_annotated(self, tmp_path):
+        """Callee that has its own test callers is NOT annotated [untested]."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("orchestrate", "app.py")
+        callee = self._fn_sym("helper", "util.py")
+        test_seed = self._fn_sym("test_orchestrate", "tests/test_app.py")
+        test_callee = self._fn_sym("test_helper", "tests/test_util.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=callee.id),
+            Edge(kind=EdgeKind.CALLS, source_id=test_seed.id, target_id=seed.id),
+            Edge(kind=EdgeKind.CALLS, source_id=test_callee.id, target_id=callee.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, callee, test_seed, test_callee])
+        result = _build_callees_block(seed, 0, graph, "")
+        calls_line = result[0]
+        assert "[untested]" not in calls_line, f"Callee has tests, no [untested] expected; got: {calls_line!r}"
+
+    def test_no_annotation_when_seed_has_no_test_callers(self, tmp_path):
+        """[untested] is suppressed when seed itself has no test callers — signal would be noise."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("internal", "lib.py")
+        callee = self._fn_sym("sub_helper", "lib.py")
+        caller = self._fn_sym("main", "app.py")  # production caller only
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=callee.id),
+            Edge(kind=EdgeKind.CALLS, source_id=caller.id, target_id=seed.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, callee, caller])
+        result = _build_callees_block(seed, 0, graph, "")
+        calls_line = result[0]
+        assert "[untested]" not in calls_line, f"No [untested] when seed untested; got: {calls_line!r}"
+
+    def test_untested_absent_at_depth1(self, tmp_path):
+        """[untested] is never emitted at depth=1 (only depth=0 matters)."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("inner", "mod.py")
+        callee = self._fn_sym("leaf", "util.py")
+        test_fn = self._fn_sym("test_inner", "tests/test_mod.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=callee.id),
+            Edge(kind=EdgeKind.CALLS, source_id=test_fn.id, target_id=seed.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, callee, test_fn])
+        result = _build_callees_block(seed, 1, graph, "")
+        joined = "\n".join(result)
+        assert "[untested]" not in joined, f"[untested] must not appear at depth=1; got:\n{joined}"
+
+    def test_class_callee_not_annotated_untested(self, tmp_path):
+        """Class callees are never annotated [untested] — only function/method kind."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("factory", "app.py")
+        class_sym = Symbol(
+            id="models.py::MyModel",
+            name="MyModel",
+            qualified_name="MyModel",
+            kind=SymbolKind.CLASS,
+            language=Language.PYTHON,
+            file_path="models.py",
+            line_start=1,
+            line_end=20,
+            exported=True,
+            complexity=0,
+        )
+        test_fn = self._fn_sym("test_factory", "tests/test_app.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=class_sym.id),
+            Edge(kind=EdgeKind.CALLS, source_id=test_fn.id, target_id=seed.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, class_sym, test_fn])
+        result = _build_callees_block(seed, 0, graph, "")
+        calls_line = result[0]
+        assert "[untested]" not in calls_line, f"Class callees get no [untested]; got: {calls_line!r}"
