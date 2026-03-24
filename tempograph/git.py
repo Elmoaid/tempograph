@@ -287,15 +287,69 @@ def recently_modified_files(repo: str, n_commits: int = 5) -> set[str]:
     return {line for line in out.splitlines() if line.strip()}
 
 
+def batch_file_modification_map(repo: str) -> dict[str, int | None]:
+    """Return a {relative_file_path: days_since_last_commit} map for all tracked files.
+
+    Runs one ``git log --format=%ct --name-only -n 1000`` and parses the output
+    to build a complete staleness map.  Used to pre-populate staleness caches so
+    render passes avoid spawning one subprocess per unique file path.
+
+    Files not seen in the last 1000 commits map to ``None``.
+    """
+    # Use COMMIT_SEP marker so we can split on commit boundaries reliably.
+    # Two-year window covers all "recent" staleness checks; files older than 2 years
+    # are definitively stale (>730 days > 30-day threshold) so None is safe there.
+    out = _run_git(
+        repo, "log", "--pretty=format:COMMIT_SEP%ct", "--name-only",
+        "--since=2.years.ago",
+    )
+    if not out:
+        return {}
+
+    result: dict[str, int | None] = {}
+    current_ct: int | None = None
+    now = time.time()
+
+    for raw in out.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith("COMMIT_SEP"):
+            ts = line[len("COMMIT_SEP"):]
+            current_ct = int(ts) if ts.isdigit() else None
+        elif current_ct is not None and line not in result:
+            result[line] = int((now - current_ct) / 86400)
+
+    return result
+
+
+# Module-level batch prime: populated by prime_file_age_cache() from render passes.
+# Checked before the subprocess in file_last_modified_days to avoid per-file git calls.
+_file_age_prime: dict[tuple[str, str], int | None] = {}
+
+
+def prime_file_age_cache(repo: str) -> None:
+    """Pre-populate _file_age_prime for all files in ``repo`` using one git call.
+
+    Render functions call this once before their main loop so that subsequent
+    ``file_last_modified_days`` calls are prime-cache hits rather than subprocess
+    spawns.  Safe to call multiple times — later calls overwrite earlier values.
+    """
+    batch = batch_file_modification_map(repo)
+    for fp, days in batch.items():
+        _file_age_prime[(repo, fp)] = days
+
+
 @functools.lru_cache(maxsize=512)
 def file_last_modified_days(repo: str, file_path: str) -> int | None:
     """Return the number of days since `file_path` was last committed.
 
-    Uses ``git log -1 --format=%ct`` for the file.  Returns None if the file
-    has no git history or git is unavailable.  Callers should cache the result
-    per file_path to avoid repeated subprocess invocations within a single
-    render call.
+    Checks _file_age_prime (pre-populated via prime_file_age_cache) before
+    spawning a subprocess.  Falls back to ``git log -1 --format=%ct`` for
+    files not in the prime cache.
     """
+    if (repo, file_path) in _file_age_prime:
+        return _file_age_prime[(repo, file_path)]
     out = _run_git(repo, "log", "-1", "--format=%ct", "--", file_path)
     if not out:
         return None

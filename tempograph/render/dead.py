@@ -3567,6 +3567,13 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
 
     _dead_sym_ids = {sym.id for sym, _ in scored}
     _touched_cache: dict[str, int | None] = {}
+    # Pre-prime file age cache: one batch git call instead of N per-file calls.
+    if graph.root:
+        try:
+            from ..git import prime_file_age_cache as _prime_dc  # noqa: PLC0415
+            _prime_dc(graph.root)
+        except Exception:
+            pass
     lines.extend(_render_dead_insights_b(graph, scored, dead, _dead_sym_ids, _touched_cache))
 
     lines.append("")
