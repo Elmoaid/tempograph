@@ -282,7 +282,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
     ))
     return "\n".join(lines)  # ALWAYS return here — never inside a conditional block
 
-def _signals_hotspots_core_a(
+def _signals_hotspots_core_a_churn(
     graph: Tempo,
     scores: list[tuple[float, Symbol]],
     velocity: dict[str, float],
@@ -468,6 +468,16 @@ def _signals_hotspots_core_a(
             out.append("")
             out.append(f"Churn spike: {', '.join(_sp_parts)} — velocity doubled vs 2-week avg")
 
+
+def _signals_hotspots_core_a_quality(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    velocity: dict[str, float],
+    velocity_14: dict[str, float],
+    all_test_fps: set[str],
+    top_n: int,
+    out: list[str],
+) -> None:
     # S97: High fan-out — functions calling 8+ distinct functions.
     # High callee count = coordination hubs: changing any callee can affect this function.
     # Shows top 3 sorted by callee count. Only source functions (no test helpers).
@@ -556,6 +566,16 @@ def _signals_hotspots_core_a(
         except Exception:
             pass
 
+
+def _signals_hotspots_core_a_activity(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    velocity: dict[str, float],
+    velocity_14: dict[str, float],
+    all_test_fps: set[str],
+    top_n: int,
+    out: list[str],
+) -> None:
     # S121: Recently active files not in the hot zone — files touched recently but with low
     # hotspot scores (clean, growing code). Agents should be aware of these active files
     # even though they haven't accumulated complexity or coupling yet.
@@ -665,6 +685,16 @@ def _signals_hotspots_core_a(
                 f" — highest combined velocity+complexity"
             )
 
+
+def _signals_hotspots_core_a_structure(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    velocity: dict[str, float],
+    velocity_14: dict[str, float],
+    all_test_fps: set[str],
+    top_n: int,
+    out: list[str],
+) -> None:
     # S200: Size hotspot — the top hotspot file is also the largest file by line count.
     # The most-changed file also being the largest = maximum cognitive load per change.
     # Only shown when the top hotspot file is in the top 3 by line count.
@@ -811,6 +841,16 @@ def _signals_hotspots_core_a(
                 f"\nzero-test hotspot: {_top164_base} — top hotspot with no matching test file"
             )
 
+
+def _signals_hotspots_core_a_risks(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    velocity: dict[str, float],
+    velocity_14: dict[str, float],
+    all_test_fps: set[str],
+    top_n: int,
+    out: list[str],
+) -> None:
     # S144: Recursive fns in hotspots — top-ranked symbols that call themselves.
     # Recursive functions are harder to modify: changing loop invariants or base cases
     # requires understanding the full recursion contract. Flag when 2+ are in top hotspots.
@@ -970,6 +1010,22 @@ def _signals_hotspots_core_a(
                     f"\nundocumented hotspot: {_top253.name}"
                     f" — top hotspot has no docstring; add docs when modifying"
                 )
+
+
+def _signals_hotspots_core_a(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    velocity: dict[str, float],
+    velocity_14: dict[str, float],
+    all_test_fps: set[str],
+    top_n: int,
+    out: list[str],
+) -> None:
+    _signals_hotspots_core_a_churn(graph, scores, velocity, velocity_14, all_test_fps, top_n, out)
+    _signals_hotspots_core_a_quality(graph, scores, velocity, velocity_14, all_test_fps, top_n, out)
+    _signals_hotspots_core_a_activity(graph, scores, velocity, velocity_14, all_test_fps, top_n, out)
+    _signals_hotspots_core_a_structure(graph, scores, velocity, velocity_14, all_test_fps, top_n, out)
+    _signals_hotspots_core_a_risks(graph, scores, velocity, velocity_14, all_test_fps, top_n, out)
 
 
 
