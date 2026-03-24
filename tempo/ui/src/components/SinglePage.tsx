@@ -74,11 +74,13 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
         </button>
         {showSnapshots && homeDir && (
           <div style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 10 }}>
-            <SnapshotPanel
-              homeDir={homeDir}
-              onLoad={(path) => { addWorkspace(path); setShowSnapshots(false); }}
-              onClose={() => setShowSnapshots(false)}
-            />
+            <ErrorBoundary label="Snapshots">
+              <SnapshotPanel
+                homeDir={homeDir}
+                onLoad={(path) => { addWorkspace(path); setShowSnapshots(false); }}
+                onClose={() => setShowSnapshots(false)}
+              />
+            </ErrorBoundary>
           </div>
         )}
       </div>
@@ -115,14 +117,20 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
       />
 
       {showSnapshots && homeDir && (
-        <SnapshotPanel
-          homeDir={homeDir}
-          onLoad={(path) => { addWorkspace(path); setShowSnapshots(false); }}
-          onClose={() => setShowSnapshots(false)}
-        />
+        <ErrorBoundary label="Snapshots">
+          <SnapshotPanel
+            homeDir={homeDir}
+            onLoad={(path) => { addWorkspace(path); setShowSnapshots(false); }}
+            onClose={() => setShowSnapshots(false)}
+          />
+        </ErrorBoundary>
       )}
 
-      {showClaude && <ClaudePanel onClose={() => setShowClaude(false)} workspaces={workspaces} />}
+      {showClaude && (
+        <ErrorBoundary label="Claude">
+          <ClaudePanel onClose={() => setShowClaude(false)} workspaces={workspaces} />
+        </ErrorBoundary>
+      )}
 
       <div className={`grid-shell${rightHidden ? " right-hidden" : ""}`} style={{ display: showClaude ? "none" : undefined }}>
         <ErrorBoundary label="Modes">
