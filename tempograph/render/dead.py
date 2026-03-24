@@ -3208,70 +3208,30 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
 
 
 
-def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8000, include_low: bool = False) -> str:
-    """Find exported symbols that appear to be unused (never referenced externally).
-
-    include_low: include low-confidence (likely false positive) symbols. Off by default
-        to reduce token output (~47% savings). Pass include_low=True to see all tiers.
-    """
-    dead = graph.find_dead_code()
-
-    # S569: Dead typing file — Python file that only contains typing imports (no indexed symbols)
-    # and has no importers. Pre-computed here so it can fire even when `dead` is empty.
-    _dead_typing_files569 = [
-        fp for fp, fi in graph.files.items()
-        if not _is_test_file(fp)
-        and not list(fi.symbols)
-        and any("typing" in imp.lower() for imp in fi.imports)
-        and not graph.importers_of(fp)
-    ]
-
-    # S605: Dead utility function — pre-computed to allow firing when `dead` is empty.
-    # Catches BOTH non-exported private utilities AND exported dead utilities with utility prefix.
-    _util_prefixes605_pre = ("get_", "make_", "create_", "build_", "generate_", "compute_", "fetch_")
-    _dead_util605_pre = [
-        sym for sym in graph.symbols.values()
-        if not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-        and any(sym.name.startswith(p) for p in _util_prefixes605_pre)
-        and not graph.callers_of(sym.id)
-    ]
-
-    if not dead and not _dead_typing_files569 and not _dead_util605_pre:
-        return "No dead code detected — all exported symbols are referenced."
-
-    # Score each symbol
-    scored = [(sym, _dead_code_confidence(sym, graph)) for sym in dead]
-    scored.sort(key=lambda x: (-x[1], -x[0].line_count))
-
-    high = [(s, c) for s, c in scored if c >= 70]
-    medium = [(s, c) for s, c in scored if 40 <= c < 70]
-    low = [(s, c) for s, c in scored if c < 40]
-
+def _render_dead_header_stats(
+    scored: list[tuple[Symbol, int]],
+    dead: list[Symbol],
+    graph: Tempo,
+) -> tuple[str, str]:
+    """Compute removable_header (S98) and dead_ratio_str (S109+S126) for the header line."""
     # S98: Total removable lines — sum of line counts for high+medium confidence dead symbols.
-    # Gives agents immediate ROI signal: "is this worth cleaning up?"
-    # Only shown when total >= 50 lines (smaller amounts aren't worth flagging).
     _removable_lines = sum(sym.line_count for sym, conf in scored if conf >= 40)
-    _removable_header = ""
+    removable_header = ""
     if _removable_lines >= 50:
-        _removable_header = f" (~{_removable_lines} lines removable)"
+        removable_header = f" (~{_removable_lines} lines removable)"
 
     # S109: Dead ratio — fraction of total (non-test) symbols that are dead.
-    # Quick health signal: "10% dead = manageable, 40% dead = major cleanup needed."
-    # Only shown when there are 10+ total non-test symbols to avoid tiny-project noise.
     _total_non_test_syms = sum(
         1 for sym in graph.symbols.values() if not _is_test_file(sym.file_path)
     )
-    _dead_ratio_str = ""
+    dead_ratio_str = ""
     if _total_non_test_syms >= 10 and dead:
         _high_conf_dead = sum(1 for sym, conf in scored if conf >= 40)
         _ratio_pct = int(_high_conf_dead / _total_non_test_syms * 100)
         if _ratio_pct >= 5:
-            _dead_ratio_str = f" [{_ratio_pct}% of {_total_non_test_syms} source symbols]"
+            dead_ratio_str = f" [{_ratio_pct}% of {_total_non_test_syms} source symbols]"
 
     # S126: Exported dead ratio — fraction of exported (public API) symbols that are dead.
-    # High ratio = bloated, stale API surface. Even more alarming than overall dead ratio.
-    # Only shown when 5+ total exported non-test symbols exist and ratio >= 20%.
     _total_exported_src = sum(
         1 for sym in graph.symbols.values()
         if sym.exported and not _is_test_file(sym.file_path)
@@ -3284,12 +3244,20 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         )
         _exp_dead_pct = int(_dead_exported / _total_exported_src * 100)
         if _exp_dead_pct >= 20:
-            _dead_ratio_str += f" [exported: {_dead_exported}/{_total_exported_src} public symbols dead ({_exp_dead_pct}%)]"
+            dead_ratio_str += f" [exported: {_dead_exported}/{_total_exported_src} public symbols dead ({_exp_dead_pct}%)]"
 
-    lines = [f"Potential dead code ({len(dead)} symbols){_removable_header}{_dead_ratio_str}:"]
+    return removable_header, dead_ratio_str
+
+
+def _render_dead_insights_a(
+    graph: Tempo,
+    scored: list[tuple[Symbol, int]],
+    high: list[tuple[Symbol, int]],
+) -> list[str]:
+    """Quick wins, largest dead, complex dead, and dead API summary lines."""
+    lines: list[str] = []
 
     # Quick wins: top files with the most HIGH confidence dead symbols.
-    # Shows agents where to start cleanup without reading the full list.
     if high:
         _qw_counts: dict[str, int] = {}
         for sym, _ in high:
@@ -3301,7 +3269,6 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         lines.append(f"Quick wins: {', '.join(_qw_parts)}")
 
     # Largest dead: top 3 dead symbols by line count (high+medium confidence only).
-    # These are the highest ROI individual deletions — big functions that nobody calls.
     _ld_candidates = sorted(
         [(sym, conf) for sym, conf in scored if conf >= 40],
         key=lambda x: -x[0].line_count,
@@ -3314,8 +3281,6 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         lines.append(f"Largest dead: {', '.join(_ld_parts)}")
 
     # S92: Complex dead — top dead symbols by cyclomatic complexity (cx >= 5).
-    # Complements "Largest dead" (line count): a short but complex dead function
-    # has high cognitive overhead; deleting it reduces maintainability burden.
     _cx_dead = sorted(
         [(sym, conf) for sym, conf in scored if conf >= 40 and sym.complexity >= 5],
         key=lambda x: -x[0].complexity,
@@ -3327,9 +3292,7 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         ]
         lines.append(f"Complex dead: {', '.join(_cd_parts)}")
 
-    # S95: Dead API — exported symbols with 0 cross-file callers in the dead code list.
-    # Distinct from private dead: exported symbols may be called from external code
-    # outside the indexed codebase. Deprecation-then-delete vs. immediate removal.
+    # S95: Dead API — exported symbols with 0 cross-file callers.
     _dead_api = [
         (sym, conf) for sym, conf in scored
         if sym.exported and conf >= 40
@@ -3342,9 +3305,22 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             _da_str += f" +{len(_dead_api) - 4} more"
         lines.append(f"Dead API ({len(_dead_api)}): {_da_str} — exported, no callers (verify before deleting)")
 
+    return lines
+
+
+def _render_dead_insights_b(
+    graph: Tempo,
+    scored: list[tuple[Symbol, int]],
+    dead: list[Symbol],
+    dead_sym_ids: set[str],
+    touched_cache: dict[str, int | None],
+) -> list[str]:
+    """Clustered dead, orphan files, recently/stale dead, transitively dead, safe-to-delete."""
+    from ..git import file_last_modified_days as _file_last_modified_days  # noqa: PLC0415
+
+    lines: list[str] = []
+
     # S101: Clustered dead — files with 3+ dead symbols are batch cleanup targets.
-    # More actionable than a scattered list: "clean up this file" vs. "hunt everywhere."
-    # Shows top 2 worst offenders with symbol count and file name.
     _dead_by_file: dict[str, int] = {}
     for sym, conf in scored:
         if conf >= 40:
@@ -3358,9 +3334,7 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         lines.append(f"Clustered dead: {', '.join(_cl_parts)} — batch cleanup targets")
 
     # Orphan files: files where ALL exported symbols are dead → delete the whole file.
-    # More actionable than quick wins: one `rm` instead of N symbol deletions.
-    _dead_sym_ids = {sym.id for sym, _ in scored}
-    _orphan_files: list[tuple[str, int, int]] = []  # (file_path, sym_count, line_count)
+    _orphan_files: list[tuple[str, int, int]] = []
     for _fp in {sym.file_path for sym, _ in scored}:
         if _is_test_file(_fp):
             continue
@@ -3371,7 +3345,7 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             graph.symbols[sid] for sid in _fi.symbols
             if sid in graph.symbols and graph.symbols[sid].exported
         ]
-        if _exported and all(sym.id in _dead_sym_ids for sym in _exported):
+        if _exported and all(sym.id in dead_sym_ids for sym in _exported):
             _orphan_files.append((_fp, len(_exported), sum(sym.line_count for sym in _exported)))
     if _orphan_files:
         _orphan_files.sort(key=lambda x: -x[2])
@@ -3381,20 +3355,15 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         ]
         lines.append(f"Orphan files (all-dead): {', '.join(_o_parts)}")
 
-    # Recently dead: dead symbols in files touched in the last 30 days.
-    # These are most likely accidentally dead (just added but not yet wired up).
-    # Only shown when git history is available and at least 2 symbols qualify.
-    from ..git import file_last_modified_days as _file_last_modified_days  # noqa: PLC0415
-    _touched_cache: dict[str, int | None] = {}
-
     def _file_age(fp: str) -> int | None:
-        if fp not in _touched_cache:
-            _touched_cache[fp] = _file_last_modified_days(graph.root, fp)
-        return _touched_cache[fp]
+        if fp not in touched_cache:
+            touched_cache[fp] = _file_last_modified_days(graph.root, fp)
+        return touched_cache[fp]
 
+    # Recently dead: dead symbols in files touched in the last 30 days.
     _recently_dead = [
         (sym, conf) for sym, conf in scored
-        if conf >= 40  # medium+ confidence only
+        if conf >= 40
         and (_file_age(sym.file_path) or 9999) <= 30
     ]
     if len(_recently_dead) >= 2:
@@ -3408,9 +3377,6 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         lines.append(f"Recently dead ({len(_recently_dead)}): {_rd_str}")
 
     # S106: Stale dead — dead symbols in files untouched for 90+ days.
-    # These are the safest to delete: nobody's been near them in months.
-    # Different from "Recently dead" which flags accidentally-wired new code.
-    # Only shown when git history is available and 2+ stale symbols qualify.
     _stale_dead = [
         (sym, conf, _file_age(sym.file_path))
         for sym, conf in scored
@@ -3427,18 +3393,16 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         lines.append(f"Stale dead ({len(_stale_dead)}, avg {_avg_age}d): {_sd_str} — safe to delete")
 
     # Transitively dead: non-dead symbols whose ALL callers are already dead.
-    # find_dead_code() only marks symbols with 0 external callers or unimported files.
-    # This catches functions only called by dead functions — "second-order" dead code.
     _transitively_dead: list[Symbol] = []
     for _td_sym in graph.symbols.values():
-        if _td_sym.id in _dead_sym_ids:
+        if _td_sym.id in dead_sym_ids:
             continue
         if _is_test_file(_td_sym.file_path):
             continue
         _td_callers = graph.callers_of(_td_sym.id)
         if not _td_callers:
             continue  # Already in find_dead_code() results or 0-caller symbol
-        if all(c.id in _dead_sym_ids for c in _td_callers):
+        if all(c.id in dead_sym_ids for c in _td_callers):
             _transitively_dead.append(_td_sym)
     if len(_transitively_dead) >= 1:
         _trd_names = [
@@ -3451,8 +3415,6 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
         lines.append(f"Transitively dead ({len(_transitively_dead)}): {_trd_str} — only called by dead code")
 
     # S69: Safe-to-delete tier — conf >= 75 symbols.
-    # Requires: no callers (30) + no file importers (25) + no renderers (10) + large (15) = 80 max.
-    # Threshold 75 = slam-dunk deletions: file is isolated AND symbol is large. Subset of HIGH tier.
     _safe_delete = [(sym, conf) for sym, conf in scored if conf >= 75]
     if len(_safe_delete) >= 2:
         _sd_parts = [f"{sym.name} ({sym.file_path.rsplit('/', 1)[-1]}, conf:{conf})" for sym, conf in _safe_delete[:4]]
@@ -3461,21 +3423,18 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             _sd_str += f" +{len(_safe_delete) - 4} more"
         lines.append(f"Safe to delete ({len(_safe_delete)}): {_sd_str}")
 
-    lines.append("")
-    total_lines = 0
+    return lines
 
-    tiers = [("HIGH CONFIDENCE (safe to remove)", high),
-             ("MEDIUM CONFIDENCE (review before removing)", medium)]
-    if include_low:
-        tiers.append(("LOW CONFIDENCE (likely false positives)", low))
 
-    def _last_touched(file_path: str) -> str:
-        if file_path not in _touched_cache:
-            _touched_cache[file_path] = _file_last_modified_days(graph.root, file_path)
-        days = _touched_cache[file_path]
-        if days is None:
-            return ""
-        return f" — last touched: {days} days ago"
+def _render_dead_tier_block(
+    graph: Tempo,
+    tier: list[tuple[Symbol, int]],
+    label: str,
+    max_symbols: int,
+    touched_cache: dict[str, int | None],
+) -> tuple[list[str], int]:
+    """Render one confidence tier (HIGH/MEDIUM/LOW). Returns (lines, total_line_count)."""
+    from ..git import file_last_modified_days as _file_last_modified_days  # noqa: PLC0415
 
     def _format_age(days: int | None) -> str:
         if days is None:
@@ -3486,59 +3445,148 @@ def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8
             return f" [age: {days // 30}m]"
         return f" [age: {days}d]"
 
+    def _last_touched(file_path: str) -> str:
+        if file_path not in touched_cache:
+            touched_cache[file_path] = _file_last_modified_days(graph.root, file_path)
+        days = touched_cache[file_path]
+        if days is None:
+            return ""
+        return f" — last touched: {days} days ago"
+
     def _sym_age(sym: Symbol) -> str:
-        if sym.file_path not in _touched_cache:
-            _touched_cache[sym.file_path] = _file_last_modified_days(graph.root, sym.file_path)
-        return _format_age(_touched_cache[sym.file_path])
+        if sym.file_path not in touched_cache:
+            touched_cache[sym.file_path] = _file_last_modified_days(graph.root, sym.file_path)
+        return _format_age(touched_cache[sym.file_path])
+
+    lines: list[str] = []
+    total_line_count = 0
+    shown = tier[:max_symbols]
+    lines.append(f"{label}:")
+    lines.append("")
+    by_file: dict[str, list[tuple[Symbol, int]]] = {}
+    for sym, conf in shown:
+        by_file.setdefault(sym.file_path, []).append((sym, conf))
+    # Sort files: most dead symbols first (most-contaminated first)
+    sorted_files = sorted(by_file.items(), key=lambda x: -len(x[1]))
+    for fp, file_syms in sorted_files:
+        n = len(file_syms)
+        sym_label = f"{n} dead symbol{'s' if n != 1 else ''}"
+        _effort = _file_effort_badge(file_syms, graph)
+        lines.append(f"  {fp} ({sym_label}){_last_touched(fp)}{_effort}:")
+        by_line = sorted(file_syms, key=lambda x: x[0].line_start)
+        shown_syms = by_line[:10]
+        for sym, conf in shown_syms:
+            lc = sym.line_count
+            total_line_count += lc
+            age = _sym_age(sym)
+            # Superseded hint: if name has legacy/old/deprecated suffix, find active replacement.
+            _sup_hint = ""
+            _STALE_SUFFIXES = ("_old", "_legacy", "_v1", "_v2", "_deprecated", "_backup", "_bak", "_orig")
+            _lower = sym.name.lower()
+            for _suf in _STALE_SUFFIXES:
+                if _lower.endswith(_suf):
+                    _base = sym.name[:-(len(_suf))]
+                    _replacement = next(
+                        (s for s in graph.symbols.values()
+                         if s.name.lower() == _base.lower()
+                         and s.id != sym.id
+                         and graph.callers_of(s.id)),
+                        None
+                    )
+                    if _replacement:
+                        _sup_hint = f" → possibly replaced by: {_replacement.name}"
+                    break
+            lines.append(f"    {sym.kind.value} {sym.qualified_name} (L{sym.line_start}-{sym.line_end}, {lc} lines) [confidence: {conf}]{age}{_sup_hint}")
+        if len(by_line) > 10:
+            lines.append(f"    ... and {len(by_line) - 10} more")
+        lines.append("")
+    return lines, total_line_count
+
+
+def _dead_precompute_early_signals(graph: Tempo) -> tuple[list[str], list]:
+    """Pre-compute S569 (dead typing files) and S605 (dead util fns) that fire even when dead=[].
+
+    Returns (dead_typing_files569, dead_util605_pre).
+    """
+    # S569: Dead typing file — Python file that only contains typing imports (no indexed symbols)
+    # and has no importers. Pre-computed here so it can fire even when `dead` is empty.
+    dead_typing_files569 = [
+        fp for fp, fi in graph.files.items()
+        if not _is_test_file(fp)
+        and not list(fi.symbols)
+        and any("typing" in imp.lower() for imp in fi.imports)
+        and not graph.importers_of(fp)
+    ]
+
+    # S605: Dead utility function — catches BOTH non-exported private utilities
+    # AND exported dead utilities with utility prefix.
+    _util_prefixes = ("get_", "make_", "create_", "build_", "generate_", "compute_", "fetch_")
+    dead_util605_pre = [
+        sym for sym in graph.symbols.values()
+        if not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+        and any(sym.name.startswith(p) for p in _util_prefixes)
+        and not graph.callers_of(sym.id)
+    ]
+
+    return dead_typing_files569, dead_util605_pre
+
+
+def _dead_score_and_tier(
+    dead: list[Symbol],
+    graph: Tempo,
+) -> tuple[list[tuple[Symbol, int]], list[tuple[Symbol, int]], list[tuple[Symbol, int]], list[tuple[Symbol, int]]]:
+    """Score dead symbols and split into high/medium/low confidence tiers.
+
+    Returns (scored, high, medium, low).
+    """
+    scored = [(sym, _dead_code_confidence(sym, graph)) for sym in dead]
+    scored.sort(key=lambda x: (-x[1], -x[0].line_count))
+    high = [(s, c) for s, c in scored if c >= 70]
+    medium = [(s, c) for s, c in scored if 40 <= c < 70]
+    low = [(s, c) for s, c in scored if c < 40]
+    return scored, high, medium, low
+
+
+def render_dead_code(graph: Tempo, *, max_symbols: int = 50, max_tokens: int = 8000, include_low: bool = False) -> str:
+    """Find exported symbols that appear to be unused (never referenced externally).
+
+    include_low: include low-confidence (likely false positive) symbols. Off by default
+        to reduce token output (~47% savings). Pass include_low=True to see all tiers.
+    """
+    dead = graph.find_dead_code()
+    dead_typing_files, dead_util_fns = _dead_precompute_early_signals(graph)
+
+    if not dead and not dead_typing_files and not dead_util_fns:
+        return "No dead code detected — all exported symbols are referenced."
+
+    scored, high, medium, low = _dead_score_and_tier(dead, graph)
+    removable_header, dead_ratio_str = _render_dead_header_stats(scored, dead, graph)
+    lines = [f"Potential dead code ({len(dead)} symbols){removable_header}{dead_ratio_str}:"]
+    lines.extend(_render_dead_insights_a(graph, scored, high))
+
+    _dead_sym_ids = {sym.id for sym, _ in scored}
+    _touched_cache: dict[str, int | None] = {}
+    lines.extend(_render_dead_insights_b(graph, scored, dead, _dead_sym_ids, _touched_cache))
+
+    lines.append("")
+    total_lines = 0
+    tiers = [("HIGH CONFIDENCE (safe to remove)", high),
+             ("MEDIUM CONFIDENCE (review before removing)", medium)]
+    if include_low:
+        tiers.append(("LOW CONFIDENCE (likely false positives)", low))
 
     for label, tier in tiers:
         if not tier:
             continue
-        shown = tier[:max_symbols]
-        lines.append(f"{label}:")
-        lines.append("")
-        by_file: dict[str, list[tuple[Symbol, int]]] = {}
-        for sym, conf in shown:
-            by_file.setdefault(sym.file_path, []).append((sym, conf))
-        # Sort files: most dead symbols first (most-contaminated first)
-        sorted_files = sorted(by_file.items(), key=lambda x: -len(x[1]))
-        for fp, file_syms in sorted_files:
-            n = len(file_syms)
-            sym_label = f"{n} dead symbol{'s' if n != 1 else ''}"
-            _effort = _file_effort_badge(file_syms, graph)
-            lines.append(f"  {fp} ({sym_label}){_last_touched(fp)}{_effort}:")
-            by_line = sorted(file_syms, key=lambda x: x[0].line_start)
-            shown_syms = by_line[:10]
-            for sym, conf in shown_syms:
-                lc = sym.line_count
-                total_lines += lc
-                age = _sym_age(sym)
-                # Superseded hint: if name has legacy/old/deprecated suffix, find active replacement.
-                _sup_hint = ""
-                _STALE_SUFFIXES = ("_old", "_legacy", "_v1", "_v2", "_deprecated", "_backup", "_bak", "_orig")
-                _lower = sym.name.lower()
-                for _suf in _STALE_SUFFIXES:
-                    if _lower.endswith(_suf):
-                        _base = sym.name[:-(len(_suf))]
-                        _replacement = next(
-                            (s for s in graph.symbols.values()
-                             if s.name.lower() == _base.lower()
-                             and s.id != sym.id
-                             and graph.callers_of(s.id)),
-                            None
-                        )
-                        if _replacement:
-                            _sup_hint = f" → possibly replaced by: {_replacement.name}"
-                        break
-                lines.append(f"    {sym.kind.value} {sym.qualified_name} (L{sym.line_start}-{sym.line_end}, {lc} lines) [confidence: {conf}]{age}{_sup_hint}")
-            if len(by_line) > 10:
-                lines.append(f"    ... and {len(by_line) - 10} more")
-            lines.append("")
+        tier_block_lines, tier_lc = _render_dead_tier_block(graph, tier, label, max_symbols, _touched_cache)
+        lines.extend(tier_block_lines)
+        total_lines += tier_lc
 
     _signals_dead_core(graph, scored, dead, lines)
     _signals_dead_patterns_a(graph, scored, dead, lines)
     _signals_dead_patterns_b(graph, scored, dead, lines)
-    _signals_dead_typed_a(graph, scored, dead, lines, _dead_typing_files569, _dead_util605_pre)
+    _signals_dead_typed_a(graph, scored, dead, lines, dead_typing_files, dead_util_fns)
     _signals_dead_typed_b(graph, scored, dead, lines)
     lines.append(f"Total: {len(dead)} unused symbols (~{total_lines:,} lines shown)")
     if include_low:
