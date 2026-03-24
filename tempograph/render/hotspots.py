@@ -1029,7 +1029,7 @@ def _signals_hotspots_core_a(
 
 
 
-def _signals_hotspots_core_b(
+def _signals_hotspots_core_b_type(
     graph: Tempo,
     scores: list[tuple[float, Symbol]],
     velocity: dict[str, float],
@@ -1198,6 +1198,16 @@ def _signals_hotspots_core_b(
                 )
                 break
 
+
+def _signals_hotspots_core_b_concentration(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    velocity: dict[str, float],
+    velocity_14: dict[str, float],
+    all_test_fps: set[str],
+    top_n: int,
+    out: list[str],
+) -> None:
     # S299: Mono-file hotspot — all top-5 hotspot symbols come from the same file.
     # When a single file monopolises the hotspot list, it's structurally overloaded;
     # the module has grown past cohesion and needs splitting.
@@ -1326,6 +1336,16 @@ def _signals_hotspots_core_b(
                 f" — package interface is unstable; every importer of the package is affected"
             )
 
+
+def _signals_hotspots_core_b_structure(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    velocity: dict[str, float],
+    velocity_14: dict[str, float],
+    all_test_fps: set[str],
+    top_n: int,
+    out: list[str],
+) -> None:
     # S376: Same-file hotspot cluster — top 3 hotspot symbols all live in the same file.
     # When the top 3 hotspots are all in one file, that file has very concentrated risk;
     # it is likely a core module that warrants extra scrutiny before any change.
@@ -1543,6 +1563,16 @@ def _signals_hotspots_core_b(
                     f" — class instantiated in many places; consider DI/singleton to reduce coupling"
                 )
 
+
+def _signals_hotspots_core_b_risk(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    velocity: dict[str, float],
+    velocity_14: dict[str, float],
+    all_test_fps: set[str],
+    top_n: int,
+    out: list[str],
+) -> None:
     # S430: High-complexity hotspot — top hotspot symbol has cyclomatic complexity >= 20.
     # High complexity means many execution paths; each path needs its own test scenario.
     # Complex hotspots are refactor targets AND test coverage bottlenecks simultaneously.
@@ -1725,6 +1755,21 @@ def _signals_hotspots_core_b(
                         f"\nsolo file: {_top492.file_path.rsplit('/', 1)[-1]} is the only source file in {_dir492}/"
                         f" — no siblings to share load; complexity will compound with each change"
                     )
+
+
+def _signals_hotspots_core_b(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    velocity: dict[str, float],
+    velocity_14: dict[str, float],
+    all_test_fps: set[str],
+    top_n: int,
+    out: list[str],
+) -> None:
+    _signals_hotspots_core_b_type(graph, scores, velocity, velocity_14, all_test_fps, top_n, out)
+    _signals_hotspots_core_b_concentration(graph, scores, velocity, velocity_14, all_test_fps, top_n, out)
+    _signals_hotspots_core_b_structure(graph, scores, velocity, velocity_14, all_test_fps, top_n, out)
+    _signals_hotspots_core_b_risk(graph, scores, velocity, velocity_14, all_test_fps, top_n, out)
 
 
 
