@@ -1639,6 +1639,7 @@ def _build_callees_block(
         _cx_ann = ""
         _cb_ann = ""
         _sole_ann = ""
+        _recursive_ann = ""
         if depth == 0:
             # S49: annotate callees with high complexity so agents see the iceberg
             if c.complexity > 15 and c.kind.value in ("function", "method"):
@@ -1655,10 +1656,16 @@ def _build_callees_block(
                 ]
                 if len(_prod_callers) == 1 and _prod_callers[0].id == sym.id:
                     _sole_ann = " [sole-use]"
-        callee_strs.append(f"{c.qualified_name}{_cx_ann}{_hot_ann}{_cb_ann}{_sole_ann}")
+            # S54: flag self-call — recursive functions need base-case awareness when modified.
+            if c.id == sym.id:
+                _recursive_ann = " [recursive]"
+        callee_strs.append(f"{c.qualified_name}{_cx_ann}{_hot_ann}{_cb_ann}{_sole_ann}{_recursive_ann}")
     lines.append(f"{indent}  calls: {', '.join(callee_strs)}")
     if len(callees) > shown:
         lines[-1] += f" (+{len(callees) - shown} more)"
+    # S54: recursive summary — fire once when seed calls itself, at depth=0 only.
+    if depth == 0 and any(c.id == sym.id for c in callees):
+        lines.append(f"{indent}  \u21b3 recursive \u2014 self-referential; verify base case before modifying")
     # S52: hot callee instability — ≥2 non-test callees in hot_files = volatile territory.
     # Agent editing a seed that calls 2+ recently-changed functions is walking on thin ice.
     if depth == 0 and graph.hot_files:
