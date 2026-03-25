@@ -3638,8 +3638,11 @@ def _signals_async_oop(
 # Main render function
 # ---------------------------------------------------------------------------
 
-def render_overview(graph: Tempo) -> str:
-    """Cheapest mode: repo orientation — stats, entry points, key files, structure."""
+def _overview_preamble(graph: Tempo) -> tuple[list[str], dict]:
+    """Header section: stats, entry points, key files, activity, hot symbols, stable core.
+
+    Returns (lines, _commit_counts).
+    """
     stats = graph.stats
     lines = [f"repo: {graph.root.rsplit('/', 1)[-1]}"]
 
@@ -3782,8 +3785,15 @@ def render_overview(graph: Tempo) -> str:
         except Exception:
             pass
 
+    return lines, _commit_counts
 
-    # --- Compute shared variables used by multiple signal groups ---
+
+def _overview_shared_vars(graph: Tempo) -> tuple:
+    """Compute shared context variables used across signal-group helpers.
+
+    Returns (_src_fps, _test_fps, _exported_src, _src_file_cx, _total_cx,
+             _all_cx_vals, _import_adj, _importer_counts, modules, _s220_entry_files).
+    """
     _src_fps = [fp for fp in graph.files if not _is_test_file(fp) and graph.files[fp].symbols]
     _test_fps = {fp for fp in graph.files if _is_test_file(fp)}
 
@@ -3845,7 +3855,20 @@ def render_overview(graph: Tempo) -> str:
         and graph.files[fp].language.value in _CODE_LANGS
     ]
 
-    # --- Call signal-group helpers ---
+    return (
+        _src_fps, _test_fps, _exported_src, _src_file_cx, _total_cx,
+        _all_cx_vals, _import_adj, _importer_counts, modules, _s220_entry_files,
+    )
+
+
+def render_overview(graph: Tempo) -> str:
+    """Cheapest mode: repo orientation — stats, entry points, key files, structure."""
+    lines, _commit_counts = _overview_preamble(graph)
+    (
+        _src_fps, _test_fps, _exported_src, _src_file_cx, _total_cx,
+        _all_cx_vals, _import_adj, _importer_counts, modules, _s220_entry_files,
+    ) = _overview_shared_vars(graph)
+
     lines.extend(_signals_complexity(
         graph, _src_fps=_src_fps, _all_cx_vals=_all_cx_vals,
         _src_file_cx=_src_file_cx, _total_cx=_total_cx,
@@ -3869,12 +3892,7 @@ def render_overview(graph: Tempo) -> str:
         graph, _s220_entry_files=_s220_entry_files,
     ))
 
-    # Module structure -- just the shape, no noisy import counts
-    modules: dict[str, list[str]] = {}
-    for fp in graph.files:
-        parts = fp.split("/")
-        mod = parts[0] if len(parts) > 1 else "."
-        modules.setdefault(mod, []).append(fp)
+    # Module structure — just the shape, no noisy import counts
     if len(modules) > 1:
         lines.append("")
         lines.append("structure: " + ", ".join(
@@ -3890,7 +3908,6 @@ def render_overview(graph: Tempo) -> str:
         for cycle in cycles[:3]:
             chain = " → ".join(c.rsplit("/", 1)[-1] for c in cycle)
             lines.append(f"  {chain}")
-
 
     # Suggest directories to exclude — detect likely noise
     noisy = _detect_noisy_dirs(graph, modules)

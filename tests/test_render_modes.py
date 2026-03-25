@@ -18,7 +18,7 @@ from tempograph.render import (
     _is_test_file,
 )
 from tempograph.render.dead import _file_effort_badge
-from tempograph.render.hotspots import _collect_hotspots_signals
+from tempograph.render.hotspots import _collect_hotspots_signals, _calm_zones_lines
 from tempograph.git import is_git_repo
 from tempograph.types import Symbol, SymbolKind, Language
 
@@ -261,6 +261,81 @@ class TestHotCascadeSignal:
         result = _collect_hotspots_signals(graph, scores, {}, {}, set(), 20)
         combined = "\n".join(result)
         assert "hot cascade" not in combined
+
+
+class TestCalmZones:
+    """S63: Calm zones — stable, heavily-imported files (load-bearing walls)."""
+
+    def _make_graph(self, files_importers: dict[str, list[str]]) -> "MagicMock":
+        """Build a minimal mock graph for calm zones testing."""
+        graph = MagicMock()
+        graph.files = {fp: MagicMock() for fp in files_importers}
+        graph.importers_of.side_effect = lambda fp: files_importers.get(fp, [])
+        return graph
+
+    def test_calm_zone_fires_for_stable_heavily_imported_file(self):
+        # core.py has 5 non-test importers and velocity 0.0 → calm zone
+        graph = self._make_graph({
+            "core.py": ["a.py", "b.py", "c.py", "d.py", "e.py"],
+        })
+        result = _calm_zones_lines(graph, {"core.py": 0.0})
+        combined = "\n".join(result)
+        assert "calm zones" in combined
+        assert "core.py" in combined
+        assert "5 importers" in combined
+
+    def test_calm_zone_hidden_when_file_is_hot(self):
+        # core.py has many importers but is actively churning — NOT a calm zone
+        graph = self._make_graph({
+            "core.py": ["a.py", "b.py", "c.py", "d.py", "e.py"],
+        })
+        result = _calm_zones_lines(graph, {"core.py": 5.0})
+        combined = "\n".join(result)
+        assert "calm zones" not in combined
+
+    def test_calm_zone_hidden_when_too_few_importers(self):
+        # stable file but only 4 importers — below threshold of 5
+        graph = self._make_graph({
+            "utils.py": ["a.py", "b.py", "c.py", "d.py"],
+        })
+        result = _calm_zones_lines(graph, {"utils.py": 0.0})
+        combined = "\n".join(result)
+        assert "calm zones" not in combined
+
+    def test_calm_zone_hidden_when_no_velocity_data(self):
+        # empty velocity dict → no git data → don't emit calm zones
+        graph = self._make_graph({
+            "core.py": ["a.py", "b.py", "c.py", "d.py", "e.py"],
+        })
+        result = _calm_zones_lines(graph, {})
+        assert result == []
+
+    def test_calm_zones_sorted_by_importer_count(self):
+        # two calm candidates: big.py (8 importers) and small.py (5) → big first
+        graph = self._make_graph({
+            "big.py": ["a.py", "b.py", "c.py", "d.py", "e.py", "f.py", "g.py", "h.py"],
+            "small.py": ["a.py", "b.py", "c.py", "d.py", "e.py"],
+        })
+        result = _calm_zones_lines(graph, {"big.py": 0.0, "small.py": 0.0})
+        combined = "\n".join(result)
+        assert combined.index("big.py") < combined.index("small.py")
+
+    def test_calm_zone_vel_note_shown_when_nonzero(self):
+        # velocity 0.5 → shows commits/wk note; velocity 0.0 → no note
+        graph = self._make_graph({
+            "slow.py": ["a.py", "b.py", "c.py", "d.py", "e.py"],
+        })
+        result = _calm_zones_lines(graph, {"slow.py": 0.5})
+        combined = "\n".join(result)
+        assert "0.5 commits/wk" in combined
+
+    def test_calm_zones_excludes_test_files(self):
+        # test_core.py would match on importers but is a test file → excluded
+        graph = self._make_graph({
+            "test_core.py": ["a.py", "b.py", "c.py", "d.py", "e.py"],
+        })
+        result = _calm_zones_lines(graph, {"test_core.py": 0.0})
+        assert "calm zones" not in "\n".join(result)
 
 
 # ── render_dead_code ──────────────────────────────────────────────────────────
