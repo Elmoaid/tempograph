@@ -1781,6 +1781,48 @@ def _build_callees_block(
                 f"{indent}  \u21b3 orphan cascade: {_total_chain} private helpers in chain"
                 f" (via {', '.join(_hub_names)}{_hub_suffix}) \u2014 refactor ripples deeper than visible callees"
             )
+    # S60: callee co-change coupling — when two callees live in files that frequently
+    # co-change together in git history, touching one typically means touching both.
+    # Agents assume callees are independent; this reveals hidden coupling between dependencies.
+    # Guard: depth=0, ≥2 distinct non-test callee files (excluding seed's own file).
+    if depth == 0 and graph.root:
+        try:
+            from ..git import cochange_matrix as _ccm
+            _matrix = _ccm(graph.root)
+            if _matrix:
+                _callee_files = list(dict.fromkeys(
+                    c.file_path for c in callees
+                    if c.file_path != sym.file_path and not _is_test_file(c.file_path)
+                ))
+                _coupled: list[tuple[str, str, float]] = []
+                for _i, _fa in enumerate(_callee_files):
+                    _partners = {fp: freq for fp, freq in _matrix.get(_fa, [])}
+                    for _fb in _callee_files[_i + 1:]:
+                        if _fb in _partners and _partners[_fb] >= 0.2:
+                            _coupled.append((_fa, _fb, _partners[_fb]))
+                if _coupled:
+                    _coupled.sort(key=lambda x: -x[2])
+                    if len(_coupled) == 1:
+                        _fa0, _fb0, _ = _coupled[0]
+                        lines.append(
+                            f"{indent}  \u21b3 callee coupling: {Path(_fa0).name} \u2194 {Path(_fb0).name}"
+                            f" \u2014 often change together, check both"
+                        )
+                    elif len(_coupled) == 2:
+                        _fa0, _fb0, _ = _coupled[0]
+                        _fa1, _fb1, _ = _coupled[1]
+                        lines.append(
+                            f"{indent}  \u21b3 callee coupling: {Path(_fa0).name} \u2194 {Path(_fb0).name}"
+                            f", {Path(_fa1).name} \u2194 {Path(_fb1).name}"
+                        )
+                    else:
+                        _fa0, _fb0, _ = _coupled[0]
+                        lines.append(
+                            f"{indent}  \u21b3 callee coupling: {len(_coupled)} coupled pairs"
+                            f" ({Path(_fa0).name} \u2194 {Path(_fb0).name} strongest)"
+                        )
+        except Exception:
+            pass
     return lines
 
 
