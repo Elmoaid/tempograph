@@ -179,6 +179,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   // Stable refs so keyboard/auto-run closures always call the latest functions
   const runModeRef = useRef<(() => void) | null>(null);
   const cancelModeRef = useRef<(() => void) | null>(null);
+  const saveOutputRef = useRef<(() => Promise<void>) | null>(null);
 
   const switchMode = (mode: string) => {
     // Persist args for the mode we're leaving
@@ -239,6 +240,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     helpOpen: showHelp,
     runModeRef,
     cancelModeRef,
+    saveOutputRef,
     argsInputRef,
     filterInputRef,
     clearOutput,
@@ -290,6 +292,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   }, [_runMode, modeOutput, activeMode, modeArgs]);
   runModeRef.current = runMode;
   cancelModeRef.current = cancelMode;
+  saveOutputRef.current = handleSaveOutput;
 
   const copyOutput = () => {
     navigator.clipboard.writeText(modeOutput);
