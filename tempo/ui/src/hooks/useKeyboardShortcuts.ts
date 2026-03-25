@@ -8,6 +8,7 @@ interface KeyboardShortcutsConfig {
   searchActive: boolean;
   helpOpen: boolean;
   runModeRef: React.RefObject<(() => void) | null>;
+  cancelModeRef: React.RefObject<(() => void) | null>;
   argsInputRef: React.RefObject<HTMLInputElement | null>;
   filterInputRef: React.RefObject<HTMLInputElement | null>;
   clearOutput: () => void;
@@ -28,6 +29,7 @@ export function useKeyboardShortcuts({
   searchActive,
   helpOpen,
   runModeRef,
+  cancelModeRef,
   argsInputRef,
   filterInputRef,
   clearOutput,
@@ -42,9 +44,10 @@ export function useKeyboardShortcuts({
 }: KeyboardShortcutsConfig) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      // Escape: close help overlay first, then search, then clear output
+      // Escape: close help overlay → cancel running → close search → clear output
       if (e.key === "Escape") {
         if (helpOpen) { setHelpOpen(false); return; }
+        if (modeRunning) { cancelModeRef.current?.(); return; }
         if (!historyOpen) {
           if (searchActive) { closeSearch(); return; }
           if (modeOutput) { clearOutput(); return; }

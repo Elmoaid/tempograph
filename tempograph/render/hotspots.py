@@ -83,8 +83,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
     except Exception:
         pass
 
-    # Pre-prime file age cache: one batch git call instead of N per-file calls
-    # inside _signals_hotspots_core_a_quality and _signals_hotspots_core_a_activity.
+    # S40: pre-prime file age cache — one batch git call instead of N per-file calls.
     if graph.root:
         try:
             from ..git import prime_file_age_cache as _prime_hs  # noqa: PLC0415

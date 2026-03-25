@@ -66,6 +66,7 @@ export interface ModeRunnerActions {
   onFilterToggle: () => void;
   onFilterClose: () => void;
   clearOutput: () => void;
+  cancelMode: () => void;
   onSearchOpen: () => void;
   onSearchClose: () => void;
   onSearchChange: (text: string) => void;
@@ -175,8 +176,9 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
 
   useEffect(() => { loadCustomKits(); }, [loadCustomKits]);
 
-  // Stable ref so keyboard/auto-run closures always call the latest runMode
+  // Stable refs so keyboard/auto-run closures always call the latest functions
   const runModeRef = useRef<(() => void) | null>(null);
+  const cancelModeRef = useRef<(() => void) | null>(null);
 
   const switchMode = (mode: string) => {
     // Persist args for the mode we're leaving
@@ -236,6 +238,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     searchActive,
     helpOpen: showHelp,
     runModeRef,
+    cancelModeRef,
     argsInputRef,
     filterInputRef,
     clearOutput,
@@ -261,7 +264,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   // Auto-run overview on mount
   useEffect(() => { runModeRef.current?.(); }, []);
 
-  const { runMode: _runMode } = useRunMode({
+  const { runMode: _runMode, cancelMode } = useRunMode({
     repoPath,
     excludeDirs,
     activeMode,
@@ -286,6 +289,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     return _runMode();
   }, [_runMode, modeOutput, activeMode, modeArgs]);
   runModeRef.current = runMode;
+  cancelModeRef.current = cancelMode;
 
   const copyOutput = () => {
     navigator.clipboard.writeText(modeOutput);
@@ -380,6 +384,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     onFilterToggle,
     onFilterClose,
     clearOutput,
+    cancelMode,
     onSearchOpen,
     onSearchClose,
     onSearchChange: setSearchText,

@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 import { runTempo } from "../components/tempo";
 import { MODES, loadHistory, saveHistory } from "../components/modes";
 
@@ -41,8 +41,18 @@ export function useRunMode({
   setCachedModes,
   setHistory,
 }: RunModeConfig) {
+  // Monotonically increasing serial — cancel checks serial to ignore stale results
+  const runSerial = useRef(0);
+
+  const cancelMode = useCallback(() => {
+    runSerial.current++;
+    setModeRunning(false);
+    setModeOutput("[Cancelled]");
+  }, [setModeRunning, setModeOutput]);
+
   const runMode = useCallback(async () => {
     if (!repoPath || modeRunning) return;
+    const serial = ++runSerial.current;
     const cacheKey = activeKit ? `kit:${activeKit}` : activeMode;
     runStart.current = Date.now();
     setElapsed(0);
@@ -69,6 +79,8 @@ export function useRunMode({
         }
         r = await runTempo(repoPath, activeMode, args);
       }
+      // If cancelled while awaiting, discard result
+      if (serial !== runSerial.current) return;
       const out = r.output || "No output";
       const now = Date.now();
       const dur = runStart.current ? (now - runStart.current) / 1000 : null;
@@ -88,10 +100,11 @@ export function useRunMode({
         }
       }
     } catch {
+      if (serial !== runSerial.current) return;
       setModeOutput("Failed to run mode. Check that tempo is installed.");
     }
-    setModeRunning(false);
+    if (serial === runSerial.current) setModeRunning(false);
   }, [repoPath, activeMode, activeKit, modeArgs, modeRunning, excludeDirs]);
 
-  return { runMode };
+  return { runMode, cancelMode };
 }
