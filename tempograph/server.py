@@ -285,7 +285,7 @@ def _prefetch_next(current_tool: str, repo_path: str, exclude_dirs: list[str] | 
                     "dead_code": lambda g: render_dead_code(g),
                     "stats": None,  # cheap enough, skip
                     "architecture": lambda g: render_architecture(g),
-                    "file_map": lambda g: render_map(g),
+                    "file_map": lambda g: render_map(g, max_tokens=4000),
                     "dependencies": lambda g: render_dependencies(g),
                 }
                 fn = _prefetch_renderers.get(next_mode)
