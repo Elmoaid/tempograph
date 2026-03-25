@@ -5046,6 +5046,13 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
         _callsite_lines[_key] = sorted(set(_callsite_lines[_key]))
 
     _staleness_cache: dict[str, int | None] = {}
+    # S40: pre-populate staleness cache with one batch git call instead of N individual
+    # `git log -1 -- <file>` subprocesses (one per unique caller file in BFS).
+    try:
+        from ..git import batch_file_modification_map as _bfmm  # noqa: PLC0415
+        _staleness_cache.update(_bfmm(graph.root))
+    except Exception:
+        pass
 
     for _sym_idx, (sym, depth) in enumerate(ordered):
         orbit_note = ""
