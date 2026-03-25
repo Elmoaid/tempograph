@@ -1411,14 +1411,30 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
 
 def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: list[Symbol], lines: list[str], dead_typing_files: list, dead_util_fns: list) -> None:
     """Dead code signals S536-S737: typed patterns batch A — abstract base, dataclass, module constants, exceptions, magic methods, value objects, CLI handlers, context managers, service classes, modules, classes, callbacks, derived classes."""
+    # S44-precompute: One classification pass instead of 13 full-corpus scans.
+    # Before: 13 × 7018 = 91,234 iterations. After: 7018 + sum(kind_bucket_size × signals).
+    _nt_cls: list = []
+    _nt_fn: list = []
+    _nt_meth: list = []
+    _nt_var: list = []
+    for _s44 in graph.symbols.values():
+        _kv44 = _s44.kind.value
+        if not _is_test_file(_s44.file_path):
+            if _kv44 == "class":
+                _nt_cls.append(_s44)
+            elif _kv44 == "function":
+                _nt_fn.append(_s44)
+            elif _kv44 == "method":
+                _nt_meth.append(_s44)
+            elif _kv44 == "variable":
+                _nt_var.append(_s44)
+
     # S536: Dead abstract base class — Abstract*/Protocol class with no subclasses and no callers.
     # An abstract class that was never implemented is pure dead weight; it cannot be instantiated
     # and its only value was as a type contract — which is now unrealized.
     _s536_dead_abc = [
-        sym for sym in graph.symbols.values()
-        if not _is_test_file(sym.file_path)
-        and sym.kind.value == "class"
-        and (
+        sym for sym in _nt_cls
+        if (
             sym.name.startswith("Abstract")
             or sym.name.startswith("Base")
             or sym.name.endswith("ABC")
@@ -1446,10 +1462,8 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
         if any("dataclass" in imp for imp in fi.imports)
     }
     _s542_dead_dc = [
-        sym for sym in graph.symbols.values()
-        if not _is_test_file(sym.file_path)
-        and sym.kind.value == "class"
-        and sym.file_path in _s542_dc_files
+        sym for sym in _nt_cls
+        if sym.file_path in _s542_dc_files
         and not graph.callers_of(sym.id)
         and not graph.importers_of(sym.file_path)
     ]
@@ -1466,10 +1480,8 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # Unused module-level constants accumulate from feature flags, thresholds, and magic values
     # that were never cleaned up; they mislead about the codebase's active configuration surface.
     _s530_dead_constants = [
-        sym for sym in graph.symbols.values()
-        if not _is_test_file(sym.file_path)
-        and sym.kind.value == "variable"
-        and sym.name == sym.name.upper()
+        sym for sym in _nt_var
+        if sym.name == sym.name.upper()
         and "_" in sym.name
         and len(sym.name) >= 3
         and not sym.parent_id
@@ -1490,10 +1502,8 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # they often result from copy-pasted exception hierarchies that were never wired up.
     _s524_exc_suffixes = ("error", "exception", "fault", "failure", "warning")
     _s524_dead_exc = [
-        sym for sym in graph.symbols.values()
-        if not _is_test_file(sym.file_path)
-        and sym.kind.value == "class"
-        and any(sym.name.lower().endswith(s) for s in _s524_exc_suffixes)
+        sym for sym in _nt_cls
+        if any(sym.name.lower().endswith(s) for s in _s524_exc_suffixes)
         and not graph.callers_of(sym.id)
         and not graph.importers_of(sym.file_path)
     ]
@@ -1511,10 +1521,8 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # magic methods are rarely flagged as dead code but the whole class is likely removable.
     _s518_dunder_targets = frozenset(("__str__", "__repr__", "__len__", "__iter__", "__contains__", "__format__"))
     _s518_dead_dunders = [
-        sym for sym in graph.symbols.values()
-        if not _is_test_file(sym.file_path)
-        and sym.kind.value == "method"
-        and sym.name in _s518_dunder_targets
+        sym for sym in _nt_meth
+        if sym.name in _s518_dunder_targets
         and not graph.callers_of(sym.id)
         and not graph.importers_of(sym.file_path)
     ]
@@ -1532,10 +1540,8 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # API contracts; they are especially easy to miss because they have no logic to trigger errors.
     _s542_vo_suffixes = ("data", "schema", "payload", "dto", "record", "config", "settings", "response", "request")
     _s542_dead_vos = [
-        sym for sym in graph.symbols.values()
-        if not _is_test_file(sym.file_path)
-        and sym.kind.value == "class"
-        and any(sym.name.lower().endswith(s) for s in _s542_vo_suffixes)
+        sym for sym in _nt_cls
+        if any(sym.name.lower().endswith(s) for s in _s542_vo_suffixes)
         and not graph.callers_of(sym.id)
         and not graph.importers_of(sym.file_path)
     ]
@@ -1553,10 +1559,8 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # they clutter help output, inflate entry-point lists, and mislead tool discovery.
     _cli_prefixes551 = ("cmd_", "do_", "handle_", "on_", "command_")
     _dead_cli551 = [
-        sym for sym in graph.symbols.values()
-        if not _is_test_file(sym.file_path)
-        and sym.kind.value == "function"
-        and any(sym.name.startswith(p) for p in _cli_prefixes551)
+        sym for sym in _nt_fn
+        if any(sym.name.startswith(p) for p in _cli_prefixes551)
         and not graph.callers_of(sym.id)
         and not graph.importers_of(sym.file_path)
     ]
@@ -1574,10 +1578,8 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # the construction pattern was abandoned mid-implementation.
     _factory_prefixes557 = ("create_", "make_", "build_", "new_", "from_")
     _dead_factories557 = [
-        sym for sym in graph.symbols.values()
-        if not _is_test_file(sym.file_path)
-        and sym.kind.value == "function"
-        and any(sym.name.startswith(p) for p in _factory_prefixes557)
+        sym for sym in _nt_fn
+        if any(sym.name.startswith(p) for p in _factory_prefixes557)
         and not graph.callers_of(sym.id)
         and not graph.importers_of(sym.file_path)
     ]
@@ -1595,10 +1597,8 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # their absence means callers silently skip validation, creating hidden injection points.
     _validator_prefixes563 = ("validate_", "check_", "verify_", "assert_", "ensure_")
     _dead_validators563 = [
-        sym for sym in graph.symbols.values()
-        if not _is_test_file(sym.file_path)
-        and sym.kind.value == "function"
-        and any(sym.name.startswith(p) for p in _validator_prefixes563)
+        sym for sym in _nt_fn
+        if any(sym.name.startswith(p) for p in _validator_prefixes563)
         and not graph.callers_of(sym.id)
         and not graph.importers_of(sym.file_path)
     ]
@@ -1626,11 +1626,9 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # their with-block protocol is never invoked and resource cleanup never happens.
     _cm_dunder575 = frozenset(("__enter__", "__exit__"))
     _dead_cm575: list = []
-    for _sym575 in graph.symbols.values():
+    for _sym575 in _nt_cls:
         if (
-            not _is_test_file(_sym575.file_path)
-            and _sym575.kind.value == "class"
-            and not graph.callers_of(_sym575.id)
+            not graph.callers_of(_sym575.id)
             and not graph.importers_of(_sym575.file_path)
         ):
             _children575 = {c.name for c in graph.children_of(_sym575.id)}
@@ -1651,11 +1649,9 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     _svc_suffixes586 = ("Manager", "Service", "Controller", "Registry",
                         "Repository", "Handler", "Provider", "Dispatcher")
     _dead_svc586: list = []
-    for _sym586 in graph.symbols.values():
+    for _sym586 in _nt_cls:
         if (
-            not _is_test_file(_sym586.file_path)
-            and _sym586.kind.value == "class"
-            and _sym586.name.endswith(_svc_suffixes586)
+            _sym586.name.endswith(_svc_suffixes586)
             and not graph.callers_of(_sym586.id)
             and not graph.importers_of(_sym586.file_path)
         ):
@@ -1674,11 +1670,9 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # they add noise to exception hierarchies and mislead readers about error contracts.
     _exc_suffixes592 = ("Error", "Exception", "Warning", "Fault", "Failure")
     _dead_exc592: list = []
-    for _sym592 in graph.symbols.values():
+    for _sym592 in _nt_cls:
         if (
-            not _is_test_file(_sym592.file_path)
-            and _sym592.kind.value == "class"
-            and _sym592.name.endswith(_exc_suffixes592)
+            _sym592.name.endswith(_exc_suffixes592)
             and not graph.callers_of(_sym592.id)
             and not graph.importers_of(_sym592.file_path)
         ):
@@ -1920,8 +1914,8 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
         _fi671 = graph.files.get(_fp671)
         if _fi671:
             _all_top671 = [
-                s for s in graph.symbols.values()
-                if s.file_path == _fp671 and s.parent_id is None
+                s for s in graph.symbols_in_file(_fp671)
+                if s.parent_id is None
             ]
             if _all_top671 and len(_dsyms671) == len(_all_top671):
                 _full_dead671.append(_fp671)
@@ -2714,8 +2708,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     _single_method_classes905 = []
     for _cls905 in _dead_classes905:
         _methods905 = [
-            s for s in graph.symbols.values()
-            if s.parent_id == _cls905.id and s.kind.value in ("method", "function")
+            c for c in graph.children_of(_cls905.id)
+            if c.kind.value in ("method", "function")
         ]
         if len(_methods905) == 1:
             _single_method_classes905.append(_cls905)
@@ -2797,8 +2791,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     _dead_data929 = []
     for _cls929 in [s for s in dead if s.kind.value == "class" and not _is_test_file(s.file_path)]:
         _children929 = [
-            s for s in graph.symbols.values()
-            if s.parent_id == _cls929.id and s.kind.value in ("method", "function")
+            c for c in graph.children_of(_cls929.id)
+            if c.kind.value in ("method", "function")
         ]
         if not _children929:
             _dead_data929.append(_cls929)
