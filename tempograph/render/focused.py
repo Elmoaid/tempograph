@@ -1765,6 +1765,27 @@ def _build_callees_block(
             lines.append(
                 f"{indent}  \u21b3 instability: {len(_hot_non_test)} hot callees ({', '.join(_names)}{_suffix})"
             )
+    # S62: contract drift — seed file is STABLE (not in hot_files) but ≥2 of its callees' files ARE hot.
+    # S52 fires for general hot-callee instability ("volatile territory — be careful while editing").
+    # S62 fires for the DRIFT case specifically: you haven't touched this code in a while, but the
+    # things it calls HAVE been updated — their interface may have changed without you knowing.
+    # The recommended action is different: read callee changelogs BEFORE editing, not just while editing.
+    # Guard: depth=0, seed file NOT in hot_files, ≥2 non-test callees from different hot files.
+    if depth == 0 and graph.hot_files and sym.file_path not in graph.hot_files:
+        _drift_callees = [
+            c for c in callees
+            if c.file_path in graph.hot_files
+            and c.file_path != sym.file_path
+            and not _is_test_file(c.file_path)
+            and c.kind.value in ("function", "method")
+        ]
+        if len(_drift_callees) >= 3:
+            _drift_names = [c.name for c in _drift_callees[:3]]
+            _drift_suffix = "..." if len(_drift_callees) > 3 else ""
+            lines.append(
+                f"{indent}  \u21b3 drift risk: {len(_drift_callees)} callees updated while seed is stable"
+                f" ({', '.join(_drift_names)}{_drift_suffix}) \u2014 verify contracts still match"
+            )
     # S56: coverage gap summary — when seed is tested but ≥2 eligible callees have zero test callers.
     # Per-callee [untested] annotation already fires, but agents still need to count. This summary
     # makes the coverage gap immediately scannable: "6/8 callees untested" is alarming at a glance.
