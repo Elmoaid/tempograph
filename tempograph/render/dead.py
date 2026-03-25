@@ -3167,6 +3167,36 @@ def _render_dead_insights_b(
         _cl_parts = [f"{cnt} in {fp.rsplit('/', 1)[-1]}" for fp, cnt in _clustered[:2]]
         lines.append(f"Clustered dead: {', '.join(_cl_parts)} — batch cleanup targets")
 
+    # S[HFD]: Hot-file dead — dead symbols in currently high-velocity files.
+    # Different from "Recently dead" (file touched once in 30d): hot_files means
+    # the file is in ACTIVE CHURN (many commits/week). Developers are already here;
+    # this is the right moment to remove dead code incrementally with the next PR.
+    # Only shown when graph.hot_files is populated and ≥1 medium+ confidence match.
+    if graph.hot_files:
+        _hot_file_dead = [
+            (sym, conf) for sym, conf in scored
+            if conf >= 40
+            and sym.file_path
+            and sym.file_path in graph.hot_files
+        ]
+        if len(_hot_file_dead) >= 1:
+            _hfd_by_file: dict[str, list[str]] = {}
+            for _hfd_sym, _ in _hot_file_dead:
+                _fname = _hfd_sym.file_path.rsplit("/", 1)[-1]
+                _hfd_by_file.setdefault(_fname, []).append(_hfd_sym.name)
+            _hfd_sorted = sorted(_hfd_by_file.items(), key=lambda x: -len(x[1]))
+            _hfd_parts = [
+                f"{fname} ({len(names)} dead)" if len(names) > 1 else f"{names[0]} ({fname})"
+                for fname, names in _hfd_sorted[:3]
+            ]
+            _hfd_str = ", ".join(_hfd_parts)
+            if len(_hfd_by_file) > 3:
+                _hfd_str += f" +{len(_hfd_by_file) - 3} more files"
+            lines.append(
+                f"Hot-file debt ({len(_hot_file_dead)}): {_hfd_str}"
+                f" — dead code in active files, clean up with next PR"
+            )
+
     # Orphan files: files where ALL exported symbols are dead → delete the whole file.
     _orphan_files: list[tuple[str, int, int]] = []
     for _fp in {sym.file_path for sym, _ in scored}:

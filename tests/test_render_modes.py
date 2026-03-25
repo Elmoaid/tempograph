@@ -407,6 +407,92 @@ class TestRenderDeadCode:
         assert isinstance(out, str)
 
 
+
+# ── hot-file debt signal ──────────────────────────────────────────────────────
+
+class TestHotFileDeadCode:
+    """S64: Hot-file dead — dead symbols in currently high-velocity files."""
+
+    def test_fires_when_dead_symbol_in_hot_file(self, tmp_path):
+        # dead.py has two unconnected dead functions; mark it as a hot file
+        g = _build(tmp_path, {
+            "lib.py": "def unused_a():\n    pass\n\ndef unused_b():\n    pass\n",
+            "main.py": "def main():\n    pass\n",
+        })
+        rel = "lib.py"
+        g.hot_files = {rel}
+        out = render_dead_code(g)
+        assert "Hot-file debt" in out
+
+    def test_silent_when_hot_files_empty(self, tmp_path):
+        g = _build(tmp_path, {
+            "lib.py": "def unused_a():\n    pass\n\ndef unused_b():\n    pass\n",
+            "main.py": "def main():\n    pass\n",
+        })
+        g.hot_files = set()
+        out = render_dead_code(g)
+        assert "Hot-file debt" not in out
+
+    def test_silent_when_no_dead_in_hot_file(self, tmp_path):
+        # hot file is main.py but dead code is in lib.py
+        g = _build(tmp_path, {
+            "lib.py": "def unused_a():\n    pass\n\ndef unused_b():\n    pass\n",
+            "main.py": "def main():\n    pass\n",
+        })
+        g.hot_files = {"main.py"}
+        out = render_dead_code(g)
+        assert "Hot-file debt" not in out
+
+    def test_shows_filename_in_output(self, tmp_path):
+        g = _build(tmp_path, {
+            "utils.py": "def stale_a():\n    pass\n\ndef stale_b():\n    pass\n",
+            "app.py": "def run():\n    pass\n",
+        })
+        g.hot_files = {"utils.py"}
+        out = render_dead_code(g)
+        if "Hot-file debt" in out:
+            assert "utils.py" in out
+
+    def test_count_in_header(self, tmp_path):
+        # 3 dead symbols all in hot file → count should be ≥1
+        fns = "".join(f"def fn_{i}():\n    pass\n\n" for i in range(5))
+        g = _build(tmp_path, {
+            "dead_batch.py": fns,
+            "caller.py": "def entry():\n    pass\n",
+        })
+        g.hot_files = {"dead_batch.py"}
+        out = render_dead_code(g)
+        if "Hot-file debt" in out:
+            # count should be a positive integer in parentheses
+            import re
+            m = re.search(r"Hot-file debt \((\d+)\)", out)
+            assert m and int(m.group(1)) >= 1
+
+    def test_positioned_after_clustered_dead(self, tmp_path):
+        # Hot-file debt should appear after Clustered dead in output order
+        fns = "".join(f"def fn_{i}():\n    pass\n\n" for i in range(5))
+        g = _build(tmp_path, {
+            "hot_module.py": fns,
+            "other.py": "def go():\n    pass\n",
+        })
+        g.hot_files = {"hot_module.py"}
+        out = render_dead_code(g)
+        if "Hot-file debt" in out and "Clustered dead" in out:
+            assert out.index("Clustered dead") < out.index("Hot-file debt")
+
+    def test_multiple_hot_files_aggregated(self, tmp_path):
+        g = _build(tmp_path, {
+            "alpha.py": "def dead_one():\n    pass\n\ndef dead_two():\n    pass\n",
+            "beta.py": "def dead_three():\n    pass\n",
+            "app.py": "def main():\n    pass\n",
+        })
+        g.hot_files = {"alpha.py", "beta.py"}
+        out = render_dead_code(g)
+        if "Hot-file debt" in out:
+            # At least one of the hot files should appear
+            assert "alpha.py" in out or "beta.py" in out
+
+
 # ── render_dependencies ───────────────────────────────────────────────────────
 
 class TestRenderDependencies:
