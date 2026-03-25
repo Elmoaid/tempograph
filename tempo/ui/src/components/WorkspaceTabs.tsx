@@ -20,7 +20,7 @@ export function WorkspaceTabs({ workspaces, activeIdx, loading, onSelect, onRemo
   const [addingWs, setAddingWs] = useState(false);
   const [newWsPath, setNewWsPath] = useState("");
   const addInputRef = useRef<HTMLInputElement>(null);
-  const { recentRepos, addRecentRepo, removeRecentRepo } = useRecentRepos();
+  const { recentRepos, addRecentRepo, removeRecentRepo, clearRecentRepos } = useRecentRepos();
 
   useEffect(() => {
     if (addingWs) addInputRef.current?.focus();
@@ -86,6 +86,7 @@ export function WorkspaceTabs({ workspaces, activeIdx, loading, onSelect, onRemo
       activeWorkspaces={workspaces}
       onSelect={handleSelectRecent}
       onRemove={removeRecentRepo}
+      onClear={clearRecentRepos}
     />
     </>
   );

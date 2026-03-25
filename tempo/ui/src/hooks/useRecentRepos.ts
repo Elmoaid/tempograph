@@ -41,5 +41,10 @@ export function useRecentRepos() {
     });
   }, []);
 
-  return { recentRepos, addRecentRepo, removeRecentRepo };
+  const clearRecentRepos = useCallback(() => {
+    localStorage.removeItem(RECENT_KEY);
+    setRecentRepos([]);
+  }, []);
+
+  return { recentRepos, addRecentRepo, removeRecentRepo, clearRecentRepos };
 }
