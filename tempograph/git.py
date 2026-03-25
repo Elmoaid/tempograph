@@ -406,6 +406,19 @@ def recent_file_commits(repo: str, file_path: str, n: int = 3) -> list[dict]:
     return results
 
 
+@functools.lru_cache(maxsize=8)
+def _cochange_log_raw(repo_path: str) -> str:
+    """Return raw ``git log --max-count=200 --name-only`` output for repo_path.
+
+    Cached so multiple ``cochange_pairs`` calls within the same session (e.g.
+    focused-mode rendering the same repo for different file paths) share one
+    subprocess instead of spawning one per call.
+    """
+    return _run_git(
+        repo_path, "log", "--max-count=200", "--name-only", "--pretty=format:COMMIT_SEP"
+    ) or ""
+
+
 def cochange_pairs(
     repo_path: str, file_path: str, n: int = 3, min_count: int = 3
 ) -> list[dict]:
@@ -418,9 +431,7 @@ def cochange_pairs(
     """
     if not repo_path or not is_git_repo(repo_path):
         return []
-    out = _run_git(
-        repo_path, "log", "--max-count=200", "--name-only", "--pretty=format:COMMIT_SEP"
-    )
+    out = _cochange_log_raw(repo_path)
     if not out:
         return []
 
