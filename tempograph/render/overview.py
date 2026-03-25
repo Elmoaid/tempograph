@@ -3638,27 +3638,22 @@ def _signals_async_oop(
 # Main render function
 # ---------------------------------------------------------------------------
 
-def _overview_preamble(graph: Tempo) -> tuple[list[str], dict]:
-    """Header section: stats, entry points, key files, activity, hot symbols, stable core.
-
-    Returns (lines, _commit_counts).
-    """
+def _preamble_stats_and_entries(graph: Tempo) -> list[str]:
     stats = graph.stats
     lines = [f"repo: {graph.root.rsplit('/', 1)[-1]}"]
-
-    # One-line stats
     lang_items = sorted(stats["languages"].items(), key=lambda x: -x[1])
     lang_str = ", ".join(f"{lang}({n})" for lang, n in lang_items)
     lines.append(f"{stats['files']} files, {stats['symbols']} symbols, {stats['total_lines']:,} lines | {lang_str}")
-
-    # Entry points — what agents need to understand "where does this start"
     entries = _find_entry_points(graph)
     if entries:
         lines.append("")
         lines.append("entry points:")
         for e in entries:
             lines.append(f"  {e}")
+    return lines
 
+
+def _preamble_key_files(graph: Tempo) -> list[str]:
     # Top files by combined size + complexity (not two separate lists)
     # Exclude non-code files: JSON schemas, markdown docs, CSS, TOML configs, etc.
     # These have cx=0 but large line counts (e.g. auto-generated Tauri schemas at 2564L),
@@ -3668,27 +3663,28 @@ def _overview_preamble(graph: Tempo) -> tuple[list[str], dict]:
         if fi.language.value not in _CODE_LANGS:
             continue  # skip markdown, json, toml, yaml, html, css — never "key" for coding
         cx = sum(graph.symbols[sid].complexity for sid in fi.symbols if sid in graph.symbols)
-        # Score: lines matter, complexity matters more
         score = fi.line_count + cx * 3
         file_scores.append((score, fi))
     file_scores.sort(key=lambda x: -x[0])
-    lines.append("")
-    lines.append("key files (by size + complexity):")
-    for score, fi in file_scores[:12]:
+    lines: list[str] = ["", "key files (by size + complexity):"]
+    for _score, fi in file_scores[:12]:
         cx = sum(graph.symbols[sid].complexity for sid in fi.symbols if sid in graph.symbols)
-        parts = []
-        parts.append(f"{fi.line_count:,}L")
+        parts = [f"{fi.line_count:,}L"]
         if cx > 0:
             parts.append(f"cx={cx}")
         parts.append(fi.language.value)
         lines.append(f"  {fi.path} ({', '.join(parts)})")
+    return lines
 
+
+def _preamble_recently_active(graph: Tempo) -> tuple[list[str], dict]:
     # Recently active: top commit-hot SOURCE files (excludes docs/config/tests)
+    lines: list[str] = []
     try:
         from ..git import file_commit_counts as _file_commit_counts
-        _commit_counts = _file_commit_counts(graph.root)
+        commit_counts = _file_commit_counts(graph.root)
         _active = sorted(
-            [(fp, c) for fp, c in _commit_counts.items()
+            [(fp, c) for fp, c in commit_counts.items()
              if fp in graph.files and not _is_test_file(fp)
              and Path(fp).suffix in _SRC_EXTS],
             key=lambda x: -x[1],
@@ -3699,30 +3695,37 @@ def _overview_preamble(graph: Tempo) -> tuple[list[str], dict]:
             _act_str = ", ".join(f"{sh} ({c})" for sh, (_, c) in zip(short, _active))
             lines.append("")
             lines.append(f"recently active: {_act_str}")
+        return lines, commit_counts
     except Exception:
-        _commit_counts = {}
+        return lines, {}
 
+
+def _preamble_high_risk(graph: Tempo, commit_counts: dict) -> list[str]:
     # High-risk files: high-churn source files with no matching test file.
     # Actively changing code with no test coverage — most likely to introduce regressions.
     # Only shown when test files exist (otherwise the whole project lacks tests).
     _test_fps_for_risk = {fp for fp in graph.files if _is_test_file(fp)}
-    if _commit_counts and _test_fps_for_risk:
-        _high_risk = sorted(
-            [
-                (fp, c) for fp, c in _commit_counts.items()
-                if fp in graph.files
-                and not _is_test_file(fp)
-                and c >= 5
-                and graph.files[fp].symbols
-                and Path(fp).suffix in _SRC_EXTS
-                and not any(fp.rsplit("/", 1)[-1].rsplit(".", 1)[0] in t for t in _test_fps_for_risk)
-            ],
-            key=lambda x: -x[1],
-        )
-        if _high_risk:
-            _hr_parts = [f"{fp.rsplit('/', 1)[-1]} ({c})" for fp, c in _high_risk[:3]]
-            lines.append(f"high risk (no tests): {', '.join(_hr_parts)}")
+    if not commit_counts or not _test_fps_for_risk:
+        return []
+    _high_risk = sorted(
+        [
+            (fp, c) for fp, c in commit_counts.items()
+            if fp in graph.files
+            and not _is_test_file(fp)
+            and c >= 5
+            and graph.files[fp].symbols
+            and Path(fp).suffix in _SRC_EXTS
+            and not any(fp.rsplit("/", 1)[-1].rsplit(".", 1)[0] in t for t in _test_fps_for_risk)
+        ],
+        key=lambda x: -x[1],
+    )
+    if not _high_risk:
+        return []
+    _hr_parts = [f"{fp.rsplit('/', 1)[-1]} ({c})" for fp, c in _high_risk[:3]]
+    return [f"high risk (no tests): {', '.join(_hr_parts)}"]
 
+
+def _preamble_hot_symbols(graph: Tempo) -> list[str]:
     # Hot symbols: top 3 source functions by unique cross-file caller files.
     # Helps agents immediately identify the highest-traffic API surfaces.
     _hot_syms: list[tuple[int, str, str]] = []  # (unique_caller_files, name, file)
@@ -3735,12 +3738,14 @@ def _overview_preamble(graph: Tempo) -> tuple[list[str], dict]:
         }
         if len(cross_files) >= 3:
             _hot_syms.append((len(cross_files), sym.qualified_name, sym.file_path))
-    if _hot_syms:
-        _hot_syms.sort(key=lambda x: -x[0])
-        _hot_parts = [f"{name} ({n})" for n, name, _ in _hot_syms[:3]]
-        lines.append("")
-        lines.append(f"hot symbols: {', '.join(_hot_parts)}")
+    if not _hot_syms:
+        return []
+    _hot_syms.sort(key=lambda x: -x[0])
+    _hot_parts = [f"{name} ({n})" for n, name, _ in _hot_syms[:3]]
+    return ["", f"hot symbols: {', '.join(_hot_parts)}"]
 
+
+def _preamble_untested_hot(graph: Tempo) -> list[str]:
     # Untested hot: hot symbols (>=3 caller files) with zero test file callers.
     # These are the most dangerous to refactor — widely used but unprotected by tests.
     _untested_hot: list[tuple[int, str]] = []
@@ -3752,39 +3757,58 @@ def _overview_preamble(graph: Tempo) -> tuple[list[str], dict]:
         _test_callers = [c for c in _all_callers if _is_test_file(c.file_path)]
         if len(_src_caller_files) >= 3 and not _test_callers:
             _untested_hot.append((len(_src_caller_files), sym.name, sym.file_path))
-    if _untested_hot:
-        _untested_hot.sort(key=lambda x: -x[0])
-        _uh_parts = [
-            f"{name} ({n}, {fp.rsplit('/', 1)[-1]})"
-            for n, name, fp in _untested_hot[:3]
-        ]
-        lines.append(f"untested hot: {', '.join(_uh_parts)} — no test coverage")
+    if not _untested_hot:
+        return []
+    _untested_hot.sort(key=lambda x: -x[0])
+    _uh_parts = [f"{name} ({n}, {fp.rsplit('/', 1)[-1]})" for n, name, fp in _untested_hot[:3]]
+    return [f"untested hot: {', '.join(_uh_parts)} — no test coverage"]
 
+
+def _preamble_stable_core_candidates(graph: Tempo, _fld_sc) -> list[tuple[int, int, str]]:
+    candidates: list[tuple[int, int, str]] = []
+    for _fp, _fi in graph.files.items():
+        if _is_test_file(_fp) or not _fi.symbols:
+            continue
+        _src_imps = len({i for i in graph.importers_of(_fp) if i != _fp and i in graph.files and not _is_test_file(i)})
+        if _src_imps < 5:
+            continue
+        _days = _fld_sc(graph.root, _fp)
+        if _days is not None and _days >= 30:
+            candidates.append((_src_imps, _days, _fp))
+    return candidates
+
+
+def _preamble_stable_core(graph: Tempo) -> list[str]:
     # Stable core: files with high import fan-in that have rarely changed (>=30d).
     # Foundational infrastructure treated as stable contracts — changes here are highest-risk.
-    if graph.root:
-        try:
-            from ..git import file_last_modified_days as _fld_sc  # noqa: PLC0415
-            _sc_candidates: list[tuple[int, int, str]] = []  # (importers, days, fp)
-            for _fp, _fi in graph.files.items():
-                if _is_test_file(_fp) or not _fi.symbols:
-                    continue
-                _src_imps = len({
-                    i for i in graph.importers_of(_fp)
-                    if i != _fp and i in graph.files and not _is_test_file(i)
-                })
-                if _src_imps >= 5:
-                    _days_sc = _fld_sc(graph.root, _fp)
-                    if _days_sc is not None and _days_sc >= 30:
-                        _sc_candidates.append((_src_imps, _days_sc, _fp))
-            if len(_sc_candidates) >= 2:
-                _sc_candidates.sort(key=lambda x: -x[0])
-                _sc3_fps = [fp for _, _, fp in _sc_candidates[:3]]
-                _sc_parts = [f"{_display_path(fp, _sc3_fps)} ({n} importers, {d}d stable)" for n, d, fp in _sc_candidates[:3]]
-                lines.append(f"stable core: {', '.join(_sc_parts)}")
-        except Exception:
-            pass
+    if not graph.root:
+        return []
+    try:
+        from ..git import file_last_modified_days as _fld_sc  # noqa: PLC0415
+        _sc_candidates = _preamble_stable_core_candidates(graph, _fld_sc)
+        if len(_sc_candidates) >= 2:
+            _sc_candidates.sort(key=lambda x: -x[0])
+            _sc3_fps = [fp for _, _, fp in _sc_candidates[:3]]
+            _sc_parts = [f"{_display_path(fp, _sc3_fps)} ({n} importers, {d}d stable)" for n, d, fp in _sc_candidates[:3]]
+            return [f"stable core: {', '.join(_sc_parts)}"]
+    except Exception:
+        pass
+    return []
 
+
+def _overview_preamble(graph: Tempo) -> tuple[list[str], dict]:
+    """Header section: stats, entry points, key files, activity, hot symbols, stable core.
+
+    Returns (lines, _commit_counts).
+    """
+    lines = _preamble_stats_and_entries(graph)
+    lines.extend(_preamble_key_files(graph))
+    activity_lines, _commit_counts = _preamble_recently_active(graph)
+    lines.extend(activity_lines)
+    lines.extend(_preamble_high_risk(graph, _commit_counts))
+    lines.extend(_preamble_hot_symbols(graph))
+    lines.extend(_preamble_untested_hot(graph))
+    lines.extend(_preamble_stable_core(graph))
     return lines, _commit_counts
 
 
