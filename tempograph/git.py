@@ -290,15 +290,12 @@ def recently_modified_files(repo: str, n_commits: int = 5) -> set[str]:
 def batch_file_modification_map(repo: str) -> dict[str, int | None]:
     """Return a {relative_file_path: days_since_last_commit} map for all tracked files.
 
-    Runs one ``git log --format=%ct --name-only -n 1000`` and parses the output
-    to build a complete staleness map.  Used to pre-populate staleness caches so
-    render passes avoid spawning one subprocess per unique file path.
+    Runs one ``git log --format=%ct --name-only --since=2.years.ago`` and parses
+    the output to build a complete staleness map.  Used to pre-populate staleness
+    caches so render passes avoid spawning one subprocess per unique file path.
 
-    Files not seen in the last 1000 commits map to ``None``.
+    Files not seen in the last 2 years map to ``None`` (treated as stale).
     """
-    # Use COMMIT_SEP marker so we can split on commit boundaries reliably.
-    # Two-year window covers all "recent" staleness checks; files older than 2 years
-    # are definitively stale (>730 days > 30-day threshold) so None is safe there.
     out = _run_git(
         repo, "log", "--pretty=format:COMMIT_SEP%ct", "--name-only",
         "--since=2.years.ago",
@@ -323,8 +320,8 @@ def batch_file_modification_map(repo: str) -> dict[str, int | None]:
     return result
 
 
-# Module-level batch prime: populated by prime_file_age_cache() from render passes.
-# Checked before the subprocess in file_last_modified_days to avoid per-file git calls.
+# Module-level prime cache: populated by prime_file_age_cache() from render passes.
+# Checked before subprocess in file_last_modified_days to avoid per-file git calls.
 _file_age_prime: dict[tuple[str, str], int | None] = {}
 
 
