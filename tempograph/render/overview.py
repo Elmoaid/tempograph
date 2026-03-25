@@ -624,130 +624,125 @@ def _signals_coupling(
     return lines
 
 
-def _signals_coverage(
-    graph: Tempo, *, _src_fps: list[str],
-    _test_fps: set[str], _commit_counts: dict[str, int],
-) -> list[str]:
-    """Test coverage signals."""
+def _coverage_stale_tests(graph: Tempo) -> list[str]:
+    """Stale tests: test files not updated while their source file changed (git-based)."""
     lines: list[str] = []
-
-    # Stale tests: test files not in recent commits while their source file IS.
-    # Signals test drift — code changed but tests haven't kept up. Needs git repo.
-    if graph.root:
-        try:
-            from ..git import file_change_velocity as _fcv2  # noqa: PLC0415
-            _recent_vel = _fcv2(graph.root)
-            _stale_tests: list[str] = []
-            for _tfp in graph.files:
-                if not _is_test_file(_tfp):
-                    continue
-                # Find likely source file: test_foo.py → foo.py
-                _tname = _tfp.rsplit("/", 1)[-1]
-                _sname = _tname
-                if _sname.startswith("test_"):
-                    _sname = _sname[5:]
-                elif _sname.endswith("_test.py"):
-                    _sname = _sname[:-8] + ".py"
-                # Find source file with matching base name
-                _src_match = next(
-                    (fp for fp in graph.files if not _is_test_file(fp) and fp.rsplit("/", 1)[-1] == _sname),
-                    None,
-                )
-                if _src_match and _src_match in _recent_vel and _tfp not in _recent_vel:
-                    _stale_tests.append(_tfp.rsplit("/", 1)[-1])
-            if len(_stale_tests) >= 2:
-                _st_str = ", ".join(_stale_tests[:3])
-                if len(_stale_tests) > 3:
-                    _st_str += f" +{len(_stale_tests) - 3} more"
-                lines.append(f"stale tests ({len(_stale_tests)}): {_st_str} — source changed, tests didn't")
-        except Exception:
-            pass
-
-    # Test coverage ratio: source files with a matching test file (name-pattern match).
-    # Signals overall project health — agents use this to identify undertested areas.
-    # Only count code files with symbols (excludes docs, config, markdown).
-    _src_fps = [fp for fp in graph.files if not _is_test_file(fp) and graph.files[fp].symbols]
-    _test_fps = {fp for fp in graph.files if _is_test_file(fp)}
-    if _src_fps and _test_fps:
-        _covered = sum(
-            1 for fp in _src_fps
-            if any(fp.rsplit("/", 1)[-1].rsplit(".", 1)[0] in t for t in _test_fps)
-        )
-        _test_pct = int(_covered / len(_src_fps) * 100)
-        lines.append(f"test coverage: {_covered}/{len(_src_fps)} source files ({_test_pct}%)")
-
-        # Per-directory breakdown: show dirs with >=3 source files and <80% coverage.
-        # Agents use this to identify which directories are high-risk to edit.
-        from collections import defaultdict as _dd
-        _dir_src: dict[str, list[str]] = _dd(list)
-        for fp in _src_fps:
-            _d = fp.rsplit("/", 1)[0] if "/" in fp else "."
-            _dir_src[_d].append(fp)
-        _dir_breakdown: list[tuple[int, str, str]] = []  # (pct, dir, label)
-        for _d, _fps in _dir_src.items():
-            if len(_fps) < 3:
+    if not graph.root:
+        return lines
+    try:
+        from ..git import file_change_velocity as _fcv2  # noqa: PLC0415
+        _recent_vel = _fcv2(graph.root)
+        _stale_tests: list[str] = []
+        for _tfp in graph.files:
+            if not _is_test_file(_tfp):
                 continue
-            _d_cov = sum(1 for fp in _fps if any(fp.rsplit("/", 1)[-1].rsplit(".", 1)[0] in t for t in _test_fps))
-            _d_pct = int(_d_cov / len(_fps) * 100)
-            if _d_pct < 80:  # only show undertested dirs
-                _dname = _d.rsplit("/", 1)[-1] if "/" in _d else _d
-                _dir_breakdown.append((_d_pct, _dname, f"{_dname}/ ({_d_pct}%, {_d_cov}/{len(_fps)})"))
-        if len(_dir_breakdown) >= 2:
-            _dir_breakdown.sort(key=lambda x: x[0])  # worst first
-            lines.append(f"  by dir: {', '.join(x[2] for x in _dir_breakdown[:4])}")
-
-    # Orphan test files: test files that name a source file which no longer exists.
-    # These linger after source renames/deletions and should be cleaned up.
-    # Uses both basename and stem-segment matching to avoid false positives:
-    # test_bench_context.py -> "bench_context.py" OR any file ending in "context.py"
-    # with a path segment containing "bench".
-    if len(_test_fps) >= 2:
-        _orphan_tests: list[str] = []
-        _src_basenames = {
-            fp.rsplit("/", 1)[-1] for fp in graph.files if not _is_test_file(fp)
-        }
-        # Also build a stem set for partial matching (handles test_bench_ctx -> ctx.py patterns)
-        _src_stems = {
-            fp.rsplit("/", 1)[-1].rsplit(".", 1)[0]
-            for fp in graph.files if not _is_test_file(fp)
-        }
-        for _tfp in _test_fps:
+            # Find likely source file: test_foo.py → foo.py
             _tname = _tfp.rsplit("/", 1)[-1]
             _sname = _tname
             if _sname.startswith("test_"):
                 _sname = _sname[5:]
             elif _sname.endswith("_test.py"):
                 _sname = _sname[:-8] + ".py"
-            else:
-                continue  # no test_ prefix/suffix pattern — skip
-            _sstem = _sname.rsplit(".", 1)[0]  # e.g. "bench_context"
-            # Direct basename match
-            if _sname in _src_basenames:
-                continue
-            # Partial stem match: any source file whose stem is a suffix of test stem
-            # e.g. "bench_context" -> source "context" (bench/changelocal/context.py)
-            _partial_match = any(
-                _sstem.endswith("_" + s) or _sstem == s
-                for s in _src_stems
-                if len(s) >= 3
+            # Find source file with matching base name
+            _src_match = next(
+                (fp for fp in graph.files if not _is_test_file(fp) and fp.rsplit("/", 1)[-1] == _sname),
+                None,
             )
-            if not _partial_match:
-                _orphan_tests.append(_tname)
-        # Suppress if many orphans AND >40% ratio — indicates a naming mismatch
-        # between test structure and source structure (e.g. test_bench_foo.py for bench/foo.py).
-        # Small counts (<5) always shown regardless of ratio (likely real orphans).
-        _orphan_ratio = len(_orphan_tests) / max(len(_test_fps), 1)
-        if _orphan_tests and (len(_orphan_tests) < 5 or _orphan_ratio <= 0.40):
-            _ot_str = ", ".join(sorted(_orphan_tests)[:3])
-            if len(_orphan_tests) > 3:
-                _ot_str += f" +{len(_orphan_tests) - 3} more"
-            lines.append(
-                f"orphan tests ({len(_orphan_tests)}): {_ot_str} — no matching source file"
-            )
+            if _src_match and _src_match in _recent_vel and _tfp not in _recent_vel:
+                _stale_tests.append(_tfp.rsplit("/", 1)[-1])
+        if len(_stale_tests) >= 2:
+            _st_str = ", ".join(_stale_tests[:3])
+            if len(_stale_tests) > 3:
+                _st_str += f" +{len(_stale_tests) - 3} more"
+            lines.append(f"stale tests ({len(_stale_tests)}): {_st_str} — source changed, tests didn't")
+    except Exception:
+        pass
+    return lines
 
-    # S115: Largest test file — the test file with the most test functions.
-    # Identifies the "main test suite" — agents should run it first after any change.
-    # Only shown when 2+ test files exist and the largest has 3+ test functions.
+
+def _coverage_ratio_breakdown(graph: Tempo, _src_fps: list[str], _test_fps: set[str]) -> list[str]:
+    """Coverage ratio and per-directory breakdown for undertested dirs."""
+    lines: list[str] = []
+    if not (_src_fps and _test_fps):
+        return lines
+    _covered = sum(
+        1 for fp in _src_fps
+        if any(fp.rsplit("/", 1)[-1].rsplit(".", 1)[0] in t for t in _test_fps)
+    )
+    _test_pct = int(_covered / len(_src_fps) * 100)
+    lines.append(f"test coverage: {_covered}/{len(_src_fps)} source files ({_test_pct}%)")
+    # Per-directory breakdown: show dirs with >=3 source files and <80% coverage.
+    from collections import defaultdict as _dd
+    _dir_src: dict[str, list[str]] = _dd(list)
+    for fp in _src_fps:
+        _d = fp.rsplit("/", 1)[0] if "/" in fp else "."
+        _dir_src[_d].append(fp)
+    _dir_breakdown: list[tuple[int, str, str]] = []  # (pct, dir, label)
+    for _d, _fps in _dir_src.items():
+        if len(_fps) < 3:
+            continue
+        _d_cov = sum(1 for fp in _fps if any(fp.rsplit("/", 1)[-1].rsplit(".", 1)[0] in t for t in _test_fps))
+        _d_pct = int(_d_cov / len(_fps) * 100)
+        if _d_pct < 80:  # only show undertested dirs
+            _dname = _d.rsplit("/", 1)[-1] if "/" in _d else _d
+            _dir_breakdown.append((_d_pct, _dname, f"{_dname}/ ({_d_pct}%, {_d_cov}/{len(_fps)})"))
+    if len(_dir_breakdown) >= 2:
+        _dir_breakdown.sort(key=lambda x: x[0])  # worst first
+        lines.append(f"  by dir: {', '.join(x[2] for x in _dir_breakdown[:4])}")
+    return lines
+
+
+def _coverage_orphan_tests(graph: Tempo, _test_fps: set[str]) -> list[str]:
+    """Orphan tests: test files whose named source file no longer exists."""
+    lines: list[str] = []
+    if len(_test_fps) < 2:
+        return lines
+    _orphan_tests: list[str] = []
+    _src_basenames = {
+        fp.rsplit("/", 1)[-1] for fp in graph.files if not _is_test_file(fp)
+    }
+    # Also build a stem set for partial matching (handles test_bench_ctx -> ctx.py patterns)
+    _src_stems = {
+        fp.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+        for fp in graph.files if not _is_test_file(fp)
+    }
+    for _tfp in _test_fps:
+        _tname = _tfp.rsplit("/", 1)[-1]
+        _sname = _tname
+        if _sname.startswith("test_"):
+            _sname = _sname[5:]
+        elif _sname.endswith("_test.py"):
+            _sname = _sname[:-8] + ".py"
+        else:
+            continue  # no test_ prefix/suffix pattern — skip
+        _sstem = _sname.rsplit(".", 1)[0]  # e.g. "bench_context"
+        # Direct basename match
+        if _sname in _src_basenames:
+            continue
+        # Partial stem match: any source file whose stem is a suffix of test stem
+        _partial_match = any(
+            _sstem.endswith("_" + s) or _sstem == s
+            for s in _src_stems
+            if len(s) >= 3
+        )
+        if not _partial_match:
+            _orphan_tests.append(_tname)
+    # Suppress if many orphans AND >40% ratio — indicates a naming mismatch
+    _orphan_ratio = len(_orphan_tests) / max(len(_test_fps), 1)
+    if _orphan_tests and (len(_orphan_tests) < 5 or _orphan_ratio <= 0.40):
+        _ot_str = ", ".join(sorted(_orphan_tests)[:3])
+        if len(_orphan_tests) > 3:
+            _ot_str += f" +{len(_orphan_tests) - 3} more"
+        lines.append(
+            f"orphan tests ({len(_orphan_tests)}): {_ot_str} — no matching source file"
+        )
+    return lines
+
+
+def _coverage_api_quality(graph: Tempo, _test_fps: set[str]) -> list[str]:
+    """S115 (largest test file), S84 (test debt), S86 (zombie exports)."""
+    lines: list[str] = []
+    # S115: Largest test file — identifies the "main test suite" agents run first.
     if len(_test_fps) >= 2:
         _test_fn_counts: list[tuple[int, str]] = []
         for _tfp in _test_fps:
@@ -763,12 +758,7 @@ def _signals_coverage(
         if _test_fn_counts:
             _largest_t_n, _largest_t_fp = max(_test_fn_counts, key=lambda x: x[0])
             lines.append(f"largest test file: {_largest_t_fp.rsplit('/', 1)[-1]} ({_largest_t_n} tests)")
-
-
-    # S84: Test debt — exported functions/methods with real callers but zero test coverage.
-    # Different from "API surface unused": these ARE actively called but not tested.
-    # The highest-risk category: production code exercised by users but not by tests.
-    # Only shown when 3+ qualify (avoids noise on small/well-tested repos).
+    # S84: Test debt — exported functions with callers but zero test coverage.
     _active_exported_fns = [
         sym for sym in graph.symbols.values()
         if sym.exported
@@ -781,10 +771,7 @@ def _signals_coverage(
         lines.append(
             f"test debt: {len(_active_exported_fns)} active exports with callers but no tests"
         )
-
     # S86: Zombie exports — exported functions whose ONLY callers are test files.
-    # These are test-scaffolding APIs that should be made private or deleted.
-    # Only shown when 2+ qualify; single occurrence could be an intentional test helper.
     _zombie_exports = [
         sym for sym in graph.symbols.values()
         if sym.exported
@@ -799,11 +786,13 @@ def _signals_coverage(
         if len(_zombie_exports) > 4:
             _z_str += f" +{len(_zombie_exports) - 4} more"
         lines.append(f"zombie exports ({len(_zombie_exports)}): {_z_str} — exported but only called from tests")
+    return lines
 
 
+def _coverage_balance_signals(graph: Tempo) -> list[str]:
+    """S142, S151, S233, S213, S271, S322: test ratio and balance signals."""
+    lines: list[str] = []
     # S142: Test coverage gap — source files with no corresponding test file.
-    # Helps agents know which areas of the codebase are "flying blind."
-    # Only shown when test files exist AND >= 30% of source files lack tests.
     _s142_all_tests = {fp for fp in graph.files if _is_test_file(fp)}
     _s142_src_fps = [fp for fp in graph.files if not _is_test_file(fp)]
     if _s142_all_tests and len(_s142_src_fps) >= 5:
@@ -817,11 +806,7 @@ def _signals_coverage(
                 f"test coverage gap: {len(_s142_untested_fps)}/{len(_s142_src_fps)}"
                 f" source files have no tests ({_s142_gap_pct}%)"
             )
-
-
-    # S151: Impl vs test ratio — ratio of non-test source lines to test file lines.
-    # High ratio (>= 5x) = tests are thin relative to implementation.
-    # Only shown when test files exist and there are 10+ source lines.
+    # S151: Impl vs test ratio — high ratio (>= 5x) means tests are thin.
     _s151_src_lines = sum(
         fi.line_count for fp, fi in graph.files.items() if not _is_test_file(fp)
     )
@@ -835,11 +820,7 @@ def _signals_coverage(
                 f"impl:test ratio: {_s151_ratio:.1f}x ({_s151_src_lines:,}L src / {_s151_test_lines:,}L tests)"
                 f" — test coverage is thin"
             )
-
-
-    # S233: Undertested codebase — source files exist but fewer than 20% of all files are tests.
-    # A low test ratio for a non-trivial codebase is a coverage risk signal.
-    # Only shown when < 20% of 10+ files are tests (excluding trivial single-file repos).
+    # S233: Undertested codebase — fewer than 20% of all files are tests.
     _s233_all = [fp for fp in graph.files if graph.files[fp].language.value in _CODE_LANGS]
     _s233_tests = [fp for fp in _s233_all if _is_test_file(fp)]
     _s233_src = [fp for fp in _s233_all if not _is_test_file(fp)]
@@ -850,11 +831,7 @@ def _signals_coverage(
                 f"undertested: {len(_s233_tests)}/{len(_s233_all)} files are tests"
                 f" ({_s233_ratio:.0f}%) — consider adding test coverage"
             )
-
-
-    # S213: High test ratio — more than 60% of source files are test files.
-    # Test-heavy repos are healthy, but very high ratios may indicate missing source coverage.
-    # Positive signal: only shown when ratio >= 60% and there are 5+ total files.
+    # S213: High test ratio — more than 60% of files are tests (positive signal).
     _all_files213 = [fp for fp in graph.files if graph.files[fp].language.value in _CODE_LANGS]
     _test_files213 = [fp for fp in _all_files213 if _is_test_file(fp)]
     if len(_all_files213) >= 5:
@@ -864,11 +841,7 @@ def _signals_coverage(
                 f"high test ratio: {len(_test_files213)}/{len(_all_files213)} files are tests"
                 f" ({_test_ratio213:.0f}%) — well-tested codebase"
             )
-
-
     # S271: Test-heavy codebase — test files outnumber source files by 2×.
-    # A very high test-to-code ratio may indicate test duplication, over-testing of
-    # trivial code, or test debt accumulated from abandoned features.
     _s271_src = [
         fp for fp in graph.files
         if not _is_test_file(fp) and graph.files[fp].language.value in _CODE_LANGS
@@ -880,12 +853,7 @@ def _signals_coverage(
             f"test-heavy: {len(_s271_tests)} test files vs {len(_s271_src)} source files"
             f" ({_s271_ratio:.1f}× ratio) — unusually high; check for test duplication or dead tests"
         )
-
-
-
     # S322: Test gap — source files outnumber test files by 3× or more.
-    # A large source-to-test ratio means most code has no regression safety net;
-    # adding tests before refactoring is strongly advised.
     _s322_src_files = [fp for fp in graph.files if not _is_test_file(fp)]
     _s322_test_files = [fp for fp in graph.files if _is_test_file(fp)]
     if len(_s322_src_files) >= 10 and _s322_test_files:
@@ -900,8 +868,22 @@ def _signals_coverage(
             f"no tests: {len(_s322_src_files)} source files with 0 test files detected"
             f" — add baseline tests before any refactor"
         )
+    return lines
 
 
+def _signals_coverage(
+    graph: Tempo, *, _src_fps: list[str],
+    _test_fps: set[str], _commit_counts: dict[str, int],
+) -> list[str]:
+    """Test coverage signals."""
+    _src_fps = [fp for fp in graph.files if not _is_test_file(fp) and graph.files[fp].symbols]
+    _test_fps = {fp for fp in graph.files if _is_test_file(fp)}
+    lines: list[str] = []
+    lines.extend(_coverage_stale_tests(graph))
+    lines.extend(_coverage_ratio_breakdown(graph, _src_fps, _test_fps))
+    lines.extend(_coverage_orphan_tests(graph, _test_fps))
+    lines.extend(_coverage_api_quality(graph, _test_fps))
+    lines.extend(_coverage_balance_signals(graph))
     return lines
 
 
