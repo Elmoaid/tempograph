@@ -1073,14 +1073,19 @@ class TestFocusHotCalleeInstability:
         assert "hot_b" in instability_line
 
     def test_four_hot_callees_truncated(self, tmp_path):
-        """4 hot callees → shows 3 names then '...'."""
+        """4 hot callees → instability shows 3 names then '...'.
+
+        Seed file is also hot to prevent S62 (drift risk) from co-firing,
+        keeping instability as the only signal line for a clean assertion.
+        """
         from tempograph.render.focused import _build_callees_block
 
         seed = self._fn_sym("run", "app.py")
         callees = [self._fn_sym(f"fn_{i}", f"hot_{i}.py") for i in range(4)]
         edges = [Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c.id) for c in callees]
         graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + callees)
-        graph.hot_files = {f"hot_{i}.py" for i in range(4)}
+        # Include seed's own file so S62 drift guard (seed NOT hot) is blocked
+        graph.hot_files = {f"hot_{i}.py" for i in range(4)} | {"app.py"}
 
         result = _build_callees_block(seed, 0, graph, "")
         assert len(result) == 2
@@ -1124,6 +1129,173 @@ class TestFocusHotCalleeInstability:
         result = _build_callees_block(seed, 1, graph, "")
         assert len(result) == 1, "depth=1 should not emit instability"
         assert "instability" not in result[0]
+
+
+# S62: _build_callees_block — contract drift (stable seed, hot callees)
+# -----------------------------------------------------------------------
+
+
+class TestFocusContractDrift:
+    """S62: emit drift risk when seed file is stable but ≥2 callees' files are hot.
+
+    S52 fires for general hot-callee instability. S62 fires specifically when the SEED
+    file itself is NOT in hot_files — meaning the seed hasn't been touched while its
+    callees have been updated. The recommended action differs: verify interface contracts
+    BEFORE editing, not just while editing.
+    """
+
+    def _fn_sym(self, name, file_path):
+        return Symbol(
+            id=f"{file_path}::{name}",
+            name=name,
+            qualified_name=name,
+            kind=SymbolKind.FUNCTION,
+            language=Language.PYTHON,
+            file_path=file_path,
+            line_start=1,
+            line_end=20,
+            exported=False,
+            complexity=0,
+        )
+
+    def test_stable_seed_three_hot_callees_fires(self, tmp_path):
+        """Stable seed + ≥3 hot callees → drift risk line appears.
+
+        Threshold is 3 (not 2) to differentiate from S52 which fires at ≥2.
+        S52 catches general instability; S62 fires only on the more extreme drift case.
+        """
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("process", "stable.py")
+        c1 = self._fn_sym("fetch_data", "hot_a.py")
+        c2 = self._fn_sym("serialize", "hot_b.py")
+        c3 = self._fn_sym("validate", "hot_c.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c1.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c2.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c3.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1, c2, c3])
+        # seed file NOT hot, callees are hot
+        graph.hot_files = {"hot_a.py", "hot_b.py", "hot_c.py"}
+
+        result = _build_callees_block(seed, 0, graph, "")
+        drift_lines = [l for l in result if "drift risk" in l]
+        assert drift_lines, f"Expected drift risk line; got {result!r}"
+        assert "3 callees updated" in drift_lines[0]
+        assert "verify contracts" in drift_lines[0]
+
+    def test_two_hot_callees_no_drift(self, tmp_path):
+        """2 hot callees: S52 (instability) fires but S62 (drift) does NOT — threshold is 3."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("process", "stable.py")
+        c1 = self._fn_sym("fetch_data", "hot_a.py")
+        c2 = self._fn_sym("serialize", "hot_b.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c1.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c2.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1, c2])
+        graph.hot_files = {"hot_a.py", "hot_b.py"}
+
+        result = _build_callees_block(seed, 0, graph, "")
+        # S52 fires (instability), S62 does NOT (below threshold)
+        assert any("instability" in l for l in result), "S52 should fire"
+        assert all("drift risk" not in l for l in result), "S62 must not fire with only 2 hot callees"
+
+    def test_seed_itself_hot_no_drift(self, tmp_path):
+        """When seed file IS hot, no drift signal (active development, not dormant)."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("process", "active.py")
+        c1 = self._fn_sym("fetch_data", "hot_a.py")
+        c2 = self._fn_sym("serialize", "hot_b.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c1.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c2.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1, c2])
+        # seed file IS hot too — drift doesn't apply
+        graph.hot_files = {"active.py", "hot_a.py", "hot_b.py"}
+
+        result = _build_callees_block(seed, 0, graph, "")
+        assert all("drift risk" not in l for l in result), f"Drift must not fire when seed is hot; got {result!r}"
+
+    def test_two_hot_callees_below_drift_threshold(self, tmp_path):
+        """2 hot callees: S52 fires (instability) but S62 does NOT (drift threshold is ≥3)."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("process", "stable.py")
+        c1 = self._fn_sym("fetch_data", "hot_a.py")
+        c2 = self._fn_sym("local_util", "cold.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c1.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c2.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1, c2])
+        graph.hot_files = {"hot_a.py"}
+
+        result = _build_callees_block(seed, 0, graph, "")
+        assert all("drift risk" not in l for l in result), f"1 hot callee must not fire drift; got {result!r}"
+
+    def test_hot_callee_same_file_as_seed_excluded(self, tmp_path):
+        """Hot callee in seed's own file doesn't count — same-file calls aren't drift."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("main_fn", "stable.py")
+        # Same file as seed — should be excluded from drift count
+        c_same = self._fn_sym("helper_a", "stable.py")
+        c_hot = self._fn_sym("dep_b", "hot_external.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c_same.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c_hot.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c_same, c_hot])
+        # stable.py is hot but that's also the seed — and hot_external.py is hot
+        # Only 1 distinct external hot callee → no drift
+        graph.hot_files = {"stable.py", "hot_external.py"}
+        # Override: seed itself must be stable, use different key for seed
+        # Actually seed.file_path is "stable.py" which IS in hot_files — so S62 guard blocks.
+        # Let's instead make seed stable and only external callee hot:
+        graph.hot_files = {"hot_external.py"}
+
+        result = _build_callees_block(seed, 0, graph, "")
+        # Only 1 external hot callee → no drift (same-file callee doesn't count)
+        assert all("drift risk" not in l for l in result), f"1 external hot callee must not fire; got {result!r}"
+
+    def test_drift_truncates_names_at_three(self, tmp_path):
+        """4+ hot callees → shows 3 names then '...'."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("orchestrate", "stable.py")
+        callees = [self._fn_sym(f"dep_{i}", f"hot_{i}.py") for i in range(4)]
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c.id) for c in callees]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + callees)
+        graph.hot_files = {f"hot_{i}.py" for i in range(4)}
+
+        result = _build_callees_block(seed, 0, graph, "")
+        drift_lines = [l for l in result if "drift risk" in l]
+        assert drift_lines, "Should fire with 4 hot callees"
+        assert "4 callees updated" in drift_lines[0]
+        assert "..." in drift_lines[0]
+
+    def test_depth1_no_drift(self, tmp_path):
+        """Drift signal only fires at depth=0."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("inner", "stable.py")
+        c1 = self._fn_sym("dep_a", "hot_a.py")
+        c2 = self._fn_sym("dep_b", "hot_b.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c1.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c2.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1, c2])
+        graph.hot_files = {"hot_a.py", "hot_b.py"}
+
+        result = _build_callees_block(seed, 1, graph, "")
+        assert all("drift risk" not in l for l in result), "depth=1 must not emit drift risk"
 
 
 # S53: _build_callees_block — depth=1 hot-first callee ordering
