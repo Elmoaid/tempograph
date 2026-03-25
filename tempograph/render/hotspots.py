@@ -65,6 +65,42 @@ def _file_blast_count(graph: Tempo, file_path: str) -> int:
     return _file_blast_info(graph, file_path)["total"]
 
 
+def _calm_zones_lines(graph: Tempo, velocity: dict[str, float]) -> list[str]:
+    """Identify stable, heavily-imported files — the load-bearing walls of the codebase.
+
+    These are the INVERSE of hotspots: not currently churning, but critical because
+    many files depend on them. Breaking one silently cascades across the codebase.
+
+    Fires when: velocity data available AND ≥1 non-test file has low churn (<2 commits/week)
+    AND ≥5 non-test importers. Sorted by importer count: most load-bearing first.
+    """
+    if not velocity:
+        return []
+
+    candidates: list[tuple[int, str, float]] = []
+    for fp in graph.files:
+        if _is_test_file(fp):
+            continue
+        vel = velocity.get(fp, 0.0)
+        if vel >= 2.0:
+            continue
+        src_importers = [i for i in graph.importers_of(fp) if not _is_test_file(i)]
+        if len(src_importers) < 5:
+            continue
+        candidates.append((len(src_importers), fp, vel))
+
+    if not candidates:
+        return []
+
+    candidates.sort(key=lambda x: -x[0])
+    lines = ["", "calm zones (stable, load-bearing):"]
+    for imp_count, fp, vel in candidates[:4]:
+        base = fp.rsplit("/", 1)[-1]
+        vel_note = f", {vel:.1f} commits/wk" if vel >= 0.1 else ""
+        lines.append(f"  {base} — {imp_count} importers{vel_note}")
+    return lines
+
+
 def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
     """Find the most interconnected, complex, high-risk symbols."""
     # Pre-build renders-from index to avoid O(symbols*edges) scan
@@ -284,6 +320,7 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
             lines.append("")
             lines.append(f"Untested hotspots: {', '.join(_uh_parts)}")
 
+    lines.extend(_calm_zones_lines(graph, velocity))
 
     lines.extend(_collect_hotspots_signals(
         graph, scores, velocity, velocity_14, _all_test_fps_hs, top_n
