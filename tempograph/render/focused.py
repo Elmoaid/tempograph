@@ -1631,6 +1631,23 @@ def _build_callers_block(
                     f"{indent}    ↳ primary caller: {_dom_basename}"
                     f" ({_dom_count}/{_total_callers})"
                 )
+        # S59: caller volatility — ≥2 non-test callers in hot_files = interface under pressure.
+        # Mirror of S52 (hot callee instability): S52 flags when callees are changing under you;
+        # S59 flags when callers are changing around you. Together they paint a full volatility picture.
+        # An agent editing a function whose callers are in active churn risks interface breakage
+        # from parallel edits: callers may be adding/removing call sites or changing how they use output.
+        if depth == 0 and graph.hot_files:
+            _hot_callers = [
+                c for c in _callers_for_display
+                if c.file_path in graph.hot_files
+            ]
+            if len(_hot_callers) >= 2:
+                _cv_names = [c.name for c in _hot_callers[:3]]
+                _cv_suffix = "..." if len(_hot_callers) > 3 else ""
+                lines.append(
+                    f"{indent}    \u21b3 caller volatility: {len(_hot_callers)} active callers"
+                    f" ({', '.join(_cv_names)}{_cv_suffix})"
+                )
     return lines
 
 
