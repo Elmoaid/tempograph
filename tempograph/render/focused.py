@@ -1648,6 +1648,40 @@ def _build_callers_block(
                     f"{indent}    \u21b3 caller volatility: {len(_hot_callers)} active callers"
                     f" ({', '.join(_cv_names)}{_cv_suffix})"
                 )
+        # S61: upstream transitive reach — how many non-test nodes transitively call this seed.
+        # Direct callers (shown above) are the visible surface. But those callers have their own
+        # callers, and so on. When direct callers <= 8 but amplify to 4x+ upstream nodes, the
+        # agent's blast-radius intuition is wrong: "only 2 callers" can mean 60+ transitively.
+        # BFS upward max depth=4, max 200 nodes. Only fires when amplification ratio >= 4x AND
+        # upstream >= 20 (strong signal only — avoid noise on well-isolated functions).
+        if depth == 0 and len(_callers_for_display) <= 8:
+            _direct_count = len(_callers_for_display)
+            _upstream_visited: set[str] = {sym.id}
+            _upstream_frontier = [sym.id]
+            _upstream_capped = False
+            for _ in range(4):  # max depth 4 hops
+                _next: list[str] = []
+                for _uid in _upstream_frontier:
+                    for _uc in graph.callers_of(_uid):
+                        if _uc.id not in _upstream_visited and not _is_test_file(_uc.file_path):
+                            _upstream_visited.add(_uc.id)
+                            _next.append(_uc.id)
+                            if len(_upstream_visited) >= 201:
+                                _upstream_capped = True
+                                break
+                    if _upstream_capped:
+                        break
+                _upstream_frontier = _next
+                if not _upstream_frontier or _upstream_capped:
+                    break
+            _upstream_count = len(_upstream_visited) - 1  # exclude seed itself
+            if _upstream_count >= 20 and _upstream_count >= _direct_count * 4:
+                _cap_str = "+" if _upstream_capped else ""
+                lines.append(
+                    f"{indent}    \u21b3 upstream reach: {_upstream_count}{_cap_str} nodes"
+                    f" — {_direct_count} direct caller{'s' if _direct_count != 1 else ''}"
+                    f" amplif{'y' if _direct_count != 1 else 'ies'} to wider blast"
+                )
     return lines
 
 
