@@ -2150,13 +2150,8 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
         )
 
 
-def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: list[Symbol], lines: list[str]) -> None:
-    """Dead code signals S743-S1019: typed patterns batch B — cache fns, validation, method-only classes, event handlers, getters, single-method classes, dispatch fns, subclasses, exception clusters, API endpoints, mixins, protocol classes, setup fns, SQL fns, builders."""
-    # S45-precompute: One classification pass over dead instead of 36 repeated scans.
-    # Before: 36 passes × 1659 items + 77,973 enum accesses. After: 1659 (1 pass) + bucket subsets.
-    _d_fn_meth: list = [s for s in dead if s.kind.value in ("function", "method") and not _is_test_file(s.file_path)]
-    _d_cls: list = [s for s in dead if s.kind.value == "class" and not _is_test_file(s.file_path)]
-    _d_const: list = [s for s in dead if s.kind.value in ("constant", "variable") and not _is_test_file(s.file_path)]
+def _typed_b_fn_name_patterns(graph: Tempo, _d_fn_meth: list, _d_cls: list, lines: list[str]) -> None:
+    """S743-S779: fn/method name-keyword patterns + method-only and single-method dead classes."""
     # S743: Dead cache functions — unused functions with caching/memoization names.
     # Caching functions that are never called indicate abandoned performance optimizations
     # or superseded caching strategies; they add complexity without delivering benefit.
@@ -2282,6 +2277,9 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
             f" — abandoned control-flow logic; endpoint or feature was removed"
         )
 
+
+def _typed_b_class_patterns(_d_fn_meth: list, _d_cls: list, _d_const: list, lines: list[str]) -> None:
+    """S785-S839: dead class shape patterns (subclass, constants cluster, exceptions, API endpoints, mixins, dataclasses, abstract, protocol)."""
     # S791: Dead subclass — dead class that inherits from a named base (not just object).
     # Subclasses carry the burden of the parent's interface; dead subclasses indicate
     # a plugin, strategy, or hook that was never activated or was removed.
@@ -2462,6 +2460,9 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
             f" — abandoned interface contracts; verify no concrete class is checked against them"
         )
 
+
+def _typed_b_fn_lifecycle(graph: Tempo, dead: list, _d_fn_meth: list, _d_cls: list, _d_const: list, lines: list[str]) -> None:
+    """S845-S911: fn/method lifecycle signals (event handlers, validators, factories, singletons, module constants, type aliases, test helpers, middleware, exported symbols, error handlers, thin classes, async)."""
     # S845: Dead event handler functions — unused on_/handle_/_handler functions.
     # Event handlers are wired to event buses, signals, or hooks; dead handlers indicate
     # removed subscriptions where the handler was not cleaned up alongside the subscription.
@@ -2689,6 +2690,9 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
             f" — may be registered background tasks; verify no dynamic registration before removing"
         )
 
+
+def _typed_b_fn_operational(graph: Tempo, _d_fn_meth: list, _d_cls: list, lines: list[str]) -> None:
+    """S917-S1019: fn/method operational signals (callbacks, formatters, data classes, exception classes, setup, type guards, serializers, hooks, tasks, converters, SQL, event dispatchers, validators, builders, error handlers, migrations, routers)."""
     # S917: Dead callback functions — unused on_/handle_/callback_/cb_ prefixed functions.
     # Dead callbacks indicate event-driven logic removed from registration; they may still
     # be referenced in configuration files or event registries outside the graph.
@@ -3019,6 +3023,23 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
         )
 
 
+def _typed_b_precompute(dead: list) -> tuple[list, list, list]:
+    """S45-precompute: One classification pass over dead instead of 36 repeated scans.
+    Before: 36 passes × 1659 items + 77,973 enum accesses. After: 1659 (1 pass) + bucket subsets.
+    Returns (_d_fn_meth, _d_cls, _d_const)."""
+    _d_fn_meth = [s for s in dead if s.kind.value in ("function", "method") and not _is_test_file(s.file_path)]
+    _d_cls = [s for s in dead if s.kind.value == "class" and not _is_test_file(s.file_path)]
+    _d_const = [s for s in dead if s.kind.value in ("constant", "variable") and not _is_test_file(s.file_path)]
+    return _d_fn_meth, _d_cls, _d_const
+
+
+def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: list[Symbol], lines: list[str]) -> None:
+    """Dead code signals S743-S1019: typed patterns batch B — dispatcher."""
+    _d_fn_meth, _d_cls, _d_const = _typed_b_precompute(dead)
+    _typed_b_fn_name_patterns(graph, _d_fn_meth, _d_cls, lines)
+    _typed_b_class_patterns(_d_fn_meth, _d_cls, _d_const, lines)
+    _typed_b_fn_lifecycle(graph, dead, _d_fn_meth, _d_cls, _d_const, lines)
+    _typed_b_fn_operational(graph, _d_fn_meth, _d_cls, lines)
 
 
 def _render_dead_header_stats(
