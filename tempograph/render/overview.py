@@ -2594,8 +2594,8 @@ def _signals_async_oop_b(graph: Tempo) -> list[str]:
 
     return lines
 
-def _signals_async_oop_c(graph: Tempo) -> list[str]:
-    """File quality and hub pattern signals (S655–S787)."""
+def _async_oop_c_complexity_structure(graph: Tempo) -> list[str]:
+    """File complexity and structural shape signals (S655, S661, S703, S709, S727, S733, S775)."""
     lines: list[str] = []
     # S655: High average complexity — average symbol complexity exceeds 5.
     # Complex functions are harder to understand, test, and maintain;
@@ -2632,111 +2632,6 @@ def _signals_async_oop_c(graph: Tempo) -> list[str]:
             f" — long import paths and review-invisible files; consider flattening package structure"
         )
 
-    # S667: No tests detected — repo has no test files at all (high risk for any change).
-    # Repos without tests have no safety net; any modification is an untested change
-    # and regressions will only surface at runtime.
-    _has_tests667 = any(_is_test_file(fp) for fp in graph.files)
-    if not _has_tests667 and len(graph.files) >= 3:
-        lines.append(
-            "no tests detected: no test files found in this repo"
-            " — all changes are untested; add a test suite before refactoring"
-        )
-
-    # S673: Dominant file — one non-test file holds >30% of all repo symbols.
-    # A file that dominates the symbol count is a gravity well that accumulates
-    # responsibilities; it should be the first target for decomposition.
-    _total_syms673 = sum(
-        1 for s in graph.symbols.values()
-        if not _is_test_file(s.file_path) and s.parent_id is None
-    )
-    if _total_syms673 > 0:
-        _file_counts673: dict[str, int] = {}
-        for s in graph.symbols.values():
-            if not _is_test_file(s.file_path) and s.parent_id is None:
-                _file_counts673[s.file_path] = _file_counts673.get(s.file_path, 0) + 1
-        _top_fp673 = max(_file_counts673, key=lambda f: _file_counts673[f], default=None)
-        if _top_fp673 and _file_counts673[_top_fp673] / _total_syms673 > 0.30:
-            _pct673 = int(_file_counts673[_top_fp673] / _total_syms673 * 100)
-            lines.append(
-                f"dominant file: {_top_fp673.rsplit('/', 1)[-1]} holds {_pct673}% of repo symbols"
-                f" — gravity-well file; prioritize decomposing this file"
-            )
-
-    # S679: High orphan ratio — more than 30% of source files have no importers.
-    # Files that nothing imports may be dead modules, scripts, or tools that
-    # have drifted from the main codebase; high orphan ratios signal poor cohesion.
-    _src_files679 = [fp for fp in graph.files if not _is_test_file(fp)]
-    if len(_src_files679) >= 4:
-        _orphans679 = [
-            fp for fp in _src_files679
-            if not graph.importers_of(fp)
-        ]
-        _orphan_pct679 = len(_orphans679) / len(_src_files679)
-        if _orphan_pct679 > 0.30:
-            _opct679 = int(_orphan_pct679 * 100)
-            lines.append(
-                f"high orphan ratio: {_opct679}% of source files have no importers"
-                f" — many disconnected files; verify none are abandoned dead modules"
-            )
-
-    # S685: Class-heavy repo — more than 60% of non-test exported symbols are classes.
-    # A repo where classes greatly outnumber functions often has anemic domain models
-    # with shallow behaviour; heavy OOP can obscure data flow and reduce testability.
-    _all_src685 = [
-        s for s in graph.symbols.values()
-        if s.parent_id is None and not _is_test_file(s.file_path)
-        and s.kind.value not in ("unknown", "module")
-    ]
-    if len(_all_src685) >= 5:
-        _class_count685 = sum(1 for s in _all_src685 if s.kind.value == "class")
-        if _class_count685 / len(_all_src685) > 0.60:
-            _cpct685 = int(_class_count685 / len(_all_src685) * 100)
-            lines.append(
-                f"class-heavy repo: {_cpct685}% of symbols are classes ({_class_count685}/{len(_all_src685)})"
-                f" — OOP-heavy; verify classes have behaviour, not just data"
-            )
-
-    # S691: Global variable density — top-level variables/constants are >20% of all symbols.
-    # High global state density increases coupling between modules and makes testing harder;
-    # constants are acceptable but mutable globals are a refactoring risk.
-    _all_top691 = [
-        s for s in graph.symbols.values()
-        if s.parent_id is None and not _is_test_file(s.file_path)
-        and s.kind.value not in ("unknown", "module")
-    ]
-    if len(_all_top691) >= 5:
-        _var_count691 = sum(
-            1 for s in _all_top691
-            if s.kind.value in ("variable", "constant")
-        )
-        if _var_count691 / len(_all_top691) > 0.20:
-            _vpct691 = int(_var_count691 / len(_all_top691) * 100)
-            lines.append(
-                f"high global state: {_vpct691}% of top-level symbols are variables/constants"
-                f" — check for mutable globals; prefer dependency injection or module-level constants"
-            )
-
-    # S697: Low test proxy — source has 5x+ more symbols than test symbols.
-    # When the production codebase greatly outnumbers test code, changes are under-tested;
-    # this is a structural proxy for coverage gaps.
-    _src_syms697 = sum(
-        1 for s in graph.symbols.values()
-        if not _is_test_file(s.file_path) and s.parent_id is None
-        and s.kind.value not in ("unknown", "module")
-    )
-    _test_syms697 = sum(
-        1 for s in graph.symbols.values()
-        if _is_test_file(s.file_path) and s.parent_id is None
-        and s.kind.value not in ("unknown", "module")
-    )
-    if _src_syms697 >= 5 and _test_syms697 > 0 and _src_syms697 >= _test_syms697 * 5:
-        lines.append(
-            f"low test proxy: {_src_syms697} source symbols vs {_test_syms697} test symbols"
-            f" — source outpaces tests by {_src_syms697 // max(_test_syms697, 1)}x; likely under-tested"
-        )
-    elif _src_syms697 >= 5 and _test_syms697 == 0:
-        pass  # covered by S667 (no tests detected)
-
     # S703: Empty source files — 2+ non-test source files with no exported symbols.
     # Files that define no symbols are placeholder stubs, empty modules, or leftover scaffolding;
     # they add noise to import paths and confuse agents trying to understand the codebase.
@@ -2767,42 +2662,6 @@ def _signals_async_oop_c(graph: Tempo) -> list[str]:
                 f" ({_ratio709:.1f} files/symbol) — over-fragmented; consider consolidating thin files"
             )
 
-    # S715: Hub file — a single source file is imported by >40% of all other source files.
-    # Hub files are architectural bottlenecks; changes to them propagate widely and can break
-    # many consumers simultaneously. They often need careful versioning and change control.
-    _src_files715 = [
-        fp for fp in graph.files
-        if not _is_test_file(fp) and fp.endswith(".py")
-    ]
-    if len(_src_files715) >= 4:
-        for _fp715 in _src_files715:
-            _importers715 = [
-                f for f in graph.importers_of(_fp715)
-                if f != _fp715 and not _is_test_file(f)
-            ]
-            _ratio715 = len(_importers715) / max(len(_src_files715) - 1, 1)
-            if _ratio715 > 0.40:
-                lines.append(
-                    f"hub file: {_fp715.rsplit('/', 1)[-1]} is imported by"
-                    f" {len(_importers715)}/{len(_src_files715) - 1} source files ({_ratio715:.0%})"
-                    f" — architectural bottleneck; changes here cascade widely"
-                )
-                break
-
-    # S721: No entry points — no files with standard entry-point names found in the repo.
-    # A repo without main.py / app.py / server.py etc. is likely a library or has non-standard
-    # naming; agents should not assume a runnable entrypoint exists.
-    _entry_names721 = {
-        "main.py", "app.py", "server.py", "cli.py", "__main__.py",
-        "run.py", "index.py", "wsgi.py", "asgi.py",
-    }
-    _all_basenames721 = {fp.rsplit("/", 1)[-1] for fp in graph.files}
-    if not (_all_basenames721 & _entry_names721) and len(graph.files) >= 3:
-        lines.append(
-            f"no entry points: none of {len(graph.files)} files have standard entry-point names"
-            f" — library-style repo or entry point uses non-standard naming"
-        )
-
     # S727: Single-file repo — the entire codebase is in one non-test source file.
     # All logic in one file makes every change touch the same place, prevents parallel
     # development, and makes testing harder; time to split into modules.
@@ -2832,23 +2691,55 @@ def _signals_async_oop_c(graph: Tempo) -> list[str]:
                 f" — consider organizing into subdirectories as the codebase grows"
             )
 
-    # S739: High constant density — the repo has more than twice as many variables/constants
-    # as functions. Config-heavy or data-heavy repos may lack abstraction; constants scattered
-    # across files make configuration management harder.
-    _all_syms739 = list(graph.symbols.values())
-    _fn_count739 = sum(
-        1 for s in _all_syms739
-        if s.kind.value in ("function", "method") and not _is_test_file(s.file_path)
-    )
-    _var_count739 = sum(
-        1 for s in _all_syms739
-        if s.kind.value in ("variable", "constant") and not _is_test_file(s.file_path)
-    )
-    if _fn_count739 > 0 and _var_count739 > _fn_count739 * 2:
+    # S775: Large average file size — avg source file exceeds 200 lines.
+    # When source files average more than 200 lines, the codebase has large files
+    # that are hard to navigate and review — consider splitting into smaller modules.
+    _src_files775 = [fi for fp, fi in graph.files.items() if not _is_test_file(fp)]
+    if len(_src_files775) >= 3:
+        _total_lines775 = sum(fi.line_count if fi.line_count else 0 for fi in _src_files775)
+        _avg_lines775 = _total_lines775 / len(_src_files775)
+        if _avg_lines775 >= 200:
+            lines.append(
+                f"large avg file size: {_avg_lines775:.0f} avg lines per source file"
+                f" — files are large; consider splitting into smaller, focused modules"
+            )
+
+    return lines
+
+
+def _async_oop_c_test_quality(graph: Tempo) -> list[str]:
+    """Test suite quality and coverage proxy signals (S667, S697, S745, S751)."""
+    lines: list[str] = []
+    # S667: No tests detected — repo has no test files at all (high risk for any change).
+    # Repos without tests have no safety net; any modification is an untested change
+    # and regressions will only surface at runtime.
+    _has_tests667 = any(_is_test_file(fp) for fp in graph.files)
+    if not _has_tests667 and len(graph.files) >= 3:
         lines.append(
-            f"high constant density: {_var_count739} variables/constants vs {_fn_count739} functions"
-            f" — config-heavy repo; verify constants are not scattered across multiple files"
+            "no tests detected: no test files found in this repo"
+            " — all changes are untested; add a test suite before refactoring"
         )
+
+    # S697: Low test proxy — source has 5x+ more symbols than test symbols.
+    # When the production codebase greatly outnumbers test code, changes are under-tested;
+    # this is a structural proxy for coverage gaps.
+    _src_syms697 = sum(
+        1 for s in graph.symbols.values()
+        if not _is_test_file(s.file_path) and s.parent_id is None
+        and s.kind.value not in ("unknown", "module")
+    )
+    _test_syms697 = sum(
+        1 for s in graph.symbols.values()
+        if _is_test_file(s.file_path) and s.parent_id is None
+        and s.kind.value not in ("unknown", "module")
+    )
+    if _src_syms697 >= 5 and _test_syms697 > 0 and _src_syms697 >= _test_syms697 * 5:
+        lines.append(
+            f"low test proxy: {_src_syms697} source symbols vs {_test_syms697} test symbols"
+            f" — source outpaces tests by {_src_syms697 // max(_test_syms697, 1)}x; likely under-tested"
+        )
+    elif _src_syms697 >= 5 and _test_syms697 == 0:
+        pass  # covered by S667 (no tests detected)
 
     # S745: Test concentration — more than 80% of test symbols are in one test file.
     # When tests are heavily concentrated in one file, the test suite becomes monolithic;
@@ -2885,26 +2776,28 @@ def _signals_async_oop_c(graph: Tempo) -> list[str]:
             f" — one test file for {len(_src_syms751)} source symbols; split by module as the project grows"
         )
 
-    # S757: Constant-heavy repo — ratio of constants/variables to functions exceeds 2:1.
-    # When a codebase has far more constants than functions, it may have config sprawl,
-    # magic numbers distributed across files, or a fragmented configuration architecture.
-    _const_syms757 = sum(
-        1 for s in graph.symbols.values()
-        if s.kind.value in ("constant", "variable")
-        and not _is_test_file(s.file_path)
-        and s.parent_id is None
-    )
-    _fn_syms757 = sum(
-        1 for s in graph.symbols.values()
-        if s.kind.value in ("function", "method")
-        and not _is_test_file(s.file_path)
-        and s.parent_id is None
-    )
-    if _fn_syms757 >= 3 and _const_syms757 >= _fn_syms757 * 2:
-        lines.append(
-            f"constant-heavy repo: {_const_syms757} constants vs {_fn_syms757} functions"
-            f" — config sprawl likely; consolidate constants into dedicated config modules"
-        )
+    return lines
+
+
+def _async_oop_c_oop_style(graph: Tempo) -> list[str]:
+    """OOP style and class design signals (S685, S763, S769)."""
+    lines: list[str] = []
+    # S685: Class-heavy repo — more than 60% of non-test exported symbols are classes.
+    # A repo where classes greatly outnumber functions often has anemic domain models
+    # with shallow behaviour; heavy OOP can obscure data flow and reduce testability.
+    _all_src685 = [
+        s for s in graph.symbols.values()
+        if s.parent_id is None and not _is_test_file(s.file_path)
+        and s.kind.value not in ("unknown", "module")
+    ]
+    if len(_all_src685) >= 5:
+        _class_count685 = sum(1 for s in _all_src685 if s.kind.value == "class")
+        if _class_count685 / len(_all_src685) > 0.60:
+            _cpct685 = int(_class_count685 / len(_all_src685) * 100)
+            lines.append(
+                f"class-heavy repo: {_cpct685}% of symbols are classes ({_class_count685}/{len(_all_src685)})"
+                f" — OOP-heavy; verify classes have behaviour, not just data"
+            )
 
     # S763: Classless repo — the repo has no classes at all (purely functional style).
     # A classless codebase is deliberately functional; adding classes changes the design
@@ -2944,18 +2837,149 @@ def _signals_async_oop_c(graph: Tempo) -> list[str]:
                 f" — classes are large; consider splitting responsibilities"
             )
 
-    # S775: Large average file size — avg source file exceeds 200 lines.
-    # When source files average more than 200 lines, the codebase has large files
-    # that are hard to navigate and review — consider splitting into smaller modules.
-    _src_files775 = [fi for fp, fi in graph.files.items() if not _is_test_file(fp)]
-    if len(_src_files775) >= 3:
-        _total_lines775 = sum(fi.line_count if fi.line_count else 0 for fi in _src_files775)
-        _avg_lines775 = _total_lines775 / len(_src_files775)
-        if _avg_lines775 >= 200:
+    return lines
+
+
+def _async_oop_c_state_constants(graph: Tempo) -> list[str]:
+    """Global state and constant density signals (S691, S739, S757)."""
+    lines: list[str] = []
+    # S691: Global variable density — top-level variables/constants are >20% of all symbols.
+    # High global state density increases coupling between modules and makes testing harder;
+    # constants are acceptable but mutable globals are a refactoring risk.
+    _all_top691 = [
+        s for s in graph.symbols.values()
+        if s.parent_id is None and not _is_test_file(s.file_path)
+        and s.kind.value not in ("unknown", "module")
+    ]
+    if len(_all_top691) >= 5:
+        _var_count691 = sum(
+            1 for s in _all_top691
+            if s.kind.value in ("variable", "constant")
+        )
+        if _var_count691 / len(_all_top691) > 0.20:
+            _vpct691 = int(_var_count691 / len(_all_top691) * 100)
             lines.append(
-                f"large avg file size: {_avg_lines775:.0f} avg lines per source file"
-                f" — files are large; consider splitting into smaller, focused modules"
+                f"high global state: {_vpct691}% of top-level symbols are variables/constants"
+                f" — check for mutable globals; prefer dependency injection or module-level constants"
             )
+
+    # S739: High constant density — the repo has more than twice as many variables/constants
+    # as functions. Config-heavy or data-heavy repos may lack abstraction; constants scattered
+    # across files make configuration management harder.
+    _all_syms739 = list(graph.symbols.values())
+    _fn_count739 = sum(
+        1 for s in _all_syms739
+        if s.kind.value in ("function", "method") and not _is_test_file(s.file_path)
+    )
+    _var_count739 = sum(
+        1 for s in _all_syms739
+        if s.kind.value in ("variable", "constant") and not _is_test_file(s.file_path)
+    )
+    if _fn_count739 > 0 and _var_count739 > _fn_count739 * 2:
+        lines.append(
+            f"high constant density: {_var_count739} variables/constants vs {_fn_count739} functions"
+            f" — config-heavy repo; verify constants are not scattered across multiple files"
+        )
+
+    # S757: Constant-heavy repo — ratio of constants/variables to functions exceeds 2:1.
+    # When a codebase has far more constants than functions, it may have config sprawl,
+    # magic numbers distributed across files, or a fragmented configuration architecture.
+    _const_syms757 = sum(
+        1 for s in graph.symbols.values()
+        if s.kind.value in ("constant", "variable")
+        and not _is_test_file(s.file_path)
+        and s.parent_id is None
+    )
+    _fn_syms757 = sum(
+        1 for s in graph.symbols.values()
+        if s.kind.value in ("function", "method")
+        and not _is_test_file(s.file_path)
+        and s.parent_id is None
+    )
+    if _fn_syms757 >= 3 and _const_syms757 >= _fn_syms757 * 2:
+        lines.append(
+            f"constant-heavy repo: {_const_syms757} constants vs {_fn_syms757} functions"
+            f" — config sprawl likely; consolidate constants into dedicated config modules"
+        )
+
+    return lines
+
+
+def _async_oop_c_coupling(graph: Tempo) -> list[str]:
+    """Import coupling, dominance, orphan, and entry-point signals (S673, S679, S715, S721, S787)."""
+    lines: list[str] = []
+    # S673: Dominant file — one non-test file holds >30% of all repo symbols.
+    # A file that dominates the symbol count is a gravity well that accumulates
+    # responsibilities; it should be the first target for decomposition.
+    _total_syms673 = sum(
+        1 for s in graph.symbols.values()
+        if not _is_test_file(s.file_path) and s.parent_id is None
+    )
+    if _total_syms673 > 0:
+        _file_counts673: dict[str, int] = {}
+        for s in graph.symbols.values():
+            if not _is_test_file(s.file_path) and s.parent_id is None:
+                _file_counts673[s.file_path] = _file_counts673.get(s.file_path, 0) + 1
+        _top_fp673 = max(_file_counts673, key=lambda f: _file_counts673[f], default=None)
+        if _top_fp673 and _file_counts673[_top_fp673] / _total_syms673 > 0.30:
+            _pct673 = int(_file_counts673[_top_fp673] / _total_syms673 * 100)
+            lines.append(
+                f"dominant file: {_top_fp673.rsplit('/', 1)[-1]} holds {_pct673}% of repo symbols"
+                f" — gravity-well file; prioritize decomposing this file"
+            )
+
+    # S679: High orphan ratio — more than 30% of source files have no importers.
+    # Files that nothing imports may be dead modules, scripts, or tools that
+    # have drifted from the main codebase; high orphan ratios signal poor cohesion.
+    _src_files679 = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_src_files679) >= 4:
+        _orphans679 = [
+            fp for fp in _src_files679
+            if not graph.importers_of(fp)
+        ]
+        _orphan_pct679 = len(_orphans679) / len(_src_files679)
+        if _orphan_pct679 > 0.30:
+            _opct679 = int(_orphan_pct679 * 100)
+            lines.append(
+                f"high orphan ratio: {_opct679}% of source files have no importers"
+                f" — many disconnected files; verify none are abandoned dead modules"
+            )
+
+    # S715: Hub file — a single source file is imported by >40% of all other source files.
+    # Hub files are architectural bottlenecks; changes to them propagate widely and can break
+    # many consumers simultaneously. They often need careful versioning and change control.
+    _src_files715 = [
+        fp for fp in graph.files
+        if not _is_test_file(fp) and fp.endswith(".py")
+    ]
+    if len(_src_files715) >= 4:
+        for _fp715 in _src_files715:
+            _importers715 = [
+                f for f in graph.importers_of(_fp715)
+                if f != _fp715 and not _is_test_file(f)
+            ]
+            _ratio715 = len(_importers715) / max(len(_src_files715) - 1, 1)
+            if _ratio715 > 0.40:
+                lines.append(
+                    f"hub file: {_fp715.rsplit('/', 1)[-1]} is imported by"
+                    f" {len(_importers715)}/{len(_src_files715) - 1} source files ({_ratio715:.0%})"
+                    f" — architectural bottleneck; changes here cascade widely"
+                )
+                break
+
+    # S721: No entry points — no files with standard entry-point names found in the repo.
+    # A repo without main.py / app.py / server.py etc. is likely a library or has non-standard
+    # naming; agents should not assume a runnable entrypoint exists.
+    _entry_names721 = {
+        "main.py", "app.py", "server.py", "cli.py", "__main__.py",
+        "run.py", "index.py", "wsgi.py", "asgi.py",
+    }
+    _all_basenames721 = {fp.rsplit("/", 1)[-1] for fp in graph.files}
+    if not (_all_basenames721 & _entry_names721) and len(graph.files) >= 3:
+        lines.append(
+            f"no entry points: none of {len(graph.files)} files have standard entry-point names"
+            f" — library-style repo or entry point uses non-standard naming"
+        )
 
     # S787: High import coupling — the most-imported file is imported by > 50% of source files.
     # When a single file is imported by more than half the codebase, it becomes a structural
@@ -2977,6 +3001,17 @@ def _signals_async_oop_c(graph: Tempo) -> list[str]:
                 f" — structural singleton; breaking changes require touching all importers"
             )
 
+    return lines
+
+
+def _signals_async_oop_c(graph: Tempo) -> list[str]:
+    """File quality and hub pattern signals (S655–S787)."""
+    lines: list[str] = []
+    lines.extend(_async_oop_c_complexity_structure(graph))
+    lines.extend(_async_oop_c_test_quality(graph))
+    lines.extend(_async_oop_c_oop_style(graph))
+    lines.extend(_async_oop_c_state_constants(graph))
+    lines.extend(_async_oop_c_coupling(graph))
     return lines
 
 def _async_oop_d_file_structure(graph: Tempo) -> list[str]:
