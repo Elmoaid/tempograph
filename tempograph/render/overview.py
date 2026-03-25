@@ -887,14 +887,10 @@ def _signals_coverage(
     return lines
 
 
-def _signals_exports(
-    graph: Tempo, *, _src_fps: list[str], _exported_src: list,
+def _exports_god_and_surface(
+    graph: "Tempo", _exported_src: list,
 ) -> list[str]:
-    """Export/API signals."""
     lines: list[str] = []
-
-    # God files: source files with unusually many exported symbols (>15).
-    # Signal for undivided modules or god objects — high cognitive load, hard to navigate.
     _god_files = sorted(
         (
             (sum(1 for sid in fi.symbols if graph.symbols.get(sid, None) and graph.symbols[sid].exported), fp)
@@ -907,16 +903,6 @@ def _signals_exports(
     if len(_god_files) >= 1:
         _gf_parts = [f"{fp.rsplit('/', 1)[-1]} ({n} exported)" for n, fp in _god_files[:3]]
         lines.append(f"god files: {', '.join(_gf_parts)}")
-
-
-    # API surface health: exported symbols with 0 cross-file callers = potentially dead API.
-    # Quick fraction for agents: "35% of exports unused → dead code problem worth investigating."
-    # Only shown when >= 5 exported non-test symbols exist (avoids noise on tiny repos).
-    _exported_src = [
-        sym for sym in graph.symbols.values()
-        if sym.exported and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method", "class", "interface", "variable", "constant")
-    ]
     if len(_exported_src) >= 5:
         _unused_exp = [
             sym for sym in _exported_src
@@ -927,10 +913,6 @@ def _signals_exports(
         if _unused_exp:
             _ap_line += f", {len(_unused_exp)} unused ({_unused_pct}%)"
         lines.append(_ap_line)
-
-    # S130: Most-called export — the single exported symbol with the most cross-file source callers.
-    # The "heart" of the codebase: changes here have maximum blast radius.
-    # Only shown when there are 5+ exported non-test symbols and max callers >= 5.
     if len(_exported_src) >= 5:
         _mc_exp_sym: "Symbol | None" = None
         _mc_exp_count = 0
@@ -949,11 +931,13 @@ def _signals_exports(
                 f"most-called export: {_mc_exp_sym.name}"
                 f" ({_mc_exp_count} caller files in {_mc_exp_sym.file_path.rsplit('/', 1)[-1]})"
             )
+    return lines
 
 
-    # S80: Interface/abstract count — how many pure interface/protocol/abstract-class symbols.
-    # Signals codebase abstraction health: 0 interfaces in a 100-class repo = no abstraction layer.
-    # Only shown when project has 5+ classes (smaller repos rarely use abstractions).
+def _exports_symbol_quality(
+    graph: "Tempo", _exported_src: list,
+) -> list[str]:
+    lines: list[str] = []
     _class_count = sum(
         1 for sym in graph.symbols.values()
         if sym.kind.value == "class" and not _is_test_file(sym.file_path) and sym.exported
@@ -965,9 +949,6 @@ def _signals_exports(
         )
         if _iface_count >= 1:
             lines.append(f"abstractions: {_iface_count} interface(s) across {_class_count} classes")
-
-    # Private API leaking: symbols with _ prefix called from external files.
-    # Indicates callers depending on implementation details — fragile coupling.
     _private_leaks: list[str] = []
     for sym in graph.symbols.values():
         if not sym.name.startswith("_") or sym.name.startswith("__"):
@@ -982,10 +963,6 @@ def _signals_exports(
         if len(_private_leaks) > 4:
             _pl_str += f" +{len(_private_leaks) - 4} more"
         lines.append(f"private leak ({len(_private_leaks)}): {_pl_str} — _ symbols called externally")
-
-    # Quick-win dead code: largest non-test, non-exported functions with 0 callers.
-    # Agents get immediate cleanup targets without running full dead_code mode.
-    # Threshold: line_count >= 15 to avoid flagging trivial 1-2 line helpers.
     _quick_wins = sorted(
         [
             (sym.line_count, sym)
@@ -1001,12 +978,6 @@ def _signals_exports(
     if len(_quick_wins) >= 2:
         _qw_parts = [f"{sym.name} ({lc}L)" for lc, sym in _quick_wins]
         lines.append(f"quick wins: {', '.join(_qw_parts)} — no callers, likely dead")
-
-
-    # S105: Mono-callers — exported symbols used by exactly 1 external file.
-    # These look like "public API" but are secretly coupled to a single consumer.
-    # High count = hidden tight coupling disguised as an open interface.
-    # Only shown when 3+ mono-caller exports exist (fewer = not a pattern worth flagging).
     _mono_callers = [
         sym for sym in graph.symbols.values()
         if sym.exported and sym.kind.value in ("function", "method")
@@ -1019,11 +990,6 @@ def _signals_exports(
         if len(_mono_callers) > 4:
             _mc_str += f" +{len(_mono_callers) - 4} more"
         lines.append(f"mono-callers: {len(_mono_callers)} exported fns with only 1 caller file ({_mc_str})")
-
-
-    # S154: Single-caller fns — source functions called by exactly one other function.
-    # These are prime inlining candidates; many single-caller fns = over-extracted code.
-    # Only shown when 5+ such functions found.
     _s154_single_callers = [
         sym for sym in graph.symbols.values()
         if sym.kind.value in ("function", "method")
@@ -1037,10 +1003,13 @@ def _signals_exports(
             f"single-caller fns: {len(_s154_single_callers)} private fns have exactly 1 caller"
             f" — consider inlining"
         )
+    return lines
 
-    # S161: Hub files — source files imported by 10+ other files.
-    # High import fan-in = central dependency; a change here blasts everywhere.
-    # Only shown when >= 1 non-test file has 10+ unique importing files.
+
+def _exports_file_patterns(
+    graph: "Tempo",
+) -> list[str]:
+    lines: list[str] = []
     _s161_hubs = sorted(
         [
             (len([i for i in graph.importers_of(fp) if i in graph.files and not _is_test_file(i) and i != fp]), fp)
@@ -1058,10 +1027,6 @@ def _signals_exports(
             f"hub files: {len(_s161_hubs)} files imported by 10+ others ({_s161_str})"
             f" — changes here have wide blast radius"
         )
-
-    # S203: Undocumented exports — high percentage of exported symbols with empty docstrings.
-    # Public API without docs is harder to use correctly and harder to review for contracts.
-    # Only shown when >= 10 exported non-test symbols exist and >= 50% have no doc.
     _s203_exports = [
         s for s in graph.symbols.values()
         if s.exported and not _is_test_file(s.file_path)
@@ -1075,11 +1040,6 @@ def _signals_exports(
                 f"undocumented exports: {len(_s203_no_doc)}/{len(_s203_exports)}"
                 f" exported symbols lack docstrings ({_s203_pct:.0f}%)"
             )
-
-
-    # S191: API-only files — source files where every tracked symbol is exported.
-    # Files where all symbols are public = pure API surface; any change risks breaking callers.
-    # Only shown when 2+ non-trivial source files (>= 3 symbols) are fully exported.
     _s191_api_files: list[str] = []
     for _fp191 in graph.files:
         if _is_test_file(_fp191):
@@ -1099,11 +1059,6 @@ def _signals_exports(
             f"api-only files: {len(_s191_api_files)} files where all symbols are exported"
             f" ({_s191_str}) — pure contract files, high breaking-change risk"
         )
-
-
-    # S252: God symbol — single non-test symbol called from 10+ distinct files.
-    # One function/class/module that everything depends on is an architectural bottleneck.
-    # Only shown when 1+ symbol has 10+ distinct non-test caller files.
     _s252_god: list[tuple[int, str, str]] = []
     for _sym252 in graph.symbols.values():
         if _sym252.kind.value not in ("function", "method", "class"):
@@ -1123,10 +1078,6 @@ def _signals_exports(
             f"god symbol: {_name252} ({_fp252.rsplit('/', 1)[-1]}) called from {_n252} files"
             f" — central bottleneck; changes here blast everywhere"
         )
-
-    # S247: API-heavy codebase — 3+ source files with "api", "route", "endpoint", or
-    # "view" in their names. Changes often need to update route handlers, serializers, and tests.
-    # Only shown when 3+ such files detected (1-2 is typical for small apps).
     _s247_api_stems = {"api", "route", "routes", "router", "routers", "endpoint", "endpoints",
                        "view", "views", "handler", "handlers", "controller", "controllers",
                        "resource", "resources", "schema", "schemas", "serializer", "serializers"}
@@ -1145,9 +1096,22 @@ def _signals_exports(
             f"api-heavy: {len(_s247_api_files)} API/route files ({_s247_str})"
             f" — changes often need aligned updates in routes, schemas, and handlers"
         )
+    return lines
 
 
-
+def _signals_exports(
+    graph: Tempo, *, _src_fps: list[str], _exported_src: list,
+) -> list[str]:
+    """Export/API signals."""
+    _exported_src = [
+        sym for sym in graph.symbols.values()
+        if sym.exported and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method", "class", "interface", "variable", "constant")
+    ]
+    lines: list[str] = []
+    lines.extend(_exports_god_and_surface(graph, _exported_src))
+    lines.extend(_exports_symbol_quality(graph, _exported_src))
+    lines.extend(_exports_file_patterns(graph))
     return lines
 
 
