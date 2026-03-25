@@ -1840,3 +1840,133 @@ class TestFocusOrphanCascade:
         assert "orphan cascade" in joined, f"Should fire even with callees beyond shown=8; got:\n{joined}"
         # 9 direct + 6 transitive = 15
         assert "15 private" in joined, f"Expected '15 private' (9+6); got:\n{joined}"
+
+
+class TestFocusCallerVolatility:
+    """S59: emit caller volatility warning when ≥2 non-test callers live in hot_files.
+
+    Mirror of S52 (hot callee instability): S52 flags when callees are changing;
+    S59 flags when callers are changing. Together they paint full volatility picture.
+    """
+
+    def _fn(self, name, file_path):
+        return Symbol(
+            id=f"{file_path}::{name}",
+            name=name,
+            qualified_name=name,
+            kind=SymbolKind.FUNCTION,
+            language=Language.PYTHON,
+            file_path=file_path,
+            line_start=1,
+            line_end=10,
+            exported=True,
+        )
+
+    def test_no_hot_files_no_signal(self, tmp_path):
+        """No hot_files → no caller volatility line."""
+        from tempograph.render.focused import _build_callers_block
+
+        seed = self._fn("process", "app/core.py")
+        c1 = self._fn("use_a", "app/server.py")
+        c2 = self._fn("use_b", "app/cli.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=c1.id, target_id=seed.id),
+            Edge(kind=EdgeKind.CALLS, source_id=c2.id, target_id=seed.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1, c2])
+        # hot_files is empty (default)
+        result = _build_callers_block(seed, 0, graph, [], {}, None, "")
+        joined = "\n".join(result)
+        assert "caller volatility" not in joined, f"Should not fire with no hot_files; got:\n{joined}"
+
+    def test_one_hot_caller_no_signal(self, tmp_path):
+        """1 hot caller → threshold not met, no caller volatility line."""
+        from tempograph.render.focused import _build_callers_block
+
+        seed = self._fn("validate", "app/core.py")
+        hot = self._fn("use_hot", "app/server.py")
+        cold = self._fn("use_cold", "app/cli.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=hot.id, target_id=seed.id),
+            Edge(kind=EdgeKind.CALLS, source_id=cold.id, target_id=seed.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, hot, cold])
+        graph.hot_files = {"app/server.py"}
+
+        result = _build_callers_block(seed, 0, graph, [], {}, None, "")
+        joined = "\n".join(result)
+        assert "caller volatility" not in joined, f"1 hot caller should not fire; got:\n{joined}"
+
+    def test_two_hot_callers_fires(self, tmp_path):
+        """≥2 hot callers → caller volatility line with correct count and names."""
+        from tempograph.render.focused import _build_callers_block
+
+        seed = self._fn("render", "app/core.py")
+        hot_a = self._fn("route_a", "app/server.py")
+        hot_b = self._fn("route_b", "app/middleware.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=hot_a.id, target_id=seed.id),
+            Edge(kind=EdgeKind.CALLS, source_id=hot_b.id, target_id=seed.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, hot_a, hot_b])
+        graph.hot_files = {"app/server.py", "app/middleware.py"}
+
+        result = _build_callers_block(seed, 0, graph, [], {}, None, "")
+        joined = "\n".join(result)
+        assert "caller volatility" in joined, f"Expected 'caller volatility'; got:\n{joined}"
+        assert "2 active callers" in joined, f"Expected '2 active callers'; got:\n{joined}"
+        assert "route_a" in joined or "route_b" in joined, f"Expected caller names; got:\n{joined}"
+
+    def test_four_hot_callers_truncated(self, tmp_path):
+        """4 hot callers → shows 3 names then '...'."""
+        from tempograph.render.focused import _build_callers_block
+
+        seed = self._fn("auth", "app/core.py")
+        callers = [self._fn(f"caller_{i}", f"app/mod_{i}.py") for i in range(4)]
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=c.id, target_id=seed.id) for c in callers]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + callers)
+        graph.hot_files = {f"app/mod_{i}.py" for i in range(4)}
+
+        result = _build_callers_block(seed, 0, graph, [], {}, None, "")
+        joined = "\n".join(result)
+        assert "caller volatility" in joined, f"Expected 'caller volatility'; got:\n{joined}"
+        assert "4 active callers" in joined, f"Expected '4 active callers'; got:\n{joined}"
+        assert "..." in joined, f"Expected truncation '...'; got:\n{joined}"
+
+    def test_test_file_callers_excluded(self, tmp_path):
+        """Callers from test files (tests/test_*.py) do not count toward volatility threshold."""
+        from tempograph.render.focused import _build_callers_block
+
+        seed = self._fn("transform", "app/core.py")
+        test_caller = self._fn("test_transform", "tests/test_core.py")
+        prod_hot = self._fn("use_transform", "app/server.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=test_caller.id, target_id=seed.id),
+            Edge(kind=EdgeKind.CALLS, source_id=prod_hot.id, target_id=seed.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, test_caller, prod_hot])
+        # Both files are hot — but test file should be excluded
+        graph.hot_files = {"tests/test_core.py", "app/server.py"}
+
+        result = _build_callers_block(seed, 0, graph, [], {}, None, "")
+        joined = "\n".join(result)
+        # Only 1 non-test hot caller → below threshold
+        assert "caller volatility" not in joined, f"Test-file callers should be excluded; got:\n{joined}"
+
+    def test_absent_at_depth1(self, tmp_path):
+        """Caller volatility only fires at depth=0."""
+        from tempograph.render.focused import _build_callers_block
+
+        seed = self._fn("helper", "app/core.py")
+        hot_a = self._fn("user_a", "app/server.py")
+        hot_b = self._fn("user_b", "app/middleware.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=hot_a.id, target_id=seed.id),
+            Edge(kind=EdgeKind.CALLS, source_id=hot_b.id, target_id=seed.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, hot_a, hot_b])
+        graph.hot_files = {"app/server.py", "app/middleware.py"}
+
+        result = _build_callers_block(seed, 1, graph, [], {}, None, "")
+        joined = "\n".join(result)
+        assert "caller volatility" not in joined, f"Should not fire at depth=1; got:\n{joined}"
