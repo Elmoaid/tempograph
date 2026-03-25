@@ -1648,6 +1648,40 @@ def _build_callers_block(
                     f"{indent}    \u21b3 caller volatility: {len(_hot_callers)} active callers"
                     f" ({', '.join(_cv_names)}{_cv_suffix})"
                 )
+        # S61: upstream transitive reach — how many non-test nodes transitively call this seed.
+        # Direct callers (shown above) are the visible surface. But those callers have their own
+        # callers, and so on. When direct callers <= 8 but amplify to 4x+ upstream nodes, the
+        # agent's blast-radius intuition is wrong: "only 2 callers" can mean 60+ transitively.
+        # BFS upward max depth=4, max 200 nodes. Only fires when amplification ratio >= 4x AND
+        # upstream >= 20 (strong signal only — avoid noise on well-isolated functions).
+        if depth == 0 and len(_callers_for_display) <= 8:
+            _direct_count = len(_callers_for_display)
+            _upstream_visited: set[str] = {sym.id}
+            _upstream_frontier = [sym.id]
+            _upstream_capped = False
+            for _ in range(4):  # max depth 4 hops
+                _next: list[str] = []
+                for _uid in _upstream_frontier:
+                    for _uc in graph.callers_of(_uid):
+                        if _uc.id not in _upstream_visited and not _is_test_file(_uc.file_path):
+                            _upstream_visited.add(_uc.id)
+                            _next.append(_uc.id)
+                            if len(_upstream_visited) >= 201:
+                                _upstream_capped = True
+                                break
+                    if _upstream_capped:
+                        break
+                _upstream_frontier = _next
+                if not _upstream_frontier or _upstream_capped:
+                    break
+            _upstream_count = len(_upstream_visited) - 1  # exclude seed itself
+            if _upstream_count >= 20 and _upstream_count >= _direct_count * 4:
+                _cap_str = "+" if _upstream_capped else ""
+                lines.append(
+                    f"{indent}    \u21b3 upstream reach: {_upstream_count}{_cap_str} nodes"
+                    f" — {_direct_count} direct caller{'s' if _direct_count != 1 else ''}"
+                    f" amplif{'y' if _direct_count != 1 else 'ies'} to wider blast"
+                )
     return lines
 
 
@@ -1781,6 +1815,48 @@ def _build_callees_block(
                 f"{indent}  \u21b3 orphan cascade: {_total_chain} private helpers in chain"
                 f" (via {', '.join(_hub_names)}{_hub_suffix}) \u2014 refactor ripples deeper than visible callees"
             )
+    # S60: callee co-change coupling — when two callees live in files that frequently
+    # co-change together in git history, touching one typically means touching both.
+    # Agents assume callees are independent; this reveals hidden coupling between dependencies.
+    # Guard: depth=0, ≥2 distinct non-test callee files (excluding seed's own file).
+    if depth == 0 and graph.root:
+        try:
+            from ..git import cochange_matrix as _ccm
+            _matrix = _ccm(graph.root)
+            if _matrix:
+                _callee_files = list(dict.fromkeys(
+                    c.file_path for c in callees
+                    if c.file_path != sym.file_path and not _is_test_file(c.file_path)
+                ))
+                _coupled: list[tuple[str, str, float]] = []
+                for _i, _fa in enumerate(_callee_files):
+                    _partners = {fp: freq for fp, freq in _matrix.get(_fa, [])}
+                    for _fb in _callee_files[_i + 1:]:
+                        if _fb in _partners and _partners[_fb] >= 0.2:
+                            _coupled.append((_fa, _fb, _partners[_fb]))
+                if _coupled:
+                    _coupled.sort(key=lambda x: -x[2])
+                    if len(_coupled) == 1:
+                        _fa0, _fb0, _ = _coupled[0]
+                        lines.append(
+                            f"{indent}  \u21b3 callee coupling: {Path(_fa0).name} \u2194 {Path(_fb0).name}"
+                            f" \u2014 often change together, check both"
+                        )
+                    elif len(_coupled) == 2:
+                        _fa0, _fb0, _ = _coupled[0]
+                        _fa1, _fb1, _ = _coupled[1]
+                        lines.append(
+                            f"{indent}  \u21b3 callee coupling: {Path(_fa0).name} \u2194 {Path(_fb0).name}"
+                            f", {Path(_fa1).name} \u2194 {Path(_fb1).name}"
+                        )
+                    else:
+                        _fa0, _fb0, _ = _coupled[0]
+                        lines.append(
+                            f"{indent}  \u21b3 callee coupling: {len(_coupled)} coupled pairs"
+                            f" ({Path(_fa0).name} \u2194 {Path(_fb0).name} strongest)"
+                        )
+        except Exception:
+            pass
     return lines
 
 

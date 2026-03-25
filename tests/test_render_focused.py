@@ -1970,3 +1970,315 @@ class TestFocusCallerVolatility:
         result = _build_callers_block(seed, 1, graph, [], {}, None, "")
         joined = "\n".join(result)
         assert "caller volatility" not in joined, f"Should not fire at depth=1; got:\n{joined}"
+
+
+# S60: _build_callees_block — callee co-change coupling signal
+# -------------------------------------------------------------------
+
+
+class TestFocusCalleeCouplingCochange:
+    """S60: emit callee coupling line when ≥1 pair of callee files cochange frequently.
+
+    When callee A and callee B live in files that often change together in git history,
+    agents need to know: touching one usually means touching both. This surfaces hidden
+    coupling between a seed's dependencies that the call graph alone doesn't show.
+    """
+
+    def _fn(self, name, file_path):
+        return Symbol(
+            id=f"{file_path}::{name}",
+            name=name,
+            qualified_name=name,
+            kind=SymbolKind.FUNCTION,
+            language=Language.PYTHON,
+            file_path=file_path,
+            line_start=1,
+            line_end=20,
+            exported=False,
+            complexity=0,
+        )
+
+    def test_coupled_callee_files_fires(self, tmp_path):
+        """Two callee files that cochange ≥0.2 freq → emit callee coupling line."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn("orchestrate", "app/main.py")
+        c1 = self._fn("parse", "app/parser.py")
+        c2 = self._fn("validate", "app/validator.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c1.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c2.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1, c2])
+        # parser.py and validator.py change together 60% of the time
+        mock_matrix = {
+            "app/parser.py": [("app/validator.py", 0.6)],
+            "app/validator.py": [("app/parser.py", 0.6)],
+        }
+        with patch("tempograph.git.cochange_matrix", return_value=mock_matrix):
+            result = _build_callees_block(seed, 0, graph, "")
+        joined = "\n".join(result)
+        assert "callee coupling" in joined, f"Expected 'callee coupling'; got:\n{joined}"
+        assert "parser.py" in joined and "validator.py" in joined, f"Expected file names; got:\n{joined}"
+        assert "\u2194" in joined, f"Expected ↔ separator; got:\n{joined}"
+
+    def test_freq_below_threshold_no_signal(self, tmp_path):
+        """Cochange freq < 0.2 → below threshold, no coupling line."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn("run", "app/main.py")
+        c1 = self._fn("fn_a", "app/mod_a.py")
+        c2 = self._fn("fn_b", "app/mod_b.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c1.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c2.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1, c2])
+        # freq=0.1 is below the 0.2 threshold
+        mock_matrix = {"app/mod_a.py": [("app/mod_b.py", 0.1)]}
+        with patch("tempograph.git.cochange_matrix", return_value=mock_matrix):
+            result = _build_callees_block(seed, 0, graph, "")
+        joined = "\n".join(result)
+        assert "callee coupling" not in joined, f"Freq below threshold should not fire; got:\n{joined}"
+
+    def test_empty_matrix_no_signal(self, tmp_path):
+        """Empty cochange matrix → no coupling line (graceful no-op)."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn("run", "app/main.py")
+        c1 = self._fn("fn_a", "app/mod_a.py")
+        c2 = self._fn("fn_b", "app/mod_b.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c1.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c2.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1, c2])
+        with patch("tempograph.git.cochange_matrix", return_value={}):
+            result = _build_callees_block(seed, 0, graph, "")
+        joined = "\n".join(result)
+        assert "callee coupling" not in joined, f"Empty matrix should not fire; got:\n{joined}"
+
+    def test_callees_in_seed_file_excluded(self, tmp_path):
+        """Callees in the same file as the seed don't form coupling pairs."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn("entry", "app/core.py")
+        # Both callees are in the SAME file as seed — should be excluded from pair check
+        c1 = self._fn("helper_a", "app/core.py")
+        c2 = self._fn("helper_b", "app/core.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c1.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c2.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1, c2])
+        mock_matrix = {"app/core.py": [("app/core.py", 1.0)]}
+        with patch("tempograph.git.cochange_matrix", return_value=mock_matrix):
+            result = _build_callees_block(seed, 0, graph, "")
+        joined = "\n".join(result)
+        assert "callee coupling" not in joined, f"Same-file callees should not fire; got:\n{joined}"
+
+    def test_test_file_callees_excluded(self, tmp_path):
+        """Callees in test files don't count toward coupling pairs."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn("build", "app/main.py")
+        prod = self._fn("real_dep", "app/dep.py")
+        test_helper = self._fn("test_fixture", "tests/test_fixtures.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=prod.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=test_helper.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, prod, test_helper])
+        # test file cochanges with dep — but test callees are excluded
+        mock_matrix = {
+            "app/dep.py": [("tests/test_fixtures.py", 0.8)],
+            "tests/test_fixtures.py": [("app/dep.py", 0.8)],
+        }
+        with patch("tempograph.git.cochange_matrix", return_value=mock_matrix):
+            result = _build_callees_block(seed, 0, graph, "")
+        joined = "\n".join(result)
+        assert "callee coupling" not in joined, f"Test-file callees excluded, only 1 prod file; got:\n{joined}"
+
+    def test_multiple_pairs_shows_count(self, tmp_path):
+        """3+ coupled pairs → shows N coupled pairs with strongest."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn("dispatch", "app/main.py")
+        c1 = self._fn("fn_a", "app/a.py")
+        c2 = self._fn("fn_b", "app/b.py")
+        c3 = self._fn("fn_c", "app/c.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c1.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c2.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c3.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1, c2, c3])
+        # All 3 files cochange with each other → 3 pairs (a↔b, a↔c, b↔c)
+        mock_matrix = {
+            "app/a.py": [("app/b.py", 0.9), ("app/c.py", 0.5)],
+            "app/b.py": [("app/a.py", 0.9), ("app/c.py", 0.4)],
+            "app/c.py": [("app/a.py", 0.5), ("app/b.py", 0.4)],
+        }
+        with patch("tempograph.git.cochange_matrix", return_value=mock_matrix):
+            result = _build_callees_block(seed, 0, graph, "")
+        joined = "\n".join(result)
+        assert "callee coupling" in joined, f"Expected coupling signal; got:\n{joined}"
+        assert "3 coupled pairs" in joined or "a.py" in joined, f"Expected count or strongest pair; got:\n{joined}"
+
+    def test_depth1_no_signal(self, tmp_path):
+        """Callee coupling only fires at depth=0."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn("inner", "app/inner.py")
+        c1 = self._fn("fn_a", "app/a.py")
+        c2 = self._fn("fn_b", "app/b.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c1.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c2.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1, c2])
+        mock_matrix = {"app/a.py": [("app/b.py", 0.9)], "app/b.py": [("app/a.py", 0.9)]}
+        with patch("tempograph.git.cochange_matrix", return_value=mock_matrix):
+            result = _build_callees_block(seed, 1, graph, "")
+        joined = "\n".join(result)
+        assert "callee coupling" not in joined, f"Should not fire at depth=1; got:\n{joined}"
+
+
+class TestFocusUpstreamReach:
+    """S61: emit upstream reach warning when few direct callers amplify to many transitive callers.
+
+    Agents see 'called by: A, B' and think low blast. But if A and B are each called by 20 more
+    functions, true upstream = 40+ — the blast intuition is wrong. S61 exposes this hidden reach.
+    Guards: depth==0, direct callers <= 8, upstream >= 20, amplification >= 4x.
+    """
+
+    def _fn(self, name, file_path, exported=True):
+        return Symbol(
+            id=f"{file_path}::{name}",
+            name=name,
+            qualified_name=name,
+            kind=SymbolKind.FUNCTION,
+            language=Language.PYTHON,
+            file_path=file_path,
+            line_start=1,
+            line_end=10,
+            exported=exported,
+        )
+
+    def test_fires_with_strong_amplification(self, tmp_path):
+        """2 direct callers, each called by 15 more → upstream=32, ratio=16x → fires."""
+        from tempograph.render.focused import _build_callers_block
+
+        seed = self._fn("helper", "app/core.py")
+        c1 = self._fn("router", "app/router.py")
+        c2 = self._fn("handler", "app/handler.py")
+        # 15 grandparent callers of c1, 15 of c2
+        gp1 = [self._fn(f"gp1_{i}", f"app/gp1_{i}.py") for i in range(15)]
+        gp2 = [self._fn(f"gp2_{i}", f"app/gp2_{i}.py") for i in range(15)]
+        all_syms = [seed, c1, c2] + gp1 + gp2
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=c1.id, target_id=seed.id),
+            Edge(kind=EdgeKind.CALLS, source_id=c2.id, target_id=seed.id),
+        ] + [
+            Edge(kind=EdgeKind.CALLS, source_id=gp.id, target_id=c1.id) for gp in gp1
+        ] + [
+            Edge(kind=EdgeKind.CALLS, source_id=gp.id, target_id=c2.id) for gp in gp2
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=all_syms)
+
+        result = _build_callers_block(seed, 0, graph, [], {}, None, "")
+        joined = "\n".join(result)
+        assert "upstream reach" in joined, f"Expected 'upstream reach'; got:\n{joined}"
+        assert "32 nodes" in joined, f"Expected '32 nodes'; got:\n{joined}"
+        assert "2 direct callers" in joined, f"Expected '2 direct callers'; got:\n{joined}"
+        assert "amplify to wider blast" in joined, f"Expected 'amplify to wider blast'; got:\n{joined}"
+
+    def test_no_signal_weak_amplification(self, tmp_path):
+        """2 direct callers, only 5 grandparents total → 7 upstream, 3.5x ratio → no signal."""
+        from tempograph.render.focused import _build_callers_block
+
+        seed = self._fn("util", "app/util.py")
+        c1 = self._fn("svc_a", "app/svc_a.py")
+        c2 = self._fn("svc_b", "app/svc_b.py")
+        gps = [self._fn(f"gp_{i}", f"app/gp_{i}.py") for i in range(5)]
+        all_syms = [seed, c1, c2] + gps
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=c1.id, target_id=seed.id),
+            Edge(kind=EdgeKind.CALLS, source_id=c2.id, target_id=seed.id),
+        ] + [Edge(kind=EdgeKind.CALLS, source_id=gp.id, target_id=c1.id) for gp in gps]
+        graph = _make_graph(tmp_path, edges=edges, symbols=all_syms)
+
+        result = _build_callers_block(seed, 0, graph, [], {}, None, "")
+        joined = "\n".join(result)
+        assert "upstream reach" not in joined, f"7 upstream < 4x amplification; got:\n{joined}"
+
+    def test_no_signal_upstream_below_20(self, tmp_path):
+        """2 direct callers, 6 grandparents total → 8 upstream (< 20 threshold) → no signal."""
+        from tempograph.render.focused import _build_callers_block
+
+        seed = self._fn("parse", "app/parser.py")
+        c1 = self._fn("reader", "app/reader.py")
+        c2 = self._fn("writer", "app/writer.py")
+        gps = [self._fn(f"gp_{i}", f"app/gp_{i}.py") for i in range(3)]
+        # direct=2, grandparents=3 per c1 → upstream = 2+3 = 5 < 20, even if 6x
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=c1.id, target_id=seed.id),
+            Edge(kind=EdgeKind.CALLS, source_id=c2.id, target_id=seed.id),
+        ] + [Edge(kind=EdgeKind.CALLS, source_id=gp.id, target_id=c1.id) for gp in gps]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1, c2] + gps)
+
+        result = _build_callers_block(seed, 0, graph, [], {}, None, "")
+        joined = "\n".join(result)
+        assert "upstream reach" not in joined, f"Upstream < 20; should not fire; got:\n{joined}"
+
+    def test_no_signal_too_many_direct_callers(self, tmp_path):
+        """9 direct callers (> 8 guard) → signal suppressed even with high amplification."""
+        from tempograph.render.focused import _build_callers_block
+
+        seed = self._fn("hub", "app/hub.py")
+        directs = [self._fn(f"direct_{i}", f"app/d_{i}.py") for i in range(9)]
+        # each direct has 10 callers → upstream would be 9 + 90 = 99, but guard blocks
+        gps = [self._fn(f"gp_{i}", f"app/gp_{i}.py") for i in range(10)]
+        all_syms = [seed] + directs + gps
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=d.id, target_id=seed.id) for d in directs
+        ] + [Edge(kind=EdgeKind.CALLS, source_id=gp.id, target_id=directs[0].id) for gp in gps]
+        graph = _make_graph(tmp_path, edges=edges, symbols=all_syms)
+
+        result = _build_callers_block(seed, 0, graph, [], {}, None, "")
+        joined = "\n".join(result)
+        assert "upstream reach" not in joined, f"9 direct callers > guard of 8; got:\n{joined}"
+
+    def test_no_signal_at_depth1(self, tmp_path):
+        """Signal only fires at depth=0 — depth=1 stays silent."""
+        from tempograph.render.focused import _build_callers_block
+
+        seed = self._fn("inner", "app/inner.py")
+        c1 = self._fn("mid", "app/mid.py")
+        gps = [self._fn(f"gp_{i}", f"app/gp_{i}.py") for i in range(15)]
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=c1.id, target_id=seed.id),
+        ] + [Edge(kind=EdgeKind.CALLS, source_id=gp.id, target_id=c1.id) for gp in gps]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1] + gps)
+
+        result = _build_callers_block(seed, 1, graph, [], {}, None, "")
+        joined = "\n".join(result)
+        assert "upstream reach" not in joined, f"depth=1 should not fire; got:\n{joined}"
+
+    def test_singular_grammar_one_direct_caller(self, tmp_path):
+        """1 direct caller → 'amplifies' (not 'amplify'), '1 direct caller' (not plural)."""
+        from tempograph.render.focused import _build_callers_block
+
+        seed = self._fn("leaf", "app/leaf.py")
+        c1 = self._fn("mid", "app/mid.py")
+        gps = [self._fn(f"gp_{i}", f"app/gp_{i}.py") for i in range(20)]
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=c1.id, target_id=seed.id),
+        ] + [Edge(kind=EdgeKind.CALLS, source_id=gp.id, target_id=c1.id) for gp in gps]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1] + gps)
+
+        result = _build_callers_block(seed, 0, graph, [], {}, None, "")
+        joined = "\n".join(result)
+        assert "upstream reach" in joined, f"Expected signal; got:\n{joined}"
+        assert "1 direct caller" in joined, f"Expected singular '1 direct caller'; got:\n{joined}"
+        assert "amplifies to" in joined, f"Expected 'amplifies' (singular); got:\n{joined}"

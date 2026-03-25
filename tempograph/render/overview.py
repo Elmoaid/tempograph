@@ -234,7 +234,7 @@ def _signals_complexity(
     for _fp226 in graph.files:
         if _is_test_file(_fp226):
             continue
-        _n_syms226 = sum(1 for s in graph.symbols.values() if s.file_path == _fp226)
+        _n_syms226 = len(graph.symbols_in_file(_fp226))
         if _n_syms226 >= 50:
             _s226_mono.append((_n_syms226, _fp226))
     if _s226_mono:
@@ -624,130 +624,125 @@ def _signals_coupling(
     return lines
 
 
-def _signals_coverage(
-    graph: Tempo, *, _src_fps: list[str],
-    _test_fps: set[str], _commit_counts: dict[str, int],
-) -> list[str]:
-    """Test coverage signals."""
+def _coverage_stale_tests(graph: Tempo) -> list[str]:
+    """Stale tests: test files not updated while their source file changed (git-based)."""
     lines: list[str] = []
-
-    # Stale tests: test files not in recent commits while their source file IS.
-    # Signals test drift — code changed but tests haven't kept up. Needs git repo.
-    if graph.root:
-        try:
-            from ..git import file_change_velocity as _fcv2  # noqa: PLC0415
-            _recent_vel = _fcv2(graph.root)
-            _stale_tests: list[str] = []
-            for _tfp in graph.files:
-                if not _is_test_file(_tfp):
-                    continue
-                # Find likely source file: test_foo.py → foo.py
-                _tname = _tfp.rsplit("/", 1)[-1]
-                _sname = _tname
-                if _sname.startswith("test_"):
-                    _sname = _sname[5:]
-                elif _sname.endswith("_test.py"):
-                    _sname = _sname[:-8] + ".py"
-                # Find source file with matching base name
-                _src_match = next(
-                    (fp for fp in graph.files if not _is_test_file(fp) and fp.rsplit("/", 1)[-1] == _sname),
-                    None,
-                )
-                if _src_match and _src_match in _recent_vel and _tfp not in _recent_vel:
-                    _stale_tests.append(_tfp.rsplit("/", 1)[-1])
-            if len(_stale_tests) >= 2:
-                _st_str = ", ".join(_stale_tests[:3])
-                if len(_stale_tests) > 3:
-                    _st_str += f" +{len(_stale_tests) - 3} more"
-                lines.append(f"stale tests ({len(_stale_tests)}): {_st_str} — source changed, tests didn't")
-        except Exception:
-            pass
-
-    # Test coverage ratio: source files with a matching test file (name-pattern match).
-    # Signals overall project health — agents use this to identify undertested areas.
-    # Only count code files with symbols (excludes docs, config, markdown).
-    _src_fps = [fp for fp in graph.files if not _is_test_file(fp) and graph.files[fp].symbols]
-    _test_fps = {fp for fp in graph.files if _is_test_file(fp)}
-    if _src_fps and _test_fps:
-        _covered = sum(
-            1 for fp in _src_fps
-            if any(fp.rsplit("/", 1)[-1].rsplit(".", 1)[0] in t for t in _test_fps)
-        )
-        _test_pct = int(_covered / len(_src_fps) * 100)
-        lines.append(f"test coverage: {_covered}/{len(_src_fps)} source files ({_test_pct}%)")
-
-        # Per-directory breakdown: show dirs with >=3 source files and <80% coverage.
-        # Agents use this to identify which directories are high-risk to edit.
-        from collections import defaultdict as _dd
-        _dir_src: dict[str, list[str]] = _dd(list)
-        for fp in _src_fps:
-            _d = fp.rsplit("/", 1)[0] if "/" in fp else "."
-            _dir_src[_d].append(fp)
-        _dir_breakdown: list[tuple[int, str, str]] = []  # (pct, dir, label)
-        for _d, _fps in _dir_src.items():
-            if len(_fps) < 3:
+    if not graph.root:
+        return lines
+    try:
+        from ..git import file_change_velocity as _fcv2  # noqa: PLC0415
+        _recent_vel = _fcv2(graph.root)
+        _stale_tests: list[str] = []
+        for _tfp in graph.files:
+            if not _is_test_file(_tfp):
                 continue
-            _d_cov = sum(1 for fp in _fps if any(fp.rsplit("/", 1)[-1].rsplit(".", 1)[0] in t for t in _test_fps))
-            _d_pct = int(_d_cov / len(_fps) * 100)
-            if _d_pct < 80:  # only show undertested dirs
-                _dname = _d.rsplit("/", 1)[-1] if "/" in _d else _d
-                _dir_breakdown.append((_d_pct, _dname, f"{_dname}/ ({_d_pct}%, {_d_cov}/{len(_fps)})"))
-        if len(_dir_breakdown) >= 2:
-            _dir_breakdown.sort(key=lambda x: x[0])  # worst first
-            lines.append(f"  by dir: {', '.join(x[2] for x in _dir_breakdown[:4])}")
-
-    # Orphan test files: test files that name a source file which no longer exists.
-    # These linger after source renames/deletions and should be cleaned up.
-    # Uses both basename and stem-segment matching to avoid false positives:
-    # test_bench_context.py -> "bench_context.py" OR any file ending in "context.py"
-    # with a path segment containing "bench".
-    if len(_test_fps) >= 2:
-        _orphan_tests: list[str] = []
-        _src_basenames = {
-            fp.rsplit("/", 1)[-1] for fp in graph.files if not _is_test_file(fp)
-        }
-        # Also build a stem set for partial matching (handles test_bench_ctx -> ctx.py patterns)
-        _src_stems = {
-            fp.rsplit("/", 1)[-1].rsplit(".", 1)[0]
-            for fp in graph.files if not _is_test_file(fp)
-        }
-        for _tfp in _test_fps:
+            # Find likely source file: test_foo.py → foo.py
             _tname = _tfp.rsplit("/", 1)[-1]
             _sname = _tname
             if _sname.startswith("test_"):
                 _sname = _sname[5:]
             elif _sname.endswith("_test.py"):
                 _sname = _sname[:-8] + ".py"
-            else:
-                continue  # no test_ prefix/suffix pattern — skip
-            _sstem = _sname.rsplit(".", 1)[0]  # e.g. "bench_context"
-            # Direct basename match
-            if _sname in _src_basenames:
-                continue
-            # Partial stem match: any source file whose stem is a suffix of test stem
-            # e.g. "bench_context" -> source "context" (bench/changelocal/context.py)
-            _partial_match = any(
-                _sstem.endswith("_" + s) or _sstem == s
-                for s in _src_stems
-                if len(s) >= 3
+            # Find source file with matching base name
+            _src_match = next(
+                (fp for fp in graph.files if not _is_test_file(fp) and fp.rsplit("/", 1)[-1] == _sname),
+                None,
             )
-            if not _partial_match:
-                _orphan_tests.append(_tname)
-        # Suppress if many orphans AND >40% ratio — indicates a naming mismatch
-        # between test structure and source structure (e.g. test_bench_foo.py for bench/foo.py).
-        # Small counts (<5) always shown regardless of ratio (likely real orphans).
-        _orphan_ratio = len(_orphan_tests) / max(len(_test_fps), 1)
-        if _orphan_tests and (len(_orphan_tests) < 5 or _orphan_ratio <= 0.40):
-            _ot_str = ", ".join(sorted(_orphan_tests)[:3])
-            if len(_orphan_tests) > 3:
-                _ot_str += f" +{len(_orphan_tests) - 3} more"
-            lines.append(
-                f"orphan tests ({len(_orphan_tests)}): {_ot_str} — no matching source file"
-            )
+            if _src_match and _src_match in _recent_vel and _tfp not in _recent_vel:
+                _stale_tests.append(_tfp.rsplit("/", 1)[-1])
+        if len(_stale_tests) >= 2:
+            _st_str = ", ".join(_stale_tests[:3])
+            if len(_stale_tests) > 3:
+                _st_str += f" +{len(_stale_tests) - 3} more"
+            lines.append(f"stale tests ({len(_stale_tests)}): {_st_str} — source changed, tests didn't")
+    except Exception:
+        pass
+    return lines
 
-    # S115: Largest test file — the test file with the most test functions.
-    # Identifies the "main test suite" — agents should run it first after any change.
-    # Only shown when 2+ test files exist and the largest has 3+ test functions.
+
+def _coverage_ratio_breakdown(graph: Tempo, _src_fps: list[str], _test_fps: set[str]) -> list[str]:
+    """Coverage ratio and per-directory breakdown for undertested dirs."""
+    lines: list[str] = []
+    if not (_src_fps and _test_fps):
+        return lines
+    _covered = sum(
+        1 for fp in _src_fps
+        if any(fp.rsplit("/", 1)[-1].rsplit(".", 1)[0] in t for t in _test_fps)
+    )
+    _test_pct = int(_covered / len(_src_fps) * 100)
+    lines.append(f"test coverage: {_covered}/{len(_src_fps)} source files ({_test_pct}%)")
+    # Per-directory breakdown: show dirs with >=3 source files and <80% coverage.
+    from collections import defaultdict as _dd
+    _dir_src: dict[str, list[str]] = _dd(list)
+    for fp in _src_fps:
+        _d = fp.rsplit("/", 1)[0] if "/" in fp else "."
+        _dir_src[_d].append(fp)
+    _dir_breakdown: list[tuple[int, str, str]] = []  # (pct, dir, label)
+    for _d, _fps in _dir_src.items():
+        if len(_fps) < 3:
+            continue
+        _d_cov = sum(1 for fp in _fps if any(fp.rsplit("/", 1)[-1].rsplit(".", 1)[0] in t for t in _test_fps))
+        _d_pct = int(_d_cov / len(_fps) * 100)
+        if _d_pct < 80:  # only show undertested dirs
+            _dname = _d.rsplit("/", 1)[-1] if "/" in _d else _d
+            _dir_breakdown.append((_d_pct, _dname, f"{_dname}/ ({_d_pct}%, {_d_cov}/{len(_fps)})"))
+    if len(_dir_breakdown) >= 2:
+        _dir_breakdown.sort(key=lambda x: x[0])  # worst first
+        lines.append(f"  by dir: {', '.join(x[2] for x in _dir_breakdown[:4])}")
+    return lines
+
+
+def _coverage_orphan_tests(graph: Tempo, _test_fps: set[str]) -> list[str]:
+    """Orphan tests: test files whose named source file no longer exists."""
+    lines: list[str] = []
+    if len(_test_fps) < 2:
+        return lines
+    _orphan_tests: list[str] = []
+    _src_basenames = {
+        fp.rsplit("/", 1)[-1] for fp in graph.files if not _is_test_file(fp)
+    }
+    # Also build a stem set for partial matching (handles test_bench_ctx -> ctx.py patterns)
+    _src_stems = {
+        fp.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+        for fp in graph.files if not _is_test_file(fp)
+    }
+    for _tfp in _test_fps:
+        _tname = _tfp.rsplit("/", 1)[-1]
+        _sname = _tname
+        if _sname.startswith("test_"):
+            _sname = _sname[5:]
+        elif _sname.endswith("_test.py"):
+            _sname = _sname[:-8] + ".py"
+        else:
+            continue  # no test_ prefix/suffix pattern — skip
+        _sstem = _sname.rsplit(".", 1)[0]  # e.g. "bench_context"
+        # Direct basename match
+        if _sname in _src_basenames:
+            continue
+        # Partial stem match: any source file whose stem is a suffix of test stem
+        _partial_match = any(
+            _sstem.endswith("_" + s) or _sstem == s
+            for s in _src_stems
+            if len(s) >= 3
+        )
+        if not _partial_match:
+            _orphan_tests.append(_tname)
+    # Suppress if many orphans AND >40% ratio — indicates a naming mismatch
+    _orphan_ratio = len(_orphan_tests) / max(len(_test_fps), 1)
+    if _orphan_tests and (len(_orphan_tests) < 5 or _orphan_ratio <= 0.40):
+        _ot_str = ", ".join(sorted(_orphan_tests)[:3])
+        if len(_orphan_tests) > 3:
+            _ot_str += f" +{len(_orphan_tests) - 3} more"
+        lines.append(
+            f"orphan tests ({len(_orphan_tests)}): {_ot_str} — no matching source file"
+        )
+    return lines
+
+
+def _coverage_api_quality(graph: Tempo, _test_fps: set[str]) -> list[str]:
+    """S115 (largest test file), S84 (test debt), S86 (zombie exports)."""
+    lines: list[str] = []
+    # S115: Largest test file — identifies the "main test suite" agents run first.
     if len(_test_fps) >= 2:
         _test_fn_counts: list[tuple[int, str]] = []
         for _tfp in _test_fps:
@@ -763,12 +758,7 @@ def _signals_coverage(
         if _test_fn_counts:
             _largest_t_n, _largest_t_fp = max(_test_fn_counts, key=lambda x: x[0])
             lines.append(f"largest test file: {_largest_t_fp.rsplit('/', 1)[-1]} ({_largest_t_n} tests)")
-
-
-    # S84: Test debt — exported functions/methods with real callers but zero test coverage.
-    # Different from "API surface unused": these ARE actively called but not tested.
-    # The highest-risk category: production code exercised by users but not by tests.
-    # Only shown when 3+ qualify (avoids noise on small/well-tested repos).
+    # S84: Test debt — exported functions with callers but zero test coverage.
     _active_exported_fns = [
         sym for sym in graph.symbols.values()
         if sym.exported
@@ -781,10 +771,7 @@ def _signals_coverage(
         lines.append(
             f"test debt: {len(_active_exported_fns)} active exports with callers but no tests"
         )
-
     # S86: Zombie exports — exported functions whose ONLY callers are test files.
-    # These are test-scaffolding APIs that should be made private or deleted.
-    # Only shown when 2+ qualify; single occurrence could be an intentional test helper.
     _zombie_exports = [
         sym for sym in graph.symbols.values()
         if sym.exported
@@ -799,11 +786,13 @@ def _signals_coverage(
         if len(_zombie_exports) > 4:
             _z_str += f" +{len(_zombie_exports) - 4} more"
         lines.append(f"zombie exports ({len(_zombie_exports)}): {_z_str} — exported but only called from tests")
+    return lines
 
 
+def _coverage_balance_signals(graph: Tempo) -> list[str]:
+    """S142, S151, S233, S213, S271, S322: test ratio and balance signals."""
+    lines: list[str] = []
     # S142: Test coverage gap — source files with no corresponding test file.
-    # Helps agents know which areas of the codebase are "flying blind."
-    # Only shown when test files exist AND >= 30% of source files lack tests.
     _s142_all_tests = {fp for fp in graph.files if _is_test_file(fp)}
     _s142_src_fps = [fp for fp in graph.files if not _is_test_file(fp)]
     if _s142_all_tests and len(_s142_src_fps) >= 5:
@@ -817,11 +806,7 @@ def _signals_coverage(
                 f"test coverage gap: {len(_s142_untested_fps)}/{len(_s142_src_fps)}"
                 f" source files have no tests ({_s142_gap_pct}%)"
             )
-
-
-    # S151: Impl vs test ratio — ratio of non-test source lines to test file lines.
-    # High ratio (>= 5x) = tests are thin relative to implementation.
-    # Only shown when test files exist and there are 10+ source lines.
+    # S151: Impl vs test ratio — high ratio (>= 5x) means tests are thin.
     _s151_src_lines = sum(
         fi.line_count for fp, fi in graph.files.items() if not _is_test_file(fp)
     )
@@ -835,11 +820,7 @@ def _signals_coverage(
                 f"impl:test ratio: {_s151_ratio:.1f}x ({_s151_src_lines:,}L src / {_s151_test_lines:,}L tests)"
                 f" — test coverage is thin"
             )
-
-
-    # S233: Undertested codebase — source files exist but fewer than 20% of all files are tests.
-    # A low test ratio for a non-trivial codebase is a coverage risk signal.
-    # Only shown when < 20% of 10+ files are tests (excluding trivial single-file repos).
+    # S233: Undertested codebase — fewer than 20% of all files are tests.
     _s233_all = [fp for fp in graph.files if graph.files[fp].language.value in _CODE_LANGS]
     _s233_tests = [fp for fp in _s233_all if _is_test_file(fp)]
     _s233_src = [fp for fp in _s233_all if not _is_test_file(fp)]
@@ -850,11 +831,7 @@ def _signals_coverage(
                 f"undertested: {len(_s233_tests)}/{len(_s233_all)} files are tests"
                 f" ({_s233_ratio:.0f}%) — consider adding test coverage"
             )
-
-
-    # S213: High test ratio — more than 60% of source files are test files.
-    # Test-heavy repos are healthy, but very high ratios may indicate missing source coverage.
-    # Positive signal: only shown when ratio >= 60% and there are 5+ total files.
+    # S213: High test ratio — more than 60% of files are tests (positive signal).
     _all_files213 = [fp for fp in graph.files if graph.files[fp].language.value in _CODE_LANGS]
     _test_files213 = [fp for fp in _all_files213 if _is_test_file(fp)]
     if len(_all_files213) >= 5:
@@ -864,11 +841,7 @@ def _signals_coverage(
                 f"high test ratio: {len(_test_files213)}/{len(_all_files213)} files are tests"
                 f" ({_test_ratio213:.0f}%) — well-tested codebase"
             )
-
-
     # S271: Test-heavy codebase — test files outnumber source files by 2×.
-    # A very high test-to-code ratio may indicate test duplication, over-testing of
-    # trivial code, or test debt accumulated from abandoned features.
     _s271_src = [
         fp for fp in graph.files
         if not _is_test_file(fp) and graph.files[fp].language.value in _CODE_LANGS
@@ -880,12 +853,7 @@ def _signals_coverage(
             f"test-heavy: {len(_s271_tests)} test files vs {len(_s271_src)} source files"
             f" ({_s271_ratio:.1f}× ratio) — unusually high; check for test duplication or dead tests"
         )
-
-
-
     # S322: Test gap — source files outnumber test files by 3× or more.
-    # A large source-to-test ratio means most code has no regression safety net;
-    # adding tests before refactoring is strongly advised.
     _s322_src_files = [fp for fp in graph.files if not _is_test_file(fp)]
     _s322_test_files = [fp for fp in graph.files if _is_test_file(fp)]
     if len(_s322_src_files) >= 10 and _s322_test_files:
@@ -900,19 +868,29 @@ def _signals_coverage(
             f"no tests: {len(_s322_src_files)} source files with 0 test files detected"
             f" — add baseline tests before any refactor"
         )
-
-
     return lines
 
 
-def _signals_exports(
-    graph: Tempo, *, _src_fps: list[str], _exported_src: list,
+def _signals_coverage(
+    graph: Tempo, *, _src_fps: list[str],
+    _test_fps: set[str], _commit_counts: dict[str, int],
 ) -> list[str]:
-    """Export/API signals."""
+    """Test coverage signals."""
+    _src_fps = [fp for fp in graph.files if not _is_test_file(fp) and graph.files[fp].symbols]
+    _test_fps = {fp for fp in graph.files if _is_test_file(fp)}
     lines: list[str] = []
+    lines.extend(_coverage_stale_tests(graph))
+    lines.extend(_coverage_ratio_breakdown(graph, _src_fps, _test_fps))
+    lines.extend(_coverage_orphan_tests(graph, _test_fps))
+    lines.extend(_coverage_api_quality(graph, _test_fps))
+    lines.extend(_coverage_balance_signals(graph))
+    return lines
 
-    # God files: source files with unusually many exported symbols (>15).
-    # Signal for undivided modules or god objects — high cognitive load, hard to navigate.
+
+def _exports_god_and_surface(
+    graph: "Tempo", _exported_src: list,
+) -> list[str]:
+    lines: list[str] = []
     _god_files = sorted(
         (
             (sum(1 for sid in fi.symbols if graph.symbols.get(sid, None) and graph.symbols[sid].exported), fp)
@@ -925,16 +903,6 @@ def _signals_exports(
     if len(_god_files) >= 1:
         _gf_parts = [f"{fp.rsplit('/', 1)[-1]} ({n} exported)" for n, fp in _god_files[:3]]
         lines.append(f"god files: {', '.join(_gf_parts)}")
-
-
-    # API surface health: exported symbols with 0 cross-file callers = potentially dead API.
-    # Quick fraction for agents: "35% of exports unused → dead code problem worth investigating."
-    # Only shown when >= 5 exported non-test symbols exist (avoids noise on tiny repos).
-    _exported_src = [
-        sym for sym in graph.symbols.values()
-        if sym.exported and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method", "class", "interface", "variable", "constant")
-    ]
     if len(_exported_src) >= 5:
         _unused_exp = [
             sym for sym in _exported_src
@@ -945,10 +913,6 @@ def _signals_exports(
         if _unused_exp:
             _ap_line += f", {len(_unused_exp)} unused ({_unused_pct}%)"
         lines.append(_ap_line)
-
-    # S130: Most-called export — the single exported symbol with the most cross-file source callers.
-    # The "heart" of the codebase: changes here have maximum blast radius.
-    # Only shown when there are 5+ exported non-test symbols and max callers >= 5.
     if len(_exported_src) >= 5:
         _mc_exp_sym: "Symbol | None" = None
         _mc_exp_count = 0
@@ -967,11 +931,13 @@ def _signals_exports(
                 f"most-called export: {_mc_exp_sym.name}"
                 f" ({_mc_exp_count} caller files in {_mc_exp_sym.file_path.rsplit('/', 1)[-1]})"
             )
+    return lines
 
 
-    # S80: Interface/abstract count — how many pure interface/protocol/abstract-class symbols.
-    # Signals codebase abstraction health: 0 interfaces in a 100-class repo = no abstraction layer.
-    # Only shown when project has 5+ classes (smaller repos rarely use abstractions).
+def _exports_symbol_quality(
+    graph: "Tempo", _exported_src: list,
+) -> list[str]:
+    lines: list[str] = []
     _class_count = sum(
         1 for sym in graph.symbols.values()
         if sym.kind.value == "class" and not _is_test_file(sym.file_path) and sym.exported
@@ -983,9 +949,6 @@ def _signals_exports(
         )
         if _iface_count >= 1:
             lines.append(f"abstractions: {_iface_count} interface(s) across {_class_count} classes")
-
-    # Private API leaking: symbols with _ prefix called from external files.
-    # Indicates callers depending on implementation details — fragile coupling.
     _private_leaks: list[str] = []
     for sym in graph.symbols.values():
         if not sym.name.startswith("_") or sym.name.startswith("__"):
@@ -1000,10 +963,6 @@ def _signals_exports(
         if len(_private_leaks) > 4:
             _pl_str += f" +{len(_private_leaks) - 4} more"
         lines.append(f"private leak ({len(_private_leaks)}): {_pl_str} — _ symbols called externally")
-
-    # Quick-win dead code: largest non-test, non-exported functions with 0 callers.
-    # Agents get immediate cleanup targets without running full dead_code mode.
-    # Threshold: line_count >= 15 to avoid flagging trivial 1-2 line helpers.
     _quick_wins = sorted(
         [
             (sym.line_count, sym)
@@ -1019,12 +978,6 @@ def _signals_exports(
     if len(_quick_wins) >= 2:
         _qw_parts = [f"{sym.name} ({lc}L)" for lc, sym in _quick_wins]
         lines.append(f"quick wins: {', '.join(_qw_parts)} — no callers, likely dead")
-
-
-    # S105: Mono-callers — exported symbols used by exactly 1 external file.
-    # These look like "public API" but are secretly coupled to a single consumer.
-    # High count = hidden tight coupling disguised as an open interface.
-    # Only shown when 3+ mono-caller exports exist (fewer = not a pattern worth flagging).
     _mono_callers = [
         sym for sym in graph.symbols.values()
         if sym.exported and sym.kind.value in ("function", "method")
@@ -1037,11 +990,6 @@ def _signals_exports(
         if len(_mono_callers) > 4:
             _mc_str += f" +{len(_mono_callers) - 4} more"
         lines.append(f"mono-callers: {len(_mono_callers)} exported fns with only 1 caller file ({_mc_str})")
-
-
-    # S154: Single-caller fns — source functions called by exactly one other function.
-    # These are prime inlining candidates; many single-caller fns = over-extracted code.
-    # Only shown when 5+ such functions found.
     _s154_single_callers = [
         sym for sym in graph.symbols.values()
         if sym.kind.value in ("function", "method")
@@ -1055,10 +1003,13 @@ def _signals_exports(
             f"single-caller fns: {len(_s154_single_callers)} private fns have exactly 1 caller"
             f" — consider inlining"
         )
+    return lines
 
-    # S161: Hub files — source files imported by 10+ other files.
-    # High import fan-in = central dependency; a change here blasts everywhere.
-    # Only shown when >= 1 non-test file has 10+ unique importing files.
+
+def _exports_file_patterns(
+    graph: "Tempo",
+) -> list[str]:
+    lines: list[str] = []
     _s161_hubs = sorted(
         [
             (len([i for i in graph.importers_of(fp) if i in graph.files and not _is_test_file(i) and i != fp]), fp)
@@ -1076,10 +1027,6 @@ def _signals_exports(
             f"hub files: {len(_s161_hubs)} files imported by 10+ others ({_s161_str})"
             f" — changes here have wide blast radius"
         )
-
-    # S203: Undocumented exports — high percentage of exported symbols with empty docstrings.
-    # Public API without docs is harder to use correctly and harder to review for contracts.
-    # Only shown when >= 10 exported non-test symbols exist and >= 50% have no doc.
     _s203_exports = [
         s for s in graph.symbols.values()
         if s.exported and not _is_test_file(s.file_path)
@@ -1093,18 +1040,13 @@ def _signals_exports(
                 f"undocumented exports: {len(_s203_no_doc)}/{len(_s203_exports)}"
                 f" exported symbols lack docstrings ({_s203_pct:.0f}%)"
             )
-
-
-    # S191: API-only files — source files where every tracked symbol is exported.
-    # Files where all symbols are public = pure API surface; any change risks breaking callers.
-    # Only shown when 2+ non-trivial source files (>= 3 symbols) are fully exported.
     _s191_api_files: list[str] = []
     for _fp191 in graph.files:
         if _is_test_file(_fp191):
             continue
         _syms191 = [
-            s for s in graph.symbols.values()
-            if s.file_path == _fp191 and s.kind.value in ("function", "method", "class", "constant")
+            s for s in graph.symbols_in_file(_fp191)
+            if s.kind.value in ("function", "method", "class", "constant")
         ]
         if len(_syms191) >= 3 and all(s.exported for s in _syms191):
             _s191_api_files.append(_fp191)
@@ -1117,11 +1059,6 @@ def _signals_exports(
             f"api-only files: {len(_s191_api_files)} files where all symbols are exported"
             f" ({_s191_str}) — pure contract files, high breaking-change risk"
         )
-
-
-    # S252: God symbol — single non-test symbol called from 10+ distinct files.
-    # One function/class/module that everything depends on is an architectural bottleneck.
-    # Only shown when 1+ symbol has 10+ distinct non-test caller files.
     _s252_god: list[tuple[int, str, str]] = []
     for _sym252 in graph.symbols.values():
         if _sym252.kind.value not in ("function", "method", "class"):
@@ -1141,10 +1078,6 @@ def _signals_exports(
             f"god symbol: {_name252} ({_fp252.rsplit('/', 1)[-1]}) called from {_n252} files"
             f" — central bottleneck; changes here blast everywhere"
         )
-
-    # S247: API-heavy codebase — 3+ source files with "api", "route", "endpoint", or
-    # "view" in their names. Changes often need to update route handlers, serializers, and tests.
-    # Only shown when 3+ such files detected (1-2 is typical for small apps).
     _s247_api_stems = {"api", "route", "routes", "router", "routers", "endpoint", "endpoints",
                        "view", "views", "handler", "handlers", "controller", "controllers",
                        "resource", "resources", "schema", "schemas", "serializer", "serializers"}
@@ -1163,9 +1096,22 @@ def _signals_exports(
             f"api-heavy: {len(_s247_api_files)} API/route files ({_s247_str})"
             f" — changes often need aligned updates in routes, schemas, and handlers"
         )
+    return lines
 
 
-
+def _signals_exports(
+    graph: Tempo, *, _src_fps: list[str], _exported_src: list,
+) -> list[str]:
+    """Export/API signals."""
+    _exported_src = [
+        sym for sym in graph.symbols.values()
+        if sym.exported and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method", "class", "interface", "variable", "constant")
+    ]
+    lines: list[str] = []
+    lines.extend(_exports_god_and_surface(graph, _exported_src))
+    lines.extend(_exports_symbol_quality(graph, _exported_src))
+    lines.extend(_exports_file_patterns(graph))
     return lines
 
 
@@ -1362,8 +1308,7 @@ def _signals_structure_a(
             continue
         _has_test_sym179 = any(
             s.name.startswith("test_")
-            for s in graph.symbols.values()
-            if s.file_path == _fp179
+            for s in graph.symbols_in_file(_fp179)
         )
         if _has_test_sym179:
             _s179_mixed.append(_fp179)
@@ -1420,8 +1365,7 @@ def _signals_structure_a(
                 c for c in graph.callers_of(s.id)
                 if c.file_path != _fp167
             ]) > 0
-            for s in graph.symbols.values()
-            if s.file_path == _fp167
+            for s in graph.symbols_in_file(_fp167)
         )
         if not _has_callers167:
             _s167_orphans.append(_fp167)
@@ -1611,7 +1555,7 @@ def _signals_structure_b(graph: Tempo) -> list[str]:
     if len(_s349_src_files) >= 10:
         _s349_tiny = [
             fp for fp in _s349_src_files
-            if len([s for s in graph.symbols.values() if s.file_path == fp]) <= 2
+            if len(graph.symbols_in_file(fp)) <= 2
         ]
         if len(_s349_tiny) / len(_s349_src_files) >= 0.50:
             _pct349 = int(100 * len(_s349_tiny) / len(_s349_src_files))
@@ -1632,8 +1576,8 @@ def _signals_structure_b(graph: Tempo) -> list[str]:
         _s373_thin = [
             fp for fp in _s373_test_files_all
             if len([
-                s for s in graph.symbols.values()
-                if s.file_path == fp and s.name.lower().startswith("test_")
+                s for s in graph.symbols_in_file(fp)
+                if s.name.lower().startswith("test_")
             ]) <= 2
         ]
         if len(_s373_thin) / len(_s373_test_files_all) >= 0.50:
@@ -1954,8 +1898,8 @@ def _async_oop_a_async_patterns(graph: Tempo) -> list[str]:
         if not _has_async316:
             _has_async316 = any(
                 s.signature and s.signature.startswith("async ")
-                for s in graph.symbols.values()
-                if s.file_path == _fp316 and s.kind.value in ("function", "method")
+                for s in graph.symbols_in_file(_fp316)
+                if s.kind.value in ("function", "method")
             )
         if _has_async316:
             _s316_async_files.append(_fp316)
@@ -2168,8 +2112,8 @@ def _async_oop_a_quality(graph: Tempo) -> list[str]:
         if _is_test_file(_fp483) or _fi483.language.value != "python":
             continue
         _fns483 = [
-            s for s in graph.symbols.values()
-            if s.file_path == _fp483 and s.kind.value in ("function", "method")
+            s for s in graph.symbols_in_file(_fp483)
+            if s.kind.value in ("function", "method")
         ]
         if not _fns483:
             continue
@@ -2330,12 +2274,10 @@ def _signals_async_oop_a(
     lines.extend(_async_oop_a_structure(graph, _s220_entry_files=_s220_entry_files))
     return lines
 
-def _signals_async_oop_b(graph: Tempo) -> list[str]:
-    """Symbol and export metric signals (S571–S649)."""
+def _async_oop_b_import_exports(graph: Tempo) -> list[str]:
+    """Import and export structure signals (S571, S582, S613, S625)."""
     lines: list[str] = []
-    # S571: No exports — 5+ source files but zero exported (public) symbols detected.
-    # A codebase with no exports is likely a script collection or has accidentally made
-    # everything private; agents can't reliably identify the public API surface.
+    # S571: No exports
     _s571_exported = [
         sym for sym in graph.symbols.values()
         if not _is_test_file(sym.file_path) and sym.exported
@@ -2346,30 +2288,7 @@ def _signals_async_oop_b(graph: Tempo) -> list[str]:
             f"no exports: {_s571_src_count} source files but 0 exported symbols detected"
             f" — all symbols are private; agents cannot identify the public API surface"
         )
-
-    # S577: Orphan test — test file with no corresponding source file in the graph.
-    # Test files without a matching source file often result from source renames or
-    # deletions; tests are wired to nothing and silently provide false coverage confidence.
-    _s577_test_fps = [fp for fp in graph.files if _is_test_file(fp)]
-    _s577_src_stems = {
-        fp.replace("\\", "/").rsplit("/", 1)[-1].replace(".py", "")
-        for fp in graph.files
-        if not _is_test_file(fp)
-    }
-    _s577_orphans = [
-        fp for fp in _s577_test_fps
-        if fp.replace("\\", "/").rsplit("/", 1)[-1].replace("test_", "").replace("_test.py", ".py").replace(".py", "") not in _s577_src_stems
-    ]
-    if _s577_orphans:
-        _orph_names577 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s577_orphans[:3])
-        lines.append(
-            f"orphan tests: {len(_s577_orphans)} test file(s) with no matching source ({_orph_names577})"
-            f" — source was renamed or deleted; tests cover nothing and create false confidence"
-        )
-
-    # S582: No cross-file imports — 5+ source files but zero import edges between them.
-    # A fully disconnected module graph means every file is an island; either the project
-    # uses dynamic imports not detected by the parser, or the files share no dependencies at all.
+    # S582: No cross-file imports
     _s582_src_files = [fp for fp in graph.files if not _is_test_file(fp)]
     if len(_s582_src_files) >= 5:
         _s582_import_edges = [
@@ -2383,76 +2302,7 @@ def _signals_async_oop_b(graph: Tempo) -> list[str]:
                 f"no cross-file imports: {len(_s582_src_files)} source files with zero import edges detected"
                 f" — may use dynamic imports, path manipulation, or files are truly unrelated"
             )
-
-    # S588: Single-language repo — all indexed source files share one language.
-    # Homogeneous repos are simpler but less portable; agents can apply language-specific
-    # best practices uniformly. Worth noting when the entire codebase is one language.
-    _s588_langs = {
-        graph.files[fp].language
-        for fp in graph.files
-        if not _is_test_file(fp) and graph.files[fp].language
-    }
-    if len(_s588_langs) == 1:
-        _only_lang588 = next(iter(_s588_langs))
-        _src_count588 = len([fp for fp in graph.files if not _is_test_file(fp)])
-        if _src_count588 >= 3:
-            lines.append(
-                f"single-language repo: all {_src_count588} source files are {_only_lang588}"
-                f" — uniform stack; language-specific linting and type tools apply globally"
-            )
-
-    # S594: No public classes — 5+ source files but zero exported class symbols detected.
-    # A repo with only functions and no public classes may be intentionally procedural,
-    # or may indicate that domain models are missing or unexported.
-    _s594_src_fps = [fp for fp in graph.files if not _is_test_file(fp)]
-    if len(_s594_src_fps) >= 5:
-        _s594_exported_classes = [
-            sym for sym in graph.symbols.values()
-            if not _is_test_file(sym.file_path)
-            and sym.exported
-            and sym.kind.value == "class"
-        ]
-        if not _s594_exported_classes:
-            lines.append(
-                f"no public classes: {len(_s594_src_fps)} source files but zero exported class symbols"
-                f" — procedural style or domain models are unexported/missing"
-            )
-
-    # S601: Flat repo — 10+ source files all in the root directory with no subdirectories.
-    # A flat layout is fine for scripts but signals that the codebase has outgrown its structure;
-    # consider grouping related files into packages.
-    _s601_root_files = [
-        fp for fp in graph.files
-        if not _is_test_file(fp)
-        and "/" not in fp.replace("\\", "/")
-        and fp.endswith(".py")
-    ]
-    if len(_s601_root_files) >= 10:
-        lines.append(
-            f"flat repo: {len(_s601_root_files)} source files all in the root directory"
-            f" — consider organizing into packages as the codebase grows"
-        )
-
-    # S607: High dead symbol ratio — more than 30% of all indexed symbols have no callers.
-    # A high fraction of unreferenced symbols indicates code accumulation without pruning;
-    # the codebase grows but cleanup is neglected.
-    _s607_all_syms = [
-        sym for sym in graph.symbols.values()
-        if not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method", "class")
-    ]
-    if len(_s607_all_syms) >= 10:
-        _s607_dead = [s for s in _s607_all_syms if not graph.callers_of(s.id)]
-        _s607_ratio = len(_s607_dead) / len(_s607_all_syms)
-        if _s607_ratio > 0.30:
-            lines.append(
-                f"high dead ratio: {len(_s607_dead)}/{len(_s607_all_syms)} symbols"
-                f" ({_s607_ratio:.0%}) have no callers — accumulation without pruning; schedule a dead-code pass"
-            )
-
-    # S613: Circular import pairs — two source files import each other (mutual dependency).
-    # Circular imports in Python are runtime errors in many patterns; they also indicate
-    # that module responsibilities are poorly separated.
+    # S613: Circular import pairs
     _import_edges613 = {
         (e.source_id, e.target_id)
         for e in graph.edges
@@ -2470,25 +2320,7 @@ def _signals_async_oop_b(graph: Tempo) -> list[str]:
             f"circular imports: {len(_circular613)} mutual import pair(s) ({_circ_names613})"
             f" — bidirectional dependencies indicate poor module separation; refactor to break cycle"
         )
-
-    # S619: Large average file — average source file line count exceeds 200 lines.
-    # When the typical file is long, the codebase favors large monoliths over small modules;
-    # navigation and comprehension cost are both elevated.
-    _s619_src_files = {
-        fp: fi for fp, fi in graph.files.items()
-        if not _is_test_file(fp) and fi.line_count > 0
-    }
-    if len(_s619_src_files) >= 5:
-        _avg_lines619 = sum(fi.line_count for fi in _s619_src_files.values()) // len(_s619_src_files)
-        if _avg_lines619 > 200:
-            lines.append(
-                f"large average file: average source file is {_avg_lines619} lines"
-                f" — codebase favors monolithic files; navigation cost is elevated"
-            )
-
-    # S625: High export ratio — 5+ source files where >70% of symbols are exported but no imports.
-    # A repo with many exported symbols but no cross-file imports may be a collection of
-    # independent modules with no shared entry point — harder to trace end-to-end.
+    # S625: High export ratio
     _s625_src_files = [fp for fp in graph.files if not _is_test_file(fp)]
     if len(_s625_src_files) >= 5:
         _s625_export_count = sum(
@@ -2512,10 +2344,71 @@ def _signals_async_oop_b(graph: Tempo) -> list[str]:
                     f"high export ratio: {_export_pct625}% of symbols exported but zero cross-file imports"
                     f" — independent module collection; no shared entry point to trace end-to-end"
                 )
+    return lines
 
-    # S631: Procedural style — 10+ exported functions but zero exported classes in source files.
-    # No exported classes suggests the codebase uses a procedural rather than OOP style;
-    # this is fine intentionally but unexpected in frameworks that rely on class-based dispatch.
+
+def _async_oop_b_repo_layout(graph: Tempo) -> list[str]:
+    """Repo layout and language signals (S588, S601, S619)."""
+    lines: list[str] = []
+    # S588: Single-language repo
+    _s588_langs = {
+        graph.files[fp].language
+        for fp in graph.files
+        if not _is_test_file(fp) and graph.files[fp].language
+    }
+    if len(_s588_langs) == 1:
+        _only_lang588 = next(iter(_s588_langs))
+        _src_count588 = len([fp for fp in graph.files if not _is_test_file(fp)])
+        if _src_count588 >= 3:
+            lines.append(
+                f"single-language repo: all {_src_count588} source files are {_only_lang588}"
+                f" — uniform stack; language-specific linting and type tools apply globally"
+            )
+    # S601: Flat repo
+    _s601_root_files = [
+        fp for fp in graph.files
+        if not _is_test_file(fp)
+        and "/" not in fp.replace("\\", "/")
+        and fp.endswith(".py")
+    ]
+    if len(_s601_root_files) >= 10:
+        lines.append(
+            f"flat repo: {len(_s601_root_files)} source files all in the root directory"
+            f" — consider organizing into packages as the codebase grows"
+        )
+    # S619: Large average file
+    _s619_src_files = {
+        fp: fi for fp, fi in graph.files.items()
+        if not _is_test_file(fp) and fi.line_count > 0
+    }
+    if len(_s619_src_files) >= 5:
+        _avg_lines619 = sum(fi.line_count for fi in _s619_src_files.values()) // len(_s619_src_files)
+        if _avg_lines619 > 200:
+            lines.append(
+                f"large average file: average source file is {_avg_lines619} lines"
+                f" — codebase favors monolithic files; navigation cost is elevated"
+            )
+    return lines
+
+
+def _async_oop_b_oop_classes(graph: Tempo) -> list[str]:
+    """OOP and class structure signals (S594, S631, S643, S649)."""
+    lines: list[str] = []
+    # S594: No public classes
+    _s594_src_fps = [fp for fp in graph.files if not _is_test_file(fp)]
+    if len(_s594_src_fps) >= 5:
+        _s594_exported_classes = [
+            sym for sym in graph.symbols.values()
+            if not _is_test_file(sym.file_path)
+            and sym.exported
+            and sym.kind.value == "class"
+        ]
+        if not _s594_exported_classes:
+            lines.append(
+                f"no public classes: {len(_s594_src_fps)} source files but zero exported class symbols"
+                f" — procedural style or domain models are unexported/missing"
+            )
+    # S631: Procedural style
     _s631_src = [fp for fp in graph.files if not _is_test_file(fp)]
     if len(_s631_src) >= 5:
         _exported_fns631 = sum(
@@ -2531,34 +2424,13 @@ def _signals_async_oop_b(graph: Tempo) -> list[str]:
                 f"procedural style: {_exported_fns631} exported functions, 0 exported classes"
                 f" — no OOP surface; verify this is intentional for the framework in use"
             )
-
-    # S637: Test-heavy symbols — test code contains 3x more symbols than source code.
-    # An inverted symbol ratio suggests test infrastructure has grown disproportionately;
-    # test helpers and fixtures may themselves need refactoring.
-    _s637_src_syms = sum(
-        1 for s in graph.symbols.values()
-        if not _is_test_file(s.file_path) and s.parent_id is None
-    )
-    _s637_test_syms = sum(
-        1 for s in graph.symbols.values()
-        if _is_test_file(s.file_path) and s.parent_id is None
-    )
-    if _s637_src_syms >= 5 and _s637_test_syms >= _s637_src_syms * 3:
-        lines.append(
-            f"test-heavy symbols: {_s637_test_syms} top-level test symbols vs {_s637_src_syms} source symbols"
-            f" — test infrastructure may need its own refactoring pass"
-        )
-
-    # S643: Deep inheritance chain — at least one class inherits from a class that itself inherits.
-    # Inheritance depth >= 3 signals a fragile base class problem; changes to base classes
-    # propagate through all descendants, and deep chains are hard to reason about.
+    # S643: Deep inheritance chain
     _inherits643 = {
         e.source_id: e.target_id
         for e in graph.edges
         if e.kind.value == "inherits"
         and not _is_test_file(e.source_id)
     }
-    # Check for chains: A→B→C (depth 3)
     _deep_chains643 = []
     for child, parent in _inherits643.items():
         grandparent = _inherits643.get(parent)
@@ -2571,10 +2443,7 @@ def _signals_async_oop_b(graph: Tempo) -> list[str]:
             f" (e.g. {_chain643[0]} → {_chain643[1]} → {_chain643[2]})"
             f" — fragile base class risk; prefer composition over deep inheritance"
         )
-
-    # S649: Exception class density — more than 20% of exported classes are Error/Exception types.
-    # A codebase with many custom exception classes is building an exception hierarchy;
-    # this is fine but signals that callers must handle a wide surface of failure modes.
+    # S649: Exception class density
     _exported_classes649 = [
         s for s in graph.symbols.values()
         if s.exported and s.kind.value == "class" and not _is_test_file(s.file_path)
@@ -2591,7 +2460,67 @@ def _signals_async_oop_b(graph: Tempo) -> list[str]:
                 f" exported classes ({_exc_pct649}%) are error/exception types"
                 f" — wide failure surface; callers must handle many distinct exception types"
             )
+    return lines
 
+
+def _async_oop_b_symbol_test(graph: Tempo) -> list[str]:
+    """Symbol quality and test hygiene signals (S577, S607, S637)."""
+    lines: list[str] = []
+    # S577: Orphan test
+    _s577_test_fps = [fp for fp in graph.files if _is_test_file(fp)]
+    _s577_src_stems = {
+        fp.replace("\\", "/").rsplit("/", 1)[-1].replace(".py", "")
+        for fp in graph.files
+        if not _is_test_file(fp)
+    }
+    _s577_orphans = [
+        fp for fp in _s577_test_fps
+        if fp.replace("\\", "/").rsplit("/", 1)[-1].replace("test_", "").replace("_test.py", ".py").replace(".py", "") not in _s577_src_stems
+    ]
+    if _s577_orphans:
+        _orph_names577 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s577_orphans[:3])
+        lines.append(
+            f"orphan tests: {len(_s577_orphans)} test file(s) with no matching source ({_orph_names577})"
+            f" — source was renamed or deleted; tests cover nothing and create false confidence"
+        )
+    # S607: High dead symbol ratio
+    _s607_all_syms = [
+        sym for sym in graph.symbols.values()
+        if not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method", "class")
+    ]
+    if len(_s607_all_syms) >= 10:
+        _s607_dead = [s for s in _s607_all_syms if not graph.callers_of(s.id)]
+        _s607_ratio = len(_s607_dead) / len(_s607_all_syms)
+        if _s607_ratio > 0.30:
+            lines.append(
+                f"high dead ratio: {len(_s607_dead)}/{len(_s607_all_syms)} symbols"
+                f" ({_s607_ratio:.0%}) have no callers — accumulation without pruning; schedule a dead-code pass"
+            )
+    # S637: Test-heavy symbols
+    _s637_src_syms = sum(
+        1 for s in graph.symbols.values()
+        if not _is_test_file(s.file_path) and s.parent_id is None
+    )
+    _s637_test_syms = sum(
+        1 for s in graph.symbols.values()
+        if _is_test_file(s.file_path) and s.parent_id is None
+    )
+    if _s637_src_syms >= 5 and _s637_test_syms >= _s637_src_syms * 3:
+        lines.append(
+            f"test-heavy symbols: {_s637_test_syms} top-level test symbols vs {_s637_src_syms} source symbols"
+            f" — test infrastructure may need its own refactoring pass"
+        )
+    return lines
+
+
+def _signals_async_oop_b(graph: Tempo) -> list[str]:
+    """Symbol and export metric signals (S571–S649)."""
+    lines: list[str] = []
+    lines.extend(_async_oop_b_import_exports(graph))
+    lines.extend(_async_oop_b_repo_layout(graph))
+    lines.extend(_async_oop_b_oop_classes(graph))
+    lines.extend(_async_oop_b_symbol_test(graph))
     return lines
 
 def _async_oop_c_complexity_structure(graph: Tempo) -> list[str]:

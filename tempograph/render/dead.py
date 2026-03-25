@@ -231,6 +231,12 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
     # S190: Dead overrides — methods in a live class that override a parent method but have 0 callers.
     # A live class with an unused override = the child behavior is never triggered.
     # Only shown when >= 1 such method found with live class (has callers) but 0-caller override.
+    # Precompute INHERITS index: source_id → target Symbol (O(M) once vs O(N×M) per class)
+    _s190_inherits_parent: dict[str, str] = {
+        e.source_id: e.target_id
+        for e in graph.edges
+        if e.kind.value == "inherits" and e.target_id in graph.symbols
+    }
     _s190_dead_overrides: list[str] = []
     for _cls190 in graph.symbols.values():
         if _cls190.kind.value != "class" or _is_test_file(_cls190.file_path):
@@ -244,16 +250,9 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
             if m.kind.value == "method"
         ):
             continue
-        # Find parent class via INHERITS edge (source=child, target=parent)
-        _parent190 = next(
-            (
-                graph.symbols[e.target_id]
-                for e in graph.edges
-                if e.kind.value == "inherits" and e.source_id == _cls190.id
-                and e.target_id in graph.symbols
-            ),
-            None,
-        )
+        # Find parent class via precomputed INHERITS index (indexed O(1) vs edge scan)
+        _parent190_id = _s190_inherits_parent.get(_cls190.id)
+        _parent190 = graph.symbols[_parent190_id] if _parent190_id else None
         if _parent190 is None:
             continue
         _parent_method_names190 = {
@@ -347,16 +346,12 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
             continue
         if _sym166.kind.value != "method":
             continue
-        # Find the parent class via CONTAINS edges (parent contains this method)
-        _parent_cls166 = next(
-            (
-                graph.symbols[e.source_id]
-                for e in graph.edges
-                if e.kind.value == "contains" and e.target_id == _sym166.id
-                and e.source_id in graph.symbols
-                and graph.symbols[e.source_id].kind.value == "class"
-            ),
-            None,
+        # Find the parent class via parent_id (indexed, avoids edge scan)
+        _parent_cls166 = (
+            graph.symbols[_sym166.parent_id]
+            if _sym166.parent_id and _sym166.parent_id in graph.symbols
+            and graph.symbols[_sym166.parent_id].kind.value == "class"
+            else None
         )
         if _parent_cls166 is not None and len(graph.callers_of(_parent_cls166.id)) > 0:
             _s166_zombies.append(_sym166.name)
@@ -432,17 +427,22 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
 
 def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: list[Symbol], lines: list[str]) -> None:
     """Dead code signals S241-S360: named-prefix patterns batch A — config, exceptions, types, CLI, events, async, factory, validators, middleware, serializers, adapters, auth, notifications, scheduled tasks, migration, parsers, property accessors."""
+    # Pre-filter to fn/method candidates — avoids 23× redundant enum scans across all signals.
+    _fn_candidates = [
+        (sym, conf) for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+    ]
+    _fn_candidates_40 = [(sym, conf) for sym, conf in _fn_candidates if conf >= 40]
     # S241: Dead config/settings — config_*/settings_*/get_config/load_config functions with 0 callers.
     # Dead config accessors often signal removed features whose configuration was never cleaned up.
     # Only shown when 2+ dead config-accessor functions found (conf >= 40).
     _s241_cfg_patterns = ("config_", "settings_", "get_config", "load_config", "get_setting",
                           "load_settings", "parse_config", "read_config")
     _s241_dead_cfg = [
-        sym for sym, conf in scored
-        if conf >= 40
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-        and any(sym.name.lower().startswith(p) for p in _s241_cfg_patterns)
+        sym for sym, conf in _fn_candidates_40
+        if any(sym.name.lower().startswith(p) for p in _s241_cfg_patterns)
     ]
     if len(_s241_dead_cfg) >= 2:
         _cfg_names = [s.name for s in _s241_dead_cfg[:3]]
@@ -624,11 +624,8 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
     # Only shown when 3+ such functions found (conf >= 30).
     _s297_val_prefixes = ("validate_", "check_", "verify_", "ensure_", "assert_", "is_valid_")
     _s297_dead_vals = [
-        sym for sym, conf in scored
-        if conf >= 30
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-        and any(sym.name.lower().startswith(p) for p in _s297_val_prefixes)
+        sym for sym, conf in _fn_candidates
+        if any(sym.name.lower().startswith(p) for p in _s297_val_prefixes)
     ]
     if len(_s297_dead_vals) >= 3:
         _val_names = [s.name for s in _s297_dead_vals[:3]]
@@ -649,11 +646,8 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         "pre_", "post_process", "apply_filter", "handle_request",
     )
     _s298_dead_mw = [
-        sym for sym, conf in scored
-        if conf >= 30
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-        and any(sym.name.lower().startswith(p) for p in _s298_mw_prefixes)
+        sym for sym, conf in _fn_candidates
+        if any(sym.name.lower().startswith(p) for p in _s298_mw_prefixes)
     ]
     if len(_s298_dead_mw) >= 2:
         _mw_names298 = ", ".join(s.name for s in _s298_dead_mw[:3])
@@ -697,11 +691,8 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         "transformer_", "format_", "formatter_", "translate_",
     )
     _s310_dead_adapt = [
-        sym for sym, conf in scored
-        if conf >= 30
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-        and any(sym.name.lower().startswith(p) for p in _s310_adapt_prefixes)
+        sym for sym, conf in _fn_candidates
+        if any(sym.name.lower().startswith(p) for p in _s310_adapt_prefixes)
     ]
     if len(_s310_dead_adapt) >= 2:
         _adapt_names310 = ", ".join(s.name for s in _s310_dead_adapt[:3])
@@ -720,11 +711,8 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         "rate_limit_", "throttle_", "debounce_", "limit_", "rate_check_", "quota_",
     )
     _s315_dead_rl = [
-        sym for sym, conf in scored
-        if conf >= 30
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-        and any(sym.name.lower().startswith(p) for p in _s315_rl_prefixes)
+        sym for sym, conf in _fn_candidates
+        if any(sym.name.lower().startswith(p) for p in _s315_rl_prefixes)
     ]
     if len(_s315_dead_rl) >= 2:
         _rl_names315 = ", ".join(s.name for s in _s315_dead_rl[:3])
@@ -744,11 +732,8 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         "require_auth", "require_permission", "has_permission", "is_authorized",
     )
     _s321_dead_auth = [
-        sym for sym, conf in scored
-        if conf >= 40
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-        and any(sym.name.lower().startswith(p) for p in _s321_auth_prefixes)
+        sym for sym, conf in _fn_candidates_40
+        if any(sym.name.lower().startswith(p) for p in _s321_auth_prefixes)
     ]
     if _s321_dead_auth:
         _auth_names321 = ", ".join(s.name for s in _s321_dead_auth[:3])
@@ -767,11 +752,8 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         "emit_event_", "publish_", "broadcast_",
     )
     _s329_dead_notif = [
-        sym for sym, conf in scored
-        if conf >= 30
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-        and any(sym.name.lower().startswith(p) for p in _s329_notif_prefixes)
+        sym for sym, conf in _fn_candidates
+        if any(sym.name.lower().startswith(p) for p in _s329_notif_prefixes)
     ]
     if len(_s329_dead_notif) >= 2:
         _notif_names329 = ", ".join(s.name for s in _s329_dead_notif[:3])
@@ -791,11 +773,8 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         "handle_state_", "state_", "enter_state_",
     )
     _s335_dead_state = [
-        sym for sym, conf in scored
-        if conf >= 30
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-        and any(sym.name.lower().startswith(p) for p in _s335_state_prefixes)
+        sym for sym, conf in _fn_candidates
+        if any(sym.name.lower().startswith(p) for p in _s335_state_prefixes)
     ]
     if len(_s335_dead_state) >= 2:
         _state_names335 = ", ".join(s.name for s in _s335_dead_state[:3])
@@ -814,11 +793,8 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         "task_", "cron_", "scheduled_", "periodic_", "job_", "background_task_",
     )
     _s341_dead_tasks = [
-        sym for sym, conf in scored
-        if conf >= 30
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-        and any(sym.name.lower().startswith(p) for p in _s341_task_prefixes)
+        sym for sym, conf in _fn_candidates
+        if any(sym.name.lower().startswith(p) for p in _s341_task_prefixes)
     ]
     if len(_s341_dead_tasks) >= 2:
         _task_names341 = ", ".join(s.name for s in _s341_dead_tasks[:3])
@@ -837,11 +813,8 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         "revert_migration_", "run_migration_",
     )
     _s347_dead_mig = [
-        sym for sym, conf in scored
-        if conf >= 30
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-        and any(sym.name.lower().startswith(p) for p in _s347_mig_prefixes)
+        sym for sym, conf in _fn_candidates
+        if any(sym.name.lower().startswith(p) for p in _s347_mig_prefixes)
     ]
     if len(_s347_dead_mig) >= 1:
         _mig_names347 = ", ".join(s.name for s in _s347_dead_mig[:3])
@@ -860,11 +833,8 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         "from_string_", "load_from_", "read_from_",
     )
     _s378_dead_parsers = [
-        sym for sym, conf in scored
-        if conf >= 30
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-        and any(sym.name.lower().startswith(p) for p in _s378_parser_prefixes)
+        sym for sym, conf in _fn_candidates
+        if any(sym.name.lower().startswith(p) for p in _s378_parser_prefixes)
     ]
     if len(_s378_dead_parsers) >= 2:
         _parser_names378 = ", ".join(s.name for s in _s378_dead_parsers[:3])
@@ -939,11 +909,8 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         "on_event_", "event_handler_", "process_event_",
     )
     _s360_dead_ev = [
-        sym for sym, conf in scored
-        if conf >= 30
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-        and any(sym.name.lower().startswith(p) for p in _s360_ev_prefixes)
+        sym for sym, conf in _fn_candidates
+        if any(sym.name.lower().startswith(p) for p in _s360_ev_prefixes)
     ]
     if len(_s360_dead_ev) >= 2:
         _ev_names360 = ", ".join(s.name for s in _s360_dead_ev[:3])
@@ -957,6 +924,15 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
 
 def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: list[Symbol], lines: list[str]) -> None:
     """Dead code signals S354-S512: named-prefix patterns batch B — factory fns, logging, reports, cleanup, background tasks, validators, converters, schedulers, decorators, event handlers, migrations, CLI, error handlers, formatters, debug helpers."""
+    # Pre-filter to fn/method candidates — avoids 19× redundant enum scans across all signals.
+    # 1654 scored → 96 fn/method (conf>=30, non-test): 17.2× fewer iterations per signal.
+    _fn_candidates = [
+        (sym, conf) for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+    ]
+    _fn_candidates_40 = [(sym, conf) for sym, conf in _fn_candidates if conf >= 40]
     # S354: Dead factory functions — create_*/make_*/build_* functions with 0 callers.
     # Factory functions that are never called may represent abandoned creation patterns
     # or forgotten constructor alternatives; they can be removed safely once verified unused.
@@ -964,11 +940,8 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         "create_", "make_", "build_", "construct_", "new_", "factory_", "spawn_",
     )
     _s354_dead_factories = [
-        sym for sym, conf in scored
-        if conf >= 30
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-        and any(sym.name.lower().startswith(p) for p in _s354_factory_prefixes)
+        sym for sym, conf in _fn_candidates
+        if any(sym.name.lower().startswith(p) for p in _s354_factory_prefixes)
     ]
     if len(_s354_dead_factories) >= 2:
         _fac_names354 = ", ".join(s.name for s in _s354_dead_factories[:3])
@@ -987,11 +960,8 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         "log_event_", "record_event_",
     )
     _s396_dead_logs = [
-        sym for sym, conf in scored
-        if conf >= 30
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-        and any(sym.name.lower().startswith(p) for p in _s396_log_prefixes)
+        sym for sym, conf in _fn_candidates
+        if any(sym.name.lower().startswith(p) for p in _s396_log_prefixes)
     ]
     if len(_s396_dead_logs) >= 2:
         _log_names396 = ", ".join(s.name for s in _s396_dead_logs[:3])
@@ -1010,11 +980,8 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         "create_report_", "render_report_",
     )
     _s390_dead_reports = [
-        sym for sym, conf in scored
-        if conf >= 30
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-        and any(sym.name.lower().startswith(p) for p in _s390_report_prefixes)
+        sym for sym, conf in _fn_candidates
+        if any(sym.name.lower().startswith(p) for p in _s390_report_prefixes)
     ]
     if len(_s390_dead_reports) >= 2:
         _rpt_names390 = ", ".join(s.name for s in _s390_dead_reports[:3])
@@ -1033,11 +1000,8 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         "dispose_", "finalize_", "free_", "release_",
     )
     _s384_dead_cleanup = [
-        sym for sym, conf in scored
-        if conf >= 30
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-        and any(sym.name.lower().startswith(p) for p in _s384_cleanup_prefixes)
+        sym for sym, conf in _fn_candidates
+        if any(sym.name.lower().startswith(p) for p in _s384_cleanup_prefixes)
     ]
     if len(_s384_dead_cleanup) >= 2:
         _cl_names384 = ", ".join(s.name for s in _s384_dead_cleanup[:3])
@@ -1056,11 +1020,8 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         "async_job_", "queue_", "job_",
     )
     _s402_dead_bg = [
-        sym for sym, conf in scored
-        if conf >= 30
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-        and any(sym.name.lower().startswith(p) for p in _s402_bg_prefixes)
+        sym for sym, conf in _fn_candidates
+        if any(sym.name.lower().startswith(p) for p in _s402_bg_prefixes)
     ]
     if len(_s402_dead_bg) >= 2:
         _bg_names402 = ", ".join(s.name for s in _s402_dead_bg[:3])
@@ -1079,11 +1040,8 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         "is_valid_", "sanitize_",
     )
     _s408_dead_validators = [
-        sym for sym, conf in scored
-        if conf >= 30
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-        and any(sym.name.lower().startswith(p) for p in _s408_val_prefixes)
+        sym for sym, conf in _fn_candidates
+        if any(sym.name.lower().startswith(p) for p in _s408_val_prefixes)
     ]
     if len(_s408_dead_validators) >= 2:
         _val_names408 = ", ".join(s.name for s in _s408_dead_validators[:3])
@@ -1102,11 +1060,8 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         "serialize_", "format_", "encode_", "decode_",
     )
     _s414_dead_converters = [
-        sym for sym, conf in scored
-        if conf >= 30
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-        and any(sym.name.lower().startswith(p) for p in _s414_conv_prefixes)
+        sym for sym, conf in _fn_candidates
+        if any(sym.name.lower().startswith(p) for p in _s414_conv_prefixes)
     ]
     if len(_s414_dead_converters) >= 2:
         _conv_names414 = ", ".join(s.name for s in _s414_dead_converters[:3])
@@ -1125,11 +1080,8 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         "hourly_", "daily_", "weekly_", "nightly_",
     )
     _s420_dead_schedulers = [
-        sym for sym, conf in scored
-        if conf >= 30
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-        and any(sym.name.lower().startswith(p) for p in _s420_sched_prefixes)
+        sym for sym, conf in _fn_candidates
+        if any(sym.name.lower().startswith(p) for p in _s420_sched_prefixes)
     ]
     if len(_s420_dead_schedulers) >= 2:
         _sched_names420 = ", ".join(s.name for s in _s420_dead_schedulers[:3])
@@ -1148,11 +1100,8 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         "patch_", "monkey_patch_", "decorate_",
     )
     _s426_dead_decorators = [
-        sym for sym, conf in scored
-        if conf >= 30
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-        and any(sym.name.lower().startswith(p) for p in _s426_dec_prefixes)
+        sym for sym, conf in _fn_candidates
+        if any(sym.name.lower().startswith(p) for p in _s426_dec_prefixes)
     ]
     if len(_s426_dead_decorators) >= 2:
         _dec_names426 = ", ".join(s.name for s in _s426_dead_decorators[:3])
@@ -1171,11 +1120,8 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         "on_event_", "attach_", "bind_",
     )
     _s432_dead_subs = [
-        sym for sym, conf in scored
-        if conf >= 30
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-        and any(sym.name.lower().startswith(p) for p in _s432_sub_prefixes)
+        sym for sym, conf in _fn_candidates
+        if any(sym.name.lower().startswith(p) for p in _s432_sub_prefixes)
     ]
     if len(_s432_dead_subs) >= 2:
         _sub_names432 = ", ".join(s.name for s in _s432_dead_subs[:3])
@@ -1194,11 +1140,8 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         "apply_migration_", "run_migration_",
     )
     _s438_dead_migrations = [
-        sym for sym, conf in scored
-        if conf >= 30
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-        and any(sym.name.lower().startswith(p) for p in _s438_migration_prefixes)
+        sym for sym, conf in _fn_candidates
+        if any(sym.name.lower().startswith(p) for p in _s438_migration_prefixes)
     ]
     if len(_s438_dead_migrations) >= 1:
         _mig_names438 = ", ".join(s.name for s in _s438_dead_migrations[:3])
@@ -1215,11 +1158,8 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
     # with any documentation or scripts that reference the command name.
     _s444_cli_prefixes = ("main_", "cmd_", "cli_", "command_", "run_command_", "handle_command_")
     _s444_dead_cli = [
-        sym for sym, conf in scored
-        if conf >= 30
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-        and any(sym.name.lower().startswith(p) for p in _s444_cli_prefixes)
+        sym for sym, conf in _fn_candidates
+        if any(sym.name.lower().startswith(p) for p in _s444_cli_prefixes)
     ]
     if len(_s444_dead_cli) >= 1:
         _cli_names444 = ", ".join(s.name for s in _s444_dead_cli[:3])
@@ -1238,11 +1178,8 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         "except_", "catch_", "recover_",
     )
     _s450_dead_handlers = [
-        sym for sym, conf in scored
-        if conf >= 30
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-        and any(sym.name.lower().startswith(p) for p in _s450_error_prefixes)
+        sym for sym, conf in _fn_candidates
+        if any(sym.name.lower().startswith(p) for p in _s450_error_prefixes)
     ]
     if len(_s450_dead_handlers) >= 1:
         _handler_names450 = ", ".join(s.name for s in _s450_dead_handlers[:3])
@@ -1261,11 +1198,8 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         "render_output_", "display_",
     )
     _s456_dead_fmts = [
-        sym for sym, conf in scored
-        if conf >= 30
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-        and any(sym.name.lower().startswith(p) for p in _s456_fmt_prefixes)
+        sym for sym, conf in _fn_candidates
+        if any(sym.name.lower().startswith(p) for p in _s456_fmt_prefixes)
     ]
     if len(_s456_dead_fmts) >= 2:
         _fmt_names456 = ", ".join(s.name for s in _s456_dead_fmts[:3])
@@ -1283,11 +1217,8 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         "validate_", "check_", "verify_", "assert_", "ensure_", "is_valid_",
     )
     _s462_dead_vals = [
-        sym for sym, conf in scored
-        if conf >= 30
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-        and any(sym.name.lower().startswith(p) for p in _s462_val_prefixes)
+        sym for sym, conf in _fn_candidates
+        if any(sym.name.lower().startswith(p) for p in _s462_val_prefixes)
     ]
     if len(_s462_dead_vals) >= 2:
         _val_names462 = ", ".join(s.name for s in _s462_dead_vals[:3])
@@ -1306,11 +1237,8 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         "export_", "dump_", "as_json_",
     )
     _s468_dead_serials = [
-        sym for sym, conf in scored
-        if conf >= 30
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-        and any(sym.name.lower().startswith(p) for p in _s468_serial_prefixes)
+        sym for sym, conf in _fn_candidates
+        if any(sym.name.lower().startswith(p) for p in _s468_serial_prefixes)
     ]
     if len(_s468_dead_serials) >= 1:
         _serial_names468 = ", ".join(s.name for s in _s468_dead_serials[:3])
@@ -1328,11 +1256,8 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         "setup_", "initialize_", "init_", "bootstrap_", "configure_", "startup_",
     )
     _s474_dead_inits = [
-        sym for sym, conf in scored
-        if conf >= 30
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-        and any(sym.name.lower().startswith(p) for p in _s474_init_prefixes)
+        sym for sym, conf in _fn_candidates
+        if any(sym.name.lower().startswith(p) for p in _s474_init_prefixes)
     ]
     if len(_s474_dead_inits) >= 1:
         _init_names474 = ", ".join(s.name for s in _s474_dead_inits[:3])
@@ -1351,11 +1276,8 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         "debug_print_", "debug_log_",
     )
     _s480_dead_debug = [
-        sym for sym, conf in scored
-        if conf >= 30
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-        and any(sym.name.lower().startswith(p) for p in _s480_debug_prefixes)
+        sym for sym, conf in _fn_candidates
+        if any(sym.name.lower().startswith(p) for p in _s480_debug_prefixes)
     ]
     if len(_s480_dead_debug) >= 2:
         _dbg_names480 = ", ".join(s.name for s in _s480_dead_debug[:3])
@@ -1378,12 +1300,8 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
             and not _is_test_file(_s487sym.file_path)
             and _s487sym.file_path not in _s487_seen_files
         ):
-            _callers487 = [
-                e for e in graph.edges
-                if e.kind.value == "calls" and e.target_id == _s487sym.id
-            ]
             _importers487 = graph.importers_of(_s487sym.file_path)
-            if not _callers487 and not _importers487:
+            if not graph.callers_of(_s487sym.id) and not _importers487:
                 _cls487 = next(
                     (
                         s for s in graph.symbols.values()
@@ -1407,11 +1325,8 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         "on_", "handle_", "listen_", "when_", "on_event_", "receive_", "dispatch_",
     )
     _s493_dead_handlers = [
-        sym for sym, conf in scored
-        if conf >= 40
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-        and any(sym.name.lower().startswith(p) for p in _s493_handler_prefixes)
+        sym for sym, conf in _fn_candidates_40
+        if any(sym.name.lower().startswith(p) for p in _s493_handler_prefixes)
     ]
     if len(_s493_dead_handlers) >= 2:
         _h_names493 = ", ".join(s.name for s in _s493_dead_handlers[:3])
@@ -1438,10 +1353,7 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
             and _sym499.parent_id in graph.symbols
             and graph.symbols[_sym499.parent_id].kind.value == "class"
         ):
-            _callers499 = [
-                e for e in graph.edges if e.kind.value == "calls" and e.target_id == _sym499.id
-            ]
-            if not _callers499 and not graph.importers_of(_sym499.file_path):
+            if not graph.callers_of(_sym499.id) and not graph.importers_of(_sym499.file_path):
                 _s499_dead_class_methods.append(_sym499)
     if len(_s499_dead_class_methods) >= 2:
         _cm_names499 = ", ".join(s.name for s in _s499_dead_class_methods[:3])
@@ -1513,10 +1425,7 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
             or sym.name.endswith("Protocol")
             or sym.name.endswith("Interface")
         )
-        and not any(
-            e.kind.value in ("inherits", "implements") and e.target_id == sym.id
-            for e in graph.edges
-        )
+        and not graph.subtypes_of(sym.name)
         and not graph.callers_of(sym.id)
         and not graph.importers_of(sym.file_path)
     ]
@@ -2293,10 +2202,7 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     _dead_static755 = []
     for _s755 in dead:
         if _s755.kind.value == "class" and not _is_test_file(_s755.file_path):
-            _children755 = [
-                graph.symbols[cid] for cid in graph.symbols
-                if graph.symbols[cid].parent_id == _s755.id
-            ]
+            _children755 = graph.children_of(_s755.id)
             if _children755 and all(
                 c.kind.value in ("function", "method", "classmethod", "staticmethod")
                 for c in _children755
@@ -2356,9 +2262,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     for _s773 in dead:
         if _s773.kind.value == "class" and not _is_test_file(_s773.file_path):
             _methods773 = [
-                graph.symbols[cid] for cid in graph.symbols
-                if graph.symbols[cid].parent_id == _s773.id
-                and graph.symbols[cid].kind.value in ("function", "method", "classmethod", "staticmethod")
+                c for c in graph.children_of(_s773.id)
+                if c.kind.value in ("function", "method", "classmethod", "staticmethod")
             ]
             if len(_methods773) == 1:
                 _dead_single773.append((_s773, _methods773[0]))
