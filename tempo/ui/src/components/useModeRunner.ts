@@ -23,6 +23,7 @@ export interface ModeRunnerState {
   paletteOpen: boolean;
   historyOpen: boolean;
   showHelp: boolean;
+  showWhichKey: boolean;
   history: string[];
   feedbackMode: string | null;
   outputFilter: string;
@@ -110,6 +111,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   const [saved, setSaved] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [showHelp, setHelpOpen] = useState(false);
+  const [showWhichKey, setWhichKeyVisible] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState<string[]>(() => loadHistory(localStorage.getItem(lastModeKey(repoPath)) || "overview"));
   const feedbackGiven = useRef<Map<string, boolean>>(new Map<string, boolean>());
@@ -252,6 +254,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     setSidebarTab,
     setFilterVisible,
     setHelpOpen,
+    setWhichKeyVisible,
   });
 
   // Live elapsed counter
@@ -345,6 +348,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     saved,
     paletteOpen,
     showHelp,
+    showWhichKey,
     historyOpen,
     history,
     feedbackMode,
