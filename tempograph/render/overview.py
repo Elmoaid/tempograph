@@ -234,7 +234,7 @@ def _signals_complexity(
     for _fp226 in graph.files:
         if _is_test_file(_fp226):
             continue
-        _n_syms226 = sum(1 for s in graph.symbols.values() if s.file_path == _fp226)
+        _n_syms226 = len(graph.symbols_in_file(_fp226))
         if _n_syms226 >= 50:
             _s226_mono.append((_n_syms226, _fp226))
     if _s226_mono:
@@ -1045,8 +1045,8 @@ def _exports_file_patterns(
         if _is_test_file(_fp191):
             continue
         _syms191 = [
-            s for s in graph.symbols.values()
-            if s.file_path == _fp191 and s.kind.value in ("function", "method", "class", "constant")
+            s for s in graph.symbols_in_file(_fp191)
+            if s.kind.value in ("function", "method", "class", "constant")
         ]
         if len(_syms191) >= 3 and all(s.exported for s in _syms191):
             _s191_api_files.append(_fp191)
@@ -1308,8 +1308,7 @@ def _signals_structure_a(
             continue
         _has_test_sym179 = any(
             s.name.startswith("test_")
-            for s in graph.symbols.values()
-            if s.file_path == _fp179
+            for s in graph.symbols_in_file(_fp179)
         )
         if _has_test_sym179:
             _s179_mixed.append(_fp179)
@@ -1366,8 +1365,7 @@ def _signals_structure_a(
                 c for c in graph.callers_of(s.id)
                 if c.file_path != _fp167
             ]) > 0
-            for s in graph.symbols.values()
-            if s.file_path == _fp167
+            for s in graph.symbols_in_file(_fp167)
         )
         if not _has_callers167:
             _s167_orphans.append(_fp167)
@@ -1557,7 +1555,7 @@ def _signals_structure_b(graph: Tempo) -> list[str]:
     if len(_s349_src_files) >= 10:
         _s349_tiny = [
             fp for fp in _s349_src_files
-            if len([s for s in graph.symbols.values() if s.file_path == fp]) <= 2
+            if len(graph.symbols_in_file(fp)) <= 2
         ]
         if len(_s349_tiny) / len(_s349_src_files) >= 0.50:
             _pct349 = int(100 * len(_s349_tiny) / len(_s349_src_files))
@@ -1578,8 +1576,8 @@ def _signals_structure_b(graph: Tempo) -> list[str]:
         _s373_thin = [
             fp for fp in _s373_test_files_all
             if len([
-                s for s in graph.symbols.values()
-                if s.file_path == fp and s.name.lower().startswith("test_")
+                s for s in graph.symbols_in_file(fp)
+                if s.name.lower().startswith("test_")
             ]) <= 2
         ]
         if len(_s373_thin) / len(_s373_test_files_all) >= 0.50:
@@ -1900,8 +1898,8 @@ def _async_oop_a_async_patterns(graph: Tempo) -> list[str]:
         if not _has_async316:
             _has_async316 = any(
                 s.signature and s.signature.startswith("async ")
-                for s in graph.symbols.values()
-                if s.file_path == _fp316 and s.kind.value in ("function", "method")
+                for s in graph.symbols_in_file(_fp316)
+                if s.kind.value in ("function", "method")
             )
         if _has_async316:
             _s316_async_files.append(_fp316)
@@ -2114,8 +2112,8 @@ def _async_oop_a_quality(graph: Tempo) -> list[str]:
         if _is_test_file(_fp483) or _fi483.language.value != "python":
             continue
         _fns483 = [
-            s for s in graph.symbols.values()
-            if s.file_path == _fp483 and s.kind.value in ("function", "method")
+            s for s in graph.symbols_in_file(_fp483)
+            if s.kind.value in ("function", "method")
         ]
         if not _fns483:
             continue
