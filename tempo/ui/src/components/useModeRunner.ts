@@ -292,7 +292,6 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   }, [_runMode, modeOutput, activeMode, modeArgs]);
   runModeRef.current = runMode;
   cancelModeRef.current = cancelMode;
-  saveOutputRef.current = handleSaveOutput;
 
   const copyOutput = () => {
     navigator.clipboard.writeText(modeOutput);
@@ -314,6 +313,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
   };
+  saveOutputRef.current = handleSaveOutput;
 
   const submitFeedback = async (helpful: boolean) => {
     const feedbackKey = activeKit ? `kit:${activeKit}` : activeMode;
