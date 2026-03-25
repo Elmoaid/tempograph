@@ -6,6 +6,7 @@ interface RecentReposProps {
   activeWorkspaces: string[];
   onSelect: (path: string) => void;
   onRemove: (path: string) => void;
+  onClear: () => void;
 }
 
 function truncatePath(p: string, max = 34): string {
@@ -13,7 +14,7 @@ function truncatePath(p: string, max = 34): string {
   return "…" + p.slice(-(max - 1));
 }
 
-export function RecentRepos({ repos, activeWorkspaces, onSelect, onRemove }: RecentReposProps) {
+export function RecentRepos({ repos, activeWorkspaces, onSelect, onRemove, onClear }: RecentReposProps) {
   if (repos.length === 0) return null;
 
   // Filter out repos already open as active workspaces
@@ -42,6 +43,9 @@ export function RecentRepos({ repos, activeWorkspaces, onSelect, onRemove }: Rec
           </span>
         </button>
       ))}
+      <button className="recent-repos-clear" onClick={onClear} title="Clear history">
+        Clear
+      </button>
     </div>
   );
 }
