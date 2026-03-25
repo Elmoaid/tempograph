@@ -8,6 +8,8 @@ const SHORTCUTS = [
   { key: "⌘L", desc: "Focus args input" },
   { key: "⌘F", desc: "Find in output" },
   { key: "⌘N", desc: "New kit" },
+  { key: "⌘+/⌘−", desc: "Output font size up / down" },
+  { key: "⌘0", desc: "Reset output font size" },
   { key: "Escape", desc: "Cancel run / close palette / clear output" },
   { key: "?", desc: "Toggle this overlay" },
 ];
