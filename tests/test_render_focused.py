@@ -2142,3 +2142,143 @@ class TestFocusCalleeCouplingCochange:
             result = _build_callees_block(seed, 1, graph, "")
         joined = "\n".join(result)
         assert "callee coupling" not in joined, f"Should not fire at depth=1; got:\n{joined}"
+
+
+class TestFocusUpstreamReach:
+    """S61: emit upstream reach warning when few direct callers amplify to many transitive callers.
+
+    Agents see 'called by: A, B' and think low blast. But if A and B are each called by 20 more
+    functions, true upstream = 40+ — the blast intuition is wrong. S61 exposes this hidden reach.
+    Guards: depth==0, direct callers <= 8, upstream >= 20, amplification >= 4x.
+    """
+
+    def _fn(self, name, file_path, exported=True):
+        return Symbol(
+            id=f"{file_path}::{name}",
+            name=name,
+            qualified_name=name,
+            kind=SymbolKind.FUNCTION,
+            language=Language.PYTHON,
+            file_path=file_path,
+            line_start=1,
+            line_end=10,
+            exported=exported,
+        )
+
+    def test_fires_with_strong_amplification(self, tmp_path):
+        """2 direct callers, each called by 15 more → upstream=32, ratio=16x → fires."""
+        from tempograph.render.focused import _build_callers_block
+
+        seed = self._fn("helper", "app/core.py")
+        c1 = self._fn("router", "app/router.py")
+        c2 = self._fn("handler", "app/handler.py")
+        # 15 grandparent callers of c1, 15 of c2
+        gp1 = [self._fn(f"gp1_{i}", f"app/gp1_{i}.py") for i in range(15)]
+        gp2 = [self._fn(f"gp2_{i}", f"app/gp2_{i}.py") for i in range(15)]
+        all_syms = [seed, c1, c2] + gp1 + gp2
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=c1.id, target_id=seed.id),
+            Edge(kind=EdgeKind.CALLS, source_id=c2.id, target_id=seed.id),
+        ] + [
+            Edge(kind=EdgeKind.CALLS, source_id=gp.id, target_id=c1.id) for gp in gp1
+        ] + [
+            Edge(kind=EdgeKind.CALLS, source_id=gp.id, target_id=c2.id) for gp in gp2
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=all_syms)
+
+        result = _build_callers_block(seed, 0, graph, [], {}, None, "")
+        joined = "\n".join(result)
+        assert "upstream reach" in joined, f"Expected 'upstream reach'; got:\n{joined}"
+        assert "32 nodes" in joined, f"Expected '32 nodes'; got:\n{joined}"
+        assert "2 direct callers" in joined, f"Expected '2 direct callers'; got:\n{joined}"
+        assert "amplify to wider blast" in joined, f"Expected 'amplify to wider blast'; got:\n{joined}"
+
+    def test_no_signal_weak_amplification(self, tmp_path):
+        """2 direct callers, only 5 grandparents total → 7 upstream, 3.5x ratio → no signal."""
+        from tempograph.render.focused import _build_callers_block
+
+        seed = self._fn("util", "app/util.py")
+        c1 = self._fn("svc_a", "app/svc_a.py")
+        c2 = self._fn("svc_b", "app/svc_b.py")
+        gps = [self._fn(f"gp_{i}", f"app/gp_{i}.py") for i in range(5)]
+        all_syms = [seed, c1, c2] + gps
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=c1.id, target_id=seed.id),
+            Edge(kind=EdgeKind.CALLS, source_id=c2.id, target_id=seed.id),
+        ] + [Edge(kind=EdgeKind.CALLS, source_id=gp.id, target_id=c1.id) for gp in gps]
+        graph = _make_graph(tmp_path, edges=edges, symbols=all_syms)
+
+        result = _build_callers_block(seed, 0, graph, [], {}, None, "")
+        joined = "\n".join(result)
+        assert "upstream reach" not in joined, f"7 upstream < 4x amplification; got:\n{joined}"
+
+    def test_no_signal_upstream_below_20(self, tmp_path):
+        """2 direct callers, 6 grandparents total → 8 upstream (< 20 threshold) → no signal."""
+        from tempograph.render.focused import _build_callers_block
+
+        seed = self._fn("parse", "app/parser.py")
+        c1 = self._fn("reader", "app/reader.py")
+        c2 = self._fn("writer", "app/writer.py")
+        gps = [self._fn(f"gp_{i}", f"app/gp_{i}.py") for i in range(3)]
+        # direct=2, grandparents=3 per c1 → upstream = 2+3 = 5 < 20, even if 6x
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=c1.id, target_id=seed.id),
+            Edge(kind=EdgeKind.CALLS, source_id=c2.id, target_id=seed.id),
+        ] + [Edge(kind=EdgeKind.CALLS, source_id=gp.id, target_id=c1.id) for gp in gps]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1, c2] + gps)
+
+        result = _build_callers_block(seed, 0, graph, [], {}, None, "")
+        joined = "\n".join(result)
+        assert "upstream reach" not in joined, f"Upstream < 20; should not fire; got:\n{joined}"
+
+    def test_no_signal_too_many_direct_callers(self, tmp_path):
+        """9 direct callers (> 8 guard) → signal suppressed even with high amplification."""
+        from tempograph.render.focused import _build_callers_block
+
+        seed = self._fn("hub", "app/hub.py")
+        directs = [self._fn(f"direct_{i}", f"app/d_{i}.py") for i in range(9)]
+        # each direct has 10 callers → upstream would be 9 + 90 = 99, but guard blocks
+        gps = [self._fn(f"gp_{i}", f"app/gp_{i}.py") for i in range(10)]
+        all_syms = [seed] + directs + gps
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=d.id, target_id=seed.id) for d in directs
+        ] + [Edge(kind=EdgeKind.CALLS, source_id=gp.id, target_id=directs[0].id) for gp in gps]
+        graph = _make_graph(tmp_path, edges=edges, symbols=all_syms)
+
+        result = _build_callers_block(seed, 0, graph, [], {}, None, "")
+        joined = "\n".join(result)
+        assert "upstream reach" not in joined, f"9 direct callers > guard of 8; got:\n{joined}"
+
+    def test_no_signal_at_depth1(self, tmp_path):
+        """Signal only fires at depth=0 — depth=1 stays silent."""
+        from tempograph.render.focused import _build_callers_block
+
+        seed = self._fn("inner", "app/inner.py")
+        c1 = self._fn("mid", "app/mid.py")
+        gps = [self._fn(f"gp_{i}", f"app/gp_{i}.py") for i in range(15)]
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=c1.id, target_id=seed.id),
+        ] + [Edge(kind=EdgeKind.CALLS, source_id=gp.id, target_id=c1.id) for gp in gps]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1] + gps)
+
+        result = _build_callers_block(seed, 1, graph, [], {}, None, "")
+        joined = "\n".join(result)
+        assert "upstream reach" not in joined, f"depth=1 should not fire; got:\n{joined}"
+
+    def test_singular_grammar_one_direct_caller(self, tmp_path):
+        """1 direct caller → 'amplifies' (not 'amplify'), '1 direct caller' (not plural)."""
+        from tempograph.render.focused import _build_callers_block
+
+        seed = self._fn("leaf", "app/leaf.py")
+        c1 = self._fn("mid", "app/mid.py")
+        gps = [self._fn(f"gp_{i}", f"app/gp_{i}.py") for i in range(20)]
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=c1.id, target_id=seed.id),
+        ] + [Edge(kind=EdgeKind.CALLS, source_id=gp.id, target_id=c1.id) for gp in gps]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1] + gps)
+
+        result = _build_callers_block(seed, 0, graph, [], {}, None, "")
+        joined = "\n".join(result)
+        assert "upstream reach" in joined, f"Expected signal; got:\n{joined}"
+        assert "1 direct caller" in joined, f"Expected singular '1 direct caller'; got:\n{joined}"
+        assert "amplifies to" in joined, f"Expected 'amplifies' (singular); got:\n{joined}"
