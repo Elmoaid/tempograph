@@ -7,6 +7,7 @@ const SHORTCUTS = [
   { key: "⌘R", desc: "Re-run mode" },
   { key: "⌘L", desc: "Focus args input" },
   { key: "⌘F", desc: "Find in output" },
+  { key: "⌘S", desc: "Save output to file" },
   { key: "⌘N", desc: "New kit" },
   { key: "⌘+/⌘−", desc: "Output font size up / down" },
   { key: "⌘0", desc: "Reset output font size" },
