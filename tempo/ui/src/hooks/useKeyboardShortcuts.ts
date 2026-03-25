@@ -21,6 +21,7 @@ interface KeyboardShortcutsConfig {
   setSidebarTab: (tab: "kits" | "modes") => void;
   setFilterVisible: (updater: boolean | ((v: boolean) => boolean)) => void;
   setHelpOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
+  setWhichKeyVisible: (v: boolean) => void;
 }
 
 export function useKeyboardShortcuts({
@@ -43,7 +44,23 @@ export function useKeyboardShortcuts({
   setSidebarTab,
   setFilterVisible,
   setHelpOpen,
+  setWhichKeyVisible,
 }: KeyboardShortcutsConfig) {
+  useEffect(() => {
+    const onMetaDown = (e: KeyboardEvent) => {
+      if (e.key === "Meta" || e.key === "Control") setWhichKeyVisible(true);
+    };
+    const onMetaUp = (e: KeyboardEvent) => {
+      if (e.key === "Meta" || e.key === "Control") setWhichKeyVisible(false);
+    };
+    window.addEventListener("keydown", onMetaDown);
+    window.addEventListener("keyup", onMetaUp);
+    return () => {
+      window.removeEventListener("keydown", onMetaDown);
+      window.removeEventListener("keyup", onMetaUp);
+    };
+  }, [setWhichKeyVisible]);
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       // Escape: close help overlay → cancel running → close search → clear output
