@@ -30,11 +30,11 @@ def _file_effort_badge(syms: list[tuple[Symbol, int]], graph: Tempo) -> str:
     return f" [effort: {label}]"
 
 
-def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: list[Symbol], lines: list[str]) -> None:
-    """Dead code signals S76-S153: structural/type signals — private dead, module breakdown, constants, error handlers, callbacks, initializers, overrides, exports, zombie methods, test helpers, whole-file dead."""
+def _core_private_module_breakdown(
+    graph: Tempo, scored: list[tuple[Symbol, int]], dead: list[Symbol], lines: list[str]
+) -> None:
+    """S76 private dead hint + S123 dead-by-module breakdown."""
     # S76: Private dead hint — non-exported functions/methods with 0 callers.
-    # find_dead_code() only reports exported symbols; private dead code is invisible without this.
-    # Shows count only (not full list) to keep output concise.
     _private_dead_count = 0
     for _pd_sym in graph.symbols.values():
         if _pd_sym.exported or _is_test_file(_pd_sym.file_path):
@@ -47,8 +47,6 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
         lines.append(f"Private dead: {_private_dead_count} non-exported symbols with 0 callers (not shown here)")
 
     # S123: Dead-by-module breakdown — which top-level directories carry the most dead code.
-    # Helps agents prioritize cleanup by module: "render/ has 8 dead symbols, utils/ has 5".
-    # Only shown when 2+ distinct modules have dead code AND total dead >= 8.
     if len(dead) >= 8:
         _dead_by_module: dict[str, int] = {}
         for _dm_sym, _dm_conf in scored:
@@ -62,9 +60,10 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
             _mb_parts = [f"{mod}/ ({cnt})" for mod, cnt in _module_items[:4]]
             lines.append(f"dead by module: {', '.join(_mb_parts)}")
 
+
+def _core_name_patterns_a(scored: list[tuple[Symbol, int]], lines: list[str]) -> None:
+    """S159 dead constants + S202 error handlers + S208 callbacks + S218 initializers."""
     # S159: Dead constants — unused constant/variable declarations.
-    # Dead constants are often magic numbers or config values from abandoned features.
-    # Only shown when 3+ dead constants/variables found.
     _dead_consts = [
         sym for sym, conf in scored
         if conf >= 40
@@ -79,8 +78,6 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
         lines.append(f"dead constants: {len(_dead_consts)} unused constants/variables ({_dc_str})")
 
     # S202: Dead error handlers — error-handling functions that are dead.
-    # Dead error handlers leave users without proper error recovery paths.
-    # Only shown when 1+ dead error handler function found (single is alarming enough).
     _s202_error_patterns = ("handle_", "on_error", "catch_", "except_", "error_handler")
     _s202_dead_handlers = [
         sym for sym, conf in scored
@@ -101,8 +98,6 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
         )
 
     # S208: Dead callbacks — callback/handler/listener/hook functions that are dead.
-    # Unregistered callbacks suggest event wiring was removed but the handler wasn't cleaned up.
-    # Only shown when 1+ dead callback function found (conf >= 40, standalone fns only).
     _s208_cb_patterns = ("_callback", "_handler", "_listener", "_hook")
     _s208_dead_cbs = [
         sym for sym, conf in scored
@@ -121,9 +116,7 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
             f" — event wiring may have been removed"
         )
 
-    # S218: Dead initializers — init/setup/configure functions with 0 callers (conf >= 40).
-    # Dead setup functions suggest abandoned initialization paths; risky if they contain side effects.
-    # Only shown when 1+ dead initializer found.
+    # S218: Dead initializers — init/setup/configure functions with 0 callers.
     _s218_init_patterns = ("init_", "initialize_", "setup_app", "configure_", "bootstrap_", "startup_")
     _s218_dead_inits = [
         sym for sym, conf in scored
@@ -142,9 +135,10 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
             f" — abandoned initialization paths"
         )
 
-        # S232: Dead serializers — serialize/to_dict/from_dict/to_json fns with 0 callers.
-    # Dead serializers often indicate abandoned API shapes or migration leftovers.
-    # Only shown when 1+ dead serializer function found (conf >= 40).
+
+def _core_name_patterns_b(scored: list[tuple[Symbol, int]], lines: list[str]) -> None:
+    """S232 dead serializers + S238 middleware + S225 validators + S196 fixtures."""
+    # S232: Dead serializers — serialize/to_dict/from_dict/to_json fns with 0 callers.
     _s232_ser_patterns = ("serialize_", "deserialize_", "to_dict", "from_dict",
                           "to_json", "from_json", "to_xml", "from_xml", "marshal_", "unmarshal_")
     _s232_dead_sers = [
@@ -164,9 +158,7 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
             f" — abandoned API shapes or migration leftovers"
         )
 
-        # S238: Dead middleware — middleware/before_*/after_* functions that are dead.
-    # Dead middleware suggests request pipeline wiring was removed but the fn wasn't cleaned up.
-    # Only shown when 1+ dead middleware function found (conf >= 40).
+    # S238: Dead middleware — middleware/before_*/after_* functions that are dead.
     _s238_mw_patterns = ("middleware_", "before_", "after_", "pre_", "post_",
                           "intercept_", "filter_", "on_request", "on_response")
     _s238_dead_mw = [
@@ -186,9 +178,7 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
             f" — request pipeline wiring may have been removed"
         )
 
-        # S225: Dead validators — validate_*/check_* functions with 0 callers (conf >= 40).
-    # Dead validators suggest removed feature gates or abandoned data integrity checks.
-    # Only shown when 2+ such dead validator functions found.
+    # S225: Dead validators — validate_*/check_* functions with 0 callers.
     _s225_val_patterns = ("validate_", "check_", "verify_", "assert_", "ensure_")
     _s225_dead_vals = [
         sym for sym, conf in scored
@@ -207,9 +197,7 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
             f" — removed feature gates or abandoned integrity checks"
         )
 
-        # S196: Dead fixtures — setup_*/teardown_* functions that are dead.
-    # Test fixture functions with 0 callers are often orphaned test infrastructure.
-    # Only shown when 2+ such dead fixture functions found.
+    # S196: Dead fixtures — setup_*/teardown_* functions that are dead.
     _s196_dead_fixtures = [
         sym for sym, conf in scored
         if conf >= 40
@@ -228,9 +216,10 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
             f"dead fixtures: {len(_s196_dead_fixtures)} unused setup/teardown/fixture fns ({_fix_str})"
         )
 
+
+def _core_class_methods(graph: Tempo, scored: list[tuple[Symbol, int]], lines: list[str]) -> None:
+    """S190 dead overrides + S184 dead accessors + S172 dead classes + S166 zombie methods."""
     # S190: Dead overrides — methods in a live class that override a parent method but have 0 callers.
-    # A live class with an unused override = the child behavior is never triggered.
-    # Only shown when >= 1 such method found with live class (has callers) but 0-caller override.
     # S46-precompute: Invert _subtypes (27 entries, 31 children) instead of scanning 30,695 edges.
     # Before: 30,695 × enum.kind.value = 2.58ms. After: 27-entry dict inversion = 2.3µs (1,146×).
     _s190_inherits_parent: dict[str, str] = {
@@ -244,7 +233,6 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
         if _cls190.kind.value != "class" or _is_test_file(_cls190.file_path):
             continue
         # Class must be live: at least one method has cross-file callers
-        # (instantiation like Child() creates edges to methods, not the class itself)
         _cls190_children = graph.children_of(_cls190.id)
         if not any(
             any(c.file_path != _cls190.file_path for c in graph.callers_of(m.id))
@@ -277,8 +265,6 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
         )
 
     # S184: Dead getters/setters — accessor methods (get_*/set_*) that are dead.
-    # Methods in classes score lower confidence than standalone fns; threshold reflects this.
-    # Only shown when 2+ such dead accessor methods found.
     _s184_dead_accessors = [
         sym for sym, conf in scored
         if conf >= 15
@@ -295,27 +281,7 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
             f"dead accessors: {len(_s184_dead_accessors)} dead getter/setter methods ({_acc_str})"
         )
 
-    # S178: Dead exports — exported functions that have 0 callers and confidence >= 40.
-    # These are public API symbols that were never used — over-exposed surface or abandoned stubs.
-    # Only shown when 3+ such dead exported functions found.
-    _s178_dead_exports = [
-        sym for sym, conf in scored
-        if conf >= 40
-        and not _is_test_file(sym.file_path)
-        and sym.exported
-        and sym.kind.value in ("function", "method")
-        and len(graph.callers_of(sym.id)) == 0
-    ]
-    if len(_s178_dead_exports) >= 3:
-        _de_names = [s.name for s in _s178_dead_exports[:3]]
-        _de_str = ", ".join(_de_names)
-        if len(_s178_dead_exports) > 3:
-            _de_str += f" +{len(_s178_dead_exports) - 3} more"
-        lines.append(f"dead exports: {len(_s178_dead_exports)} exported fns with 0 callers ({_de_str})")
-
     # S172: Dead class — a class with conf >= 40 that contains at least 1 method.
-    # Dead classes = entire feature removal candidates; deleting one removes many symbols.
-    # Only shown when >= 1 non-test class qualifies.
     _s172_dead_classes: list[str] = []
     for _cls172, _conf172 in scored:
         if _conf172 < 40:
@@ -324,7 +290,6 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
             continue
         if _cls172.kind.value != "class":
             continue
-        # Must have at least one method (non-trivial class)
         _methods172 = [
             ch for ch in graph.children_of(_cls172.id)
             if ch.kind.value == "method"
@@ -338,8 +303,6 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
         lines.append(f"dead classes: {len(_s172_dead_classes)} fully-dead class(es) ({_dclass_str})")
 
     # S166: Zombie methods — dead methods that belong to classes with active (live) callers.
-    # These are particularly surprising: the class is used but the method is unreachable.
-    # Only shown when 2+ such zombie methods found.
     _s166_zombies: list[str] = []
     for _sym166, _conf166 in scored:
         if _conf166 < 40:
@@ -363,9 +326,26 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
             _z_str += f" +{len(_s166_zombies) - 3} more"
         lines.append(f"zombie methods: {len(_s166_zombies)} dead methods in live classes ({_z_str})")
 
+
+def _core_size_exports_files(graph: Tempo, scored: list[tuple[Symbol, int]], lines: list[str]) -> None:
+    """S178 dead exports + S148 largest dead fn + S140 dead test helpers + S153 whole-file dead."""
+    # S178: Dead exports — exported functions that have 0 callers and confidence >= 40.
+    _s178_dead_exports = [
+        sym for sym, conf in scored
+        if conf >= 40
+        and not _is_test_file(sym.file_path)
+        and sym.exported
+        and sym.kind.value in ("function", "method")
+        and len(graph.callers_of(sym.id)) == 0
+    ]
+    if len(_s178_dead_exports) >= 3:
+        _de_names = [s.name for s in _s178_dead_exports[:3]]
+        _de_str = ", ".join(_de_names)
+        if len(_s178_dead_exports) > 3:
+            _de_str += f" +{len(_s178_dead_exports) - 3} more"
+        lines.append(f"dead exports: {len(_s178_dead_exports)} exported fns with 0 callers ({_de_str})")
+
     # S148: Largest dead fn — the single biggest dead symbol by line count.
-    # Large dead code (>= 20 lines) = likely an abandoned feature, not a trivial stub.
-    # Provides a high-value cleanup target: one deletion removes significant code mass.
     _src_dead_fns = [
         (sym, conf) for sym, conf in scored
         if conf >= 40
@@ -381,8 +361,6 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
         )
 
     # S140: Dead test helpers — unused functions defined in test files (not fixtures/conftest).
-    # Test helper fns that nobody calls are stale utilities from abandoned test strategies.
-    # Safe to delete; flag when >= 3 are found to prompt cleanup.
     _dead_test_helpers = [
         sym for sym, conf in scored
         if conf >= 10
@@ -400,8 +378,6 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
         lines.append(f"dead test helpers: {len(_dead_test_helpers)} unused helper fns in test files ({_dth_str})")
 
     # S153: Whole-file dead — source files where every symbol is a dead code candidate.
-    # These are likely entirely abandoned files; deleting them is safer than symbol-by-symbol.
-    # Only shown when 2+ such files found (1 might be a config/init file).
     _dead_sym_files: dict[str, int] = {}
     for sym, conf in scored:
         if conf >= 40 and not _is_test_file(sym.file_path):
@@ -425,6 +401,15 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
         if len(_whole_file_dead) > 3:
             _wfd_str += f" +{len(_whole_file_dead) - 3} more"
         lines.append(f"whole-file dead: {len(_whole_file_dead)} files fully dead ({_wfd_str}) — candidates for deletion")
+
+
+def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: list[Symbol], lines: list[str]) -> None:
+    """Dead code signals S76-S153: structural/type signals — private dead, module breakdown, constants, error handlers, callbacks, initializers, overrides, exports, zombie methods, test helpers, whole-file dead."""
+    _core_private_module_breakdown(graph, scored, dead, lines)
+    _core_name_patterns_a(scored, lines)
+    _core_name_patterns_b(scored, lines)
+    _core_class_methods(graph, scored, lines)
+    _core_size_exports_files(graph, scored, lines)
 
 
 def _patterns_a_cfg_types(
