@@ -8,11 +8,12 @@ interface OutputFooterProps {
   runDuration: number | null;
   outputTs: number | null;
   outputLength: number;
+  outputLines: number;
   onFeedback: (helpful: boolean) => void;
 }
 
 export function OutputFooter({
-  feedbackGiven, activeMode, runDuration, outputTs, outputLength, onFeedback,
+  feedbackGiven, activeMode, runDuration, outputTs, outputLength, outputLines, onFeedback,
 }: OutputFooterProps) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>
@@ -50,6 +51,7 @@ export function OutputFooter({
           </span>
         )}
         {outputTs && <span title="Time since this output was generated">{formatAge(outputTs)}</span>}
+        <span title="Output line count">{outputLines.toLocaleString()} lines</span>
         <span>~{Math.round(outputLength / 4).toLocaleString()} tok</span>
       </span>
     </div>
