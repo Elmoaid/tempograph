@@ -2253,6 +2253,32 @@ def _signals_blast_core_d(
 
 
 
+def _resolve_blast_file_path(graph: Tempo, file_path: str) -> str:
+    """Resolve file_path to a graph-relative path.
+
+    Handles: absolute paths (strips repo root), and partial suffix paths.
+    Returns the resolved relative path if a unique match is found, else
+    returns the original file_path unchanged.
+    """
+    # Try absolute → relative (strip repo root prefix)
+    if graph.root and Path(file_path).is_absolute():
+        try:
+            rel = str(Path(file_path).relative_to(Path(graph.root)))
+            if rel in graph.files:
+                return rel
+        except ValueError:
+            pass
+
+    # Try suffix matching: "render/blast.py" or "blast.py" → "tempograph/render/blast.py"
+    needle = file_path.lstrip("/").lstrip("./").replace("\\", "/")
+    if needle:
+        matches = [fp for fp in graph.files if fp == needle or fp.endswith("/" + needle)]
+        if len(matches) == 1:
+            return matches[0]
+
+    return file_path
+
+
 def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
     """Show what might break if a file or symbol is modified.
 
@@ -2262,6 +2288,14 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
         return _render_symbol_blast(graph, query)
 
     fi = graph.files.get(file_path)
+    if not fi:
+        # Try path normalization before giving up (absolute paths, partial paths)
+        _resolved = _resolve_blast_file_path(graph, file_path)
+        if _resolved != file_path:
+            fi = graph.files.get(_resolved)
+            if fi:
+                file_path = _resolved
+
     if not fi:
         if file_path and Path(file_path).exists():
             parent_dir = Path(file_path).parent.name
