@@ -231,11 +231,13 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
     # S190: Dead overrides — methods in a live class that override a parent method but have 0 callers.
     # A live class with an unused override = the child behavior is never triggered.
     # Only shown when >= 1 such method found with live class (has callers) but 0-caller override.
-    # Precompute INHERITS index: source_id → target Symbol (O(M) once vs O(N×M) per class)
+    # S46-precompute: Invert _subtypes (27 entries, 31 children) instead of scanning 30,695 edges.
+    # Before: 30,695 × enum.kind.value = 2.58ms. After: 27-entry dict inversion = 2.3µs (1,146×).
     _s190_inherits_parent: dict[str, str] = {
-        e.source_id: e.target_id
-        for e in graph.edges
-        if e.kind.value == "inherits" and e.target_id in graph.symbols
+        cid: pid
+        for pid, cids in graph._subtypes.items()
+        if pid in graph.symbols
+        for cid in cids
     }
     _s190_dead_overrides: list[str] = []
     for _cls190 in graph.symbols.values():
@@ -1409,10 +1411,10 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         )
 
 
-def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: list[Symbol], lines: list[str], dead_typing_files: list, dead_util_fns: list) -> None:
-    """Dead code signals S536-S737: typed patterns batch A — abstract base, dataclass, module constants, exceptions, magic methods, value objects, CLI handlers, context managers, service classes, modules, classes, callbacks, derived classes."""
-    # S44-precompute: One classification pass instead of 13 full-corpus scans.
-    # Before: 13 × 7018 = 91,234 iterations. After: 7018 + sum(kind_bucket_size × signals).
+def _typed_a_precompute(graph: Tempo) -> tuple[list, list, list, list]:
+    """S44-precompute: One classification pass over all non-test symbols.
+    Before: 13 × symbol_count iterations. After: symbol_count (1 pass) + bucket subsets.
+    Returns (_nt_cls, _nt_fn, _nt_meth, _nt_var)."""
     _nt_cls: list = []
     _nt_fn: list = []
     _nt_meth: list = []
@@ -1428,6 +1430,11 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
                 _nt_meth.append(_s44)
             elif _kv44 == "variable":
                 _nt_var.append(_s44)
+    return _nt_cls, _nt_fn, _nt_meth, _nt_var
+
+
+def _typed_a_abstract_types(graph: Tempo, _nt_cls: list, _nt_fn: list, _nt_meth: list, _nt_var: list, dead_typing_files: list, lines: list[str]) -> None:
+    """S536-S569: abstract base, dataclass, module constants, exceptions, magic methods, value objects, CLI handlers, factories, validators, typing files."""
 
     # S536: Dead abstract base class — Abstract*/Protocol class with no subclasses and no callers.
     # An abstract class that was never implemented is pure dead weight; it cannot be instantiated
@@ -1621,6 +1628,10 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
             f" — stale type definitions from refactored APIs; safe to remove after confirming no runtime use"
         )
 
+
+
+def _typed_a_class_service(graph: Tempo, _nt_cls: list, dead: list, dead_util_fns: list, lines: list[str]) -> None:
+    """S575-S629: context managers, service classes, exception classes, dead modules, large classes, async, constants, callbacks."""
     # S575: Dead context manager — unused class with __enter__ and __exit__ dunder methods.
     # Context managers defined but never instantiated represent abandoned resource management;
     # their with-block protocol is never invoked and resource cleanup never happens.
@@ -1792,6 +1803,10 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
             f" — dead wire; event contract was designed but never wired; remove or register"
         )
 
+
+
+def _typed_a_symbol_patterns(graph: Tempo, dead: list, lines: list[str]) -> None:
+    """S635-S689: deprecated symbols, inner/mixin/proto/empty classes, annotated fns, dead modules, overloaded names, long fns, derived classes."""
     # S635: Dead deprecated symbol — unused exported symbol with "deprecated" or "obsolete" in its doc.
     # Symbols explicitly marked deprecated but still exported are technical debt traps;
     # callers may still depend on them even though maintainers intend removal.
@@ -1983,6 +1998,10 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
             f" — abandoned subclass design; verify base class is still the right abstraction"
         )
 
+
+
+def _typed_a_fn_specialized(dead: list, lines: list[str]) -> None:
+    """S695-S737: test utilities, factory fns, event handlers, serialization, config loaders, async, migration, protocol/interface."""
     # S695: Dead test utility — unused functions in source files with test-utility names.
     # Functions named mock_*, stub_*, fake_*, or *_fixture in non-test files are test helpers
     # that leaked into production modules; they should either be moved or removed.
@@ -2148,6 +2167,15 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
             f"dead protocols: {len(_dead_protos737)} unused abstract/protocol class(es) ({_proto_names737})"
             f" — abstraction designed but no active implementations remain; remove or implement"
         )
+
+
+def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: list[Symbol], lines: list[str], dead_typing_files: list, dead_util_fns: list) -> None:
+    """Dead code signals S536-S737: typed patterns batch A — dispatcher."""
+    _nt_cls, _nt_fn, _nt_meth, _nt_var = _typed_a_precompute(graph)
+    _typed_a_abstract_types(graph, _nt_cls, _nt_fn, _nt_meth, _nt_var, dead_typing_files, lines)
+    _typed_a_class_service(graph, _nt_cls, dead, dead_util_fns, lines)
+    _typed_a_symbol_patterns(graph, dead, lines)
+    _typed_a_fn_specialized(dead, lines)
 
 
 def _typed_b_fn_name_patterns(graph: Tempo, _d_fn_meth: list, _d_cls: list, lines: list[str]) -> None:
@@ -3166,6 +3194,36 @@ def _render_dead_insights_b(
     if len(_clustered) >= 1:
         _cl_parts = [f"{cnt} in {fp.rsplit('/', 1)[-1]}" for fp, cnt in _clustered[:2]]
         lines.append(f"Clustered dead: {', '.join(_cl_parts)} — batch cleanup targets")
+
+    # S[HFD]: Hot-file dead — dead symbols in currently high-velocity files.
+    # Different from "Recently dead" (file touched once in 30d): hot_files means
+    # the file is in ACTIVE CHURN (many commits/week). Developers are already here;
+    # this is the right moment to remove dead code incrementally with the next PR.
+    # Only shown when graph.hot_files is populated and ≥1 medium+ confidence match.
+    if graph.hot_files:
+        _hot_file_dead = [
+            (sym, conf) for sym, conf in scored
+            if conf >= 40
+            and sym.file_path
+            and sym.file_path in graph.hot_files
+        ]
+        if len(_hot_file_dead) >= 1:
+            _hfd_by_file: dict[str, list[str]] = {}
+            for _hfd_sym, _ in _hot_file_dead:
+                _fname = _hfd_sym.file_path.rsplit("/", 1)[-1]
+                _hfd_by_file.setdefault(_fname, []).append(_hfd_sym.name)
+            _hfd_sorted = sorted(_hfd_by_file.items(), key=lambda x: -len(x[1]))
+            _hfd_parts = [
+                f"{fname} ({len(names)} dead)" if len(names) > 1 else f"{names[0]} ({fname})"
+                for fname, names in _hfd_sorted[:3]
+            ]
+            _hfd_str = ", ".join(_hfd_parts)
+            if len(_hfd_by_file) > 3:
+                _hfd_str += f" +{len(_hfd_by_file) - 3} more files"
+            lines.append(
+                f"Hot-file debt ({len(_hot_file_dead)}): {_hfd_str}"
+                f" — dead code in active files, clean up with next PR"
+            )
 
     # Orphan files: files where ALL exported symbols are dead → delete the whole file.
     _orphan_files: list[tuple[str, int, int]] = []

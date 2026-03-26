@@ -8,6 +8,24 @@ import { useRunMode } from "../hooks/useRunMode";
 import { useOutputFilter } from "../hooks/useOutputFilter";
 import { useOutputSearch } from "../hooks/useOutputSearch";
 
+// Static suggest_next map (suggest_next is MCP-only, not a CLI mode)
+const SUGGEST_NEXT_MAP: Record<string, string[]> = {
+  overview:      ["hotspots", "dead_code", "focus"],
+  focus:         ["blast_radius", "hotspots"],
+  blast_radius:  ["focus", "hotspots"],
+  hotspots:      ["dead_code", "focus"],
+  dead_code:     ["hotspots", "focus"],
+  diff_context:  ["focus", "blast_radius"],
+  deps:          ["focus", "blast_radius"],
+  arch:          ["hotspots", "deps"],
+  map:           ["focus", "hotspots"],
+  context:       ["focus", "blast_radius"],
+  prepare:       ["focus", "hotspots"],
+  quality:       ["hotspots", "focus"],
+  token_stats:   ["focus", "hotspots"],
+  learn:         ["focus", "overview"],
+};
+
 export interface ModeRunnerState {
   activeMode: string;
   activeKit: string | null;
@@ -44,6 +62,7 @@ export interface ModeRunnerState {
   searchActive: boolean;
   searchMatchCount: number;
   searchCurrentMatch: number;
+  suggestions: string[];
 }
 
 export interface ModeRunnerActions {
@@ -72,6 +91,7 @@ export interface ModeRunnerActions {
   onSearchClose: () => void;
   onSearchChange: (text: string) => void;
   onSearchNavigate: (dir: "next" | "prev") => void;
+  runSuggestion: (mode: string) => void;
 }
 
 function buildActiveModeInfo(activeKit: string | null, activeMode: string, customKits: KitInfo[]) {
@@ -112,6 +132,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [showHelp, setHelpOpen] = useState(false);
   const [showWhichKey, setWhichKeyVisible] = useState(false);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState<string[]>(() => loadHistory(localStorage.getItem(lastModeKey(repoPath)) || "overview"));
   const feedbackGiven = useRef<Map<string, boolean>>(new Map<string, boolean>());
@@ -266,6 +287,18 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     return () => clearInterval(id);
   }, [modeRunning]);
 
+  // Suggest follow-up modes after each run (static map; suggest_next is MCP-only)
+  useEffect(() => {
+    if (modeRunning) { setSuggestions([]); return; }
+    if (!modeOutput || activeKit ||
+        modeOutput.startsWith("[Cancelled]") ||
+        modeOutput.startsWith("Failed to run")) {
+      setSuggestions([]);
+      return;
+    }
+    setSuggestions((SUGGEST_NEXT_MAP[activeMode] ?? []).slice(0, 3));
+  }, [modeOutput, modeRunning, activeMode, activeKit]);
+
   // Auto-run overview on mount
   useEffect(() => { runModeRef.current?.(); }, []);
 
@@ -333,6 +366,10 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     setTimeout(() => runModeRef.current?.(), 0);
   };
 
+  const runSuggestion = (mode: string) => {
+    switchMode(mode);
+  };
+
   return {
     // state
     activeMode,
@@ -370,6 +407,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     searchActive,
     searchMatchCount,
     searchCurrentMatch,
+    suggestions,
     // actions
     setActiveMode,
     setSidebarTab,
@@ -396,5 +434,6 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     onSearchClose,
     onSearchChange: setSearchText,
     onSearchNavigate,
+    runSuggestion,
   };
 }

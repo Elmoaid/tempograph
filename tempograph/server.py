@@ -621,7 +621,7 @@ def symbols(repo_path: str, max_tokens: int = 8000, exclude_dirs: str = "", outp
     max_tokens: cap output (default 8000; 0 = use default)
     exclude_dirs: comma-separated directory prefixes to skip
     output_format: "text" (default) or "json" for structured response"""
-    cap = max_tokens if max_tokens > 0 else 8000
+    cap = min(max_tokens if max_tokens > 0 else 8000, 8000)
     return _run_tool("symbols", repo_path, output_format,
                      lambda g: render_symbols(g, max_tokens=cap),
                      exclude_dirs=exclude_dirs)

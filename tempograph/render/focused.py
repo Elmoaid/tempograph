@@ -797,11 +797,8 @@ def _compute_callee_depth_anns(
     graph: "Tempo",
 ) -> tuple[str, str]:
     """Compute callee-count and callee-depth annotation strings for the depth-0 header."""
-    _callee_ids = {
-        e.target_id for e in graph.edges
-        if e.kind == EdgeKind.CALLS and e.source_id == sym.id
-    }
-    callee_ann = f" [calls: {len(_callee_ids)}]" if len(_callee_ids) >= 5 else ""
+    _direct_callees = graph.callees_of(sym.id)
+    callee_ann = f" [calls: {len(_direct_callees)}]" if len(_direct_callees) >= 5 else ""
     _bfs_q: list[tuple[str, int]] = [(sym.id, 0)]
     _bfs_seen: set[str] = {sym.id}
     _max_callee_depth = 0
@@ -811,10 +808,10 @@ def _compute_callee_depth_anns(
             _max_callee_depth = _cur_lvl
         if _cur_lvl >= 8:
             continue
-        for _e in graph.edges:
-            if _e.kind == EdgeKind.CALLS and _e.source_id == _cur_id and _e.target_id not in _bfs_seen:
-                _bfs_seen.add(_e.target_id)
-                _bfs_q.append((_e.target_id, _cur_lvl + 1))
+        for _callee in graph.callees_of(_cur_id):
+            if _callee.id not in _bfs_seen:
+                _bfs_seen.add(_callee.id)
+                _bfs_q.append((_callee.id, _cur_lvl + 1))
     depth_ann = f" [callee depth: {_max_callee_depth}]" if _max_callee_depth >= 3 else ""
     return callee_ann, depth_ann
 
@@ -904,18 +901,12 @@ def _compute_recursion_label(
     """Detect self or mutual recursion; return the annotation label string."""
     if sym.kind.value not in ("function", "method"):
         return ""
-    _seed_callee_ids = {
-        e.target_id for e in graph.edges
-        if e.kind == EdgeKind.CALLS and e.source_id == sym.id
-    }
+    _seed_callees = graph.callees_of(sym.id)
+    _seed_callee_ids = {c.id for c in _seed_callees}
     if sym.id in _seed_callee_ids:
         return "[recursive]"
-    for _callee_s in graph.callees_of(sym.id)[:10]:
-        _callee_callees = {
-            e.target_id for e in graph.edges
-            if e.kind == EdgeKind.CALLS and e.source_id == _callee_s.id
-        }
-        if sym.id in _callee_callees:
+    for _callee_s in _seed_callees[:10]:
+        if sym.id in {c.id for c in graph.callees_of(_callee_s.id)}:
             return f"[recursive: mutual with {_callee_s.name}]"
     return ""
 
@@ -2817,18 +2808,21 @@ def _signals_focused_coupling_hidden(
     if graph.root:
         try:
             from ..git import cochange_pairs as _cp, is_git_repo as _igr
-            from ..types import EdgeKind as _EK
             if _igr(graph.root):
                 _seed_fp = _prim.file_path
                 _static_neighbors: set[str] = set()
-                for _e in graph.edges:
-                    if _e.kind in (_EK.CALLS, _EK.IMPORTS):
-                        _src = _e.source_id.split("::")[0]
-                        _tgt = _e.target_id.split("::")[0]
-                        if _src == _seed_fp:
-                            _static_neighbors.add(_tgt)
-                        elif _tgt == _seed_fp:
-                            _static_neighbors.add(_src)
+                # CALLS: use indexed per-symbol lookups (O(k) vs O(30K edge scan))
+                for _s in graph.symbols_in_file(_seed_fp):
+                    for _c in graph.callees_of(_s.id):
+                        _static_neighbors.add(_c.file_path)
+                    for _c in graph.callers_of(_s.id):
+                        _static_neighbors.add(_c.file_path)
+                # IMPORTS: use reverse-indexed file-level lookup
+                _static_neighbors.update(graph.importers_of(_seed_fp))
+                _static_neighbors.update(
+                    _fp for _fp, _imp_list in graph._importers.items()
+                    if _seed_fp in _imp_list
+                )
                 _pairs = _cp(graph.root, _seed_fp, n=10)
                 _hidden = [
                     p for p in _pairs
@@ -4973,6 +4967,76 @@ def _signals_focused_fn_advanced(
 
 
 
+def _compute_change_exposure(graph: "Tempo", seeds: "list[Symbol]") -> str:
+    """One-line change risk synthesizer.
+
+    Aggregates across seeds and returns a summary line (MEDIUM/HIGH/CRITICAL)
+    when the neighborhood has meaningful risk factors. Returns empty string for
+    low-risk queries so the line is absent rather than reassuring noise.
+
+    Factors (each counts once):
+    - caller_files >= 8: high blast, many dependents
+    - hot_callees >= 2: actively-changing territory downstream
+    - hot_callers >= 3: actively-changing territory upstream
+    - coverage gap: >=50% of cross-file callees are untested (when >=3 callees)
+    - seed in hot file: the symbol itself is in an actively-modified file
+    """
+    if not seeds or not graph:
+        return ""
+
+    def _itf(fp: str) -> bool:
+        return "/test" in fp or fp.startswith("test") or "tests/" in fp or fp.endswith("_test.py")
+
+    caller_files: set[str] = set()
+    hot_callees_n = 0
+    hot_callers_n = 0
+    cross_callees_total = 0
+    untested_cross_callees = 0
+    hot = graph.hot_files or set()
+
+    for sym in seeds:
+        sym_file = sym.file_path
+
+        # Callers (non-test only)
+        callers = [c for c in graph.callers_of(sym.id) if not _itf(c.file_path)]
+        for c in callers:
+            if c.file_path != sym_file:
+                caller_files.add(c.file_path)
+        if hot:
+            hot_callers_n += sum(1 for c in callers if c.file_path in hot and c.file_path != sym_file)
+
+        # Callees (cross-file, non-test)
+        callees = [c for c in graph.callees_of(sym.id)
+                   if c.file_path != sym_file and not _itf(c.file_path)]
+        cross_callees_total += len(callees)
+        if hot:
+            hot_callees_n += sum(1 for c in callees if c.file_path in hot)
+        for callee in callees:
+            if not any(_itf(t.file_path) for t in graph.callers_of(callee.id)):
+                untested_cross_callees += 1
+
+    seed_in_hot = bool(hot and any(s.file_path in hot for s in seeds))
+
+    factors: list[str] = []
+    caller_file_count = len(caller_files)
+    if caller_file_count >= 8:
+        factors.append(f"{caller_file_count} caller files")
+    if hot_callees_n >= 2:
+        factors.append(f"{hot_callees_n} hot callee{'s' if hot_callees_n != 1 else ''}")
+    if hot_callers_n >= 3:
+        factors.append(f"{hot_callers_n} hot callers")
+    if cross_callees_total >= 3 and untested_cross_callees / cross_callees_total >= 0.5:
+        factors.append(f"coverage gap ({untested_cross_callees}/{cross_callees_total} callees untested)")
+    if seed_in_hot:
+        factors.append("seed in active file")
+
+    n = len(factors)
+    if n == 0:
+        return ""
+    level = "CRITICAL" if n >= 3 else ("HIGH" if n >= 2 else "MEDIUM")
+    return f"change exposure: {level}  ← {', '.join(factors)}"
+
+
 def _collect_multi_seeds(
     graph: Tempo, query: str,
 ) -> tuple[list[Symbol], set[str], list[str], list[str]] | None:
@@ -5147,6 +5211,10 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     if _depth_extended:
         _focus_header += f"  [depth +1 — sparse ({len(ordered)} nodes)]"
     lines = [_focus_header, ""]
+    _exposure = _compute_change_exposure(graph, seeds)
+    if _exposure:
+        lines.append(_exposure)
+        lines.append("")
     seen_files: set[str] = set()
     token_count = 0
 
