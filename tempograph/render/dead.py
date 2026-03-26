@@ -2425,8 +2425,8 @@ def _typed_b_class_patterns(_d_fn_meth: list, _d_cls: list, _d_const: list, line
         )
 
 
-def _typed_b_fn_lifecycle(graph: Tempo, dead: list, _d_fn_meth: list, _d_cls: list, _d_const: list, lines: list[str]) -> None:
-    """S845-S911: fn/method lifecycle signals (event handlers, validators, factories, singletons, module constants, type aliases, test helpers, middleware, exported symbols, error handlers, thin classes, async)."""
+def _fn_lifecycle_events_val_factory_singletons(_d_fn_meth: list, lines: list[str]) -> None:
+    """S845-S863: event handlers, validators, factories, singleton accessors."""
     # S845: Dead event handler functions — unused on_/handle_/_handler functions.
     # Event handlers are wired to event buses, signals, or hooks; dead handlers indicate
     # removed subscriptions where the handler was not cleaned up alongside the subscription.
@@ -2497,6 +2497,9 @@ def _typed_b_fn_lifecycle(graph: Tempo, dead: list, _d_fn_meth: list, _d_cls: li
             f" — unused global state accessors; verify no code bypasses through direct attribute access"
         )
 
+
+def _fn_lifecycle_const_types_helpers_mw(dead: list, _d_fn_meth: list, _d_cls: list, _d_const: list, lines: list[str]) -> None:
+    """S869-S887: module constants, type aliases, test helpers, middleware."""
     # S869: Dead module-level constants — unused UPPERCASE constant definitions.
     # Module-level constants represent configuration values and feature flags; unused ones
     # indicate removed features or replaced configuration that was never cleaned up.
@@ -2580,6 +2583,9 @@ def _typed_b_fn_lifecycle(graph: Tempo, dead: list, _d_fn_meth: list, _d_cls: li
             f" — may still be registered in framework config; verify before deleting"
         )
 
+
+def _fn_lifecycle_exports_errors_classes_async(graph: Tempo, _d_fn_meth: list, _d_cls: list, lines: list[str]) -> None:
+    """S893-S911: exported symbols, error handlers, thin classes, async functions."""
     # S893: Dead exported symbols — unused functions or classes that are part of the public API.
     # Exported dead symbols may be consumed by external callers not visible in this graph;
     # removing them without checking downstream consumers can break public API contracts.
@@ -2653,6 +2659,13 @@ def _typed_b_fn_lifecycle(graph: Tempo, dead: list, _d_fn_meth: list, _d_cls: li
             f"dead async: {len(_dead_async911)} unused async function(s) ({_async_names911})"
             f" — may be registered background tasks; verify no dynamic registration before removing"
         )
+
+
+def _typed_b_fn_lifecycle(graph: Tempo, dead: list, _d_fn_meth: list, _d_cls: list, _d_const: list, lines: list[str]) -> None:
+    """S845-S911: fn/method lifecycle signals (event handlers, validators, factories, singletons, module constants, type aliases, test helpers, middleware, exported symbols, error handlers, thin classes, async)."""
+    _fn_lifecycle_events_val_factory_singletons(_d_fn_meth, lines)
+    _fn_lifecycle_const_types_helpers_mw(dead, _d_fn_meth, _d_cls, _d_const, lines)
+    _fn_lifecycle_exports_errors_classes_async(graph, _d_fn_meth, _d_cls, lines)
 
 
 def _fn_operational_callbacks_setups(graph: Tempo, _d_fn_meth: list, _d_cls: list, lines: list[str]) -> None:
