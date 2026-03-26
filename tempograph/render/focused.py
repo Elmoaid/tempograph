@@ -3151,10 +3151,7 @@ def _signals_focused_fn_patterns(
             (s for s in _seed_syms if s.kind.value in ("function", "method")), None
         )
         if _prim392:
-            _callees392 = [
-                e for e in graph.edges
-                if e.kind.value == "calls" and e.source_id == _prim392.id
-            ]
+            _callees392 = graph.callees_of(_prim392.id)
             if not _callees392 and _prim392.line_count >= 3:
                 lines.append(
                     f"\npure utility: {_prim392.name} has no outbound calls"
@@ -3214,10 +3211,7 @@ def _signals_fn_recursion(
     if not _prim:
         return lines
     # S340/S404/S500: self-loop edge (all three check the same condition; emit once)
-    _self_calls = [
-        e for e in graph.edges
-        if e.kind.value == "calls" and e.source_id == _prim.id and e.target_id == _prim.id
-    ]
+    _self_calls = any(c.id == _prim.id for c in graph.callees_of(_prim.id))
     if _self_calls:
         lines.append(
             f"\nrecursive: {_prim.name} calls itself"
@@ -3325,10 +3319,7 @@ def _signals_fn_oop_behavioral(
     # S434: Factory function pattern
     _factory_prefixes = ("create_", "make_", "build_", "factory_", "new_", "get_instance_")
     if any(_prim.name.lower().startswith(p) for p in _factory_prefixes):
-        _callees = [
-            graph.symbols[e.target_id].name for e in graph.edges
-            if e.kind.value == "calls" and e.source_id == _prim.id and e.target_id in graph.symbols
-        ]
+        _callees = [c.name for c in graph.callees_of(_prim.id)]
         _class_callees = [n for n in _callees if n and n[0].isupper()]
         if _class_callees:
             lines.append(
@@ -3358,7 +3349,7 @@ def _signals_fn_oop_behavioral(
     # S475: Generator/iterator function
     _gen_prefixes = ("iter_", "generate_", "stream_", "yield_", "produce_", "enumerate_")
     if any(_prim.name.lower().startswith(p) for p in _gen_prefixes):
-        _callers_gen = [e for e in graph.edges if e.kind.value == "calls" and e.target_id == _prim.id]
+        _callers_gen = graph.callers_of(_prim.id)
         if _callers_gen:
             lines.append(
                 f"\ngenerator function: {_prim.name} is a lazy iterator"
@@ -3623,10 +3614,8 @@ def _signals_fn_conventions_behavior(
         _is_thread_safe = any(m in _prim_fn.name.lower() for m in _lock_markers)
         if not _is_thread_safe:
             _callees_lock = [
-                graph.symbols[e.target_id].name for e in graph.edges
-                if e.kind.value == "calls" and e.source_id == _prim_fn.id
-                and e.target_id in graph.symbols
-                and graph.symbols[e.target_id].name.lower() in _lock_callee_names
+                c.name for c in graph.callees_of(_prim_fn.id)
+                if c.name.lower() in _lock_callee_names
             ]
             _is_thread_safe = bool(_callees_lock)
         if _is_thread_safe:
@@ -3641,7 +3630,7 @@ def _signals_fn_conventions_behavior(
             None,
         )
         if _mixin_class:
-            _users = [e for e in graph.edges if e.kind.value == "imports" and e.target_id == _prim_fn.file_path]
+            _users = graph.importers_of(_prim_fn.file_path)
             lines.append(
                 f"\nmixin method: {_prim_fn.name} lives in {_mixin_class.name}"
                 f" — changes propagate to all {len(_users)} consumer(s) that include this mixin;"
@@ -3665,7 +3654,7 @@ def _signals_fn_conventions_behavior(
     _factory_pfx = ("make_", "create_", "build_", "new_", "from_", "get_or_create_")
     _prim_fac = next((s for s in _seed_syms if s.kind.value in ("function", "method")), None)
     if _prim_fac and any(_prim_fac.name.lower().startswith(p) for p in _factory_pfx):
-        _callers_fac = [e for e in graph.edges if e.kind.value == "calls" and e.target_id == _prim_fac.id]
+        _callers_fac = graph.callers_of(_prim_fac.id)
         if _callers_fac:
             lines.append(
                 f"\nfactory function: {_prim_fac.name} is a factory with {len(_callers_fac)} caller(s)"
@@ -3732,7 +3721,7 @@ def _signals_fn_quality_a(
     _prim = _seed_syms[0]
     # S350: Orphaned symbol
     if _prim.kind.value in ("function", "method", "class"):
-        _callers = [e for e in graph.edges if e.kind.value == "calls" and e.target_id == _prim.id]
+        _callers = graph.callers_of(_prim.id)
         _importers = list(graph.importers_of(_prim.file_path))
         if not _callers and not _importers and not _prim.name.startswith("_"):
             lines.append(
@@ -3752,7 +3741,7 @@ def _signals_fn_quality_a(
     # S501: Pure function
     _prim_fn501 = next((s for s in _seed_syms if s.kind.value == "function"), None)
     if _prim_fn501 and not _prim_fn501.parent_id:
-        _callees501 = [e for e in graph.edges if e.kind.value == "calls" and e.source_id == _prim_fn501.id]
+        _callees501 = graph.callees_of(_prim_fn501.id)
         _has_callers501 = bool(getattr(graph, "_callers", {}).get(_prim_fn501.id))
         if not _callees501 and _has_callers501:
             lines.append(
