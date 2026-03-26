@@ -8,6 +8,16 @@ import { useRunMode } from "../hooks/useRunMode";
 import { useOutputFilter } from "../hooks/useOutputFilter";
 import { useOutputSearch } from "../hooks/useOutputSearch";
 
+export interface RunHistoryEntry {
+  mode: string;
+  args: string;
+}
+
+export function updateRunHistory(prev: RunHistoryEntry[], entry: RunHistoryEntry, max = 5): RunHistoryEntry[] {
+  const deduped = prev.filter(e => !(e.mode === entry.mode && e.args === entry.args));
+  return [entry, ...deduped].slice(0, max);
+}
+
 export interface ModeRunnerState {
   activeMode: string;
   activeKit: string | null;
@@ -43,6 +53,7 @@ export interface ModeRunnerState {
   searchActive: boolean;
   searchMatchCount: number;
   searchCurrentMatch: number;
+  runHistory: RunHistoryEntry[];
 }
 
 export interface ModeRunnerActions {
@@ -71,6 +82,7 @@ export interface ModeRunnerActions {
   onSearchClose: () => void;
   onSearchChange: (text: string) => void;
   onSearchNavigate: (dir: "next" | "prev") => void;
+  runHistoryEntry: (entry: RunHistoryEntry) => void;
 }
 
 function buildActiveModeInfo(activeKit: string | null, activeMode: string, customKits: KitInfo[]) {
@@ -123,6 +135,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   const runDurationCache = useRef<Map<string, number>>(new Map());
   const [runDuration, setRunDuration] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState<number>(0);
+  const [runHistory, setRunHistory] = useState<RunHistoryEntry[]>([]);
 
   const activeModeInfo = buildActiveModeInfo(activeKit, activeMode, customKits);
   const allKits = [...BUILTIN_KITS, ...customKits];
@@ -282,6 +295,9 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     setRunDuration,
     setCachedModes,
     setHistory,
+    onRunSuccess: (mode, args) => {
+      setRunHistory(prev => updateRunHistory(prev, { mode, args }));
+    },
   });
   const runMode = useCallback(async () => {
     if (modeOutput) setPrevOutput(modeOutput);
@@ -327,6 +343,21 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     setTimeout(() => runModeRef.current?.(), 0);
   };
 
+  const runHistoryEntry = useCallback((entry: RunHistoryEntry) => {
+    localStorage.setItem(modeArgsKey(repoPath, activeKit ? `kit:${activeKit}` : activeMode), modeArgs);
+    setActiveKit(null);
+    setActiveMode(entry.mode);
+    localStorage.setItem(lastModeKey(repoPath), entry.mode);
+    setModeArgs(entry.args);
+    setHistoryOpen(false);
+    resetFilter();
+    setPrevOutput(null);
+    setHistory(loadHistory(entry.mode));
+    setModeOutput("");
+    setOutputTs(null);
+    setTimeout(() => runModeRef.current?.(), 0);
+  }, [repoPath, activeMode, activeKit, modeArgs, resetFilter]);
+
   return {
     // state
     activeMode,
@@ -363,6 +394,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     searchActive,
     searchMatchCount,
     searchCurrentMatch,
+    runHistory,
     // actions
     setActiveMode,
     setSidebarTab,
@@ -389,5 +421,6 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     onSearchClose,
     onSearchChange: setSearchText,
     onSearchNavigate,
+    runHistoryEntry,
   };
 }
