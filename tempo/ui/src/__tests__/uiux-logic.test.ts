@@ -8,6 +8,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { MODE_HINTS } from "../components/modeHints";
 import { MODES, formatAge, loadRecentCommands, saveRecentCommand, type RecentCommand } from "../components/modes";
+import { updateRunHistory, type RunHistoryEntry } from "../components/useModeRunner";
 
 // ── modeHints coverage ────────────────────────────────────────────────────────
 
@@ -123,5 +124,36 @@ describe("saveRecentCommand", () => {
     const ts = loadRecentCommands()[0].ts;
     expect(ts).toBeGreaterThanOrEqual(before);
     expect(ts).toBeLessThanOrEqual(after);
+  });
+});
+
+// ── updateRunHistory ──────────────────────────────────────────────────────────
+
+describe("updateRunHistory", () => {
+  it("prepends a new entry and grows the list", () => {
+    const prev: RunHistoryEntry[] = [{ mode: "overview", args: "" }];
+    const result = updateRunHistory(prev, { mode: "focus", args: "--query Foo" });
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual({ mode: "focus", args: "--query Foo" });
+    expect(result[1]).toEqual({ mode: "overview", args: "" });
+  });
+
+  it("caps history at 5 entries (FIFO)", () => {
+    const prev: RunHistoryEntry[] = Array.from({ length: 5 }, (_, i) => ({ mode: `mode${i}`, args: "" }));
+    const result = updateRunHistory(prev, { mode: "new_mode", args: "" });
+    expect(result).toHaveLength(5);
+    expect(result[0]).toEqual({ mode: "new_mode", args: "" });
+    expect(result.find(e => e.mode === "mode4")).toBeUndefined();
+  });
+
+  it("deduplicates: moves existing entry to front instead of duplicating", () => {
+    const prev: RunHistoryEntry[] = [
+      { mode: "overview", args: "" },
+      { mode: "focus", args: "--query Bar" },
+    ];
+    const result = updateRunHistory(prev, { mode: "focus", args: "--query Bar" });
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual({ mode: "focus", args: "--query Bar" });
+    expect(result.filter(e => e.mode === "focus").length).toBe(1);
   });
 });

@@ -94,6 +94,8 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
           onSearchClose={vm.onSearchClose}
           onSearchNavigate={vm.onSearchNavigate}
           onFeedback={vm.submitFeedback}
+          runHistory={vm.runHistory}
+          onRunHistoryEntry={vm.runHistoryEntry}
         />
       </div>
     </>
