@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, type RefObject } from "react";
 import { Copy, Check, X } from "lucide-react";
-import type { ModeInfo } from "./modes";
+import { MODES, type ModeInfo } from "./modes";
 import { ArgsInput } from "./ArgsInput";
 import { OutputPanelHeader } from "./OutputPanelHeader";
 import { KitSectionAccordion } from "./KitSectionAccordion";
@@ -378,17 +378,20 @@ export function OutputPanel(props: OutputPanelProps) {
             {suggestions.length > 0 && (
               <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 6, flexWrap: "wrap" }}>
                 <span style={{ fontSize: 9, color: "var(--text-tertiary)", opacity: 0.7, marginRight: 2 }}>↳ try:</span>
-                {suggestions.map(mode => (
-                  <button
-                    key={mode}
-                    className="btn btn-ghost"
-                    onClick={() => onSuggestionClick(mode)}
-                    style={{ fontSize: 9, padding: "1px 7px", borderRadius: 10, opacity: 0.8 }}
-                    title={`Switch to ${mode} mode`}
-                  >
-                    {mode}
-                  </button>
-                ))}
+                {suggestions.map(mode => {
+                  const modeInfo = MODES.find(m => m.mode === mode);
+                  return (
+                    <button
+                      key={mode}
+                      className="btn btn-ghost"
+                      onClick={() => onSuggestionClick(mode)}
+                      style={{ fontSize: 9, padding: "1px 7px", borderRadius: 10, opacity: 0.8 }}
+                      title={modeInfo?.desc ?? `Switch to ${mode} mode`}
+                    >
+                      {modeInfo?.label ?? mode}
+                    </button>
+                  );
+                })}
               </div>
             )}
           </>

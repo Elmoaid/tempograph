@@ -1,6 +1,10 @@
+import { useState } from "react";
 import { MODES } from "./modes";
 import { KitCard } from "./KitCard";
 import type { KitInfo } from "./kits";
+
+type ModeGroup = "all" | "analyze" | "navigate" | "ai";
+const MODE_GROUPS: ModeGroup[] = ["all", "analyze", "navigate", "ai"];
 
 interface Props {
   sidebarTab: "kits" | "modes";
@@ -29,6 +33,9 @@ export function SidebarTabs({
   onTogglePalette,
   onToggleHelp,
 }: Props) {
+  const [modeGroup, setModeGroup] = useState<ModeGroup>("all");
+  const filteredModes = modeGroup === "all" ? MODES : MODES.filter(m => m.group === modeGroup);
+
   return (
     <div className="cell" style={{ flex: "0 0 auto", maxHeight: "45%" }}>
       {/* Tab header */}
@@ -114,6 +121,35 @@ export function SidebarTabs({
         )}
       </div>
 
+      {/* Group filter strip (modes tab only) */}
+      {sidebarTab === "modes" && (
+        <div style={{ display: "flex", gap: 2, padding: "3px 6px", borderBottom: "1px solid var(--border-subtle)", flexShrink: 0 }}>
+          {MODE_GROUPS.map(g => (
+            <button
+              key={g}
+              onClick={() => setModeGroup(g)}
+              style={{
+                flex: g === "all" ? "0 0 auto" : 1,
+                padding: "2px 5px",
+                fontSize: 9,
+                fontWeight: 600,
+                letterSpacing: "0.3px",
+                textTransform: "uppercase",
+                border: "none",
+                borderRadius: 3,
+                cursor: "pointer",
+                background: modeGroup === g ? "var(--accent)" : "transparent",
+                color: modeGroup === g ? "var(--bg-primary)" : "var(--text-tertiary)",
+                transition: "background 0.1s, color 0.1s",
+              }}
+              title={g === "all" ? "Show all modes" : `Filter: ${g} modes`}
+            >
+              {g === "all" ? "All" : g.charAt(0).toUpperCase() + g.slice(1)}
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Tab content */}
       <div className="cell-body" role="listbox" aria-label={sidebarTab === "kits" ? "Kits" : "Modes"}>
         {sidebarTab === "kits" ? (
@@ -127,45 +163,49 @@ export function SidebarTabs({
             />
           ))
         ) : (
-          MODES.map((m, idx) => (
-            <button
-              key={m.mode}
-              role="option"
-              aria-selected={!activeKit && activeMode === m.mode}
-              aria-label={`${m.label} (${m.tag})${idx < 9 ? ` — ⌘${idx + 1}` : ""}${cachedModes.has(m.mode) ? " — cached" : ""}`}
-              className={`mode-row ${!activeKit && activeMode === m.mode ? "active" : ""}`}
-              onClick={() => onModeSelect(m.mode)}
-            >
-              <span className="mode-row-icon" aria-hidden="true"><m.icon size={13} /></span>
-              <span className="mode-row-name">{m.label}</span>
-              {cachedModes.has(m.mode) && (
-                <span title="Has cached output" aria-hidden="true" style={{
-                  width: 5, height: 5, borderRadius: "50%",
-                  background: !activeKit && activeMode === m.mode ? "var(--accent-hover)" : "var(--success)",
-                  flexShrink: 0, marginLeft: "auto", marginRight: 4,
-                  opacity: !activeKit && activeMode === m.mode ? 0.7 : 1,
-                }} />
-              )}
-              {idx < 9 && (
-                <span
-                  title={`Keyboard shortcut: ⌘${idx + 1}`}
-                  aria-hidden="true"
-                  style={{
-                    fontSize: 9,
-                    color: "var(--text-tertiary)",
-                    fontFamily: "var(--font-mono)",
-                    opacity: 0.5,
-                    flexShrink: 0,
-                    marginLeft: cachedModes.has(m.mode) ? 2 : "auto",
-                    marginRight: 2,
-                  }}
-                >
-                  ⌘{idx + 1}
-                </span>
-              )}
-              <span className="mode-row-tag" aria-hidden="true">{m.tag}</span>
-            </button>
-          ))
+          filteredModes.map(m => {
+            const absIdx = MODES.indexOf(m);
+            return (
+              <button
+                key={m.mode}
+                role="option"
+                aria-selected={!activeKit && activeMode === m.mode}
+                aria-label={`${m.label} (${m.tag})${absIdx < 9 ? ` — ⌘${absIdx + 1}` : ""}${cachedModes.has(m.mode) ? " — cached" : ""}`}
+                title={m.desc}
+                className={`mode-row ${!activeKit && activeMode === m.mode ? "active" : ""}`}
+                onClick={() => onModeSelect(m.mode)}
+              >
+                <span className="mode-row-icon" aria-hidden="true"><m.icon size={13} /></span>
+                <span className="mode-row-name">{m.label}</span>
+                {cachedModes.has(m.mode) && (
+                  <span title="Has cached output" aria-hidden="true" style={{
+                    width: 5, height: 5, borderRadius: "50%",
+                    background: !activeKit && activeMode === m.mode ? "var(--accent-hover)" : "var(--success)",
+                    flexShrink: 0, marginLeft: "auto", marginRight: 4,
+                    opacity: !activeKit && activeMode === m.mode ? 0.7 : 1,
+                  }} />
+                )}
+                {absIdx < 9 && (
+                  <span
+                    title={`Keyboard shortcut: ⌘${absIdx + 1}`}
+                    aria-hidden="true"
+                    style={{
+                      fontSize: 9,
+                      color: "var(--text-tertiary)",
+                      fontFamily: "var(--font-mono)",
+                      opacity: 0.5,
+                      flexShrink: 0,
+                      marginLeft: cachedModes.has(m.mode) ? 2 : "auto",
+                      marginRight: 2,
+                    }}
+                  >
+                    ⌘{absIdx + 1}
+                  </span>
+                )}
+                <span className="mode-row-tag" aria-hidden="true">{m.tag}</span>
+              </button>
+            );
+          })
         )}
       </div>
       {onToggleHelp && (
