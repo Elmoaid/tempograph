@@ -5036,18 +5036,15 @@ def _compute_paired_functions(
     if not seeds:
         return ""
 
-    by_name: dict[str, list] = {}
-    for sym in graph.symbols.values():
-        if sym.kind.value not in ("function", "method"):
-            continue
-        by_name.setdefault(sym.name.lower(), []).append(sym)
-
-    found_pairs: list[tuple] = []
-
+    # Step 1: Compute target swap names from seed names.
+    # Most seeds have no antonym words (94% of fn/method symbols) → early exit
+    # avoids the full corpus scan for typical focus queries.
+    per_seed_swaps: dict[str, list[str]] = {}
+    target_names: set[str] = set()
     for seed in seeds:
         parts = seed.name.lower().split("_")
+        swaps: list[str] = []
         seen_complements: set[str] = set()
-
         for a, b in _PAIR_ANTONYMS:
             if a in parts:
                 new_parts = list(parts)
@@ -5059,11 +5056,30 @@ def _compute_paired_functions(
                 swap = "_".join(new_parts)
             else:
                 continue
-
             if swap == seed.name.lower() or swap in seen_complements:
                 continue
             seen_complements.add(swap)
+            swaps.append(swap)
+            target_names.add(swap)
+        per_seed_swaps[seed.id] = swaps
 
+    if not target_names:
+        return ""
+
+    # Step 2: Targeted corpus scan — only collect fn/method symbols whose name
+    # is in target_names. O(1) set check filters 94% of symbols before kind check.
+    by_name: dict[str, list] = {}
+    for sym in graph.symbols.values():
+        n = sym.name.lower()
+        if n not in target_names:
+            continue
+        if sym.kind.value not in ("function", "method"):
+            continue
+        by_name.setdefault(n, []).append(sym)
+
+    found_pairs: list[tuple] = []
+    for seed in seeds:
+        for swap in per_seed_swaps.get(seed.id, []):
             candidates = [c for c in by_name.get(swap, []) if c.id not in seen_ids]
             if not candidates:
                 continue
