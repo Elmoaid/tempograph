@@ -2645,3 +2645,86 @@ class TestChangeExposure:
 
         output = render_focused(graph, "isolated")
         assert "change exposure" not in output, f"Low-risk should have no exposure line; got:\n{output[:200]}"
+
+
+class TestBfsScopeNote:
+    """Tests for _compute_bfs_scope_note: S66 hub BFS truncation signal."""
+
+    def _fn(self, name, file_path="app/hub.py"):
+        return Symbol(
+            id=f"{file_path}::{name}",
+            name=name,
+            qualified_name=name,
+            kind=SymbolKind.FUNCTION,
+            language=Language.PYTHON,
+            file_path=file_path,
+            line_start=1,
+            line_end=10,
+            exported=False,
+            complexity=0,
+        )
+
+    def _ordered(self, counts: dict) -> list:
+        """Build ordered list with given depth counts: {0: N, 1: M, 2: P, 3: Q}."""
+        result = []
+        for depth, count in sorted(counts.items()):
+            for i in range(count):
+                result.append((self._fn(f"sym_{depth}_{i}"), depth))
+        return result
+
+    def test_fires_when_50_nodes_and_no_depth3(self):
+        """50 total nodes, 0 at depth=3 → hub BFS signal fires."""
+        from tempograph.render.focused import _compute_bfs_scope_note
+
+        ordered = self._ordered({0: 1, 1: 25, 2: 24})  # total=50, d3=0
+        result = _compute_bfs_scope_note(ordered)
+        assert "hub BFS" in result, f"Expected hub BFS signal; got: {result!r}"
+        assert "25" in result, f"Expected depth-1 count in result; got: {result!r}"
+        assert "blast_radius" in result, f"Expected blast_radius reference; got: {result!r}"
+
+    def test_silent_when_below_50(self):
+        """< 50 nodes → signal suppressed (BFS wasn't capped)."""
+        from tempograph.render.focused import _compute_bfs_scope_note
+
+        ordered = self._ordered({0: 1, 1: 5, 2: 10, 3: 8})  # total=24
+        result = _compute_bfs_scope_note(ordered)
+        assert result == "", f"Should be silent for uncapped BFS; got: {result!r}"
+
+    def test_silent_when_50_but_has_depth3(self):
+        """50 nodes with some at depth=3 → BFS reached depth=3, suppress signal."""
+        from tempograph.render.focused import _compute_bfs_scope_note
+
+        ordered = self._ordered({0: 1, 1: 10, 2: 25, 3: 14})  # total=50, d3=14
+        result = _compute_bfs_scope_note(ordered)
+        assert result == "", f"Should be silent when depth=3 present; got: {result!r}"
+
+    def test_silent_for_empty_graph(self):
+        """Empty ordered list → silent."""
+        from tempograph.render.focused import _compute_bfs_scope_note
+
+        assert _compute_bfs_scope_note([]) == ""
+
+    def test_integration_isolated_no_note(self, tmp_path):
+        """render_focused has NO hub BFS note for an isolated symbol."""
+        from tempograph.render.focused import render_focused
+
+        seed = self._fn("isolated", "app/utils.py")
+        c1 = self._fn("caller", "app/main.py")
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=c1.id, target_id=seed.id)]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1])
+
+        output = render_focused(graph, "isolated")
+        assert "hub BFS" not in output, (
+            f"Isolated symbol should have no hub BFS note; got:\n{output[:300]}"
+        )
+
+    def test_scope_note_fires_on_dense_ordered(self):
+        """Unit: 50 nodes with no depth=3 → fires with depth-1 count in message."""
+        from tempograph.render.focused import _compute_bfs_scope_note
+
+        # 50 nodes: 1 at d0, 20 at d1, 29 at d2, 0 at d3
+        ordered = self._ordered({0: 1, 1: 20, 2: 29})
+        result = _compute_bfs_scope_note(ordered)
+        assert "hub BFS" in result
+        assert "20" in result  # depth-1 count
+        assert "depth=3 cut" in result
