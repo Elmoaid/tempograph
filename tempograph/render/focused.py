@@ -871,10 +871,6 @@ def _compute_structure_anns(
     }
     _entry_fps = {fp for fp in graph.files if fp.rsplit("/", 1)[-1] in _FOCUS_ENTRY_NAMES}
     if _entry_fps and sym.file_path not in _entry_fps:
-        _rev_adj: dict[str, list[str]] = {}
-        for _e in graph.edges:
-            if _e.kind == EdgeKind.IMPORTS and _e.source_id in graph.files and _e.target_id in graph.files:
-                _rev_adj.setdefault(_e.target_id, []).append(_e.source_id)
         _bfs_imp: list[tuple[str, int]] = [(sym.file_path, 0)]
         _seen_imp: set[str] = {sym.file_path}
         _found_depth: int | None = None
@@ -882,7 +878,7 @@ def _compute_structure_anns(
             _cur_fp, _cur_d = _bfs_imp.pop(0)
             if _cur_d >= 8:
                 continue
-            for _imp in _rev_adj.get(_cur_fp, []):
+            for _imp in graph.importers_of(_cur_fp):
                 if _imp in _entry_fps:
                     _found_depth = _cur_d + 1
                     break
