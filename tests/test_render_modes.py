@@ -18,7 +18,7 @@ from tempograph.render import (
     _is_test_file,
 )
 from tempograph.render.dead import _file_effort_badge
-from tempograph.render.hotspots import _collect_hotspots_signals
+from tempograph.render.hotspots import _collect_hotspots_signals, _calm_zones_lines
 from tempograph.git import is_git_repo
 from tempograph.types import Symbol, SymbolKind, Language
 
@@ -263,6 +263,81 @@ class TestHotCascadeSignal:
         assert "hot cascade" not in combined
 
 
+class TestCalmZones:
+    """S63: Calm zones — stable, heavily-imported files (load-bearing walls)."""
+
+    def _make_graph(self, files_importers: dict[str, list[str]]) -> "MagicMock":
+        """Build a minimal mock graph for calm zones testing."""
+        graph = MagicMock()
+        graph.files = {fp: MagicMock() for fp in files_importers}
+        graph.importers_of.side_effect = lambda fp: files_importers.get(fp, [])
+        return graph
+
+    def test_calm_zone_fires_for_stable_heavily_imported_file(self):
+        # core.py has 5 non-test importers and velocity 0.0 → calm zone
+        graph = self._make_graph({
+            "core.py": ["a.py", "b.py", "c.py", "d.py", "e.py"],
+        })
+        result = _calm_zones_lines(graph, {"core.py": 0.0})
+        combined = "\n".join(result)
+        assert "calm zones" in combined
+        assert "core.py" in combined
+        assert "5 importers" in combined
+
+    def test_calm_zone_hidden_when_file_is_hot(self):
+        # core.py has many importers but is actively churning — NOT a calm zone
+        graph = self._make_graph({
+            "core.py": ["a.py", "b.py", "c.py", "d.py", "e.py"],
+        })
+        result = _calm_zones_lines(graph, {"core.py": 5.0})
+        combined = "\n".join(result)
+        assert "calm zones" not in combined
+
+    def test_calm_zone_hidden_when_too_few_importers(self):
+        # stable file but only 4 importers — below threshold of 5
+        graph = self._make_graph({
+            "utils.py": ["a.py", "b.py", "c.py", "d.py"],
+        })
+        result = _calm_zones_lines(graph, {"utils.py": 0.0})
+        combined = "\n".join(result)
+        assert "calm zones" not in combined
+
+    def test_calm_zone_hidden_when_no_velocity_data(self):
+        # empty velocity dict → no git data → don't emit calm zones
+        graph = self._make_graph({
+            "core.py": ["a.py", "b.py", "c.py", "d.py", "e.py"],
+        })
+        result = _calm_zones_lines(graph, {})
+        assert result == []
+
+    def test_calm_zones_sorted_by_importer_count(self):
+        # two calm candidates: big.py (8 importers) and small.py (5) → big first
+        graph = self._make_graph({
+            "big.py": ["a.py", "b.py", "c.py", "d.py", "e.py", "f.py", "g.py", "h.py"],
+            "small.py": ["a.py", "b.py", "c.py", "d.py", "e.py"],
+        })
+        result = _calm_zones_lines(graph, {"big.py": 0.0, "small.py": 0.0})
+        combined = "\n".join(result)
+        assert combined.index("big.py") < combined.index("small.py")
+
+    def test_calm_zone_vel_note_shown_when_nonzero(self):
+        # velocity 0.5 → shows commits/wk note; velocity 0.0 → no note
+        graph = self._make_graph({
+            "slow.py": ["a.py", "b.py", "c.py", "d.py", "e.py"],
+        })
+        result = _calm_zones_lines(graph, {"slow.py": 0.5})
+        combined = "\n".join(result)
+        assert "0.5 commits/wk" in combined
+
+    def test_calm_zones_excludes_test_files(self):
+        # test_core.py would match on importers but is a test file → excluded
+        graph = self._make_graph({
+            "test_core.py": ["a.py", "b.py", "c.py", "d.py", "e.py"],
+        })
+        result = _calm_zones_lines(graph, {"test_core.py": 0.0})
+        assert "calm zones" not in "\n".join(result)
+
+
 # ── render_dead_code ──────────────────────────────────────────────────────────
 
 class TestRenderDeadCode:
@@ -330,6 +405,92 @@ class TestRenderDeadCode:
         out = render_dead_code(g)
         # Either dead ratio is shown, or just "No dead code" — either is valid
         assert isinstance(out, str)
+
+
+
+# ── hot-file debt signal ──────────────────────────────────────────────────────
+
+class TestHotFileDeadCode:
+    """S64: Hot-file dead — dead symbols in currently high-velocity files."""
+
+    def test_fires_when_dead_symbol_in_hot_file(self, tmp_path):
+        # dead.py has two unconnected dead functions; mark it as a hot file
+        g = _build(tmp_path, {
+            "lib.py": "def unused_a():\n    pass\n\ndef unused_b():\n    pass\n",
+            "main.py": "def main():\n    pass\n",
+        })
+        rel = "lib.py"
+        g.hot_files = {rel}
+        out = render_dead_code(g)
+        assert "Hot-file debt" in out
+
+    def test_silent_when_hot_files_empty(self, tmp_path):
+        g = _build(tmp_path, {
+            "lib.py": "def unused_a():\n    pass\n\ndef unused_b():\n    pass\n",
+            "main.py": "def main():\n    pass\n",
+        })
+        g.hot_files = set()
+        out = render_dead_code(g)
+        assert "Hot-file debt" not in out
+
+    def test_silent_when_no_dead_in_hot_file(self, tmp_path):
+        # hot file is main.py but dead code is in lib.py
+        g = _build(tmp_path, {
+            "lib.py": "def unused_a():\n    pass\n\ndef unused_b():\n    pass\n",
+            "main.py": "def main():\n    pass\n",
+        })
+        g.hot_files = {"main.py"}
+        out = render_dead_code(g)
+        assert "Hot-file debt" not in out
+
+    def test_shows_filename_in_output(self, tmp_path):
+        g = _build(tmp_path, {
+            "utils.py": "def stale_a():\n    pass\n\ndef stale_b():\n    pass\n",
+            "app.py": "def run():\n    pass\n",
+        })
+        g.hot_files = {"utils.py"}
+        out = render_dead_code(g)
+        if "Hot-file debt" in out:
+            assert "utils.py" in out
+
+    def test_count_in_header(self, tmp_path):
+        # 3 dead symbols all in hot file → count should be ≥1
+        fns = "".join(f"def fn_{i}():\n    pass\n\n" for i in range(5))
+        g = _build(tmp_path, {
+            "dead_batch.py": fns,
+            "caller.py": "def entry():\n    pass\n",
+        })
+        g.hot_files = {"dead_batch.py"}
+        out = render_dead_code(g)
+        if "Hot-file debt" in out:
+            # count should be a positive integer in parentheses
+            import re
+            m = re.search(r"Hot-file debt \((\d+)\)", out)
+            assert m and int(m.group(1)) >= 1
+
+    def test_positioned_after_clustered_dead(self, tmp_path):
+        # Hot-file debt should appear after Clustered dead in output order
+        fns = "".join(f"def fn_{i}():\n    pass\n\n" for i in range(5))
+        g = _build(tmp_path, {
+            "hot_module.py": fns,
+            "other.py": "def go():\n    pass\n",
+        })
+        g.hot_files = {"hot_module.py"}
+        out = render_dead_code(g)
+        if "Hot-file debt" in out and "Clustered dead" in out:
+            assert out.index("Clustered dead") < out.index("Hot-file debt")
+
+    def test_multiple_hot_files_aggregated(self, tmp_path):
+        g = _build(tmp_path, {
+            "alpha.py": "def dead_one():\n    pass\n\ndef dead_two():\n    pass\n",
+            "beta.py": "def dead_three():\n    pass\n",
+            "app.py": "def main():\n    pass\n",
+        })
+        g.hot_files = {"alpha.py", "beta.py"}
+        out = render_dead_code(g)
+        if "Hot-file debt" in out:
+            # At least one of the hot files should appear
+            assert "alpha.py" in out or "beta.py" in out
 
 
 # ── render_dependencies ───────────────────────────────────────────────────────

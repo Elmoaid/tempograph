@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, type RefObject } from "react";
 import { Copy, Check, X } from "lucide-react";
-import type { ModeInfo } from "./modes";
+import { MODES, type ModeInfo } from "./modes";
 import { ArgsInput } from "./ArgsInput";
 import { OutputPanelHeader } from "./OutputPanelHeader";
 import { KitSectionAccordion } from "./KitSectionAccordion";
@@ -55,6 +55,8 @@ interface OutputPanelProps {
   onFeedback: (helpful: boolean) => void;
   runHistory?: { mode: string; args: string }[];
   onRunHistoryEntry?: (entry: { mode: string; args: string }) => void;
+  suggestions: string[];
+  onSuggestionClick: (mode: string) => void;
 }
 
 interface KitSection {
@@ -192,7 +194,7 @@ export function OutputPanel(props: OutputPanelProps) {
     onArgsChange, onHistoryOpen, onHistorySelect, onRun, onCancel, onCopy, onSave,
     onFilterToggle, onFilterChange, onFilterClose,
     onSearchChange, onSearchClose, onSearchNavigate,
-    onFeedback, saved, runHistory, onRunHistoryEntry,
+    onFeedback, saved, runHistory, onRunHistoryEntry, suggestions, onSuggestionClick,
   } = props;
 
   const isKitMode = activeMode.startsWith("kit:");
@@ -391,8 +393,28 @@ export function OutputPanel(props: OutputPanelProps) {
               runDuration={runDuration}
               outputTs={outputTs}
               outputLength={modeOutput.length}
+              outputLines={modeOutput.split("\n").length}
               onFeedback={onFeedback}
             />
+            {suggestions.length > 0 && (
+              <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 6, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 9, color: "var(--text-tertiary)", opacity: 0.7, marginRight: 2 }}>↳ try:</span>
+                {suggestions.map(mode => {
+                  const modeInfo = MODES.find(m => m.mode === mode);
+                  return (
+                    <button
+                      key={mode}
+                      className="btn btn-ghost"
+                      onClick={() => onSuggestionClick(mode)}
+                      style={{ fontSize: 9, padding: "1px 7px", borderRadius: 10, opacity: 0.8 }}
+                      title={modeInfo?.desc ?? `Switch to ${mode} mode`}
+                    >
+                      {modeInfo?.label ?? mode}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </>
         ) : (
           <div style={{ color: "var(--text-tertiary)", fontSize: 11, padding: 16, textAlign: "center" }}>

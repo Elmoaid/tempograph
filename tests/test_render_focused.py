@@ -1073,14 +1073,19 @@ class TestFocusHotCalleeInstability:
         assert "hot_b" in instability_line
 
     def test_four_hot_callees_truncated(self, tmp_path):
-        """4 hot callees → shows 3 names then '...'."""
+        """4 hot callees → instability shows 3 names then '...'.
+
+        Seed file is also hot to prevent S62 (drift risk) from co-firing,
+        keeping instability as the only signal line for a clean assertion.
+        """
         from tempograph.render.focused import _build_callees_block
 
         seed = self._fn_sym("run", "app.py")
         callees = [self._fn_sym(f"fn_{i}", f"hot_{i}.py") for i in range(4)]
         edges = [Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c.id) for c in callees]
         graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + callees)
-        graph.hot_files = {f"hot_{i}.py" for i in range(4)}
+        # Include seed's own file so S62 drift guard (seed NOT hot) is blocked
+        graph.hot_files = {f"hot_{i}.py" for i in range(4)} | {"app.py"}
 
         result = _build_callees_block(seed, 0, graph, "")
         assert len(result) == 2
@@ -1124,6 +1129,173 @@ class TestFocusHotCalleeInstability:
         result = _build_callees_block(seed, 1, graph, "")
         assert len(result) == 1, "depth=1 should not emit instability"
         assert "instability" not in result[0]
+
+
+# S62: _build_callees_block — contract drift (stable seed, hot callees)
+# -----------------------------------------------------------------------
+
+
+class TestFocusContractDrift:
+    """S62: emit drift risk when seed file is stable but ≥2 callees' files are hot.
+
+    S52 fires for general hot-callee instability. S62 fires specifically when the SEED
+    file itself is NOT in hot_files — meaning the seed hasn't been touched while its
+    callees have been updated. The recommended action differs: verify interface contracts
+    BEFORE editing, not just while editing.
+    """
+
+    def _fn_sym(self, name, file_path):
+        return Symbol(
+            id=f"{file_path}::{name}",
+            name=name,
+            qualified_name=name,
+            kind=SymbolKind.FUNCTION,
+            language=Language.PYTHON,
+            file_path=file_path,
+            line_start=1,
+            line_end=20,
+            exported=False,
+            complexity=0,
+        )
+
+    def test_stable_seed_three_hot_callees_fires(self, tmp_path):
+        """Stable seed + ≥3 hot callees → drift risk line appears.
+
+        Threshold is 3 (not 2) to differentiate from S52 which fires at ≥2.
+        S52 catches general instability; S62 fires only on the more extreme drift case.
+        """
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("process", "stable.py")
+        c1 = self._fn_sym("fetch_data", "hot_a.py")
+        c2 = self._fn_sym("serialize", "hot_b.py")
+        c3 = self._fn_sym("validate", "hot_c.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c1.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c2.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c3.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1, c2, c3])
+        # seed file NOT hot, callees are hot
+        graph.hot_files = {"hot_a.py", "hot_b.py", "hot_c.py"}
+
+        result = _build_callees_block(seed, 0, graph, "")
+        drift_lines = [l for l in result if "drift risk" in l]
+        assert drift_lines, f"Expected drift risk line; got {result!r}"
+        assert "3 callees updated" in drift_lines[0]
+        assert "verify contracts" in drift_lines[0]
+
+    def test_two_hot_callees_no_drift(self, tmp_path):
+        """2 hot callees: S52 (instability) fires but S62 (drift) does NOT — threshold is 3."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("process", "stable.py")
+        c1 = self._fn_sym("fetch_data", "hot_a.py")
+        c2 = self._fn_sym("serialize", "hot_b.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c1.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c2.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1, c2])
+        graph.hot_files = {"hot_a.py", "hot_b.py"}
+
+        result = _build_callees_block(seed, 0, graph, "")
+        # S52 fires (instability), S62 does NOT (below threshold)
+        assert any("instability" in l for l in result), "S52 should fire"
+        assert all("drift risk" not in l for l in result), "S62 must not fire with only 2 hot callees"
+
+    def test_seed_itself_hot_no_drift(self, tmp_path):
+        """When seed file IS hot, no drift signal (active development, not dormant)."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("process", "active.py")
+        c1 = self._fn_sym("fetch_data", "hot_a.py")
+        c2 = self._fn_sym("serialize", "hot_b.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c1.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c2.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1, c2])
+        # seed file IS hot too — drift doesn't apply
+        graph.hot_files = {"active.py", "hot_a.py", "hot_b.py"}
+
+        result = _build_callees_block(seed, 0, graph, "")
+        assert all("drift risk" not in l for l in result), f"Drift must not fire when seed is hot; got {result!r}"
+
+    def test_two_hot_callees_below_drift_threshold(self, tmp_path):
+        """2 hot callees: S52 fires (instability) but S62 does NOT (drift threshold is ≥3)."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("process", "stable.py")
+        c1 = self._fn_sym("fetch_data", "hot_a.py")
+        c2 = self._fn_sym("local_util", "cold.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c1.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c2.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1, c2])
+        graph.hot_files = {"hot_a.py"}
+
+        result = _build_callees_block(seed, 0, graph, "")
+        assert all("drift risk" not in l for l in result), f"1 hot callee must not fire drift; got {result!r}"
+
+    def test_hot_callee_same_file_as_seed_excluded(self, tmp_path):
+        """Hot callee in seed's own file doesn't count — same-file calls aren't drift."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("main_fn", "stable.py")
+        # Same file as seed — should be excluded from drift count
+        c_same = self._fn_sym("helper_a", "stable.py")
+        c_hot = self._fn_sym("dep_b", "hot_external.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c_same.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c_hot.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c_same, c_hot])
+        # stable.py is hot but that's also the seed — and hot_external.py is hot
+        # Only 1 distinct external hot callee → no drift
+        graph.hot_files = {"stable.py", "hot_external.py"}
+        # Override: seed itself must be stable, use different key for seed
+        # Actually seed.file_path is "stable.py" which IS in hot_files — so S62 guard blocks.
+        # Let's instead make seed stable and only external callee hot:
+        graph.hot_files = {"hot_external.py"}
+
+        result = _build_callees_block(seed, 0, graph, "")
+        # Only 1 external hot callee → no drift (same-file callee doesn't count)
+        assert all("drift risk" not in l for l in result), f"1 external hot callee must not fire; got {result!r}"
+
+    def test_drift_truncates_names_at_three(self, tmp_path):
+        """4+ hot callees → shows 3 names then '...'."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("orchestrate", "stable.py")
+        callees = [self._fn_sym(f"dep_{i}", f"hot_{i}.py") for i in range(4)]
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c.id) for c in callees]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + callees)
+        graph.hot_files = {f"hot_{i}.py" for i in range(4)}
+
+        result = _build_callees_block(seed, 0, graph, "")
+        drift_lines = [l for l in result if "drift risk" in l]
+        assert drift_lines, "Should fire with 4 hot callees"
+        assert "4 callees updated" in drift_lines[0]
+        assert "..." in drift_lines[0]
+
+    def test_depth1_no_drift(self, tmp_path):
+        """Drift signal only fires at depth=0."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn_sym("inner", "stable.py")
+        c1 = self._fn_sym("dep_a", "hot_a.py")
+        c2 = self._fn_sym("dep_b", "hot_b.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c1.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c2.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1, c2])
+        graph.hot_files = {"hot_a.py", "hot_b.py"}
+
+        result = _build_callees_block(seed, 1, graph, "")
+        assert all("drift risk" not in l for l in result), "depth=1 must not emit drift risk"
 
 
 # S53: _build_callees_block — depth=1 hot-first callee ordering
@@ -2282,3 +2454,576 @@ class TestFocusUpstreamReach:
         assert "upstream reach" in joined, f"Expected signal; got:\n{joined}"
         assert "1 direct caller" in joined, f"Expected singular '1 direct caller'; got:\n{joined}"
         assert "amplifies to" in joined, f"Expected 'amplifies' (singular); got:\n{joined}"
+
+
+class TestChangeExposure:
+    """Tests for _compute_change_exposure: the focus-mode risk synthesizer."""
+
+    def _fn(self, name, file_path):
+        return Symbol(
+            id=f"{file_path}::{name}",
+            name=name,
+            qualified_name=name,
+            kind=SymbolKind.FUNCTION,
+            language=Language.PYTHON,
+            file_path=file_path,
+            line_start=1,
+            line_end=20,
+            exported=False,
+            complexity=0,
+        )
+
+    def _test_caller(self, name, caller_file, seed):
+        return self._fn(name, caller_file)
+
+    def test_no_factors_silent(self, tmp_path):
+        """Zero risk factors → empty string (no noise for safe symbols)."""
+        from tempograph.render.focused import _compute_change_exposure
+
+        seed = self._fn("helper", "app/utils.py")
+        c1 = self._fn("main", "app/main.py")
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=c1.id, target_id=seed.id)]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1])
+
+        result = _compute_change_exposure(graph, [seed])
+        assert result == "", f"Low-risk should be silent; got: {result!r}"
+
+    def test_empty_seeds_silent(self, tmp_path):
+        """Empty seeds list → silent."""
+        from tempograph.render.focused import _compute_change_exposure
+
+        graph = _make_graph(tmp_path, edges=[], symbols=[])
+        assert _compute_change_exposure(graph, []) == ""
+
+    def test_high_caller_files_medium(self, tmp_path):
+        """8+ distinct cross-file callers → MEDIUM."""
+        from tempograph.render.focused import _compute_change_exposure
+
+        seed = self._fn("hub", "app/hub.py")
+        callers = [self._fn(f"caller_{i}", f"app/mod_{i}.py") for i in range(8)]
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=c.id, target_id=seed.id) for c in callers]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + callers)
+
+        result = _compute_change_exposure(graph, [seed])
+        assert "MEDIUM" in result, f"Expected MEDIUM; got: {result!r}"
+        assert "caller files" in result, f"Expected 'caller files' factor; got: {result!r}"
+
+    def test_seven_caller_files_silent(self, tmp_path):
+        """7 caller files (below threshold 8) → silent."""
+        from tempograph.render.focused import _compute_change_exposure
+
+        seed = self._fn("hub", "app/hub.py")
+        callers = [self._fn(f"caller_{i}", f"app/mod_{i}.py") for i in range(7)]
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=c.id, target_id=seed.id) for c in callers]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + callers)
+
+        result = _compute_change_exposure(graph, [seed])
+        assert result == "", f"7 callers should be silent; got: {result!r}"
+
+    def test_hot_callees_medium(self, tmp_path):
+        """≥2 hot callees → MEDIUM."""
+        from tempograph.render.focused import _compute_change_exposure
+
+        seed = self._fn("orchestrate", "app/core.py")
+        hot1 = self._fn("parse", "app/parser.py")
+        hot2 = self._fn("validate", "app/validator.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=hot1.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=hot2.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, hot1, hot2])
+        graph.hot_files = {"app/parser.py", "app/validator.py"}
+
+        result = _compute_change_exposure(graph, [seed])
+        assert "MEDIUM" in result, f"Expected MEDIUM; got: {result!r}"
+        assert "hot callee" in result, f"Expected 'hot callee' factor; got: {result!r}"
+
+    def test_one_hot_callee_silent(self, tmp_path):
+        """Only 1 hot callee (below threshold 2) → silent."""
+        from tempograph.render.focused import _compute_change_exposure
+
+        seed = self._fn("fn", "app/core.py")
+        hot1 = self._fn("dep", "app/dep.py")
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=hot1.id)]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, hot1])
+        graph.hot_files = {"app/dep.py"}
+
+        result = _compute_change_exposure(graph, [seed])
+        assert result == "", f"1 hot callee should be silent; got: {result!r}"
+
+    def test_seed_in_hot_file_medium(self, tmp_path):
+        """Seed itself in a hot file → MEDIUM."""
+        from tempograph.render.focused import _compute_change_exposure
+
+        seed = self._fn("active_fn", "app/hotmodule.py")
+        graph = _make_graph(tmp_path, edges=[], symbols=[seed])
+        graph.hot_files = {"app/hotmodule.py"}
+
+        result = _compute_change_exposure(graph, [seed])
+        assert "MEDIUM" in result, f"Expected MEDIUM; got: {result!r}"
+        assert "seed in active file" in result, f"Expected 'seed in active file'; got: {result!r}"
+
+    def test_coverage_gap_medium(self, tmp_path):
+        """≥3 cross-file callees, ≥50% untested → MEDIUM."""
+        from tempograph.render.focused import _compute_change_exposure
+
+        seed = self._fn("caller", "app/main.py")
+        # 3 untested callees (no test callers for them)
+        c1 = self._fn("dep1", "app/dep1.py")
+        c2 = self._fn("dep2", "app/dep2.py")
+        c3 = self._fn("dep3", "app/dep3.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c1.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c2.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c3.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1, c2, c3])
+
+        result = _compute_change_exposure(graph, [seed])
+        assert "MEDIUM" in result, f"Expected MEDIUM; got: {result!r}"
+        assert "coverage gap" in result, f"Expected 'coverage gap'; got: {result!r}"
+
+    def test_two_factors_high(self, tmp_path):
+        """2 factors → HIGH."""
+        from tempograph.render.focused import _compute_change_exposure
+
+        seed = self._fn("hub", "app/hub.py")
+        callers = [self._fn(f"c{i}", f"app/c{i}.py") for i in range(8)]
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=c.id, target_id=seed.id) for c in callers]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + callers)
+        # seed in hot file = 2nd factor
+        graph.hot_files = {"app/hub.py"}
+
+        result = _compute_change_exposure(graph, [seed])
+        assert "HIGH" in result, f"Expected HIGH; got: {result!r}"
+        assert "caller files" in result and "seed in active file" in result
+
+    def test_three_factors_critical(self, tmp_path):
+        """3+ factors → CRITICAL."""
+        from tempograph.render.focused import _compute_change_exposure
+
+        seed = self._fn("nexus", "app/hot.py")
+        callers = [self._fn(f"c{i}", f"app/c{i}.py") for i in range(8)]
+        hot1 = self._fn("hotdep1", "app/hd1.py")
+        hot2 = self._fn("hotdep2", "app/hd2.py")
+        edges = (
+            [Edge(kind=EdgeKind.CALLS, source_id=c.id, target_id=seed.id) for c in callers]
+            + [
+                Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=hot1.id),
+                Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=hot2.id),
+            ]
+        )
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + callers + [hot1, hot2])
+        graph.hot_files = {"app/hot.py", "app/hd1.py", "app/hd2.py"}
+
+        result = _compute_change_exposure(graph, [seed])
+        assert "CRITICAL" in result, f"Expected CRITICAL; got: {result!r}"
+
+    def test_integration_render_focused_shows_exposure(self, tmp_path):
+        """render_focused emits change exposure line near the top when factors present."""
+        from tempograph.render.focused import render_focused
+
+        seed = self._fn("hotfn", "app/hot.py")
+        callers = [self._fn(f"c{i}", f"app/c{i}.py") for i in range(8)]
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=c.id, target_id=seed.id) for c in callers]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + callers)
+        graph.hot_files = {"app/hot.py"}
+
+        output = render_focused(graph, "hotfn")
+        lines = output.splitlines()
+        # Exposure line should appear early (within first 5 lines)
+        early = "\n".join(lines[:5])
+        assert "change exposure" in early, f"Expected exposure in first 5 lines; got:\n{early}"
+        assert "HIGH" in early or "CRITICAL" in early or "MEDIUM" in early
+
+    def test_integration_low_risk_no_exposure_line(self, tmp_path):
+        """render_focused has NO change exposure line for a low-risk isolated symbol."""
+        from tempograph.render.focused import render_focused
+
+        seed = self._fn("isolated", "app/utils.py")
+        graph = _make_graph(tmp_path, edges=[], symbols=[seed])
+
+        output = render_focused(graph, "isolated")
+        assert "change exposure" not in output, f"Low-risk should have no exposure line; got:\n{output[:200]}"
+
+
+class TestBfsScopeNote:
+    """Tests for _compute_bfs_scope_note: S66 hub BFS truncation signal."""
+
+    def _fn(self, name, file_path="app/hub.py"):
+        return Symbol(
+            id=f"{file_path}::{name}",
+            name=name,
+            qualified_name=name,
+            kind=SymbolKind.FUNCTION,
+            language=Language.PYTHON,
+            file_path=file_path,
+            line_start=1,
+            line_end=10,
+            exported=False,
+            complexity=0,
+        )
+
+    def _ordered(self, counts: dict) -> list:
+        """Build ordered list with given depth counts: {0: N, 1: M, 2: P, 3: Q}."""
+        result = []
+        for depth, count in sorted(counts.items()):
+            for i in range(count):
+                result.append((self._fn(f"sym_{depth}_{i}"), depth))
+        return result
+
+    def test_fires_when_50_nodes_and_no_depth3(self):
+        """50 total nodes, 0 at depth=3 → hub BFS signal fires."""
+        from tempograph.render.focused import _compute_bfs_scope_note
+
+        ordered = self._ordered({0: 1, 1: 25, 2: 24})  # total=50, d3=0
+        result = _compute_bfs_scope_note(ordered)
+        assert "hub BFS" in result, f"Expected hub BFS signal; got: {result!r}"
+        assert "25" in result, f"Expected depth-1 count in result; got: {result!r}"
+        assert "blast_radius" in result, f"Expected blast_radius reference; got: {result!r}"
+
+    def test_silent_when_below_50(self):
+        """< 50 nodes → signal suppressed (BFS wasn't capped)."""
+        from tempograph.render.focused import _compute_bfs_scope_note
+
+        ordered = self._ordered({0: 1, 1: 5, 2: 10, 3: 8})  # total=24
+        result = _compute_bfs_scope_note(ordered)
+        assert result == "", f"Should be silent for uncapped BFS; got: {result!r}"
+
+    def test_silent_when_50_but_has_depth3(self):
+        """50 nodes with some at depth=3 → BFS reached depth=3, suppress signal."""
+        from tempograph.render.focused import _compute_bfs_scope_note
+
+        ordered = self._ordered({0: 1, 1: 10, 2: 25, 3: 14})  # total=50, d3=14
+        result = _compute_bfs_scope_note(ordered)
+        assert result == "", f"Should be silent when depth=3 present; got: {result!r}"
+
+    def test_silent_for_empty_graph(self):
+        """Empty ordered list → silent."""
+        from tempograph.render.focused import _compute_bfs_scope_note
+
+        assert _compute_bfs_scope_note([]) == ""
+
+    def test_integration_isolated_no_note(self, tmp_path):
+        """render_focused has NO hub BFS note for an isolated symbol."""
+        from tempograph.render.focused import render_focused
+
+        seed = self._fn("isolated", "app/utils.py")
+        c1 = self._fn("caller", "app/main.py")
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=c1.id, target_id=seed.id)]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1])
+
+        output = render_focused(graph, "isolated")
+        assert "hub BFS" not in output, (
+            f"Isolated symbol should have no hub BFS note; got:\n{output[:300]}"
+        )
+
+    def test_scope_note_fires_on_dense_ordered(self):
+        """Unit: 50 nodes with no depth=3 → fires with depth-1 count in message."""
+        from tempograph.render.focused import _compute_bfs_scope_note
+
+        # 50 nodes: 1 at d0, 20 at d1, 29 at d2, 0 at d3
+        ordered = self._ordered({0: 1, 1: 20, 2: 29})
+        result = _compute_bfs_scope_note(ordered)
+        assert "hub BFS" in result
+        assert "20" in result  # depth-1 count
+        assert "depth=3 cut" in result
+
+
+class TestDeadSeedNote:
+    """Tests for _compute_dead_seed_note: S67 dead seed annotation."""
+
+    def _fn(self, name, file_path="app/lib.py", exported=True, line_end=60):
+        # line_end=60 → line_count=60 > 50 → +15 size bonus in _dead_code_confidence.
+        # Without size bonus: +30 (no callers) +10 (no renderers) = 40 < threshold.
+        # With size bonus: 40+15 = 55 ≥ 50 → fires correctly.
+        return Symbol(
+            id=f"{file_path}::{name}",
+            name=name,
+            qualified_name=name,
+            kind=SymbolKind.FUNCTION,
+            language=Language.PYTHON,
+            file_path=file_path,
+            line_start=1,
+            line_end=line_end,
+            exported=exported,
+        )
+
+    def _graph_with_importer(self, tmp_path, seed, caller=None):
+        """Build graph where seed's file has an importer (library file, not entry script)."""
+        importer_sym = self._fn("main_fn", "app/main.py")
+        edges = [
+            Edge(kind=EdgeKind.IMPORTS, source_id="app/main.py", target_id=seed.file_path),
+        ]
+        if caller:
+            edges.append(Edge(kind=EdgeKind.CALLS, source_id=caller.id, target_id=seed.id))
+        symbols = [seed, importer_sym]
+        if caller:
+            symbols.append(caller)
+        return _make_graph(tmp_path, edges=edges, symbols=symbols)
+
+    def _graph_no_importer(self, tmp_path, seed):
+        """Build graph where seed's file has no importers (entry script)."""
+        return _make_graph(tmp_path, edges=[], symbols=[seed])
+
+    def test_fires_for_orphan_in_imported_file(self, tmp_path):
+        """Dead seed in an imported file: no callers + file has importers → fires."""
+        from tempograph.render.focused import _compute_dead_seed_note
+
+        seed = self._fn("process_old_data", "app/lib.py")
+        graph = self._graph_with_importer(tmp_path, seed)
+        result = _compute_dead_seed_note(graph, [seed])
+        assert "dead candidate" in result, f"Expected dead candidate signal; got: {result!r}"
+        assert "confidence" in result, f"Expected confidence score; got: {result!r}"
+        assert "dead_code mode" in result, f"Expected dead_code mode hint; got: {result!r}"
+
+    def test_silent_for_entry_script(self, tmp_path):
+        """Seed in a file with no importers (entry script) → annotation suppressed."""
+        from tempograph.render.focused import _compute_dead_seed_note
+
+        seed = self._fn("main", "scripts/run.py")
+        graph = self._graph_no_importer(tmp_path, seed)
+        result = _compute_dead_seed_note(graph, [seed])
+        assert result == "", f"Entry script should be silent; got: {result!r}"
+
+    def test_silent_for_active_symbol_with_callers(self, tmp_path):
+        """Seed with callers → annotation suppressed regardless of file import status."""
+        from tempograph.render.focused import _compute_dead_seed_note
+
+        seed = self._fn("active_fn", "app/lib.py")
+        caller = self._fn("do_work", "app/main.py")
+        graph = self._graph_with_importer(tmp_path, seed, caller=caller)
+        result = _compute_dead_seed_note(graph, [seed])
+        assert result == "", f"Active symbol should be silent; got: {result!r}"
+
+    def test_silent_for_test_file_seed(self, tmp_path):
+        """Seed in a test file → annotation suppressed (test runner calls it, not code)."""
+        from tempograph.render.focused import _compute_dead_seed_note
+
+        seed = self._fn("test_something", "tests/test_lib.py")
+        importer = self._fn("runner", "conftest.py")
+        edges = [Edge(kind=EdgeKind.IMPORTS, source_id="conftest.py", target_id="tests/test_lib.py")]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, importer])
+        result = _compute_dead_seed_note(graph, [seed])
+        assert result == "", f"Test file seed should be silent; got: {result!r}"
+
+    def test_multi_seed_names_dead_candidates(self, tmp_path):
+        """Multi-seed: one dead, one active → names only the dead seed."""
+        from tempograph.render.focused import _compute_dead_seed_note
+
+        dead_seed = self._fn("old_util", "app/lib.py")
+        active_seed = self._fn("build_graph", "app/core.py")
+        caller = self._fn("caller_fn", "app/main.py")
+        edges = [
+            Edge(kind=EdgeKind.IMPORTS, source_id="app/main.py", target_id="app/lib.py"),
+            Edge(kind=EdgeKind.IMPORTS, source_id="app/main.py", target_id="app/core.py"),
+            Edge(kind=EdgeKind.CALLS, source_id=caller.id, target_id=active_seed.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[dead_seed, active_seed, caller])
+        result = _compute_dead_seed_note(graph, [dead_seed, active_seed])
+        assert "dead candidate" in result, f"Expected dead candidate signal; got: {result!r}"
+        assert "old_util" in result, f"Expected dead seed name in result; got: {result!r}"
+
+    def test_single_seed_format_omits_name(self, tmp_path):
+        """Single dead seed → format omits the name (already in Focus header)."""
+        from tempograph.render.focused import _compute_dead_seed_note
+
+        seed = self._fn("orphan_fn", "app/lib.py")
+        graph = self._graph_with_importer(tmp_path, seed)
+        result = _compute_dead_seed_note(graph, [seed])
+        # Single seed format: "↳ dead candidate: no callers (confidence: NN%)"
+        # The name is NOT included (it's already in the "Focus:" header)
+        assert "orphan_fn" not in result, f"Single seed should omit name; got: {result!r}"
+        assert "no callers" in result, f"Expected 'no callers' in message; got: {result!r}"
+
+    def test_integration_dead_seed_in_render_focused(self, tmp_path):
+        """Integration: render_focused includes dead seed annotation when seed is orphan."""
+        from tempograph.render.focused import render_focused
+
+        seed = self._fn("orphan_fn", "app/lib.py", line_end=60)  # large enough for +15
+        importer = self._fn("main_fn", "app/main.py")
+        edges = [Edge(kind=EdgeKind.IMPORTS, source_id="app/main.py", target_id="app/lib.py")]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, importer])
+
+        output = render_focused(graph, "orphan_fn")
+        assert "dead candidate" in output, (
+            f"render_focused should include dead seed annotation; got:\n{output[:500]}"
+        )
+
+    def test_integration_no_annotation_for_active_symbol(self, tmp_path):
+        """Integration: render_focused has no dead annotation for a symbol with callers."""
+        from tempograph.render.focused import render_focused
+
+        seed = self._fn("active_fn", "app/lib.py")
+        caller = self._fn("do_work", "app/main.py")
+        edges = [
+            Edge(kind=EdgeKind.IMPORTS, source_id="app/main.py", target_id="app/lib.py"),
+            Edge(kind=EdgeKind.CALLS, source_id=caller.id, target_id=seed.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, caller])
+
+        output = render_focused(graph, "active_fn")
+        assert "dead candidate" not in output, (
+            f"Active symbol should have no dead annotation; got:\n{output[:300]}"
+        )
+
+
+class TestHiddenCalleeSummary:
+    """S68: hidden callee overflow label enriched with sole-use/untested/hot counts."""
+
+    def _fn(self, name, fp="app/core.py", kind=None, exported=True):
+        return Symbol(
+            id=f"{fp}::{name}",
+            name=name,
+            qualified_name=name,
+            kind=kind or SymbolKind.FUNCTION,
+            language=Language.PYTHON,
+            file_path=fp,
+            line_start=1,
+            line_end=5,
+            exported=exported,
+        )
+
+    def _make_seed_with_callees(self, tmp_path, n_shown, n_hidden, sole_use_hidden=0):
+        """Create seed + N_shown + N_hidden callees. First N_shown shared callees,
+        last N_hidden sole-use (only called by seed)."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn("orchestrate", "app/core.py")
+        # Shared callees (have external callers too — not sole-use)
+        shared_caller = self._fn("other", "app/other.py")
+        shown_callees = [self._fn(f"_shared_{i}", "app/core.py") for i in range(n_shown)]
+        # Hidden callees — sole-use if requested
+        hidden_callees = [self._fn(f"_hidden_{i}", "app/core.py") for i in range(n_hidden)]
+
+        edges = []
+        for c in shown_callees:
+            edges.append(Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c.id))
+            # Give them a shared caller so they're not sole-use
+            edges.append(Edge(kind=EdgeKind.CALLS, source_id=shared_caller.id, target_id=c.id))
+        for i, c in enumerate(hidden_callees):
+            edges.append(Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c.id))
+            if i >= n_hidden - sole_use_hidden:
+                pass  # sole-use: no other callers added
+            else:
+                edges.append(Edge(kind=EdgeKind.CALLS, source_id=shared_caller.id, target_id=c.id))
+
+        syms = [seed, shared_caller] + shown_callees + hidden_callees
+        graph = _make_graph(tmp_path, edges=edges, symbols=syms)
+        return seed, graph, _build_callees_block
+
+    def test_overflow_sole_use_hidden_shows_count(self, tmp_path):
+        """Hidden sole-use callees appear in overflow label as 'N sole-use'."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn("orchestrate", "app/core.py")
+        shared_caller = self._fn("other", "app/other.py")
+
+        # 8 non-sole-use callees shown, 3 sole-use callees hidden
+        shown_callees = [self._fn(f"_shared_{i}", "app/core.py") for i in range(8)]
+        sole_callees = [self._fn(f"_private_{i}", "app/core.py") for i in range(3)]
+
+        edges = []
+        for c in shown_callees:
+            edges.append(Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c.id))
+            edges.append(Edge(kind=EdgeKind.CALLS, source_id=shared_caller.id, target_id=c.id))
+        for c in sole_callees:
+            edges.append(Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c.id))
+            # sole-use: no other callers
+
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, shared_caller] + shown_callees + sole_callees)
+        result = _build_callees_block(seed, 0, graph, "")
+        calls_line = "\n".join(result)
+
+        assert "+3 more" in calls_line or "+11 more" in calls_line or "more" in calls_line, (
+            f"Expected overflow label; got:\n{calls_line}"
+        )
+        assert "sole-use" in calls_line, (
+            f"Expected 'sole-use' in overflow label for hidden sole-use callees; got:\n{calls_line}"
+        )
+
+    def test_overflow_no_attributes_shows_bare_count(self, tmp_path):
+        """Hidden callees with no notable attributes show plain '(+N more)'."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn("orchestrate", "app/core.py")
+        shared_caller = self._fn("other", "app/other.py")
+
+        # 9 callees, all with shared callers (not sole-use) and not in hot_files
+        callees = [self._fn(f"_helper_{i}", "app/utils.py") for i in range(9)]
+        edges = []
+        for c in callees:
+            edges.append(Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c.id))
+            edges.append(Edge(kind=EdgeKind.CALLS, source_id=shared_caller.id, target_id=c.id))
+
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, shared_caller] + callees)
+        result = _build_callees_block(seed, 0, graph, "")
+        calls_line = "\n".join(result)
+
+        # Overflow fires but no attributes (not sole-use — all have shared_caller too)
+        assert "+1 more" in calls_line, f"Expected '+1 more'; got:\n{calls_line}"
+        # Should NOT have "sole-use" in overflow (shared_caller also calls them)
+        overflow_part = calls_line.split("(+")[1] if "(+" in calls_line else ""
+        assert "sole-use" not in overflow_part, (
+            f"Expected no 'sole-use' in overflow for non-sole-use hidden callees; got:\n{calls_line}"
+        )
+
+    def test_overflow_depth1_shows_bare_count(self, tmp_path):
+        """At depth=1, overflow label is plain '(+N more)' — no attribute summary."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn("orchestrate", "app/core.py")
+        # 9 sole-use callees (only called from seed)
+        callees = [self._fn(f"_priv_{i}", "app/core.py") for i in range(9)]
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c.id) for c in callees]
+
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + callees)
+        result = _build_callees_block(seed, 1, graph, "")  # depth=1
+        calls_line = "\n".join(result)
+
+        # At depth=1, no attribute summary
+        assert "more" in calls_line, f"Expected overflow; got:\n{calls_line}"
+        assert "sole-use" not in calls_line, (
+            f"At depth=1, expected no 'sole-use' in overflow; got:\n{calls_line}"
+        )
+
+    def test_overflow_hot_hidden_shows_hot_count(self, tmp_path):
+        """Hidden callees in hot_files show 'N hot' in overflow label.
+        Hot callees are ordered first — to get one in the hidden set, we need 9 hot callees
+        so the first 8 fill shown slots and the 9th is hidden.
+        """
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn("orchestrate", "app/core.py")
+        shared = self._fn("other", "app/other.py")
+
+        # 9 callees all in hot_files — first 8 shown, last 1 hidden with [hot]
+        hot_callees = [self._fn(f"_hot_{i}", "app/hot.py") for i in range(9)]
+
+        edges = []
+        for c in hot_callees:
+            edges.append(Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c.id))
+            edges.append(Edge(kind=EdgeKind.CALLS, source_id=shared.id, target_id=c.id))
+
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, shared] + hot_callees)
+        graph.hot_files = {"app/hot.py"}  # mark the hot file
+
+        result = _build_callees_block(seed, 0, graph, "")
+        calls_line = "\n".join(result)
+
+        assert "+1 more" in calls_line, f"Expected '+1 more'; got:\n{calls_line}"
+        assert "1 hot" in calls_line, f"Expected '1 hot' in overflow; got:\n{calls_line}"
+
+    def test_overflow_no_callees_no_overflow(self, tmp_path):
+        """Exactly 8 callees — no overflow label."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn("orchestrate", "app/core.py")
+        callees = [self._fn(f"_c{i}", "app/core.py") for i in range(8)]
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c.id) for c in callees]
+
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + callees)
+        result = _build_callees_block(seed, 0, graph, "")
+        calls_line = "\n".join(result)
+
+        assert "more" not in calls_line, f"No overflow expected for 8 callees; got:\n{calls_line}"

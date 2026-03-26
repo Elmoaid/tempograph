@@ -797,11 +797,8 @@ def _compute_callee_depth_anns(
     graph: "Tempo",
 ) -> tuple[str, str]:
     """Compute callee-count and callee-depth annotation strings for the depth-0 header."""
-    _callee_ids = {
-        e.target_id for e in graph.edges
-        if e.kind == EdgeKind.CALLS and e.source_id == sym.id
-    }
-    callee_ann = f" [calls: {len(_callee_ids)}]" if len(_callee_ids) >= 5 else ""
+    _direct_callees = graph.callees_of(sym.id)
+    callee_ann = f" [calls: {len(_direct_callees)}]" if len(_direct_callees) >= 5 else ""
     _bfs_q: list[tuple[str, int]] = [(sym.id, 0)]
     _bfs_seen: set[str] = {sym.id}
     _max_callee_depth = 0
@@ -811,10 +808,10 @@ def _compute_callee_depth_anns(
             _max_callee_depth = _cur_lvl
         if _cur_lvl >= 8:
             continue
-        for _e in graph.edges:
-            if _e.kind == EdgeKind.CALLS and _e.source_id == _cur_id and _e.target_id not in _bfs_seen:
-                _bfs_seen.add(_e.target_id)
-                _bfs_q.append((_e.target_id, _cur_lvl + 1))
+        for _callee in graph.callees_of(_cur_id):
+            if _callee.id not in _bfs_seen:
+                _bfs_seen.add(_callee.id)
+                _bfs_q.append((_callee.id, _cur_lvl + 1))
     depth_ann = f" [callee depth: {_max_callee_depth}]" if _max_callee_depth >= 3 else ""
     return callee_ann, depth_ann
 
@@ -874,10 +871,6 @@ def _compute_structure_anns(
     }
     _entry_fps = {fp for fp in graph.files if fp.rsplit("/", 1)[-1] in _FOCUS_ENTRY_NAMES}
     if _entry_fps and sym.file_path not in _entry_fps:
-        _rev_adj: dict[str, list[str]] = {}
-        for _e in graph.edges:
-            if _e.kind == EdgeKind.IMPORTS and _e.source_id in graph.files and _e.target_id in graph.files:
-                _rev_adj.setdefault(_e.target_id, []).append(_e.source_id)
         _bfs_imp: list[tuple[str, int]] = [(sym.file_path, 0)]
         _seen_imp: set[str] = {sym.file_path}
         _found_depth: int | None = None
@@ -885,7 +878,7 @@ def _compute_structure_anns(
             _cur_fp, _cur_d = _bfs_imp.pop(0)
             if _cur_d >= 8:
                 continue
-            for _imp in _rev_adj.get(_cur_fp, []):
+            for _imp in graph.importers_of(_cur_fp):
                 if _imp in _entry_fps:
                     _found_depth = _cur_d + 1
                     break
@@ -904,18 +897,12 @@ def _compute_recursion_label(
     """Detect self or mutual recursion; return the annotation label string."""
     if sym.kind.value not in ("function", "method"):
         return ""
-    _seed_callee_ids = {
-        e.target_id for e in graph.edges
-        if e.kind == EdgeKind.CALLS and e.source_id == sym.id
-    }
+    _seed_callees = graph.callees_of(sym.id)
+    _seed_callee_ids = {c.id for c in _seed_callees}
     if sym.id in _seed_callee_ids:
         return "[recursive]"
-    for _callee_s in graph.callees_of(sym.id)[:10]:
-        _callee_callees = {
-            e.target_id for e in graph.edges
-            if e.kind == EdgeKind.CALLS and e.source_id == _callee_s.id
-        }
-        if sym.id in _callee_callees:
+    for _callee_s in _seed_callees[:10]:
+        if sym.id in {c.id for c in graph.callees_of(_callee_s.id)}:
             return f"[recursive: mutual with {_callee_s.name}]"
     return ""
 
@@ -1748,7 +1735,45 @@ def _build_callees_block(
         callee_strs.append(f"{c.qualified_name}{_cx_ann}{_hot_ann}{_cb_ann}{_sole_ann}{_recursive_ann}{_untested_ann}")
     lines.append(f"{indent}  calls: {', '.join(callee_strs)}")
     if len(callees) > shown:
-        lines[-1] += f" (+{len(callees) - shown} more)"
+        # S68: enrich overflow label with hidden-callee attribute summary (depth=0 only).
+        # "(+25 more)" tells agents nothing. "(+25 more: 14 sole-use, 11 untested)" tells them
+        # whether the hidden tail is full of private helpers / test blind spots worth digging into.
+        if depth == 0:
+            _hidden_cs = (hot_callees + cold_callees)[shown:]
+            _h_hot = [
+                c for c in _hidden_cs
+                if c.file_path in graph.hot_files and not _is_test_file(c.file_path)
+            ]
+            _h_sole: list = []
+            _h_unt: list = []
+            for _hc68 in _hidden_cs:
+                if _hc68.kind.value in ("function", "method"):
+                    _hc68_prod = [
+                        cr for cr in graph.callers_of(_hc68.id)
+                        if not _is_test_file(cr.file_path)
+                    ]
+                    if len(_hc68_prod) == 1 and _hc68_prod[0].id == sym.id:
+                        _h_sole.append(_hc68)
+                    if (
+                        _seed_is_tested
+                        and not _is_test_file(_hc68.file_path)
+                        and not any(_is_test_file(cr.file_path) for cr in graph.callers_of(_hc68.id))
+                    ):
+                        _h_unt.append(_hc68)
+            _h_parts: list[str] = []
+            if _h_hot:
+                _h_parts.append(f"{len(_h_hot)} hot")
+            if _h_sole:
+                _h_parts.append(f"{len(_h_sole)} sole-use")
+            if _h_unt:
+                _h_parts.append(f"{len(_h_unt)} untested")
+            _overflow68 = f" (+{len(_hidden_cs)} more"
+            if _h_parts:
+                _overflow68 += f": {', '.join(_h_parts)}"
+            _overflow68 += ")"
+            lines[-1] += _overflow68
+        else:
+            lines[-1] += f" (+{len(callees) - shown} more)"
     # S54: recursive summary — fire once when seed calls itself, at depth=0 only.
     if depth == 0 and any(c.id == sym.id for c in callees):
         lines.append(f"{indent}  \u21b3 recursive \u2014 self-referential; verify base case before modifying")
@@ -1764,6 +1789,27 @@ def _build_callees_block(
             _suffix = "..." if len(_hot_non_test) > 3 else ""
             lines.append(
                 f"{indent}  \u21b3 instability: {len(_hot_non_test)} hot callees ({', '.join(_names)}{_suffix})"
+            )
+    # S62: contract drift — seed file is STABLE (not in hot_files) but ≥2 of its callees' files ARE hot.
+    # S52 fires for general hot-callee instability ("volatile territory — be careful while editing").
+    # S62 fires for the DRIFT case specifically: you haven't touched this code in a while, but the
+    # things it calls HAVE been updated — their interface may have changed without you knowing.
+    # The recommended action is different: read callee changelogs BEFORE editing, not just while editing.
+    # Guard: depth=0, seed file NOT in hot_files, ≥2 non-test callees from different hot files.
+    if depth == 0 and graph.hot_files and sym.file_path not in graph.hot_files:
+        _drift_callees = [
+            c for c in callees
+            if c.file_path in graph.hot_files
+            and c.file_path != sym.file_path
+            and not _is_test_file(c.file_path)
+            and c.kind.value in ("function", "method")
+        ]
+        if len(_drift_callees) >= 3:
+            _drift_names = [c.name for c in _drift_callees[:3]]
+            _drift_suffix = "..." if len(_drift_callees) > 3 else ""
+            lines.append(
+                f"{indent}  \u21b3 drift risk: {len(_drift_callees)} callees updated while seed is stable"
+                f" ({', '.join(_drift_names)}{_drift_suffix}) \u2014 verify contracts still match"
             )
     # S56: coverage gap summary — when seed is tested but ≥2 eligible callees have zero test callers.
     # Per-callee [untested] annotation already fires, but agents still need to count. This summary
@@ -2796,18 +2842,21 @@ def _signals_focused_coupling_hidden(
     if graph.root:
         try:
             from ..git import cochange_pairs as _cp, is_git_repo as _igr
-            from ..types import EdgeKind as _EK
             if _igr(graph.root):
                 _seed_fp = _prim.file_path
                 _static_neighbors: set[str] = set()
-                for _e in graph.edges:
-                    if _e.kind in (_EK.CALLS, _EK.IMPORTS):
-                        _src = _e.source_id.split("::")[0]
-                        _tgt = _e.target_id.split("::")[0]
-                        if _src == _seed_fp:
-                            _static_neighbors.add(_tgt)
-                        elif _tgt == _seed_fp:
-                            _static_neighbors.add(_src)
+                # CALLS: use indexed per-symbol lookups (O(k) vs O(30K edge scan))
+                for _s in graph.symbols_in_file(_seed_fp):
+                    for _c in graph.callees_of(_s.id):
+                        _static_neighbors.add(_c.file_path)
+                    for _c in graph.callers_of(_s.id):
+                        _static_neighbors.add(_c.file_path)
+                # IMPORTS: use reverse-indexed file-level lookup
+                _static_neighbors.update(graph.importers_of(_seed_fp))
+                _static_neighbors.update(
+                    _fp for _fp, _imp_list in graph._importers.items()
+                    if _seed_fp in _imp_list
+                )
                 _pairs = _cp(graph.root, _seed_fp, n=10)
                 _hidden = [
                     p for p in _pairs
@@ -3140,10 +3189,7 @@ def _signals_focused_fn_patterns(
             (s for s in _seed_syms if s.kind.value in ("function", "method")), None
         )
         if _prim392:
-            _callees392 = [
-                e for e in graph.edges
-                if e.kind.value == "calls" and e.source_id == _prim392.id
-            ]
+            _callees392 = graph.callees_of(_prim392.id)
             if not _callees392 and _prim392.line_count >= 3:
                 lines.append(
                     f"\npure utility: {_prim392.name} has no outbound calls"
@@ -3203,10 +3249,7 @@ def _signals_fn_recursion(
     if not _prim:
         return lines
     # S340/S404/S500: self-loop edge (all three check the same condition; emit once)
-    _self_calls = [
-        e for e in graph.edges
-        if e.kind.value == "calls" and e.source_id == _prim.id and e.target_id == _prim.id
-    ]
+    _self_calls = any(c.id == _prim.id for c in graph.callees_of(_prim.id))
     if _self_calls:
         lines.append(
             f"\nrecursive: {_prim.name} calls itself"
@@ -3314,10 +3357,7 @@ def _signals_fn_oop_behavioral(
     # S434: Factory function pattern
     _factory_prefixes = ("create_", "make_", "build_", "factory_", "new_", "get_instance_")
     if any(_prim.name.lower().startswith(p) for p in _factory_prefixes):
-        _callees = [
-            graph.symbols[e.target_id].name for e in graph.edges
-            if e.kind.value == "calls" and e.source_id == _prim.id and e.target_id in graph.symbols
-        ]
+        _callees = [c.name for c in graph.callees_of(_prim.id)]
         _class_callees = [n for n in _callees if n and n[0].isupper()]
         if _class_callees:
             lines.append(
@@ -3347,7 +3387,7 @@ def _signals_fn_oop_behavioral(
     # S475: Generator/iterator function
     _gen_prefixes = ("iter_", "generate_", "stream_", "yield_", "produce_", "enumerate_")
     if any(_prim.name.lower().startswith(p) for p in _gen_prefixes):
-        _callers_gen = [e for e in graph.edges if e.kind.value == "calls" and e.target_id == _prim.id]
+        _callers_gen = graph.callers_of(_prim.id)
         if _callers_gen:
             lines.append(
                 f"\ngenerator function: {_prim.name} is a lazy iterator"
@@ -3612,10 +3652,8 @@ def _signals_fn_conventions_behavior(
         _is_thread_safe = any(m in _prim_fn.name.lower() for m in _lock_markers)
         if not _is_thread_safe:
             _callees_lock = [
-                graph.symbols[e.target_id].name for e in graph.edges
-                if e.kind.value == "calls" and e.source_id == _prim_fn.id
-                and e.target_id in graph.symbols
-                and graph.symbols[e.target_id].name.lower() in _lock_callee_names
+                c.name for c in graph.callees_of(_prim_fn.id)
+                if c.name.lower() in _lock_callee_names
             ]
             _is_thread_safe = bool(_callees_lock)
         if _is_thread_safe:
@@ -3630,7 +3668,7 @@ def _signals_fn_conventions_behavior(
             None,
         )
         if _mixin_class:
-            _users = [e for e in graph.edges if e.kind.value == "imports" and e.target_id == _prim_fn.file_path]
+            _users = graph.importers_of(_prim_fn.file_path)
             lines.append(
                 f"\nmixin method: {_prim_fn.name} lives in {_mixin_class.name}"
                 f" — changes propagate to all {len(_users)} consumer(s) that include this mixin;"
@@ -3654,7 +3692,7 @@ def _signals_fn_conventions_behavior(
     _factory_pfx = ("make_", "create_", "build_", "new_", "from_", "get_or_create_")
     _prim_fac = next((s for s in _seed_syms if s.kind.value in ("function", "method")), None)
     if _prim_fac and any(_prim_fac.name.lower().startswith(p) for p in _factory_pfx):
-        _callers_fac = [e for e in graph.edges if e.kind.value == "calls" and e.target_id == _prim_fac.id]
+        _callers_fac = graph.callers_of(_prim_fac.id)
         if _callers_fac:
             lines.append(
                 f"\nfactory function: {_prim_fac.name} is a factory with {len(_callers_fac)} caller(s)"
@@ -3721,7 +3759,7 @@ def _signals_fn_quality_a(
     _prim = _seed_syms[0]
     # S350: Orphaned symbol
     if _prim.kind.value in ("function", "method", "class"):
-        _callers = [e for e in graph.edges if e.kind.value == "calls" and e.target_id == _prim.id]
+        _callers = graph.callers_of(_prim.id)
         _importers = list(graph.importers_of(_prim.file_path))
         if not _callers and not _importers and not _prim.name.startswith("_"):
             lines.append(
@@ -3741,7 +3779,7 @@ def _signals_fn_quality_a(
     # S501: Pure function
     _prim_fn501 = next((s for s in _seed_syms if s.kind.value == "function"), None)
     if _prim_fn501 and not _prim_fn501.parent_id:
-        _callees501 = [e for e in graph.edges if e.kind.value == "calls" and e.source_id == _prim_fn501.id]
+        _callees501 = graph.callees_of(_prim_fn501.id)
         _has_callers501 = bool(getattr(graph, "_callers", {}).get(_prim_fn501.id))
         if not _callees501 and _has_callers501:
             lines.append(
@@ -4952,6 +4990,76 @@ def _signals_focused_fn_advanced(
 
 
 
+def _compute_change_exposure(graph: "Tempo", seeds: "list[Symbol]") -> str:
+    """One-line change risk synthesizer.
+
+    Aggregates across seeds and returns a summary line (MEDIUM/HIGH/CRITICAL)
+    when the neighborhood has meaningful risk factors. Returns empty string for
+    low-risk queries so the line is absent rather than reassuring noise.
+
+    Factors (each counts once):
+    - caller_files >= 8: high blast, many dependents
+    - hot_callees >= 2: actively-changing territory downstream
+    - hot_callers >= 3: actively-changing territory upstream
+    - coverage gap: >=50% of cross-file callees are untested (when >=3 callees)
+    - seed in hot file: the symbol itself is in an actively-modified file
+    """
+    if not seeds or not graph:
+        return ""
+
+    def _itf(fp: str) -> bool:
+        return "/test" in fp or fp.startswith("test") or "tests/" in fp or fp.endswith("_test.py")
+
+    caller_files: set[str] = set()
+    hot_callees_n = 0
+    hot_callers_n = 0
+    cross_callees_total = 0
+    untested_cross_callees = 0
+    hot = graph.hot_files or set()
+
+    for sym in seeds:
+        sym_file = sym.file_path
+
+        # Callers (non-test only)
+        callers = [c for c in graph.callers_of(sym.id) if not _itf(c.file_path)]
+        for c in callers:
+            if c.file_path != sym_file:
+                caller_files.add(c.file_path)
+        if hot:
+            hot_callers_n += sum(1 for c in callers if c.file_path in hot and c.file_path != sym_file)
+
+        # Callees (cross-file, non-test)
+        callees = [c for c in graph.callees_of(sym.id)
+                   if c.file_path != sym_file and not _itf(c.file_path)]
+        cross_callees_total += len(callees)
+        if hot:
+            hot_callees_n += sum(1 for c in callees if c.file_path in hot)
+        for callee in callees:
+            if not any(_itf(t.file_path) for t in graph.callers_of(callee.id)):
+                untested_cross_callees += 1
+
+    seed_in_hot = bool(hot and any(s.file_path in hot for s in seeds))
+
+    factors: list[str] = []
+    caller_file_count = len(caller_files)
+    if caller_file_count >= 8:
+        factors.append(f"{caller_file_count} caller files")
+    if hot_callees_n >= 2:
+        factors.append(f"{hot_callees_n} hot callee{'s' if hot_callees_n != 1 else ''}")
+    if hot_callers_n >= 3:
+        factors.append(f"{hot_callers_n} hot callers")
+    if cross_callees_total >= 3 and untested_cross_callees / cross_callees_total >= 0.5:
+        factors.append(f"coverage gap ({untested_cross_callees}/{cross_callees_total} callees untested)")
+    if seed_in_hot:
+        factors.append("seed in active file")
+
+    n = len(factors)
+    if n == 0:
+        return ""
+    level = "CRITICAL" if n >= 3 else ("HIGH" if n >= 2 else "MEDIUM")
+    return f"change exposure: {level}  ← {', '.join(factors)}"
+
+
 def _collect_multi_seeds(
     graph: Tempo, query: str,
 ) -> tuple[list[Symbol], set[str], list[str], list[str]] | None:
@@ -5103,6 +5211,75 @@ def _render_context_sections(
     return token_count
 
 
+def _compute_bfs_scope_note(ordered: "list[tuple[Symbol, int]]") -> str:
+    """S66: BFS scope signal — fires when BFS never reached depth=3.
+
+    When a hub function's depth-1 and depth-2 neighbors fill all 50 BFS slots,
+    depth=3 is completely excluded. The agent sees a truncated picture without
+    knowing it. This tells them to use blast_radius for the full scope.
+
+    Condition: total nodes = 50 AND zero depth-3 nodes collected.
+    This means the BFS was so dense at depth-1/2 that it exhausted the cap
+    before reaching depth=3 at all — a true hub truncation, not just a
+    deep-graph cutoff.
+
+    Suppressed for sparse neighborhoods (< 50 nodes, or depth=3 was reached)
+    since those already got a complete or extended BFS picture.
+    """
+    total = len(ordered)
+    if total < 50:
+        return ""
+    depth_3_count = sum(1 for _, d in ordered if d == 3)
+    if depth_3_count > 0:
+        return ""
+    depth_1_count = sum(1 for _, d in ordered if d == 1)
+    return (
+        f"↳ hub BFS: {depth_1_count} depth-1 neighbors"
+        f" — depth=3 cut (50-node cap); use blast_radius for full scope"
+    )
+
+
+def _compute_dead_seed_note(graph: "Tempo", seeds: "list[Symbol]") -> str:
+    """S67: Dead seed annotation — fires when the focus seed itself is a dead candidate.
+
+    Running focus on dead code is the meta-error nobody catches: you get a full BFS expansion
+    of callees, coverage gaps, upstream reach — all analyzing something nobody calls.
+    This fires early (before BFS blocks) so agents can recalibrate before reading further.
+
+    Condition: ≥1 seed has dead_code_confidence ≥ 50.
+    Threshold 50 = at minimum: no callers (+30) + no file importers (+25) — a truly isolated symbol.
+    Test-file seeds are excluded by _dead_code_confidence (-50 penalty).
+
+    For multi-seed focus, only dead-candidate seeds are named individually.
+    Single-seed case omits the name (already shown in the Focus header).
+    """
+    dead_seeds: list[tuple[Symbol, int]] = []
+    for sym in seeds:
+        # Skip symbols in entry-point scripts: files with no importers are standalone runners
+        # (main.py, analyze.py, etc.) — they're not called from code, so "no callers" is expected.
+        if not graph.importers_of(sym.file_path):
+            continue
+        conf = _dead_code_confidence(sym, graph)
+        if conf >= 50:
+            dead_seeds.append((sym, conf))
+
+    if not dead_seeds:
+        return ""
+
+    if len(dead_seeds) == 1 and len(seeds) == 1:
+        _, conf = dead_seeds[0]
+        return (
+            f"↳ dead candidate: no callers (confidence: {conf}%)"
+            f" — verify intent; full analysis in dead_code mode"
+        )
+
+    parts = ", ".join(f"{sym.name} ({conf}%)" for sym, conf in dead_seeds)
+    return (
+        f"↳ dead candidates: {parts}"
+        f" — these seeds have no callers; verify intent; full analysis in dead_code mode"
+    )
+
+
 def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     """Task-focused rendering with BFS graph traversal.
     Starts from search results, then follows call/render/import edges
@@ -5126,6 +5303,18 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     if _depth_extended:
         _focus_header += f"  [depth +1 — sparse ({len(ordered)} nodes)]"
     lines = [_focus_header, ""]
+    _dead_note = _compute_dead_seed_note(graph, seeds)
+    if _dead_note:
+        lines.append(_dead_note)
+        lines.append("")
+    _exposure = _compute_change_exposure(graph, seeds)
+    if _exposure:
+        lines.append(_exposure)
+        lines.append("")
+    _scope_note = _compute_bfs_scope_note(ordered)
+    if _scope_note:
+        lines.append(_scope_note)
+        lines.append("")
     seen_files: set[str] = set()
     token_count = 0
 

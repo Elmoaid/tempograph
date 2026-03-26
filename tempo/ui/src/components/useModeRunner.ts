@@ -18,6 +18,24 @@ export function updateRunHistory(prev: RunHistoryEntry[], entry: RunHistoryEntry
   return [entry, ...deduped].slice(0, max);
 }
 
+// Static suggest_next map (suggest_next is MCP-only, not a CLI mode)
+const SUGGEST_NEXT_MAP: Record<string, string[]> = {
+  overview:      ["hotspots", "dead_code", "focus"],
+  focus:         ["blast_radius", "hotspots"],
+  blast_radius:  ["focus", "hotspots"],
+  hotspots:      ["dead_code", "focus"],
+  dead_code:     ["hotspots", "focus"],
+  diff_context:  ["focus", "blast_radius"],
+  deps:          ["focus", "blast_radius"],
+  arch:          ["hotspots", "deps"],
+  map:           ["focus", "hotspots"],
+  context:       ["focus", "blast_radius"],
+  prepare:       ["focus", "hotspots"],
+  quality:       ["hotspots", "focus"],
+  token_stats:   ["focus", "hotspots"],
+  learn:         ["focus", "overview"],
+};
+
 export interface ModeRunnerState {
   activeMode: string;
   activeKit: string | null;
@@ -33,6 +51,7 @@ export interface ModeRunnerState {
   paletteOpen: boolean;
   historyOpen: boolean;
   showHelp: boolean;
+  showWhichKey: boolean;
   history: string[];
   feedbackMode: string | null;
   outputFilter: string;
@@ -54,6 +73,7 @@ export interface ModeRunnerState {
   searchMatchCount: number;
   searchCurrentMatch: number;
   runHistory: RunHistoryEntry[];
+  suggestions: string[];
 }
 
 export interface ModeRunnerActions {
@@ -83,6 +103,7 @@ export interface ModeRunnerActions {
   onSearchChange: (text: string) => void;
   onSearchNavigate: (dir: "next" | "prev") => void;
   runHistoryEntry: (entry: RunHistoryEntry) => void;
+  runSuggestion: (mode: string) => void;
 }
 
 function buildActiveModeInfo(activeKit: string | null, activeMode: string, customKits: KitInfo[]) {
@@ -122,6 +143,8 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   const [saved, setSaved] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [showHelp, setHelpOpen] = useState(false);
+  const [showWhichKey, setWhichKeyVisible] = useState(false);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState<string[]>(() => loadHistory(localStorage.getItem(lastModeKey(repoPath)) || "overview"));
   const feedbackGiven = useRef<Map<string, boolean>>(new Map<string, boolean>());
@@ -192,6 +215,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   // Stable refs so keyboard/auto-run closures always call the latest functions
   const runModeRef = useRef<(() => void) | null>(null);
   const cancelModeRef = useRef<(() => void) | null>(null);
+  const saveOutputRef = useRef<(() => Promise<void>) | null>(null);
 
   const switchMode = (mode: string) => {
     // Persist args for the mode we're leaving
@@ -252,6 +276,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     helpOpen: showHelp,
     runModeRef,
     cancelModeRef,
+    saveOutputRef,
     argsInputRef,
     filterInputRef,
     clearOutput,
@@ -263,6 +288,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     setSidebarTab,
     setFilterVisible,
     setHelpOpen,
+    setWhichKeyVisible,
   });
 
   // Live elapsed counter
@@ -273,6 +299,18 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     }, 250);
     return () => clearInterval(id);
   }, [modeRunning]);
+
+  // Suggest follow-up modes after each run (static map; suggest_next is MCP-only)
+  useEffect(() => {
+    if (modeRunning) { setSuggestions([]); return; }
+    if (!modeOutput || activeKit ||
+        modeOutput.startsWith("[Cancelled]") ||
+        modeOutput.startsWith("Failed to run")) {
+      setSuggestions([]);
+      return;
+    }
+    setSuggestions((SUGGEST_NEXT_MAP[activeMode] ?? []).slice(0, 3));
+  }, [modeOutput, modeRunning, activeMode, activeKit]);
 
   // Auto-run overview on mount
   useEffect(() => { runModeRef.current?.(); }, []);
@@ -327,6 +365,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
   };
+  saveOutputRef.current = handleSaveOutput;
 
   const submitFeedback = async (helpful: boolean) => {
     const feedbackKey = activeKit ? `kit:${activeKit}` : activeMode;
@@ -358,6 +397,10 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     setTimeout(() => runModeRef.current?.(), 0);
   }, [repoPath, activeMode, activeKit, modeArgs, resetFilter]);
 
+  const runSuggestion = (mode: string) => {
+    switchMode(mode);
+  };
+
   return {
     // state
     activeMode,
@@ -373,6 +416,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     saved,
     paletteOpen,
     showHelp,
+    showWhichKey,
     historyOpen,
     history,
     feedbackMode,
@@ -395,6 +439,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     searchMatchCount,
     searchCurrentMatch,
     runHistory,
+    suggestions,
     // actions
     setActiveMode,
     setSidebarTab,
@@ -422,5 +467,6 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     onSearchChange: setSearchText,
     onSearchNavigate,
     runHistoryEntry,
+    runSuggestion,
   };
 }

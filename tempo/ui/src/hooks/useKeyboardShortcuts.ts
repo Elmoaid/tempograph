@@ -9,6 +9,7 @@ interface KeyboardShortcutsConfig {
   helpOpen: boolean;
   runModeRef: React.RefObject<(() => void) | null>;
   cancelModeRef: React.RefObject<(() => void) | null>;
+  saveOutputRef: React.RefObject<(() => Promise<void>) | null>;
   argsInputRef: React.RefObject<HTMLInputElement | null>;
   filterInputRef: React.RefObject<HTMLInputElement | null>;
   clearOutput: () => void;
@@ -20,6 +21,7 @@ interface KeyboardShortcutsConfig {
   setSidebarTab: (tab: "kits" | "modes") => void;
   setFilterVisible: (updater: boolean | ((v: boolean) => boolean)) => void;
   setHelpOpen: (open: boolean | ((prev: boolean) => boolean)) => void;
+  setWhichKeyVisible: (v: boolean) => void;
 }
 
 export function useKeyboardShortcuts({
@@ -30,6 +32,7 @@ export function useKeyboardShortcuts({
   helpOpen,
   runModeRef,
   cancelModeRef,
+  saveOutputRef,
   argsInputRef,
   filterInputRef,
   clearOutput,
@@ -41,7 +44,23 @@ export function useKeyboardShortcuts({
   setSidebarTab,
   setFilterVisible,
   setHelpOpen,
+  setWhichKeyVisible,
 }: KeyboardShortcutsConfig) {
+  useEffect(() => {
+    const onMetaDown = (e: KeyboardEvent) => {
+      if (e.key === "Meta" || e.key === "Control") setWhichKeyVisible(true);
+    };
+    const onMetaUp = (e: KeyboardEvent) => {
+      if (e.key === "Meta" || e.key === "Control") setWhichKeyVisible(false);
+    };
+    window.addEventListener("keydown", onMetaDown);
+    window.addEventListener("keyup", onMetaUp);
+    return () => {
+      window.removeEventListener("keydown", onMetaDown);
+      window.removeEventListener("keyup", onMetaUp);
+    };
+  }, [setWhichKeyVisible]);
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       // Escape: close help overlay → cancel running → close search → clear output
@@ -75,6 +94,8 @@ export function useKeyboardShortcuts({
       if (e.key === "r" && !modeRunning) { e.preventDefault(); runModeRef.current?.(); }
       // Cmd/Ctrl+F: open output search (find in output)
       if (e.key === "f" && modeOutput) { e.preventDefault(); openSearch(); }
+      // Cmd/Ctrl+S: save output to file
+      if (e.key === "s" && modeOutput) { e.preventDefault(); void saveOutputRef.current?.(); }
       const n = parseInt(e.key, 10);
       if (n >= 1 && n <= 9 && n <= MODES.length) { e.preventDefault(); switchMode(MODES[n - 1].mode); }
     };

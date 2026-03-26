@@ -1115,11 +1115,10 @@ def _signals_exports(
     return lines
 
 
-def _signals_structure_a(
+def _structure_a_isolation(
     graph: Tempo, *, _src_fps: list[str], _test_fps: set[str],
-    modules: dict[str, list[str]], _s220_entry_files: list[str],
 ) -> list[str]:
-    """Structural signals: file isolation, module layout, entry-point patterns."""
+    """Isolation signals: lone files, unused modules, orphan files."""
     lines: list[str] = []
 
     # Lone files: source files with both 0 outgoing imports AND 0 incoming importers.
@@ -1195,148 +1194,6 @@ def _signals_structure_a(
                 _um_str += f" +{len(_unused_modules) - 4} more"
             lines.append(f"potentially unused ({len(_unused_modules)}): {_um_str}")
 
-    # Tech debt markers: TODO/FIXME/HACK/XXX comment counts in source files.
-    # Quick signal for known issues, shortcuts, and incomplete work.
-    # Only source-code files with symbols; capped to avoid I/O cost on huge repos.
-    import re as _re  # noqa: PLC0415
-    # Only match markers that appear in comment lines (after # or //).
-    # Avoids false positives from regex strings, test fixtures, and scanner code itself.
-    _TD_PAT = _re.compile(r'(?:#|//)[^\n]*\b(TODO|FIXME|HACK|XXX)\b')
-    _td_counts: dict[str, int] = {}
-    _td_per_file: dict[str, int] = {}
-    _td_file_count = 0
-    for _fp in _src_fps[:200]:  # cap at 200 to keep I/O bounded
-        if Path(_fp).suffix not in _SRC_EXTS:
-            continue
-        try:
-            _content = (Path(graph.root) / _fp).read_text(errors="replace")
-            _matches = _TD_PAT.findall(_content)
-            if _matches:
-                _td_file_count += 1
-                _td_per_file[_fp] = len(_matches)
-                for _m in _matches:
-                    _td_counts[_m] = _td_counts.get(_m, 0) + 1
-        except Exception:
-            pass
-    if _td_counts:
-        _td_total = sum(_td_counts.values())
-        if _td_total >= 3:
-            _td_parts = [
-                f"{_td_counts[k]} {k}s"
-                for k in ("TODO", "FIXME", "HACK", "XXX")
-                if _td_counts.get(k, 0) > 0
-            ]
-            lines.append(f"tech debt: {_td_total} markers in {_td_file_count} files ({', '.join(_td_parts)})")
-        # Per-file tech debt concentration: top 3 files with most markers.
-        # Tells agents where to focus cleanup effort.
-        if _td_total >= 5 and _td_per_file:
-            _debt_hot = sorted(_td_per_file.items(), key=lambda x: -x[1])[:3]
-            _debt_hot = [(fp, n) for fp, n in _debt_hot if n >= 3]
-            if _debt_hot:
-                _dh_parts = [f"{fp.rsplit('/', 1)[-1]} ({n})" for fp, n in _debt_hot]
-                lines.append(f"debt hot: {', '.join(_dh_parts)}")
-
-
-    # S134: Largest module — the top-level directory with the most source files.
-    # Points agents to the heaviest architectural weight; also flags where complexity lives.
-    # Only shown when 3+ top-level dirs exist (otherwise trivial single-package repos).
-    if modules and len(modules) >= 3:
-        _s134_file_counts: dict[str, int] = {}
-        _s134_sym_counts: dict[str, int] = {}
-        for _s134_mod, _s134_fps in modules.items():
-            _s134_src_fps = [fp for fp in _s134_fps if not _is_test_file(fp)]
-            if not _s134_src_fps:
-                continue
-            _s134_file_counts[_s134_mod] = len(_s134_src_fps)
-            _s134_sym_counts[_s134_mod] = sum(
-                len(graph.files[fp].symbols) for fp in _s134_src_fps if fp in graph.files
-            )
-        if _s134_file_counts:
-            _s134_top = max(_s134_file_counts, key=lambda m: _s134_file_counts[m])
-            _s134_fc = _s134_file_counts[_s134_top]
-            _s134_sc = _s134_sym_counts.get(_s134_top, 0)
-            if _s134_fc >= 3:
-                lines.append(
-                    f"largest module: {_s134_top}/ ({_s134_fc} files, {_s134_sc} symbols)"
-                )
-
-
-    # S157: Deepest module — the most deeply nested directory path in the project.
-    # Deep nesting (>= 4 levels) indicates over-structured architecture.
-    # Only shown when 3+ files exist and max depth >= 4.
-    _s157_max_depth = 0
-    _s157_max_dir = ""
-    for _fp157 in graph.files:
-        if _is_test_file(_fp157):
-            continue
-        _parts157 = _fp157.split("/")
-        _depth157 = len(_parts157) - 1  # dirs only, not the file itself
-        if _depth157 > _s157_max_depth:
-            _s157_max_depth = _depth157
-            _s157_max_dir = "/".join(_parts157[:-1])
-    if len(graph.files) >= 2 and _s157_max_depth >= 4:
-        lines.append(f"deepest path: {_s157_max_dir}/ ({_s157_max_depth} levels) — deeply nested structure")
-
-
-    # S197: Constant explosion — high number of named constants/variables across source files.
-    # Many constants may indicate magic-number parameterization or config sprawl.
-    # Only shown when >= 20 non-test constant/variable symbols exist.
-    _s197_consts = [
-        s for s in graph.symbols.values()
-        if not _is_test_file(s.file_path)
-        and s.kind.value in ("constant", "variable")
-    ]
-    if len(_s197_consts) >= 20:
-        _top_const_files = sorted(
-            set(s.file_path for s in _s197_consts), key=lambda fp: -sum(
-                1 for s in _s197_consts if s.file_path == fp
-            )
-        )[:2]
-        _cf_str = ", ".join(fp.rsplit("/", 1)[-1] for fp in _top_const_files)
-        lines.append(
-            f"constant explosion: {len(_s197_consts)} named constants/variables"
-            f" — consider consolidating into config module ({_cf_str} heaviest)"
-        )
-
-
-    # S179: Mixed-role files — non-test source files that contain test_ symbols.
-    # Production code mixed with test code signals poor separation of concerns.
-    # Only shown when >= 1 such mixed file exists.
-    _s179_mixed: list[str] = []
-    for _fp179 in graph.files:
-        if _is_test_file(_fp179):
-            continue
-        _has_test_sym179 = any(
-            s.name.startswith("test_")
-            for s in graph.symbols_in_file(_fp179)
-        )
-        if _has_test_sym179:
-            _s179_mixed.append(_fp179)
-    if _s179_mixed:
-        _s179_str = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s179_mixed[:3])
-        if len(_s179_mixed) > 3:
-            _s179_str += f" +{len(_s179_mixed) - 3} more"
-        lines.append(
-            f"mixed-role files: {len(_s179_mixed)} source files contain test_ symbols"
-            f" ({_s179_str}) — move tests to dedicated test files"
-        )
-
-    # S173: Private ratio — percentage of non-test symbols that are unexported (private).
-    # High private ratio (>= 80%) means the codebase hides most logic; low = over-exposed API.
-    # Only shown when >= 20 source symbols exist.
-    _s173_src_syms = [
-        s for s in graph.symbols.values()
-        if not _is_test_file(s.file_path)
-    ]
-    if len(_s173_src_syms) >= 20:
-        _s173_private_count = sum(1 for s in _s173_src_syms if not s.exported)
-        _s173_ratio = _s173_private_count / len(_s173_src_syms) * 100
-        if _s173_ratio >= 80:
-            lines.append(
-                f"private ratio: {_s173_ratio:.0f}% of symbols are unexported"
-                f" — heavily internalized codebase"
-            )
-
     # S167: Orphan files — source files with 0 importers and 0 external callers to any symbol.
     # Isolated files are likely dead entry points or abandoned modules.
     # Only shown when 2+ non-entry-point source files are fully isolated.
@@ -1379,6 +1236,169 @@ def _signals_structure_a(
             f" — not imported or called from anywhere"
         )
 
+    return lines
+
+
+def _structure_a_tech_debt(graph: Tempo, *, _src_fps: list[str]) -> list[str]:
+    """Tech debt markers: TODO/FIXME/HACK/XXX comment counts in source files."""
+    lines: list[str] = []
+
+    # Tech debt markers: TODO/FIXME/HACK/XXX comment counts in source files.
+    # Quick signal for known issues, shortcuts, and incomplete work.
+    # Only source-code files with symbols; capped to avoid I/O cost on huge repos.
+    import re as _re  # noqa: PLC0415
+    # Only match markers that appear in comment lines (after # or //).
+    # Avoids false positives from regex strings, test fixtures, and scanner code itself.
+    _TD_PAT = _re.compile(r'(?:#|//)[^\n]*\b(TODO|FIXME|HACK|XXX)\b')
+    _td_counts: dict[str, int] = {}
+    _td_per_file: dict[str, int] = {}
+    _td_file_count = 0
+    for _fp in _src_fps[:200]:  # cap at 200 to keep I/O bounded
+        if Path(_fp).suffix not in _SRC_EXTS:
+            continue
+        try:
+            _content = (Path(graph.root) / _fp).read_text(errors="replace")
+            _matches = _TD_PAT.findall(_content)
+            if _matches:
+                _td_file_count += 1
+                _td_per_file[_fp] = len(_matches)
+                for _m in _matches:
+                    _td_counts[_m] = _td_counts.get(_m, 0) + 1
+        except Exception:
+            pass
+    if _td_counts:
+        _td_total = sum(_td_counts.values())
+        if _td_total >= 3:
+            _td_parts = [
+                f"{_td_counts[k]} {k}s"
+                for k in ("TODO", "FIXME", "HACK", "XXX")
+                if _td_counts.get(k, 0) > 0
+            ]
+            lines.append(f"tech debt: {_td_total} markers in {_td_file_count} files ({', '.join(_td_parts)})")
+        # Per-file tech debt concentration: top 3 files with most markers.
+        # Tells agents where to focus cleanup effort.
+        if _td_total >= 5 and _td_per_file:
+            _debt_hot = sorted(_td_per_file.items(), key=lambda x: -x[1])[:3]
+            _debt_hot = [(fp, n) for fp, n in _debt_hot if n >= 3]
+            if _debt_hot:
+                _dh_parts = [f"{fp.rsplit('/', 1)[-1]} ({n})" for fp, n in _debt_hot]
+                lines.append(f"debt hot: {', '.join(_dh_parts)}")
+
+    return lines
+
+
+def _structure_a_module_layout(
+    graph: Tempo, *, modules: dict[str, list[str]],
+) -> list[str]:
+    """Module layout signals: largest module (S134) and deepest path (S157)."""
+    lines: list[str] = []
+
+    # S134: Largest module — the top-level directory with the most source files.
+    # Points agents to the heaviest architectural weight; also flags where complexity lives.
+    # Only shown when 3+ top-level dirs exist (otherwise trivial single-package repos).
+    if modules and len(modules) >= 3:
+        _s134_file_counts: dict[str, int] = {}
+        _s134_sym_counts: dict[str, int] = {}
+        for _s134_mod, _s134_fps in modules.items():
+            _s134_src_fps = [fp for fp in _s134_fps if not _is_test_file(fp)]
+            if not _s134_src_fps:
+                continue
+            _s134_file_counts[_s134_mod] = len(_s134_src_fps)
+            _s134_sym_counts[_s134_mod] = sum(
+                len(graph.files[fp].symbols) for fp in _s134_src_fps if fp in graph.files
+            )
+        if _s134_file_counts:
+            _s134_top = max(_s134_file_counts, key=lambda m: _s134_file_counts[m])
+            _s134_fc = _s134_file_counts[_s134_top]
+            _s134_sc = _s134_sym_counts.get(_s134_top, 0)
+            if _s134_fc >= 3:
+                lines.append(
+                    f"largest module: {_s134_top}/ ({_s134_fc} files, {_s134_sc} symbols)"
+                )
+
+    # S157: Deepest module — the most deeply nested directory path in the project.
+    # Deep nesting (>= 4 levels) indicates over-structured architecture.
+    # Only shown when 3+ files exist and max depth >= 4.
+    _s157_max_depth = 0
+    _s157_max_dir = ""
+    for _fp157 in graph.files:
+        if _is_test_file(_fp157):
+            continue
+        _parts157 = _fp157.split("/")
+        _depth157 = len(_parts157) - 1  # dirs only, not the file itself
+        if _depth157 > _s157_max_depth:
+            _s157_max_depth = _depth157
+            _s157_max_dir = "/".join(_parts157[:-1])
+    if len(graph.files) >= 2 and _s157_max_depth >= 4:
+        lines.append(f"deepest path: {_s157_max_dir}/ ({_s157_max_depth} levels) — deeply nested structure")
+
+    return lines
+
+
+def _structure_a_symbol_quality(
+    graph: Tempo, *, _src_fps: list[str], _s220_entry_files: list[str],
+) -> list[str]:
+    """Symbol quality signals: constant explosion (S197), mixed-role files (S179),
+    private ratio (S173), and entry point signals (S220, S280)."""
+    lines: list[str] = []
+
+    # S197: Constant explosion — high number of named constants/variables across source files.
+    # Many constants may indicate magic-number parameterization or config sprawl.
+    # Only shown when >= 20 non-test constant/variable symbols exist.
+    _s197_consts = [
+        s for s in graph.symbols.values()
+        if not _is_test_file(s.file_path)
+        and s.kind.value in ("constant", "variable")
+    ]
+    if len(_s197_consts) >= 20:
+        _top_const_files = sorted(
+            set(s.file_path for s in _s197_consts), key=lambda fp: -sum(
+                1 for s in _s197_consts if s.file_path == fp
+            )
+        )[:2]
+        _cf_str = ", ".join(fp.rsplit("/", 1)[-1] for fp in _top_const_files)
+        lines.append(
+            f"constant explosion: {len(_s197_consts)} named constants/variables"
+            f" — consider consolidating into config module ({_cf_str} heaviest)"
+        )
+
+    # S179: Mixed-role files — non-test source files that contain test_ symbols.
+    # Production code mixed with test code signals poor separation of concerns.
+    # Only shown when >= 1 such mixed file exists.
+    _s179_mixed: list[str] = []
+    for _fp179 in graph.files:
+        if _is_test_file(_fp179):
+            continue
+        _has_test_sym179 = any(
+            s.name.startswith("test_")
+            for s in graph.symbols_in_file(_fp179)
+        )
+        if _has_test_sym179:
+            _s179_mixed.append(_fp179)
+    if _s179_mixed:
+        _s179_str = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s179_mixed[:3])
+        if len(_s179_mixed) > 3:
+            _s179_str += f" +{len(_s179_mixed) - 3} more"
+        lines.append(
+            f"mixed-role files: {len(_s179_mixed)} source files contain test_ symbols"
+            f" ({_s179_str}) — move tests to dedicated test files"
+        )
+
+    # S173: Private ratio — percentage of non-test symbols that are unexported (private).
+    # High private ratio (>= 80%) means the codebase hides most logic; low = over-exposed API.
+    # Only shown when >= 20 source symbols exist.
+    _s173_src_syms = [
+        s for s in graph.symbols.values()
+        if not _is_test_file(s.file_path)
+    ]
+    if len(_s173_src_syms) >= 20:
+        _s173_private_count = sum(1 for s in _s173_src_syms if not s.exported)
+        _s173_ratio = _s173_private_count / len(_s173_src_syms) * 100
+        if _s173_ratio >= 80:
+            lines.append(
+                f"private ratio: {_s173_ratio:.0f}% of symbols are unexported"
+                f" — heavily internalized codebase"
+            )
 
     # S220: Multi-entry app — repo has 3+ distinct application entry point files.
     # Multiple entry points can mean inconsistent startup paths or divergent CLI/server behaviors.
@@ -1393,7 +1413,6 @@ def _signals_structure_a(
             f" — cross-cutting changes (config, auth, logging) must apply to all"
         )
 
-
     # S280: Entry point overload — 5+ distinct entry point files detected.
     # Many entry points suggest a multi-mode application (CLI + server + worker);
     # each entry point has its own startup path that must be maintained independently.
@@ -1407,9 +1426,20 @@ def _signals_structure_a(
             f" — multi-mode app; each startup path must be maintained separately"
         )
 
-
-
     return lines
+
+
+def _signals_structure_a(
+    graph: Tempo, *, _src_fps: list[str], _test_fps: set[str],
+    modules: dict[str, list[str]], _s220_entry_files: list[str],
+) -> list[str]:
+    """Structural signals: file isolation, module layout, entry-point patterns."""
+    return (
+        _structure_a_isolation(graph, _src_fps=_src_fps, _test_fps=_test_fps)
+        + _structure_a_tech_debt(graph, _src_fps=_src_fps)
+        + _structure_a_module_layout(graph, modules=modules)
+        + _structure_a_symbol_quality(graph, _src_fps=_src_fps, _s220_entry_files=_s220_entry_files)
+    )
 
 
 def _signals_structure_b(graph: Tempo) -> list[str]:
@@ -3608,24 +3638,22 @@ def _signals_async_oop(
 # Main render function
 # ---------------------------------------------------------------------------
 
-def render_overview(graph: Tempo) -> str:
-    """Cheapest mode: repo orientation — stats, entry points, key files, structure."""
+def _preamble_stats_and_entries(graph: Tempo) -> list[str]:
     stats = graph.stats
     lines = [f"repo: {graph.root.rsplit('/', 1)[-1]}"]
-
-    # One-line stats
     lang_items = sorted(stats["languages"].items(), key=lambda x: -x[1])
     lang_str = ", ".join(f"{lang}({n})" for lang, n in lang_items)
     lines.append(f"{stats['files']} files, {stats['symbols']} symbols, {stats['total_lines']:,} lines | {lang_str}")
-
-    # Entry points — what agents need to understand "where does this start"
     entries = _find_entry_points(graph)
     if entries:
         lines.append("")
         lines.append("entry points:")
         for e in entries:
             lines.append(f"  {e}")
+    return lines
 
+
+def _preamble_key_files(graph: Tempo) -> list[str]:
     # Top files by combined size + complexity (not two separate lists)
     # Exclude non-code files: JSON schemas, markdown docs, CSS, TOML configs, etc.
     # These have cx=0 but large line counts (e.g. auto-generated Tauri schemas at 2564L),
@@ -3635,27 +3663,28 @@ def render_overview(graph: Tempo) -> str:
         if fi.language.value not in _CODE_LANGS:
             continue  # skip markdown, json, toml, yaml, html, css — never "key" for coding
         cx = sum(graph.symbols[sid].complexity for sid in fi.symbols if sid in graph.symbols)
-        # Score: lines matter, complexity matters more
         score = fi.line_count + cx * 3
         file_scores.append((score, fi))
     file_scores.sort(key=lambda x: -x[0])
-    lines.append("")
-    lines.append("key files (by size + complexity):")
-    for score, fi in file_scores[:12]:
+    lines: list[str] = ["", "key files (by size + complexity):"]
+    for _score, fi in file_scores[:12]:
         cx = sum(graph.symbols[sid].complexity for sid in fi.symbols if sid in graph.symbols)
-        parts = []
-        parts.append(f"{fi.line_count:,}L")
+        parts = [f"{fi.line_count:,}L"]
         if cx > 0:
             parts.append(f"cx={cx}")
         parts.append(fi.language.value)
         lines.append(f"  {fi.path} ({', '.join(parts)})")
+    return lines
 
+
+def _preamble_recently_active(graph: Tempo) -> tuple[list[str], dict]:
     # Recently active: top commit-hot SOURCE files (excludes docs/config/tests)
+    lines: list[str] = []
     try:
         from ..git import file_commit_counts as _file_commit_counts
-        _commit_counts = _file_commit_counts(graph.root)
+        commit_counts = _file_commit_counts(graph.root)
         _active = sorted(
-            [(fp, c) for fp, c in _commit_counts.items()
+            [(fp, c) for fp, c in commit_counts.items()
              if fp in graph.files and not _is_test_file(fp)
              and Path(fp).suffix in _SRC_EXTS],
             key=lambda x: -x[1],
@@ -3666,30 +3695,37 @@ def render_overview(graph: Tempo) -> str:
             _act_str = ", ".join(f"{sh} ({c})" for sh, (_, c) in zip(short, _active))
             lines.append("")
             lines.append(f"recently active: {_act_str}")
+        return lines, commit_counts
     except Exception:
-        _commit_counts = {}
+        return lines, {}
 
+
+def _preamble_high_risk(graph: Tempo, commit_counts: dict) -> list[str]:
     # High-risk files: high-churn source files with no matching test file.
     # Actively changing code with no test coverage — most likely to introduce regressions.
     # Only shown when test files exist (otherwise the whole project lacks tests).
     _test_fps_for_risk = {fp for fp in graph.files if _is_test_file(fp)}
-    if _commit_counts and _test_fps_for_risk:
-        _high_risk = sorted(
-            [
-                (fp, c) for fp, c in _commit_counts.items()
-                if fp in graph.files
-                and not _is_test_file(fp)
-                and c >= 5
-                and graph.files[fp].symbols
-                and Path(fp).suffix in _SRC_EXTS
-                and not any(fp.rsplit("/", 1)[-1].rsplit(".", 1)[0] in t for t in _test_fps_for_risk)
-            ],
-            key=lambda x: -x[1],
-        )
-        if _high_risk:
-            _hr_parts = [f"{fp.rsplit('/', 1)[-1]} ({c})" for fp, c in _high_risk[:3]]
-            lines.append(f"high risk (no tests): {', '.join(_hr_parts)}")
+    if not commit_counts or not _test_fps_for_risk:
+        return []
+    _high_risk = sorted(
+        [
+            (fp, c) for fp, c in commit_counts.items()
+            if fp in graph.files
+            and not _is_test_file(fp)
+            and c >= 5
+            and graph.files[fp].symbols
+            and Path(fp).suffix in _SRC_EXTS
+            and not any(fp.rsplit("/", 1)[-1].rsplit(".", 1)[0] in t for t in _test_fps_for_risk)
+        ],
+        key=lambda x: -x[1],
+    )
+    if not _high_risk:
+        return []
+    _hr_parts = [f"{fp.rsplit('/', 1)[-1]} ({c})" for fp, c in _high_risk[:3]]
+    return [f"high risk (no tests): {', '.join(_hr_parts)}"]
 
+
+def _preamble_hot_symbols(graph: Tempo) -> list[str]:
     # Hot symbols: top 3 source functions by unique cross-file caller files.
     # Helps agents immediately identify the highest-traffic API surfaces.
     _hot_syms: list[tuple[int, str, str]] = []  # (unique_caller_files, name, file)
@@ -3702,12 +3738,14 @@ def render_overview(graph: Tempo) -> str:
         }
         if len(cross_files) >= 3:
             _hot_syms.append((len(cross_files), sym.qualified_name, sym.file_path))
-    if _hot_syms:
-        _hot_syms.sort(key=lambda x: -x[0])
-        _hot_parts = [f"{name} ({n})" for n, name, _ in _hot_syms[:3]]
-        lines.append("")
-        lines.append(f"hot symbols: {', '.join(_hot_parts)}")
+    if not _hot_syms:
+        return []
+    _hot_syms.sort(key=lambda x: -x[0])
+    _hot_parts = [f"{name} ({n})" for n, name, _ in _hot_syms[:3]]
+    return ["", f"hot symbols: {', '.join(_hot_parts)}"]
 
+
+def _preamble_untested_hot(graph: Tempo) -> list[str]:
     # Untested hot: hot symbols (>=3 caller files) with zero test file callers.
     # These are the most dangerous to refactor — widely used but unprotected by tests.
     _untested_hot: list[tuple[int, str]] = []
@@ -3719,41 +3757,67 @@ def render_overview(graph: Tempo) -> str:
         _test_callers = [c for c in _all_callers if _is_test_file(c.file_path)]
         if len(_src_caller_files) >= 3 and not _test_callers:
             _untested_hot.append((len(_src_caller_files), sym.name, sym.file_path))
-    if _untested_hot:
-        _untested_hot.sort(key=lambda x: -x[0])
-        _uh_parts = [
-            f"{name} ({n}, {fp.rsplit('/', 1)[-1]})"
-            for n, name, fp in _untested_hot[:3]
-        ]
-        lines.append(f"untested hot: {', '.join(_uh_parts)} — no test coverage")
+    if not _untested_hot:
+        return []
+    _untested_hot.sort(key=lambda x: -x[0])
+    _uh_parts = [f"{name} ({n}, {fp.rsplit('/', 1)[-1]})" for n, name, fp in _untested_hot[:3]]
+    return [f"untested hot: {', '.join(_uh_parts)} — no test coverage"]
 
+
+def _preamble_stable_core_candidates(graph: Tempo, _fld_sc) -> list[tuple[int, int, str]]:
+    candidates: list[tuple[int, int, str]] = []
+    for _fp, _fi in graph.files.items():
+        if _is_test_file(_fp) or not _fi.symbols:
+            continue
+        _src_imps = len({i for i in graph.importers_of(_fp) if i != _fp and i in graph.files and not _is_test_file(i)})
+        if _src_imps < 5:
+            continue
+        _days = _fld_sc(graph.root, _fp)
+        if _days is not None and _days >= 30:
+            candidates.append((_src_imps, _days, _fp))
+    return candidates
+
+
+def _preamble_stable_core(graph: Tempo) -> list[str]:
     # Stable core: files with high import fan-in that have rarely changed (>=30d).
     # Foundational infrastructure treated as stable contracts — changes here are highest-risk.
-    if graph.root:
-        try:
-            from ..git import file_last_modified_days as _fld_sc  # noqa: PLC0415
-            _sc_candidates: list[tuple[int, int, str]] = []  # (importers, days, fp)
-            for _fp, _fi in graph.files.items():
-                if _is_test_file(_fp) or not _fi.symbols:
-                    continue
-                _src_imps = len({
-                    i for i in graph.importers_of(_fp)
-                    if i != _fp and i in graph.files and not _is_test_file(i)
-                })
-                if _src_imps >= 5:
-                    _days_sc = _fld_sc(graph.root, _fp)
-                    if _days_sc is not None and _days_sc >= 30:
-                        _sc_candidates.append((_src_imps, _days_sc, _fp))
-            if len(_sc_candidates) >= 2:
-                _sc_candidates.sort(key=lambda x: -x[0])
-                _sc3_fps = [fp for _, _, fp in _sc_candidates[:3]]
-                _sc_parts = [f"{_display_path(fp, _sc3_fps)} ({n} importers, {d}d stable)" for n, d, fp in _sc_candidates[:3]]
-                lines.append(f"stable core: {', '.join(_sc_parts)}")
-        except Exception:
-            pass
+    if not graph.root:
+        return []
+    try:
+        from ..git import file_last_modified_days as _fld_sc  # noqa: PLC0415
+        _sc_candidates = _preamble_stable_core_candidates(graph, _fld_sc)
+        if len(_sc_candidates) >= 2:
+            _sc_candidates.sort(key=lambda x: -x[0])
+            _sc3_fps = [fp for _, _, fp in _sc_candidates[:3]]
+            _sc_parts = [f"{_display_path(fp, _sc3_fps)} ({n} importers, {d}d stable)" for n, d, fp in _sc_candidates[:3]]
+            return [f"stable core: {', '.join(_sc_parts)}"]
+    except Exception:
+        pass
+    return []
 
 
-    # --- Compute shared variables used by multiple signal groups ---
+def _overview_preamble(graph: Tempo) -> tuple[list[str], dict]:
+    """Header section: stats, entry points, key files, activity, hot symbols, stable core.
+
+    Returns (lines, _commit_counts).
+    """
+    lines = _preamble_stats_and_entries(graph)
+    lines.extend(_preamble_key_files(graph))
+    activity_lines, _commit_counts = _preamble_recently_active(graph)
+    lines.extend(activity_lines)
+    lines.extend(_preamble_high_risk(graph, _commit_counts))
+    lines.extend(_preamble_hot_symbols(graph))
+    lines.extend(_preamble_untested_hot(graph))
+    lines.extend(_preamble_stable_core(graph))
+    return lines, _commit_counts
+
+
+def _overview_shared_vars(graph: Tempo) -> tuple:
+    """Compute shared context variables used across signal-group helpers.
+
+    Returns (_src_fps, _test_fps, _exported_src, _src_file_cx, _total_cx,
+             _all_cx_vals, _import_adj, _importer_counts, modules, _s220_entry_files).
+    """
     _src_fps = [fp for fp in graph.files if not _is_test_file(fp) and graph.files[fp].symbols]
     _test_fps = {fp for fp in graph.files if _is_test_file(fp)}
 
@@ -3815,7 +3879,20 @@ def render_overview(graph: Tempo) -> str:
         and graph.files[fp].language.value in _CODE_LANGS
     ]
 
-    # --- Call signal-group helpers ---
+    return (
+        _src_fps, _test_fps, _exported_src, _src_file_cx, _total_cx,
+        _all_cx_vals, _import_adj, _importer_counts, modules, _s220_entry_files,
+    )
+
+
+def render_overview(graph: Tempo) -> str:
+    """Cheapest mode: repo orientation — stats, entry points, key files, structure."""
+    lines, _commit_counts = _overview_preamble(graph)
+    (
+        _src_fps, _test_fps, _exported_src, _src_file_cx, _total_cx,
+        _all_cx_vals, _import_adj, _importer_counts, modules, _s220_entry_files,
+    ) = _overview_shared_vars(graph)
+
     lines.extend(_signals_complexity(
         graph, _src_fps=_src_fps, _all_cx_vals=_all_cx_vals,
         _src_file_cx=_src_file_cx, _total_cx=_total_cx,
@@ -3839,12 +3916,7 @@ def render_overview(graph: Tempo) -> str:
         graph, _s220_entry_files=_s220_entry_files,
     ))
 
-    # Module structure -- just the shape, no noisy import counts
-    modules: dict[str, list[str]] = {}
-    for fp in graph.files:
-        parts = fp.split("/")
-        mod = parts[0] if len(parts) > 1 else "."
-        modules.setdefault(mod, []).append(fp)
+    # Module structure — just the shape, no noisy import counts
     if len(modules) > 1:
         lines.append("")
         lines.append("structure: " + ", ".join(
@@ -3860,7 +3932,6 @@ def render_overview(graph: Tempo) -> str:
         for cycle in cycles[:3]:
             chain = " → ".join(c.rsplit("/", 1)[-1] for c in cycle)
             lines.append(f"  {chain}")
-
 
     # Suggest directories to exclude — detect likely noise
     noisy = _detect_noisy_dirs(graph, modules)

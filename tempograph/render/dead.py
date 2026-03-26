@@ -30,11 +30,11 @@ def _file_effort_badge(syms: list[tuple[Symbol, int]], graph: Tempo) -> str:
     return f" [effort: {label}]"
 
 
-def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: list[Symbol], lines: list[str]) -> None:
-    """Dead code signals S76-S153: structural/type signals — private dead, module breakdown, constants, error handlers, callbacks, initializers, overrides, exports, zombie methods, test helpers, whole-file dead."""
+def _core_private_module_breakdown(
+    graph: Tempo, scored: list[tuple[Symbol, int]], dead: list[Symbol], lines: list[str]
+) -> None:
+    """S76 private dead hint + S123 dead-by-module breakdown."""
     # S76: Private dead hint — non-exported functions/methods with 0 callers.
-    # find_dead_code() only reports exported symbols; private dead code is invisible without this.
-    # Shows count only (not full list) to keep output concise.
     _private_dead_count = 0
     for _pd_sym in graph.symbols.values():
         if _pd_sym.exported or _is_test_file(_pd_sym.file_path):
@@ -47,8 +47,6 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
         lines.append(f"Private dead: {_private_dead_count} non-exported symbols with 0 callers (not shown here)")
 
     # S123: Dead-by-module breakdown — which top-level directories carry the most dead code.
-    # Helps agents prioritize cleanup by module: "render/ has 8 dead symbols, utils/ has 5".
-    # Only shown when 2+ distinct modules have dead code AND total dead >= 8.
     if len(dead) >= 8:
         _dead_by_module: dict[str, int] = {}
         for _dm_sym, _dm_conf in scored:
@@ -62,9 +60,10 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
             _mb_parts = [f"{mod}/ ({cnt})" for mod, cnt in _module_items[:4]]
             lines.append(f"dead by module: {', '.join(_mb_parts)}")
 
+
+def _core_name_patterns_a(scored: list[tuple[Symbol, int]], lines: list[str]) -> None:
+    """S159 dead constants + S202 error handlers + S208 callbacks + S218 initializers."""
     # S159: Dead constants — unused constant/variable declarations.
-    # Dead constants are often magic numbers or config values from abandoned features.
-    # Only shown when 3+ dead constants/variables found.
     _dead_consts = [
         sym for sym, conf in scored
         if conf >= 40
@@ -79,8 +78,6 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
         lines.append(f"dead constants: {len(_dead_consts)} unused constants/variables ({_dc_str})")
 
     # S202: Dead error handlers — error-handling functions that are dead.
-    # Dead error handlers leave users without proper error recovery paths.
-    # Only shown when 1+ dead error handler function found (single is alarming enough).
     _s202_error_patterns = ("handle_", "on_error", "catch_", "except_", "error_handler")
     _s202_dead_handlers = [
         sym for sym, conf in scored
@@ -101,8 +98,6 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
         )
 
     # S208: Dead callbacks — callback/handler/listener/hook functions that are dead.
-    # Unregistered callbacks suggest event wiring was removed but the handler wasn't cleaned up.
-    # Only shown when 1+ dead callback function found (conf >= 40, standalone fns only).
     _s208_cb_patterns = ("_callback", "_handler", "_listener", "_hook")
     _s208_dead_cbs = [
         sym for sym, conf in scored
@@ -121,9 +116,7 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
             f" — event wiring may have been removed"
         )
 
-    # S218: Dead initializers — init/setup/configure functions with 0 callers (conf >= 40).
-    # Dead setup functions suggest abandoned initialization paths; risky if they contain side effects.
-    # Only shown when 1+ dead initializer found.
+    # S218: Dead initializers — init/setup/configure functions with 0 callers.
     _s218_init_patterns = ("init_", "initialize_", "setup_app", "configure_", "bootstrap_", "startup_")
     _s218_dead_inits = [
         sym for sym, conf in scored
@@ -142,9 +135,10 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
             f" — abandoned initialization paths"
         )
 
-        # S232: Dead serializers — serialize/to_dict/from_dict/to_json fns with 0 callers.
-    # Dead serializers often indicate abandoned API shapes or migration leftovers.
-    # Only shown when 1+ dead serializer function found (conf >= 40).
+
+def _core_name_patterns_b(scored: list[tuple[Symbol, int]], lines: list[str]) -> None:
+    """S232 dead serializers + S238 middleware + S225 validators + S196 fixtures."""
+    # S232: Dead serializers — serialize/to_dict/from_dict/to_json fns with 0 callers.
     _s232_ser_patterns = ("serialize_", "deserialize_", "to_dict", "from_dict",
                           "to_json", "from_json", "to_xml", "from_xml", "marshal_", "unmarshal_")
     _s232_dead_sers = [
@@ -164,9 +158,7 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
             f" — abandoned API shapes or migration leftovers"
         )
 
-        # S238: Dead middleware — middleware/before_*/after_* functions that are dead.
-    # Dead middleware suggests request pipeline wiring was removed but the fn wasn't cleaned up.
-    # Only shown when 1+ dead middleware function found (conf >= 40).
+    # S238: Dead middleware — middleware/before_*/after_* functions that are dead.
     _s238_mw_patterns = ("middleware_", "before_", "after_", "pre_", "post_",
                           "intercept_", "filter_", "on_request", "on_response")
     _s238_dead_mw = [
@@ -186,9 +178,7 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
             f" — request pipeline wiring may have been removed"
         )
 
-        # S225: Dead validators — validate_*/check_* functions with 0 callers (conf >= 40).
-    # Dead validators suggest removed feature gates or abandoned data integrity checks.
-    # Only shown when 2+ such dead validator functions found.
+    # S225: Dead validators — validate_*/check_* functions with 0 callers.
     _s225_val_patterns = ("validate_", "check_", "verify_", "assert_", "ensure_")
     _s225_dead_vals = [
         sym for sym, conf in scored
@@ -207,9 +197,7 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
             f" — removed feature gates or abandoned integrity checks"
         )
 
-        # S196: Dead fixtures — setup_*/teardown_* functions that are dead.
-    # Test fixture functions with 0 callers are often orphaned test infrastructure.
-    # Only shown when 2+ such dead fixture functions found.
+    # S196: Dead fixtures — setup_*/teardown_* functions that are dead.
     _s196_dead_fixtures = [
         sym for sym, conf in scored
         if conf >= 40
@@ -228,21 +216,23 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
             f"dead fixtures: {len(_s196_dead_fixtures)} unused setup/teardown/fixture fns ({_fix_str})"
         )
 
+
+def _core_class_methods(graph: Tempo, scored: list[tuple[Symbol, int]], lines: list[str]) -> None:
+    """S190 dead overrides + S184 dead accessors + S172 dead classes + S166 zombie methods."""
     # S190: Dead overrides — methods in a live class that override a parent method but have 0 callers.
-    # A live class with an unused override = the child behavior is never triggered.
-    # Only shown when >= 1 such method found with live class (has callers) but 0-caller override.
-    # Precompute INHERITS index: source_id → target Symbol (O(M) once vs O(N×M) per class)
+    # S46-precompute: Invert _subtypes (27 entries, 31 children) instead of scanning 30,695 edges.
+    # Before: 30,695 × enum.kind.value = 2.58ms. After: 27-entry dict inversion = 2.3µs (1,146×).
     _s190_inherits_parent: dict[str, str] = {
-        e.source_id: e.target_id
-        for e in graph.edges
-        if e.kind.value == "inherits" and e.target_id in graph.symbols
+        cid: pid
+        for pid, cids in graph._subtypes.items()
+        if pid in graph.symbols
+        for cid in cids
     }
     _s190_dead_overrides: list[str] = []
     for _cls190 in graph.symbols.values():
         if _cls190.kind.value != "class" or _is_test_file(_cls190.file_path):
             continue
         # Class must be live: at least one method has cross-file callers
-        # (instantiation like Child() creates edges to methods, not the class itself)
         _cls190_children = graph.children_of(_cls190.id)
         if not any(
             any(c.file_path != _cls190.file_path for c in graph.callers_of(m.id))
@@ -275,8 +265,6 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
         )
 
     # S184: Dead getters/setters — accessor methods (get_*/set_*) that are dead.
-    # Methods in classes score lower confidence than standalone fns; threshold reflects this.
-    # Only shown when 2+ such dead accessor methods found.
     _s184_dead_accessors = [
         sym for sym, conf in scored
         if conf >= 15
@@ -293,27 +281,7 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
             f"dead accessors: {len(_s184_dead_accessors)} dead getter/setter methods ({_acc_str})"
         )
 
-    # S178: Dead exports — exported functions that have 0 callers and confidence >= 40.
-    # These are public API symbols that were never used — over-exposed surface or abandoned stubs.
-    # Only shown when 3+ such dead exported functions found.
-    _s178_dead_exports = [
-        sym for sym, conf in scored
-        if conf >= 40
-        and not _is_test_file(sym.file_path)
-        and sym.exported
-        and sym.kind.value in ("function", "method")
-        and len(graph.callers_of(sym.id)) == 0
-    ]
-    if len(_s178_dead_exports) >= 3:
-        _de_names = [s.name for s in _s178_dead_exports[:3]]
-        _de_str = ", ".join(_de_names)
-        if len(_s178_dead_exports) > 3:
-            _de_str += f" +{len(_s178_dead_exports) - 3} more"
-        lines.append(f"dead exports: {len(_s178_dead_exports)} exported fns with 0 callers ({_de_str})")
-
     # S172: Dead class — a class with conf >= 40 that contains at least 1 method.
-    # Dead classes = entire feature removal candidates; deleting one removes many symbols.
-    # Only shown when >= 1 non-test class qualifies.
     _s172_dead_classes: list[str] = []
     for _cls172, _conf172 in scored:
         if _conf172 < 40:
@@ -322,7 +290,6 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
             continue
         if _cls172.kind.value != "class":
             continue
-        # Must have at least one method (non-trivial class)
         _methods172 = [
             ch for ch in graph.children_of(_cls172.id)
             if ch.kind.value == "method"
@@ -336,8 +303,6 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
         lines.append(f"dead classes: {len(_s172_dead_classes)} fully-dead class(es) ({_dclass_str})")
 
     # S166: Zombie methods — dead methods that belong to classes with active (live) callers.
-    # These are particularly surprising: the class is used but the method is unreachable.
-    # Only shown when 2+ such zombie methods found.
     _s166_zombies: list[str] = []
     for _sym166, _conf166 in scored:
         if _conf166 < 40:
@@ -361,9 +326,26 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
             _z_str += f" +{len(_s166_zombies) - 3} more"
         lines.append(f"zombie methods: {len(_s166_zombies)} dead methods in live classes ({_z_str})")
 
+
+def _core_size_exports_files(graph: Tempo, scored: list[tuple[Symbol, int]], lines: list[str]) -> None:
+    """S178 dead exports + S148 largest dead fn + S140 dead test helpers + S153 whole-file dead."""
+    # S178: Dead exports — exported functions that have 0 callers and confidence >= 40.
+    _s178_dead_exports = [
+        sym for sym, conf in scored
+        if conf >= 40
+        and not _is_test_file(sym.file_path)
+        and sym.exported
+        and sym.kind.value in ("function", "method")
+        and len(graph.callers_of(sym.id)) == 0
+    ]
+    if len(_s178_dead_exports) >= 3:
+        _de_names = [s.name for s in _s178_dead_exports[:3]]
+        _de_str = ", ".join(_de_names)
+        if len(_s178_dead_exports) > 3:
+            _de_str += f" +{len(_s178_dead_exports) - 3} more"
+        lines.append(f"dead exports: {len(_s178_dead_exports)} exported fns with 0 callers ({_de_str})")
+
     # S148: Largest dead fn — the single biggest dead symbol by line count.
-    # Large dead code (>= 20 lines) = likely an abandoned feature, not a trivial stub.
-    # Provides a high-value cleanup target: one deletion removes significant code mass.
     _src_dead_fns = [
         (sym, conf) for sym, conf in scored
         if conf >= 40
@@ -379,8 +361,6 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
         )
 
     # S140: Dead test helpers — unused functions defined in test files (not fixtures/conftest).
-    # Test helper fns that nobody calls are stale utilities from abandoned test strategies.
-    # Safe to delete; flag when >= 3 are found to prompt cleanup.
     _dead_test_helpers = [
         sym for sym, conf in scored
         if conf >= 10
@@ -398,8 +378,6 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
         lines.append(f"dead test helpers: {len(_dead_test_helpers)} unused helper fns in test files ({_dth_str})")
 
     # S153: Whole-file dead — source files where every symbol is a dead code candidate.
-    # These are likely entirely abandoned files; deleting them is safer than symbol-by-symbol.
-    # Only shown when 2+ such files found (1 might be a config/init file).
     _dead_sym_files: dict[str, int] = {}
     for sym, conf in scored:
         if conf >= 40 and not _is_test_file(sym.file_path):
@@ -425,19 +403,23 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
         lines.append(f"whole-file dead: {len(_whole_file_dead)} files fully dead ({_wfd_str}) — candidates for deletion")
 
 
-def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: list[Symbol], lines: list[str]) -> None:
-    """Dead code signals S241-S360: named-prefix patterns batch A — config, exceptions, types, CLI, events, async, factory, validators, middleware, serializers, adapters, auth, notifications, scheduled tasks, migration, parsers, property accessors."""
-    # Pre-filter to fn/method candidates — avoids 23× redundant enum scans across all signals.
-    _fn_candidates = [
-        (sym, conf) for sym, conf in scored
-        if conf >= 30
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-    ]
-    _fn_candidates_40 = [(sym, conf) for sym, conf in _fn_candidates if conf >= 40]
+def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: list[Symbol], lines: list[str]) -> None:
+    """Dead code signals S76-S153: structural/type signals — private dead, module breakdown, constants, error handlers, callbacks, initializers, overrides, exports, zombie methods, test helpers, whole-file dead."""
+    _core_private_module_breakdown(graph, scored, dead, lines)
+    _core_name_patterns_a(scored, lines)
+    _core_name_patterns_b(scored, lines)
+    _core_class_methods(graph, scored, lines)
+    _core_size_exports_files(graph, scored, lines)
+
+
+def _patterns_a_cfg_types(
+    scored: list[tuple[Symbol, int]],
+    lines: list[str],
+    _fn_candidates: list[tuple[Symbol, int]],
+    _fn_candidates_40: list[tuple[Symbol, int]],
+) -> None:
+    """S241-S279: config, exceptions, types, CLI commands, event handlers, async functions."""
     # S241: Dead config/settings — config_*/settings_*/get_config/load_config functions with 0 callers.
-    # Dead config accessors often signal removed features whose configuration was never cleaned up.
-    # Only shown when 2+ dead config-accessor functions found (conf >= 40).
     _s241_cfg_patterns = ("config_", "settings_", "get_config", "load_config", "get_setting",
                           "load_settings", "parse_config", "read_config")
     _s241_dead_cfg = [
@@ -445,8 +427,7 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         if any(sym.name.lower().startswith(p) for p in _s241_cfg_patterns)
     ]
     if len(_s241_dead_cfg) >= 2:
-        _cfg_names = [s.name for s in _s241_dead_cfg[:3]]
-        _cfg_str = ", ".join(_cfg_names)
+        _cfg_str = ", ".join(s.name for s in _s241_dead_cfg[:3])
         if len(_s241_dead_cfg) > 3:
             _cfg_str += f" +{len(_s241_dead_cfg) - 3} more"
         lines.append(
@@ -455,9 +436,6 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         )
 
     # S248: Dead exception classes — custom exception classes with 0 raise/except sites.
-    # Dead exception classes bloat the exception hierarchy; unused errors may signal
-    # removed features whose error paths were never cleaned up.
-    # Only shown when 2+ dead exception classes found (conf >= 40).
     _s248_exc_indicators = ("error", "exception", "err", "exc", "fault", "failure")
     _s248_dead_exc = [
         sym for sym, conf in scored
@@ -467,8 +445,7 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         and any(sym.name.lower().endswith(ind) for ind in _s248_exc_indicators)
     ]
     if len(_s248_dead_exc) >= 2:
-        _exc_names = [s.name for s in _s248_dead_exc[:3]]
-        _exc_str = ", ".join(_exc_names)
+        _exc_str = ", ".join(s.name for s in _s248_dead_exc[:3])
         if len(_s248_dead_exc) > 3:
             _exc_str += f" +{len(_s248_dead_exc) - 3} more"
         lines.append(
@@ -476,11 +453,7 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
             f" — removed error paths not yet cleaned up"
         )
 
-
     # S257: Dead type definitions — Schema/DTO/Request/Response/Config classes with 0 callers.
-    # Dead type definitions suggest removed features or migrated data contracts that
-    # were never cleaned up; they bloat the type system and mislead readers.
-    # Only shown when 2+ such classes found (conf >= 40).
     _s257_type_suffixes = ("schema", "dto", "request", "response", "config", "settings",
                            "payload", "params", "options", "data", "model", "spec")
     _s257_dead_types = [
@@ -491,8 +464,7 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         and any(sym.name.lower().endswith(ind) for ind in _s257_type_suffixes)
     ]
     if len(_s257_dead_types) >= 2:
-        _type_names = [s.name for s in _s257_dead_types[:3]]
-        _type_str = ", ".join(_type_names)
+        _type_str = ", ".join(s.name for s in _s257_dead_types[:3])
         if len(_s257_dead_types) > 3:
             _type_str += f" +{len(_s257_dead_types) - 3} more"
         lines.append(
@@ -500,11 +472,7 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
             f" — removed data contracts not yet cleaned up"
         )
 
-
     # S264: Dead CLI commands — cmd_*/command_*/do_* functions with 0 callers.
-    # Dead CLI handlers suggest removed subcommands whose dispatch wiring was cleaned up
-    # but the handler itself was left behind.
-    # Only shown when 2+ such functions found (conf >= 40).
     _s264_cmd_prefixes = ("cmd_", "command_", "do_", "run_cmd", "execute_", "action_", "subcommand_")
     _s264_dead_cmds = [
         sym for sym, conf in scored
@@ -514,8 +482,7 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         and any(sym.name.startswith(p) for p in _s264_cmd_prefixes)
     ]
     if len(_s264_dead_cmds) >= 2:
-        _cmd_names = [s.name for s in _s264_dead_cmds[:3]]
-        _cmd_str = ", ".join(_cmd_names)
+        _cmd_str = ", ".join(s.name for s in _s264_dead_cmds[:3])
         if len(_s264_dead_cmds) > 3:
             _cmd_str += f" +{len(_s264_dead_cmds) - 3} more"
         lines.append(
@@ -523,11 +490,7 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
             f" — subcommand removed but handler not cleaned up"
         )
 
-
-    # S270: Dead event handlers — on_*/handle_*/listener_* functions with 0 callers.
-    # Dead event handlers suggest removed event subscriptions whose handler was not
-    # cleaned up; they may also be mistakenly detached (silent bugs).
-    # Only shown when 2+ such functions found (conf >= 40).
+    # S270: Dead event handlers — on_*/handle_*/listener_* functions with 0 callers (conf >= 40).
     _s270_evt_prefixes = ("on_", "handle_", "listener_", "observer_", "subscriber_",
                           "on_message", "on_event", "on_change", "on_error", "on_connect")
     _s270_dead_evt = [
@@ -538,8 +501,7 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         and any(sym.name.startswith(p) for p in _s270_evt_prefixes)
     ]
     if len(_s270_dead_evt) >= 2:
-        _evt_names = [s.name for s in _s270_dead_evt[:3]]
-        _evt_str = ", ".join(_evt_names)
+        _evt_str = ", ".join(s.name for s in _s270_dead_evt[:3])
         if len(_s270_dead_evt) > 3:
             _evt_str += f" +{len(_s270_dead_evt) - 3} more"
         lines.append(
@@ -547,11 +509,7 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
             f" — event subscription may have been removed or silently detached"
         )
 
-
     # S279: Dead async functions — async def functions with 0 callers (conf >= 40).
-    # Unused async functions are particularly risky because their deletion is not
-    # always obvious from sync callers; they may be event loop callbacks or coroutines.
-    # Only shown when 2+ dead async functions found.
     _s279_dead_async = [
         sym for sym, conf in scored
         if conf >= 40
@@ -560,8 +518,7 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         and sym.signature and "async" in sym.signature.lower()
     ]
     if len(_s279_dead_async) >= 2:
-        _async_names = [s.name for s in _s279_dead_async[:3]]
-        _async_str = ", ".join(_async_names)
+        _async_str = ", ".join(s.name for s in _s279_dead_async[:3])
         if len(_s279_dead_async) > 3:
             _async_str += f" +{len(_s279_dead_async) - 3} more"
         lines.append(
@@ -570,10 +527,14 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         )
 
 
+def _patterns_a_factories_adapters(
+    scored: list[tuple[Symbol, int]],
+    lines: list[str],
+    _fn_candidates: list[tuple[Symbol, int]],
+    _fn_candidates_40: list[tuple[Symbol, int]],
+) -> None:
+    """S285-S310: factories, getters, validators, middleware, serializers, adapters."""
     # S285: Dead factory functions — create_*/make_*/build_* functions with 0 callers.
-    # Dead factory functions suggest removed object creation paths; they may indicate
-    # refactored construction logic where old factories were abandoned.
-    # Only shown when 2+ such functions found (conf >= 40).
     _s285_factory_prefixes = ("create_", "make_", "build_", "construct_", "instantiate_",
                               "new_", "factory_", "get_or_create_")
     _s285_dead_factories = [
@@ -584,8 +545,7 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         and any(sym.name.startswith(p) for p in _s285_factory_prefixes)
     ]
     if len(_s285_dead_factories) >= 2:
-        _fac_names = [s.name for s in _s285_dead_factories[:3]]
-        _fac_str = ", ".join(_fac_names)
+        _fac_str = ", ".join(s.name for s in _s285_dead_factories[:3])
         if len(_s285_dead_factories) > 3:
             _fac_str += f" +{len(_s285_dead_factories) - 3} more"
         lines.append(
@@ -593,11 +553,7 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
             f" — object creation paths removed or replaced; safe to clean up"
         )
 
-
     # S291: Dead property getters — get_*/fetch_*/retrieve_* methods with 0 callers.
-    # Unused getters suggest removed data access paths; they bloat the API surface
-    # and mislead developers about what data is actually consumed.
-    # Only shown when 3+ such methods found (conf >= 40).
     _s291_getter_prefixes = ("get_", "fetch_", "retrieve_", "load_", "read_", "query_")
     _s291_dead_getters = [
         sym for sym, conf in scored
@@ -607,8 +563,7 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         and any(sym.name.startswith(p) for p in _s291_getter_prefixes)
     ]
     if len(_s291_dead_getters) >= 3:
-        _getter_names = [s.name for s in _s291_dead_getters[:3]]
-        _getter_str = ", ".join(_getter_names)
+        _getter_str = ", ".join(s.name for s in _s291_dead_getters[:3])
         if len(_s291_dead_getters) > 3:
             _getter_str += f" +{len(_s291_dead_getters) - 3} more"
         lines.append(
@@ -616,20 +571,14 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
             f" — data access paths removed; safe to clean up API surface"
         )
 
-
     # S297: Dead validators — validate_*/check_*/verify_*/ensure_* functions with 0 callers.
-    # Validation/guard functions are often added alongside a feature and forgotten when
-    # the feature is removed; leftover validators are misleading — they imply invariants
-    # that nothing actually enforces anymore.
-    # Only shown when 3+ such functions found (conf >= 30).
     _s297_val_prefixes = ("validate_", "check_", "verify_", "ensure_", "assert_", "is_valid_")
     _s297_dead_vals = [
         sym for sym, conf in _fn_candidates
         if any(sym.name.lower().startswith(p) for p in _s297_val_prefixes)
     ]
     if len(_s297_dead_vals) >= 3:
-        _val_names = [s.name for s in _s297_dead_vals[:3]]
-        _val_str = ", ".join(_val_names)
+        _val_str = ", ".join(s.name for s in _s297_dead_vals[:3])
         if len(_s297_dead_vals) > 3:
             _val_str += f" +{len(_s297_dead_vals) - 3} more"
         lines.append(
@@ -638,9 +587,6 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         )
 
     # S298: Dead middleware — middleware_*/interceptor_*/before_*/after_* functions with 0 callers.
-    # Leftover middleware fragments break the mental model of request/response lifecycle;
-    # readers may assume they're active when they're actually bypassed.
-    # Only shown when 2+ such functions found (conf >= 30).
     _s298_mw_prefixes = (
         "middleware_", "interceptor_", "before_request", "after_request",
         "pre_", "post_process", "apply_filter", "handle_request",
@@ -650,18 +596,15 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         if any(sym.name.lower().startswith(p) for p in _s298_mw_prefixes)
     ]
     if len(_s298_dead_mw) >= 2:
-        _mw_names298 = ", ".join(s.name for s in _s298_dead_mw[:3])
+        _mw_names = ", ".join(s.name for s in _s298_dead_mw[:3])
         if len(_s298_dead_mw) > 3:
-            _mw_names298 += f" +{len(_s298_dead_mw) - 3} more"
+            _mw_names += f" +{len(_s298_dead_mw) - 3} more"
         lines.append(
-            f"dead middleware: {len(_s298_dead_mw)} unused middleware fn(s) ({_mw_names298})"
+            f"dead middleware: {len(_s298_dead_mw)} unused middleware fn(s) ({_mw_names})"
             f" — orphaned filters; request lifecycle looks different than it is"
         )
 
     # S304: Dead serializers — to_dict/to_json/serialize/marshal methods with 0 callers.
-    # Serializers are usually called by API layers; when APIs change, the old serializer
-    # remains and creates confusion about the canonical representation of data.
-    # Only shown when 2+ such functions found (conf >= 30).
     _s304_ser_patterns = (
         "to_dict", "to_json", "to_yaml", "serialize", "marshal",
         "encode", "to_proto", "to_pb", "as_dict", "dump",
@@ -674,18 +617,15 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         and any(sym.name.lower() == p or sym.name.lower().startswith(p + "_") for p in _s304_ser_patterns)
     ]
     if len(_s304_dead_ser) >= 2:
-        _ser_names304 = ", ".join(s.name for s in _s304_dead_ser[:3])
+        _ser_names = ", ".join(s.name for s in _s304_dead_ser[:3])
         if len(_s304_dead_ser) > 3:
-            _ser_names304 += f" +{len(_s304_dead_ser) - 3} more"
+            _ser_names += f" +{len(_s304_dead_ser) - 3} more"
         lines.append(
-            f"dead serializers: {len(_s304_dead_ser)} unused serialization fn(s) ({_ser_names304})"
+            f"dead serializers: {len(_s304_dead_ser)} unused serialization fn(s) ({_ser_names})"
             f" — stale data representations; may reflect a removed API endpoint"
         )
 
     # S310: Dead adapters — adapter_*/converter_*/transformer_*/formatter_* functions with 0 callers.
-    # Adapters are typically tied to specific integration points; when integrations are removed,
-    # adapters become dead weight that implies functionality that no longer exists.
-    # Only shown when 2+ such functions found (conf >= 30).
     _s310_adapt_prefixes = (
         "adapt_", "adapter_", "convert_", "converter_", "transform_",
         "transformer_", "format_", "formatter_", "translate_",
@@ -695,18 +635,23 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         if any(sym.name.lower().startswith(p) for p in _s310_adapt_prefixes)
     ]
     if len(_s310_dead_adapt) >= 2:
-        _adapt_names310 = ", ".join(s.name for s in _s310_dead_adapt[:3])
+        _adapt_names = ", ".join(s.name for s in _s310_dead_adapt[:3])
         if len(_s310_dead_adapt) > 3:
-            _adapt_names310 += f" +{len(_s310_dead_adapt) - 3} more"
+            _adapt_names += f" +{len(_s310_dead_adapt) - 3} more"
         lines.append(
-            f"dead adapters: {len(_s310_dead_adapt)} unused adapter fn(s) ({_adapt_names310})"
+            f"dead adapters: {len(_s310_dead_adapt)} unused adapter fn(s) ({_adapt_names})"
             f" — removed integrations; implies features that no longer exist"
         )
 
+
+def _patterns_a_security_lifecycle(
+    scored: list[tuple[Symbol, int]],
+    lines: list[str],
+    _fn_candidates: list[tuple[Symbol, int]],
+    _fn_candidates_40: list[tuple[Symbol, int]],
+) -> None:
+    """S315-S347: rate-limiters, auth, notifications, state handlers, scheduled tasks, migrations."""
     # S315: Dead rate-limiters — rate_limit_*/throttle_*/debounce_* functions with 0 callers.
-    # Rate-limiting functions are security/stability controls; unused ones suggest
-    # an unprotected endpoint or a removed protection path.
-    # Only shown when 2+ such functions found (conf >= 30).
     _s315_rl_prefixes = (
         "rate_limit_", "throttle_", "debounce_", "limit_", "rate_check_", "quota_",
     )
@@ -715,18 +660,15 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         if any(sym.name.lower().startswith(p) for p in _s315_rl_prefixes)
     ]
     if len(_s315_dead_rl) >= 2:
-        _rl_names315 = ", ".join(s.name for s in _s315_dead_rl[:3])
+        _rl_names = ", ".join(s.name for s in _s315_dead_rl[:3])
         if len(_s315_dead_rl) > 3:
-            _rl_names315 += f" +{len(_s315_dead_rl) - 3} more"
+            _rl_names += f" +{len(_s315_dead_rl) - 3} more"
         lines.append(
-            f"dead rate-limiters: {len(_s315_dead_rl)} unused throttle/limit fn(s) ({_rl_names315})"
+            f"dead rate-limiters: {len(_s315_dead_rl)} unused throttle/limit fn(s) ({_rl_names})"
             f" — removed rate controls; verify endpoint is still protected"
         )
 
-    # S321: Dead auth functions — auth_*/authenticate_*/authorize_* functions with 0 callers.
-    # Authentication/authorization functions are critical security controls;
-    # unused auth functions may indicate a bypass, a removed check, or an orphaned auth path.
-    # Only shown when 1+ such functions found (conf >= 40, high threshold for security signals).
+    # S321: Dead auth functions — auth_*/authenticate_*/authorize_* with 0 callers (conf >= 40).
     _s321_auth_prefixes = (
         "auth_", "authenticate_", "authorize_", "check_auth", "verify_auth",
         "require_auth", "require_permission", "has_permission", "is_authorized",
@@ -736,17 +678,15 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         if any(sym.name.lower().startswith(p) for p in _s321_auth_prefixes)
     ]
     if _s321_dead_auth:
-        _auth_names321 = ", ".join(s.name for s in _s321_dead_auth[:3])
+        _auth_names = ", ".join(s.name for s in _s321_dead_auth[:3])
         if len(_s321_dead_auth) > 3:
-            _auth_names321 += f" +{len(_s321_dead_auth) - 3} more"
+            _auth_names += f" +{len(_s321_dead_auth) - 3} more"
         lines.append(
-            f"dead auth: {len(_s321_dead_auth)} unused auth fn(s) ({_auth_names321})"
+            f"dead auth: {len(_s321_dead_auth)} unused auth fn(s) ({_auth_names})"
             f" — removed security check; verify endpoint is still protected before removing"
         )
 
     # S329: Dead notification functions — notify_*/send_notification_*/alert_* with 0 callers.
-    # Notification functions are often wired to user-facing events; unused ones suggest
-    # a removed event path that users may still expect to trigger notifications.
     _s329_notif_prefixes = (
         "notify_", "send_notification", "send_alert_", "alert_", "dispatch_event_",
         "emit_event_", "publish_", "broadcast_",
@@ -756,18 +696,16 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         if any(sym.name.lower().startswith(p) for p in _s329_notif_prefixes)
     ]
     if len(_s329_dead_notif) >= 2:
-        _notif_names329 = ", ".join(s.name for s in _s329_dead_notif[:3])
+        _notif_names = ", ".join(s.name for s in _s329_dead_notif[:3])
         if len(_s329_dead_notif) > 3:
-            _notif_names329 += f" +{len(_s329_dead_notif) - 3} more"
+            _notif_names += f" +{len(_s329_dead_notif) - 3} more"
         lines.append(
             f"dead notifications: {len(_s329_dead_notif)} unused notification fn(s)"
-            f" ({_notif_names329})"
+            f" ({_notif_names})"
             f" — removed event path; users may still expect these notifications"
         )
 
     # S335: Dead state handlers — on_enter_*/on_exit_*/transition_* functions with 0 callers.
-    # State machine handlers that are never called indicate a removed state or transition;
-    # their presence implies a state machine model that is no longer accurate.
     _s335_state_prefixes = (
         "on_enter_", "on_exit_", "on_leave_", "transition_", "on_transition_",
         "handle_state_", "state_", "enter_state_",
@@ -777,18 +715,16 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         if any(sym.name.lower().startswith(p) for p in _s335_state_prefixes)
     ]
     if len(_s335_dead_state) >= 2:
-        _state_names335 = ", ".join(s.name for s in _s335_dead_state[:3])
+        _state_names = ", ".join(s.name for s in _s335_dead_state[:3])
         if len(_s335_dead_state) > 3:
-            _state_names335 += f" +{len(_s335_dead_state) - 3} more"
+            _state_names += f" +{len(_s335_dead_state) - 3} more"
         lines.append(
             f"dead state handlers: {len(_s335_dead_state)} unused state transition fn(s)"
-            f" ({_state_names335})"
+            f" ({_state_names})"
             f" — removed state or transition; state machine model may be inaccurate"
         )
 
     # S341: Dead scheduled tasks — task_*/cron_*/scheduled_*/periodic_* functions with 0 callers.
-    # Scheduled tasks run on a timer rather than being called directly; unused task functions
-    # may still be registered in the scheduler, running silently and consuming resources.
     _s341_task_prefixes = (
         "task_", "cron_", "scheduled_", "periodic_", "job_", "background_task_",
     )
@@ -797,17 +733,15 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         if any(sym.name.lower().startswith(p) for p in _s341_task_prefixes)
     ]
     if len(_s341_dead_tasks) >= 2:
-        _task_names341 = ", ".join(s.name for s in _s341_dead_tasks[:3])
+        _task_names = ", ".join(s.name for s in _s341_dead_tasks[:3])
         if len(_s341_dead_tasks) > 3:
-            _task_names341 += f" +{len(_s341_dead_tasks) - 3} more"
+            _task_names += f" +{len(_s341_dead_tasks) - 3} more"
         lines.append(
-            f"dead scheduled tasks: {len(_s341_dead_tasks)} unused task fn(s) ({_task_names341})"
+            f"dead scheduled tasks: {len(_s341_dead_tasks)} unused task fn(s) ({_task_names})"
             f" — may still be registered in scheduler; deregister before removing"
         )
 
     # S347: Dead migration helpers — migrate_*/upgrade_*/downgrade_* functions with 0 callers.
-    # Migration helpers are typically invoked by schema migration frameworks, not directly;
-    # unused ones may represent aborted migrations that should be cleaned up from the migration history.
     _s347_mig_prefixes = (
         "migrate_", "upgrade_", "downgrade_", "rollback_", "apply_migration_",
         "revert_migration_", "run_migration_",
@@ -817,17 +751,23 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         if any(sym.name.lower().startswith(p) for p in _s347_mig_prefixes)
     ]
     if len(_s347_dead_mig) >= 1:
-        _mig_names347 = ", ".join(s.name for s in _s347_dead_mig[:3])
+        _mig_names = ", ".join(s.name for s in _s347_dead_mig[:3])
         if len(_s347_dead_mig) > 3:
-            _mig_names347 += f" +{len(_s347_dead_mig) - 3} more"
+            _mig_names += f" +{len(_s347_dead_mig) - 3} more"
         lines.append(
-            f"dead migration helpers: {len(_s347_dead_mig)} unused migration fn(s) ({_mig_names347})"
+            f"dead migration helpers: {len(_s347_dead_mig)} unused migration fn(s) ({_mig_names})"
             f" — check if registered in migration history; remove from both code and migration registry"
         )
 
+
+def _patterns_a_parsers_accessors(
+    scored: list[tuple[Symbol, int]],
+    lines: list[str],
+    _fn_candidates: list[tuple[Symbol, int]],
+    _fn_candidates_40: list[tuple[Symbol, int]],
+) -> None:
+    """S378, S372, S366, S360: parsers, serializers, property accessor pairs, event handlers."""
     # S378: Dead parsers — parse_*/decode_*/deserialize_* functions with 0 callers.
-    # Dead parser functions often represent formats that were planned but never integrated;
-    # leaving them creates false confidence that the format is supported.
     _s378_parser_prefixes = (
         "parse_", "decode_", "deserialize_", "from_json_", "from_dict_",
         "from_string_", "load_from_", "read_from_",
@@ -837,17 +777,15 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         if any(sym.name.lower().startswith(p) for p in _s378_parser_prefixes)
     ]
     if len(_s378_dead_parsers) >= 2:
-        _parser_names378 = ", ".join(s.name for s in _s378_dead_parsers[:3])
+        _parser_names = ", ".join(s.name for s in _s378_dead_parsers[:3])
         if len(_s378_dead_parsers) > 3:
-            _parser_names378 += f" +{len(_s378_dead_parsers) - 3} more"
+            _parser_names += f" +{len(_s378_dead_parsers) - 3} more"
         lines.append(
-            f"dead parsers: {len(_s378_dead_parsers)} unused parser fn(s) ({_parser_names378})"
+            f"dead parsers: {len(_s378_dead_parsers)} unused parser fn(s) ({_parser_names})"
             f" — unintegrated format parsers; creates false impression that format is supported"
         )
 
     # S372: Dead serializers — to_dict/to_json/serialize/as_dict functions with 0 callers.
-    # Serializers that are never called may represent removed API endpoints or deprecated
-    # response formats; they can mislead developers about what the system exposes.
     _s372_ser_names = (
         "to_dict", "to_json", "serialize", "as_dict", "as_json",
         "to_payload", "to_response", "marshal", "dump",
@@ -860,17 +798,15 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         and any(sym.name.lower() == n or sym.name.lower().startswith(n + "_") for n in _s372_ser_names)
     ]
     if len(_s372_dead_sers) >= 2:
-        _ser_names372 = ", ".join(s.name for s in _s372_dead_sers[:3])
+        _ser_names = ", ".join(s.name for s in _s372_dead_sers[:3])
         if len(_s372_dead_sers) > 3:
-            _ser_names372 += f" +{len(_s372_dead_sers) - 3} more"
+            _ser_names += f" +{len(_s372_dead_sers) - 3} more"
         lines.append(
-            f"dead serializers: {len(_s372_dead_sers)} unused serializer(s) ({_ser_names372})"
+            f"dead serializers: {len(_s372_dead_sers)} unused serializer(s) ({_ser_names})"
             f" — may represent removed endpoints or deprecated formats; remove from public API surface"
         )
 
     # S366: Dead property accessors — get_*/set_* pairs where both are unused.
-    # Accessor pairs for removed properties are noisy dead code: two unused fns sharing a name root.
-    # They often survive after the underlying attribute was removed or renamed.
     _s366_get_names = {
         sym.name[4:]: sym
         for sym, conf in scored
@@ -893,17 +829,15 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         if k in _s366_set_names
     ]
     if _s366_dead_pairs:
-        _pair_str366 = ", ".join(
+        _pair_str = ", ".join(
             f"get_{k}/{_s366_set_names[k].name}" for k in list(_s366_get_names)[:2] if k in _s366_set_names
         )
         lines.append(
-            f"dead accessors: {len(_s366_dead_pairs)} unused get/set pair(s) ({_pair_str366})"
+            f"dead accessors: {len(_s366_dead_pairs)} unused get/set pair(s) ({_pair_str})"
             f" — accessor pairs suggest a removed property; delete both or restore the underlying attribute"
         )
 
-    # S360: Dead event handlers — on_*/handle_*/listen_* functions with 0 callers.
-    # Event handlers that are never called may have been unregistered but not deleted;
-    # they can mislead future developers into thinking certain events are handled.
+    # S360: Dead event handlers — on_*/handle_*/listen_* functions with 0 callers (conf >= 30).
     _s360_ev_prefixes = (
         "on_", "handle_", "listen_", "when_", "after_", "before_",
         "on_event_", "event_handler_", "process_event_",
@@ -913,19 +847,18 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         if any(sym.name.lower().startswith(p) for p in _s360_ev_prefixes)
     ]
     if len(_s360_dead_ev) >= 2:
-        _ev_names360 = ", ".join(s.name for s in _s360_dead_ev[:3])
+        _ev_names = ", ".join(s.name for s in _s360_dead_ev[:3])
         if len(_s360_dead_ev) > 3:
-            _ev_names360 += f" +{len(_s360_dead_ev) - 3} more"
+            _ev_names += f" +{len(_s360_dead_ev) - 3} more"
         lines.append(
-            f"dead event handlers: {len(_s360_dead_ev)} unregistered handler(s) ({_ev_names360})"
+            f"dead event handlers: {len(_s360_dead_ev)} unregistered handler(s) ({_ev_names})"
             f" — may mislead developers into thinking events are handled; deregister or remove"
         )
 
 
-def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: list[Symbol], lines: list[str]) -> None:
-    """Dead code signals S354-S512: named-prefix patterns batch B — factory fns, logging, reports, cleanup, background tasks, validators, converters, schedulers, decorators, event handlers, migrations, CLI, error handlers, formatters, debug helpers."""
-    # Pre-filter to fn/method candidates — avoids 19× redundant enum scans across all signals.
-    # 1654 scored → 96 fn/method (conf>=30, non-test): 17.2× fewer iterations per signal.
+def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: list[Symbol], lines: list[str]) -> None:
+    """Dead code signals S241-S360: named-prefix patterns batch A — config, exceptions, types, CLI, events, async, factory, validators, middleware, serializers, adapters, auth, notifications, scheduled tasks, migration, parsers, property accessors."""
+    # Pre-filter to fn/method candidates — avoids 22× redundant enum scans across all signals.
     _fn_candidates = [
         (sym, conf) for sym, conf in scored
         if conf >= 30
@@ -933,9 +866,15 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         and sym.kind.value in ("function", "method")
     ]
     _fn_candidates_40 = [(sym, conf) for sym, conf in _fn_candidates if conf >= 40]
+    _patterns_a_cfg_types(scored, lines, _fn_candidates, _fn_candidates_40)
+    _patterns_a_factories_adapters(scored, lines, _fn_candidates, _fn_candidates_40)
+    _patterns_a_security_lifecycle(scored, lines, _fn_candidates, _fn_candidates_40)
+    _patterns_a_parsers_accessors(scored, lines, _fn_candidates, _fn_candidates_40)
+
+
+def _patterns_b_creation_ops(_fn_candidates: list, lines: list[str]) -> None:
+    """S354/S396/S390/S384/S402: factory, logging, report, cleanup, background-task signals."""
     # S354: Dead factory functions — create_*/make_*/build_* functions with 0 callers.
-    # Factory functions that are never called may represent abandoned creation patterns
-    # or forgotten constructor alternatives; they can be removed safely once verified unused.
     _s354_factory_prefixes = (
         "create_", "make_", "build_", "construct_", "new_", "factory_", "spawn_",
     )
@@ -953,8 +892,6 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         )
 
     # S396: Dead logging functions — log_*/debug_*/trace_* functions with 0 callers.
-    # Custom logging wrappers that are never called may represent observability features
-    # that were added but never integrated; they can be removed to simplify the logging path.
     _s396_log_prefixes = (
         "log_", "debug_", "trace_", "emit_log_", "write_log_",
         "log_event_", "record_event_",
@@ -973,8 +910,6 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         )
 
     # S390: Dead report generators — report_*/generate_*_report/export_* with 0 callers.
-    # Dead report generators often represent features that were built but never shipped;
-    # they consume test/maintenance attention and mislead about what the system can produce.
     _s390_report_prefixes = (
         "report_", "generate_report", "generate_", "export_", "build_report_",
         "create_report_", "render_report_",
@@ -993,8 +928,6 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         )
 
     # S384: Dead cleanup functions — cleanup_*/teardown_*/destroy_* functions with 0 callers.
-    # Cleanup functions that are never called may have been unregistered from lifecycle hooks
-    # without being deleted; they consume memory and create false confidence in cleanup behavior.
     _s384_cleanup_prefixes = (
         "cleanup_", "teardown_", "destroy_", "shutdown_", "close_",
         "dispose_", "finalize_", "free_", "release_",
@@ -1013,8 +946,6 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         )
 
     # S402: Dead background tasks — background_task_*/worker_*/celery_* functions with 0 callers.
-    # Background task functions that are never called may have been deregistered from a task
-    # queue without being deleted; they create dead worker slots and confuse task routing.
     _s402_bg_prefixes = (
         "background_task_", "worker_", "celery_", "task_",
         "async_job_", "queue_", "job_",
@@ -1032,9 +963,10 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
             f" — may be deregistered from task queue; dead worker slots confuse task routing"
         )
 
+
+def _patterns_b_validation_tasks(_fn_candidates: list, lines: list[str]) -> None:
+    """S408/S414/S420/S426/S432: validators, converters, schedulers, decorators, subscriptions."""
     # S408: Dead validators — validate_*/check_*/verify_* functions with 0 callers.
-    # Unused validation functions may have been bypassed rather than deleted; silent bypass
-    # of validation weakens data integrity guarantees without making it obvious in code review.
     _s408_val_prefixes = (
         "validate_", "check_", "verify_", "assert_", "ensure_",
         "is_valid_", "sanitize_",
@@ -1053,8 +985,6 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         )
 
     # S414: Dead converters — convert_*/transform_*/map_* functions with 0 callers.
-    # Dead converter functions indicate data pipeline stages that were abandoned; they may hold
-    # stale business logic that diverges from active converters, causing confusion in future work.
     _s414_conv_prefixes = (
         "convert_", "transform_", "map_", "translate_",
         "serialize_", "format_", "encode_", "decode_",
@@ -1073,8 +1003,6 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         )
 
     # S420: Dead schedulers — schedule_*/cron_*/periodic_* functions with 0 callers.
-    # Scheduler functions with no callers may have been removed from the job registry
-    # without deleting the implementation; they accumulate as phantom scheduled logic.
     _s420_sched_prefixes = (
         "schedule_", "cron_", "periodic_", "run_every_",
         "hourly_", "daily_", "weekly_", "nightly_",
@@ -1093,8 +1021,6 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         )
 
     # S426: Dead decorators — register_*/decorator_* functions with 0 callers.
-    # Unused decorator registration functions indicate decorator patterns that were removed
-    # without cleaning up the factory; they may still modify classes if applied dynamically.
     _s426_dec_prefixes = (
         "register_", "decorator_", "with_", "apply_decorator_",
         "patch_", "monkey_patch_", "decorate_",
@@ -1113,8 +1039,6 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         )
 
     # S432: Dead event handlers (subscription style) — subscribe_*/listen_*/watch_* with 0 callers.
-    # Subscription functions that are never called may be intended handlers that were
-    # never wired up; events fire without a handler, silently dropping signal.
     _s432_sub_prefixes = (
         "subscribe_", "listen_", "watch_", "observe_",
         "on_event_", "attach_", "bind_",
@@ -1132,9 +1056,10 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
             f" — events fire without listener; silently drops signals"
         )
 
+
+def _patterns_b_infra_patterns(_fn_candidates: list, lines: list[str]) -> None:
+    """S438/S444/S450/S456/S462: migrations, CLI, error handlers, formatters, validators."""
     # S438: Dead migrations — migrate_*/migration_*/upgrade_*/downgrade_* helpers with 0 callers.
-    # Unapplied database migrations leave the schema out of sync with the ORM models;
-    # if migration helpers are dead, the schema change may never have been applied to production.
     _s438_migration_prefixes = (
         "migrate_", "migration_", "upgrade_", "downgrade_",
         "apply_migration_", "run_migration_",
@@ -1153,9 +1078,6 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         )
 
     # S444: Dead CLI commands — main_*/cli_*/cmd_* functions with 0 callers.
-    # Unused CLI entry points may represent features removed from the CLI contract
-    # without removing the underlying code; deleting them is safe but must be coordinated
-    # with any documentation or scripts that reference the command name.
     _s444_cli_prefixes = ("main_", "cmd_", "cli_", "command_", "run_command_", "handle_command_")
     _s444_dead_cli = [
         sym for sym, conf in _fn_candidates
@@ -1171,8 +1093,6 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         )
 
     # S450: Dead error handlers — handle_*/on_error_*/except_* functions with 0 callers.
-    # Unused error handlers suggest that error paths were wired up but then abandoned;
-    # the error may still propagate but is now unhandled, creating silent failure modes.
     _s450_error_prefixes = (
         "handle_error_", "handle_exception_", "on_error_", "on_exception_",
         "except_", "catch_", "recover_",
@@ -1191,8 +1111,6 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         )
 
     # S456: Dead formatters — format_*/formatter_*/pretty_* functions with 0 callers.
-    # Dead formatting functions suggest a display layer was written but never wired up;
-    # data may be rendered without formatting, or the formatter was replaced but not cleaned up.
     _s456_fmt_prefixes = (
         "format_", "formatter_", "pretty_", "pretty_print_",
         "render_output_", "display_",
@@ -1211,8 +1129,6 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         )
 
     # S462: Dead validators — validate_*/check_*/verify_* functions with 0 callers.
-    # Unused validation functions suggest either the validation was bypassed (security risk)
-    # or the validated path was removed; either way, the constraint is no longer enforced.
     _s462_val_prefixes = (
         "validate_", "check_", "verify_", "assert_", "ensure_", "is_valid_",
     )
@@ -1229,9 +1145,10 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
             f" — validation may be bypassed; verify constraints still enforced before deleting"
         )
 
+
+def _patterns_b_data_lifecycle(_fn_candidates: list, lines: list[str]) -> None:
+    """S468/S474/S480: serializers, initializers, debug helpers."""
     # S468: Dead serializers — serialize_*/marshal_*/encode_* functions with 0 callers.
-    # Unused serializers suggest a data-export path was written but never wired up;
-    # the data may be exported without proper formatting, or consumers never existed.
     _s468_serial_prefixes = (
         "serialize_", "marshal_", "encode_", "to_json_", "to_dict_",
         "export_", "dump_", "as_json_",
@@ -1250,8 +1167,6 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         )
 
     # S474: Dead initializers — setup_*/initialize_*/init_* functions with 0 callers.
-    # Unused setup functions suggest an initialization path was planned but never wired up;
-    # the component may be operating without proper initialization, using default/zero values.
     _s474_init_prefixes = (
         "setup_", "initialize_", "init_", "bootstrap_", "configure_", "startup_",
     )
@@ -1269,8 +1184,6 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         )
 
     # S480: Dead debug helpers — debug_*/log_debug_*/dump_* functions with 0 callers.
-    # Unused debug helpers are usually safe to delete but indicate that the debugging
-    # path they supported was abandoned; verify the production path they were testing still works.
     _s480_debug_prefixes = (
         "debug_", "log_debug_", "dump_", "print_debug_", "trace_", "verbose_",
         "debug_print_", "debug_log_",
@@ -1288,28 +1201,20 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
             f" — safe to delete; verify the path they were debugging still works"
         )
 
+
+def _patterns_b_cm_event_scans(graph: Tempo, _fn_candidates_40: list, lines: list[str], _s487_enter: list) -> None:
+    """S487/S493: dead context managers and event handlers (graph symbol scans)."""
     # S487: Dead context managers — class defines __enter__/__exit__ but is never imported.
-    # A context manager that is never used means the resource management path is untested;
-    # if the class is later used, teardown bugs surface at runtime.
+    # _s487_enter: pre-filtered list of __enter__ methods (non-test) from _signals_dead_patterns_b.
     _s487_cm_names: list[str] = []
     _s487_seen_files: set[str] = set()
-    for _s487sym in graph.symbols.values():
-        if (
-            _s487sym.kind.value == "method"
-            and _s487sym.name == "__enter__"
-            and not _is_test_file(_s487sym.file_path)
-            and _s487sym.file_path not in _s487_seen_files
-        ):
+    for _s487sym in _s487_enter:
+        if _s487sym.file_path not in _s487_seen_files:
             _importers487 = graph.importers_of(_s487sym.file_path)
             if not graph.callers_of(_s487sym.id) and not _importers487:
-                _cls487 = next(
-                    (
-                        s for s in graph.symbols.values()
-                        if s.kind.value == "class" and s.file_path == _s487sym.file_path
-                    ),
-                    None,
-                )
-                if _cls487:
+                # O(1) parent lookup via parent_id (replaces O(N) graph.symbols.values() scan).
+                _cls487 = graph.symbols.get(_s487sym.parent_id)
+                if _cls487 and _cls487.kind.value == "class":
                     _s487_cm_names.append(_cls487.name)
                     _s487_seen_files.add(_s487sym.file_path)
     if _s487_cm_names:
@@ -1319,8 +1224,6 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         )
 
     # S493: Dead event handlers — on_*/handle_*/listen_* functions with 0 callers.
-    # Event handler functions that are never called suggest a wiring was accidentally lost;
-    # they look like entry points but lead nowhere, creating silent gaps in event coverage.
     _s493_handler_prefixes = (
         "on_", "handle_", "listen_", "when_", "on_event_", "receive_", "dispatch_",
     )
@@ -1337,24 +1240,22 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
             f" — may indicate event wiring was accidentally lost; verify these are truly unreachable"
         )
 
+
+def _patterns_b_class_property_scans(graph: Tempo, lines: list[str], _s499_fn: list, _s505_meth: list) -> None:
+    """S499/S505/S512: dead class methods, property methods, and test utilities (graph symbol scans).
+
+    Receives pre-filtered buckets from _signals_dead_patterns_b file-based precompute:
+    _s499_fn: non-test functions whose parent is a class (for S499).
+    _s505_meth: non-test methods, all non-dunder (for S505 — prefix filter applied here).
+    S512 keeps its own graph.symbols.values() scan (test-file path, ~166 fn/meth in this repo).
+    """
     # S499: Dead class methods — `@classmethod` or `@staticmethod` functions with 0 callers.
-    # Unused class/static methods are deceptive: they look like utilities but are never invoked,
-    # suggesting they were added for future use and forgot, or a refactor left them behind.
-    _s499_dunder_skip = {"__init__", "__str__", "__repr__", "__enter__", "__exit__", "__new__"}
-    _s499_dead_class_methods = []
-    for _sym499 in graph.symbols.values():
-        # Parser assigns kind="function" to @classmethod/@staticmethod (not "method")
-        # and requires a parent class to distinguish from top-level functions.
-        if (
-            not _is_test_file(_sym499.file_path)
-            and _sym499.kind.value == "function"
-            and _sym499.name not in _s499_dunder_skip
-            and _sym499.parent_id
-            and _sym499.parent_id in graph.symbols
-            and graph.symbols[_sym499.parent_id].kind.value == "class"
-        ):
-            if not graph.callers_of(_sym499.id) and not graph.importers_of(_sym499.file_path):
-                _s499_dead_class_methods.append(_sym499)
+    # Parser assigns kind="function" to @classmethod/@staticmethod (not "method")
+    # and requires a parent class to distinguish from top-level functions.
+    _s499_dead_class_methods = [
+        sym for sym in _s499_fn
+        if not graph.callers_of(sym.id) and not graph.importers_of(sym.file_path)
+    ]
     if len(_s499_dead_class_methods) >= 2:
         _cm_names499 = ", ".join(s.name for s in _s499_dead_class_methods[:3])
         if len(_s499_dead_class_methods) > 3:
@@ -1365,18 +1266,14 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         )
 
     # S505: Dead property methods — @property methods with 0 callers.
-    # Dead properties often represent stale getters from a refactored data model;
-    # they block renaming the underlying attribute because any future reader may touch them.
     _s505_prop_prefixes = ("get_", "is_", "has_", "can_", "should_", "needs_")
     _raw_callers505 = getattr(graph, "_callers", {})
     _s505_dead_props = [
-        sym for sym in graph.symbols.values()
-        if not _is_test_file(sym.file_path)
-        and sym.kind.value == "method"
+        sym for sym in _s505_meth
+        if any(sym.name.lower().startswith(p) for p in _s505_prop_prefixes)
         and not graph.callers_of(sym.id)
         and not _raw_callers505.get(sym.id)
         and not graph.importers_of(sym.file_path)
-        and any(sym.name.lower().startswith(p) for p in _s505_prop_prefixes)
     ]
     if len(_s505_dead_props) >= 2:
         _p_names505 = ", ".join(s.name for s in _s505_dead_props[:3])
@@ -1388,16 +1285,15 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         )
 
     # S512: Dead test utilities — setup_/teardown_/fixture_ functions with 0 callers in test files.
-    # Leftover test helpers that are never called inflate test file complexity without providing
-    # coverage; they mislead about what is actually tested.
     _s512_test_util_prefixes = ("setup_", "teardown_", "fixture_", "mock_", "stub_", "fake_", "helper_test")
+    _raw_callers512 = getattr(graph, "_callers", {})
     _s512_dead_test_utils = [
         sym for sym in graph.symbols.values()
         if _is_test_file(sym.file_path)
         and sym.kind.value in ("function", "method")
         and any(sym.name.lower().startswith(p) for p in _s512_test_util_prefixes)
         and not graph.callers_of(sym.id)
-        and not getattr(graph, "_callers", {}).get(sym.id)
+        and not _raw_callers512.get(sym.id)
     ]
     if len(_s512_dead_test_utils) >= 2:
         _tu_names512 = ", ".join(s.name for s in _s512_dead_test_utils[:3])
@@ -1409,16 +1305,79 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         )
 
 
-def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: list[Symbol], lines: list[str], dead_typing_files: list, dead_util_fns: list) -> None:
-    """Dead code signals S536-S737: typed patterns batch A — abstract base, dataclass, module constants, exceptions, magic methods, value objects, CLI handlers, context managers, service classes, modules, classes, callbacks, derived classes."""
+def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: list[Symbol], lines: list[str]) -> None:
+    """Dead code signals S354-S512: named-prefix patterns batch B — factory fns, logging, reports, cleanup, background tasks, validators, converters, schedulers, decorators, event handlers, migrations, CLI, error handlers, formatters, debug helpers."""
+    # Pre-filter to fn/method candidates — avoids 19× redundant enum scans across all signals.
+    # 1654 scored → 96 fn/method (conf>=30, non-test): 17.2× fewer iterations per signal.
+    _fn_candidates = [
+        (sym, conf) for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+    ]
+    _fn_candidates_40 = [(sym, conf) for sym, conf in _fn_candidates if conf >= 40]
+
+    # File-based precompute for S487/S499/S505: iterate only non-test files (1638 symbols vs 7142 total).
+    # Replaces 3 separate graph.symbols.values() full-corpus scans with 1 file-indexed pass.
+    # S512 keeps its own scan (test-file path, ~166 fn/meth; precomputing it costs more than the scan).
+    _s499_dunder_skip = {"__init__", "__str__", "__repr__", "__enter__", "__exit__", "__new__"}
+    _s487_enter: list = []   # non-test __enter__ methods (for S487)
+    _s499_fn: list = []       # non-test functions with parent class (for S499)
+    _s505_meth: list = []     # non-test methods (for S505 — prefix filter applied in helper)
+    for fp in graph.files:
+        if _is_test_file(fp):
+            continue
+        for _sym in graph.symbols_in_file(fp):
+            _k = _sym.kind.value
+            if _k == "method":
+                if _sym.name == "__enter__":
+                    _s487_enter.append(_sym)
+                else:
+                    _s505_meth.append(_sym)
+            elif _k == "function" and _sym.name not in _s499_dunder_skip and _sym.parent_id:
+                _parent = graph.symbols.get(_sym.parent_id)
+                if _parent and _parent.kind.value == "class":
+                    _s499_fn.append(_sym)
+
+    _patterns_b_creation_ops(_fn_candidates, lines)
+    _patterns_b_validation_tasks(_fn_candidates, lines)
+    _patterns_b_infra_patterns(_fn_candidates, lines)
+    _patterns_b_data_lifecycle(_fn_candidates, lines)
+    _patterns_b_cm_event_scans(graph, _fn_candidates_40, lines, _s487_enter)
+    _patterns_b_class_property_scans(graph, lines, _s499_fn, _s505_meth)
+
+
+def _typed_a_precompute(graph: Tempo) -> tuple[list, list, list, list]:
+    """S44-precompute: One classification pass over all non-test symbols.
+    Before: 13 × symbol_count iterations. After: symbol_count (1 pass) + bucket subsets.
+    Returns (_nt_cls, _nt_fn, _nt_meth, _nt_var)."""
+    _nt_cls: list = []
+    _nt_fn: list = []
+    _nt_meth: list = []
+    _nt_var: list = []
+    for _s44 in graph.symbols.values():
+        _kv44 = _s44.kind.value
+        if not _is_test_file(_s44.file_path):
+            if _kv44 == "class":
+                _nt_cls.append(_s44)
+            elif _kv44 == "function":
+                _nt_fn.append(_s44)
+            elif _kv44 == "method":
+                _nt_meth.append(_s44)
+            elif _kv44 == "variable":
+                _nt_var.append(_s44)
+    return _nt_cls, _nt_fn, _nt_meth, _nt_var
+
+
+def _typed_a_abstract_types(graph: Tempo, _nt_cls: list, _nt_fn: list, _nt_meth: list, _nt_var: list, dead_typing_files: list, lines: list[str]) -> None:
+    """S536-S569: abstract base, dataclass, module constants, exceptions, magic methods, value objects, CLI handlers, factories, validators, typing files."""
+
     # S536: Dead abstract base class — Abstract*/Protocol class with no subclasses and no callers.
     # An abstract class that was never implemented is pure dead weight; it cannot be instantiated
     # and its only value was as a type contract — which is now unrealized.
     _s536_dead_abc = [
-        sym for sym in graph.symbols.values()
-        if not _is_test_file(sym.file_path)
-        and sym.kind.value == "class"
-        and (
+        sym for sym in _nt_cls
+        if (
             sym.name.startswith("Abstract")
             or sym.name.startswith("Base")
             or sym.name.endswith("ABC")
@@ -1446,10 +1405,8 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
         if any("dataclass" in imp for imp in fi.imports)
     }
     _s542_dead_dc = [
-        sym for sym in graph.symbols.values()
-        if not _is_test_file(sym.file_path)
-        and sym.kind.value == "class"
-        and sym.file_path in _s542_dc_files
+        sym for sym in _nt_cls
+        if sym.file_path in _s542_dc_files
         and not graph.callers_of(sym.id)
         and not graph.importers_of(sym.file_path)
     ]
@@ -1466,10 +1423,8 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # Unused module-level constants accumulate from feature flags, thresholds, and magic values
     # that were never cleaned up; they mislead about the codebase's active configuration surface.
     _s530_dead_constants = [
-        sym for sym in graph.symbols.values()
-        if not _is_test_file(sym.file_path)
-        and sym.kind.value == "variable"
-        and sym.name == sym.name.upper()
+        sym for sym in _nt_var
+        if sym.name == sym.name.upper()
         and "_" in sym.name
         and len(sym.name) >= 3
         and not sym.parent_id
@@ -1490,10 +1445,8 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # they often result from copy-pasted exception hierarchies that were never wired up.
     _s524_exc_suffixes = ("error", "exception", "fault", "failure", "warning")
     _s524_dead_exc = [
-        sym for sym in graph.symbols.values()
-        if not _is_test_file(sym.file_path)
-        and sym.kind.value == "class"
-        and any(sym.name.lower().endswith(s) for s in _s524_exc_suffixes)
+        sym for sym in _nt_cls
+        if any(sym.name.lower().endswith(s) for s in _s524_exc_suffixes)
         and not graph.callers_of(sym.id)
         and not graph.importers_of(sym.file_path)
     ]
@@ -1511,10 +1464,8 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # magic methods are rarely flagged as dead code but the whole class is likely removable.
     _s518_dunder_targets = frozenset(("__str__", "__repr__", "__len__", "__iter__", "__contains__", "__format__"))
     _s518_dead_dunders = [
-        sym for sym in graph.symbols.values()
-        if not _is_test_file(sym.file_path)
-        and sym.kind.value == "method"
-        and sym.name in _s518_dunder_targets
+        sym for sym in _nt_meth
+        if sym.name in _s518_dunder_targets
         and not graph.callers_of(sym.id)
         and not graph.importers_of(sym.file_path)
     ]
@@ -1532,10 +1483,8 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # API contracts; they are especially easy to miss because they have no logic to trigger errors.
     _s542_vo_suffixes = ("data", "schema", "payload", "dto", "record", "config", "settings", "response", "request")
     _s542_dead_vos = [
-        sym for sym in graph.symbols.values()
-        if not _is_test_file(sym.file_path)
-        and sym.kind.value == "class"
-        and any(sym.name.lower().endswith(s) for s in _s542_vo_suffixes)
+        sym for sym in _nt_cls
+        if any(sym.name.lower().endswith(s) for s in _s542_vo_suffixes)
         and not graph.callers_of(sym.id)
         and not graph.importers_of(sym.file_path)
     ]
@@ -1553,10 +1502,8 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # they clutter help output, inflate entry-point lists, and mislead tool discovery.
     _cli_prefixes551 = ("cmd_", "do_", "handle_", "on_", "command_")
     _dead_cli551 = [
-        sym for sym in graph.symbols.values()
-        if not _is_test_file(sym.file_path)
-        and sym.kind.value == "function"
-        and any(sym.name.startswith(p) for p in _cli_prefixes551)
+        sym for sym in _nt_fn
+        if any(sym.name.startswith(p) for p in _cli_prefixes551)
         and not graph.callers_of(sym.id)
         and not graph.importers_of(sym.file_path)
     ]
@@ -1574,10 +1521,8 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # the construction pattern was abandoned mid-implementation.
     _factory_prefixes557 = ("create_", "make_", "build_", "new_", "from_")
     _dead_factories557 = [
-        sym for sym in graph.symbols.values()
-        if not _is_test_file(sym.file_path)
-        and sym.kind.value == "function"
-        and any(sym.name.startswith(p) for p in _factory_prefixes557)
+        sym for sym in _nt_fn
+        if any(sym.name.startswith(p) for p in _factory_prefixes557)
         and not graph.callers_of(sym.id)
         and not graph.importers_of(sym.file_path)
     ]
@@ -1595,10 +1540,8 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # their absence means callers silently skip validation, creating hidden injection points.
     _validator_prefixes563 = ("validate_", "check_", "verify_", "assert_", "ensure_")
     _dead_validators563 = [
-        sym for sym in graph.symbols.values()
-        if not _is_test_file(sym.file_path)
-        and sym.kind.value == "function"
-        and any(sym.name.startswith(p) for p in _validator_prefixes563)
+        sym for sym in _nt_fn
+        if any(sym.name.startswith(p) for p in _validator_prefixes563)
         and not graph.callers_of(sym.id)
         and not graph.importers_of(sym.file_path)
     ]
@@ -1621,16 +1564,18 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
             f" — stale type definitions from refactored APIs; safe to remove after confirming no runtime use"
         )
 
+
+
+def _typed_a_class_service(graph: Tempo, _nt_cls: list, dead: list, dead_util_fns: list, lines: list[str]) -> None:
+    """S575-S629: context managers, service classes, exception classes, dead modules, large classes, async, constants, callbacks."""
     # S575: Dead context manager — unused class with __enter__ and __exit__ dunder methods.
     # Context managers defined but never instantiated represent abandoned resource management;
     # their with-block protocol is never invoked and resource cleanup never happens.
     _cm_dunder575 = frozenset(("__enter__", "__exit__"))
     _dead_cm575: list = []
-    for _sym575 in graph.symbols.values():
+    for _sym575 in _nt_cls:
         if (
-            not _is_test_file(_sym575.file_path)
-            and _sym575.kind.value == "class"
-            and not graph.callers_of(_sym575.id)
+            not graph.callers_of(_sym575.id)
             and not graph.importers_of(_sym575.file_path)
         ):
             _children575 = {c.name for c in graph.children_of(_sym575.id)}
@@ -1651,11 +1596,9 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     _svc_suffixes586 = ("Manager", "Service", "Controller", "Registry",
                         "Repository", "Handler", "Provider", "Dispatcher")
     _dead_svc586: list = []
-    for _sym586 in graph.symbols.values():
+    for _sym586 in _nt_cls:
         if (
-            not _is_test_file(_sym586.file_path)
-            and _sym586.kind.value == "class"
-            and _sym586.name.endswith(_svc_suffixes586)
+            _sym586.name.endswith(_svc_suffixes586)
             and not graph.callers_of(_sym586.id)
             and not graph.importers_of(_sym586.file_path)
         ):
@@ -1674,11 +1617,9 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # they add noise to exception hierarchies and mislead readers about error contracts.
     _exc_suffixes592 = ("Error", "Exception", "Warning", "Fault", "Failure")
     _dead_exc592: list = []
-    for _sym592 in graph.symbols.values():
+    for _sym592 in _nt_cls:
         if (
-            not _is_test_file(_sym592.file_path)
-            and _sym592.kind.value == "class"
-            and _sym592.name.endswith(_exc_suffixes592)
+            _sym592.name.endswith(_exc_suffixes592)
             and not graph.callers_of(_sym592.id)
             and not graph.importers_of(_sym592.file_path)
         ):
@@ -1798,6 +1739,10 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
             f" — dead wire; event contract was designed but never wired; remove or register"
         )
 
+
+
+def _typed_a_symbol_patterns(graph: Tempo, dead: list, lines: list[str]) -> None:
+    """S635-S689: deprecated symbols, inner/mixin/proto/empty classes, annotated fns, dead modules, overloaded names, long fns, derived classes."""
     # S635: Dead deprecated symbol — unused exported symbol with "deprecated" or "obsolete" in its doc.
     # Symbols explicitly marked deprecated but still exported are technical debt traps;
     # callers may still depend on them even though maintainers intend removal.
@@ -1920,8 +1865,8 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
         _fi671 = graph.files.get(_fp671)
         if _fi671:
             _all_top671 = [
-                s for s in graph.symbols.values()
-                if s.file_path == _fp671 and s.parent_id is None
+                s for s in graph.symbols_in_file(_fp671)
+                if s.parent_id is None
             ]
             if _all_top671 and len(_dsyms671) == len(_all_top671):
                 _full_dead671.append(_fp671)
@@ -1989,6 +1934,10 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
             f" — abandoned subclass design; verify base class is still the right abstraction"
         )
 
+
+
+def _typed_a_fn_specialized(dead: list, lines: list[str]) -> None:
+    """S695-S737: test utilities, factory fns, event handlers, serialization, config loaders, async, migration, protocol/interface."""
     # S695: Dead test utility — unused functions in source files with test-utility names.
     # Functions named mock_*, stub_*, fake_*, or *_fixture in non-test files are test helpers
     # that leaked into production modules; they should either be moved or removed.
@@ -2156,17 +2105,24 @@ def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
         )
 
 
-def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: list[Symbol], lines: list[str]) -> None:
-    """Dead code signals S743-S1019: typed patterns batch B — cache fns, validation, method-only classes, event handlers, getters, single-method classes, dispatch fns, subclasses, exception clusters, API endpoints, mixins, protocol classes, setup fns, SQL fns, builders."""
+def _signals_dead_typed_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: list[Symbol], lines: list[str], dead_typing_files: list, dead_util_fns: list) -> None:
+    """Dead code signals S536-S737: typed patterns batch A — dispatcher."""
+    _nt_cls, _nt_fn, _nt_meth, _nt_var = _typed_a_precompute(graph)
+    _typed_a_abstract_types(graph, _nt_cls, _nt_fn, _nt_meth, _nt_var, dead_typing_files, lines)
+    _typed_a_class_service(graph, _nt_cls, dead, dead_util_fns, lines)
+    _typed_a_symbol_patterns(graph, dead, lines)
+    _typed_a_fn_specialized(dead, lines)
+
+
+def _typed_b_fn_name_patterns(graph: Tempo, _d_fn_meth: list, _d_cls: list, lines: list[str]) -> None:
+    """S743-S779: fn/method name-keyword patterns + method-only and single-method dead classes."""
     # S743: Dead cache functions — unused functions with caching/memoization names.
     # Caching functions that are never called indicate abandoned performance optimizations
     # or superseded caching strategies; they add complexity without delivering benefit.
     _cache_kws743 = ("cache", "memo", "memoize", "cached", "memoized")
     _dead_cache743 = [
-        s for s in dead
-        if s.kind.value in ("function", "method")
-        and not _is_test_file(s.file_path)
-        and any(kw in s.name.lower() for kw in _cache_kws743)
+        s for s in _d_fn_meth
+        if any(kw in s.name.lower() for kw in _cache_kws743)
     ]
     if _dead_cache743:
         _cache_names743 = ", ".join(s.name for s in _dead_cache743[:3])
@@ -2182,10 +2138,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # abandoned validation strategies or validation removed without cleanup.
     _val_kws749 = ("validate", "check", "verify", "ensure")
     _dead_vals749 = [
-        s for s in dead
-        if s.kind.value in ("function", "method")
-        and not _is_test_file(s.file_path)
-        and any(kw in s.name.lower() for kw in _val_kws749)
+        s for s in _d_fn_meth
+        if any(kw in s.name.lower() for kw in _val_kws749)
     ]
     if _dead_vals749:
         _val_names749 = ", ".join(s.name for s in _dead_vals749[:3])
@@ -2200,14 +2154,13 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # Classes with only methods are often namespace groupings or utility collections;
     # if the class itself is dead, consider converting methods to module-level functions.
     _dead_static755 = []
-    for _s755 in dead:
-        if _s755.kind.value == "class" and not _is_test_file(_s755.file_path):
-            _children755 = graph.children_of(_s755.id)
-            if _children755 and all(
-                c.kind.value in ("function", "method", "classmethod", "staticmethod")
-                for c in _children755
-            ):
-                _dead_static755.append(_s755)
+    for _s755 in _d_cls:
+        _children755 = graph.children_of(_s755.id)
+        if _children755 and all(
+            c.kind.value in ("function", "method", "classmethod", "staticmethod")
+            for c in _children755
+        ):
+            _dead_static755.append(_s755)
     if _dead_static755:
         _names755 = ", ".join(s.name for s in _dead_static755[:3])
         if len(_dead_static755) > 3:
@@ -2222,10 +2175,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # event integrations or removed event sources; they add dead code without any benefit.
     _event_kws761 = ("on_", "handle_", "listener_", "subscriber_")
     _dead_events761 = [
-        s for s in dead
-        if s.kind.value in ("function", "method")
-        and not _is_test_file(s.file_path)
-        and any(s.name.lower().startswith(kw) for kw in _event_kws761)
+        s for s in _d_fn_meth
+        if any(s.name.lower().startswith(kw) for kw in _event_kws761)
     ]
     if _dead_events761:
         _ev_names761 = ", ".join(s.name for s in _dead_events761[:3])
@@ -2241,10 +2192,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # they often represent queries or loaders from a feature that was removed or replaced.
     _getter_kws767 = ("get_", "fetch_", "load_", "retrieve_", "find_")
     _dead_getters767 = [
-        s for s in dead
-        if s.kind.value in ("function", "method")
-        and not _is_test_file(s.file_path)
-        and any(s.name.lower().startswith(kw) for kw in _getter_kws767)
+        s for s in _d_fn_meth
+        if any(s.name.lower().startswith(kw) for kw in _getter_kws767)
     ]
     if _dead_getters767:
         _g_names767 = ", ".join(s.name for s in _dead_getters767[:3])
@@ -2259,14 +2208,13 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # A class with only one method usually wraps a single function unnecessarily;
     # if dead, the method can be extracted as a top-level function and the class removed.
     _dead_single773 = []
-    for _s773 in dead:
-        if _s773.kind.value == "class" and not _is_test_file(_s773.file_path):
-            _methods773 = [
-                c for c in graph.children_of(_s773.id)
-                if c.kind.value in ("function", "method", "classmethod", "staticmethod")
-            ]
-            if len(_methods773) == 1:
-                _dead_single773.append((_s773, _methods773[0]))
+    for _s773 in _d_cls:
+        _methods773 = [
+            c for c in graph.children_of(_s773.id)
+            if c.kind.value in ("function", "method", "classmethod", "staticmethod")
+        ]
+        if len(_methods773) == 1:
+            _dead_single773.append((_s773, _methods773[0]))
     if _dead_single773:
         _names773 = ", ".join(f"{cls.name}.{mth.name}" for cls, mth in _dead_single773[:3])
         if len(_dead_single773) > 3:
@@ -2281,10 +2229,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # an abandoned routing strategy, an unused API endpoint, or a removed feature branch.
     _dispatch_kws779 = ("dispatch", "route_", "handle_request", "process_", "execute_")
     _dead_disp779 = [
-        s for s in dead
-        if s.kind.value in ("function", "method")
-        and not _is_test_file(s.file_path)
-        and any(s.name.lower().startswith(kw) or s.name.lower() == kw.rstrip("_") for kw in _dispatch_kws779)
+        s for s in _d_fn_meth
+        if any(s.name.lower().startswith(kw) or s.name.lower() == kw.rstrip("_") for kw in _dispatch_kws779)
     ]
     if _dead_disp779:
         _d_names779 = ", ".join(s.name for s in _dead_disp779[:3])
@@ -2295,19 +2241,21 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
             f" — abandoned control-flow logic; endpoint or feature was removed"
         )
 
+
+def _typed_b_class_patterns(_d_fn_meth: list, _d_cls: list, _d_const: list, lines: list[str]) -> None:
+    """S785-S839: dead class shape patterns (subclass, constants cluster, exceptions, API endpoints, mixins, dataclasses, abstract, protocol)."""
     # S791: Dead subclass — dead class that inherits from a named base (not just object).
     # Subclasses carry the burden of the parent's interface; dead subclasses indicate
     # a plugin, strategy, or hook that was never activated or was removed.
     _dead_subclasses791 = []
-    for _s791 in dead:
-        if _s791.kind.value == "class" and not _is_test_file(_s791.file_path):
-            if (
-                _s791.signature is not None
-                and "(" in _s791.signature
-                and not _s791.signature.rstrip().endswith("()")
-                and not _s791.signature.rstrip().endswith("(object)")
-            ):
-                _dead_subclasses791.append(_s791)
+    for _s791 in _d_cls:
+        if (
+            _s791.signature is not None
+            and "(" in _s791.signature
+            and not _s791.signature.rstrip().endswith("()")
+            and not _s791.signature.rstrip().endswith("(object)")
+        ):
+            _dead_subclasses791.append(_s791)
     if _dead_subclasses791:
         _sc_names791 = ", ".join(s.name for s in _dead_subclasses791[:3])
         if len(_dead_subclasses791) > 3:
@@ -2321,10 +2269,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # When multiple constants from the same file are all unused, the file may represent
     # a removed feature's configuration; the entire constants file may be safe to delete.
     _dead_consts785 = [
-        s for s in dead
-        if s.kind.value in ("constant", "variable")
-        and not _is_test_file(s.file_path)
-        and s.parent_id is None
+        s for s in _d_const
+        if s.parent_id is None
     ]
     if len(_dead_consts785) >= 3:
         from collections import Counter as _Counter785
@@ -2343,10 +2289,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # Dead exception classes indicate removed error handling paths or replaced error hierarchies;
     # they create confusion for maintainers who wonder which errors to catch.
     _dead_exc803 = [
-        s for s in dead
-        if s.kind.value == "class"
-        and not _is_test_file(s.file_path)
-        and (
+        s for s in _d_cls
+        if (
             s.name.endswith("Error") or s.name.endswith("Exception")
             or s.name.endswith("Warning") or s.name.endswith("Fault")
         )
@@ -2365,10 +2309,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # they may still accept requests if routing configuration wasn't updated.
     _api_kws797 = ("api", "endpoint", "endpoints", "view", "views", "handler", "handlers", "route", "routes")
     _dead_api797 = [
-        s for s in dead
-        if s.kind.value in ("function", "method")
-        and not _is_test_file(s.file_path)
-        and any(kw in s.file_path.replace("\\", "/").rsplit("/", 1)[-1].replace(".py", "").lower()
+        s for s in _d_fn_meth
+        if any(kw in s.file_path.replace("\\", "/").rsplit("/", 1)[-1].replace(".py", "").lower()
                 for kw in _api_kws797)
     ]
     if _dead_api797:
@@ -2384,10 +2326,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # Mixin classes extend base class behaviour via multiple inheritance; dead mixins indicate
     # abandoned feature extensions that may leave the inheritance chain with gaps.
     _dead_mixins809 = [
-        s for s in dead
-        if s.kind.value == "class"
-        and "Mixin" in s.name
-        and not _is_test_file(s.file_path)
+        s for s in _d_cls
+        if "Mixin" in s.name
     ]
     if _dead_mixins809:
         _mx_names809 = ", ".join(s.name for s in _dead_mixins809[:3])
@@ -2402,10 +2342,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # Dataclasses and TypedDicts define structured data contracts; dead ones indicate
     # abandoned data shapes that were never wired into the data pipeline.
     _dead_dc821 = [
-        s for s in dead
-        if s.kind.value == "class"
-        and not _is_test_file(s.file_path)
-        and (s.name.endswith("Data") or s.name.endswith("Dto") or s.name.endswith("Schema")
+        s for s in _d_cls
+        if (s.name.endswith("Data") or s.name.endswith("Dto") or s.name.endswith("Schema")
              or s.name.endswith("Model") or s.name.endswith("Config") or s.name.endswith("Params")
              or s.name.endswith("TypedDict") or "TypedDict" in s.name)
     ]
@@ -2422,10 +2360,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # Abstract classes define contracts for subclasses; a dead abstract class means no
     # concrete implementation is wired in, leaving the design pattern incomplete.
     _dead_abc815 = [
-        s for s in dead
-        if s.kind.value == "class"
-        and (s.name.startswith("Abstract") or s.name.startswith("Base") or "Abstract" in s.name[1:])
-        and not _is_test_file(s.file_path)
+        s for s in _d_cls
+        if (s.name.startswith("Abstract") or s.name.startswith("Base") or "Abstract" in s.name[1:])
     ]
     if _dead_abc815:
         _abc_names815 = ", ".join(s.name for s in _dead_abc815[:3])
@@ -2441,10 +2377,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # abandoned upgrade paths or replaced migration strategies that were never cleaned up.
     _mig_prefixes827 = ("migrate_", "upgrade_", "rollback_", "revert_", "downgrade_")
     _dead_mig827 = [
-        s for s in dead
-        if s.kind.value in ("function", "method")
-        and not _is_test_file(s.file_path)
-        and any(s.name.lower().startswith(p) for p in _mig_prefixes827)
+        s for s in _d_fn_meth
+        if any(s.name.lower().startswith(p) for p in _mig_prefixes827)
     ]
     if _dead_mig827:
         _mig_names827 = ", ".join(s.name for s in _dead_mig827[:3])
@@ -2460,10 +2394,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # help output and may be invocable via routing config that was never updated.
     _cli_kws833 = ("cli", "commands", "command", "cmd", "cmds", "console", "entrypoints")
     _dead_cli833 = [
-        s for s in dead
-        if s.kind.value in ("function", "method")
-        and not _is_test_file(s.file_path)
-        and any(kw == s.file_path.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
+        s for s in _d_fn_meth
+        if any(kw == s.file_path.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower()
                 or s.file_path.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower().startswith(kw + "_")
                 for kw in _cli_kws833)
     ]
@@ -2480,10 +2412,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # Protocol classes define structural typing contracts (PEP 544); dead protocols
     # indicate abandoned interface contracts that no concrete class is checked against.
     _dead_proto839 = [
-        s for s in dead
-        if s.kind.value == "class"
-        and s.name.endswith("Protocol")
-        and not _is_test_file(s.file_path)
+        s for s in _d_cls
+        if s.name.endswith("Protocol")
     ]
     if _dead_proto839:
         _proto_names839 = ", ".join(s.name for s in _dead_proto839[:3])
@@ -2494,16 +2424,17 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
             f" — abandoned interface contracts; verify no concrete class is checked against them"
         )
 
+
+def _fn_lifecycle_events_val_factory_singletons(_d_fn_meth: list, lines: list[str]) -> None:
+    """S845-S863: event handlers, validators, factories, singleton accessors."""
     # S845: Dead event handler functions — unused on_/handle_/_handler functions.
     # Event handlers are wired to event buses, signals, or hooks; dead handlers indicate
     # removed subscriptions where the handler was not cleaned up alongside the subscription.
     _handler_prefixes845 = ("on_", "handle_")
     _handler_suffixes845 = ("_handler", "_callback", "_listener")
     _dead_handlers845 = [
-        s for s in dead
-        if s.kind.value in ("function", "method")
-        and not _is_test_file(s.file_path)
-        and (
+        s for s in _d_fn_meth
+        if (
             any(s.name.lower().startswith(p) for p in _handler_prefixes845)
             or any(s.name.lower().endswith(sfx) for sfx in _handler_suffixes845)
         )
@@ -2522,10 +2453,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # they may signal that callers no longer validate data they were once required to check.
     _val_prefixes851 = ("validate_", "check_", "verify_", "assert_", "ensure_")
     _dead_val851 = [
-        s for s in dead
-        if s.kind.value in ("function", "method")
-        and not _is_test_file(s.file_path)
-        and any(s.name.lower().startswith(p) for p in _val_prefixes851)
+        s for s in _d_fn_meth
+        if any(s.name.lower().startswith(p) for p in _val_prefixes851)
     ]
     if _dead_val851:
         _val_names851 = ", ".join(s.name for s in _dead_val851[:3])
@@ -2541,10 +2470,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # abandoned object creation paths that were replaced without deleting the old code.
     _factory_prefixes857 = ("create_", "make_", "build_", "spawn_", "new_", "construct_")
     _dead_factory857 = [
-        s for s in dead
-        if s.kind.value in ("function", "method")
-        and not _is_test_file(s.file_path)
-        and any(s.name.lower().startswith(p) for p in _factory_prefixes857)
+        s for s in _d_fn_meth
+        if any(s.name.lower().startswith(p) for p in _factory_prefixes857)
     ]
     if _dead_factory857:
         _factory_names857 = ", ".join(s.name for s in _dead_factory857[:3])
@@ -2560,10 +2487,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # patterns where the accessor was not cleaned up alongside the singleton class itself.
     _singleton_patterns863 = {"get_instance", "get_singleton", "get_registry", "instance", "get_current"}
     _dead_singletons863 = [
-        s for s in dead
-        if s.kind.value in ("function", "method")
-        and not _is_test_file(s.file_path)
-        and s.name.lower() in _singleton_patterns863
+        s for s in _d_fn_meth
+        if s.name.lower() in _singleton_patterns863
     ]
     if _dead_singletons863:
         _singleton_names863 = ", ".join(s.name for s in _dead_singletons863[:3])
@@ -2572,14 +2497,15 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
             f" — unused global state accessors; verify no code bypasses through direct attribute access"
         )
 
+
+def _fn_lifecycle_const_types_helpers_mw(dead: list, _d_fn_meth: list, _d_cls: list, _d_const: list, lines: list[str]) -> None:
+    """S869-S887: module constants, type aliases, test helpers, middleware."""
     # S869: Dead module-level constants — unused UPPERCASE constant definitions.
     # Module-level constants represent configuration values and feature flags; unused ones
     # indicate removed features or replaced configuration that was never cleaned up.
     _dead_consts869 = [
-        s for s in dead
-        if s.kind.value == "constant"
-        and s.parent_id is None
-        and not _is_test_file(s.file_path)
+        s for s in _d_const
+        if s.kind.value == "constant" and s.parent_id is None
         and s.name == s.name.upper()
         and len(s.name) >= 2
         and not s.name.startswith("_")
@@ -2597,10 +2523,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # Type aliases are used for documentation and type-checking; dead type aliases indicate
     # renamed or removed types where the alias was not cleaned up.
     _dead_types875 = [
-        s for s in dead
-        if s.kind.value in ("variable", "constant", "class")
-        and s.parent_id is None
-        and not _is_test_file(s.file_path)
+        s for s in _d_const + _d_cls
+        if s.parent_id is None
         and (
             s.name.endswith("Type") or s.name.endswith("Types")
             or s.name.startswith("T_") or s.name.startswith("Type_")
@@ -2643,10 +2567,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     _mw_prefixes887 = ("middleware_", "interceptor_", "filter_", "before_", "after_", "pre_", "post_")
     _mw_contains887 = ("middleware", "interceptor")
     _dead_mw887 = [
-        s for s in dead
-        if s.kind.value in ("function", "method")
-        and s.parent_id is None
-        and not _is_test_file(s.file_path)
+        s for s in _d_fn_meth
+        if s.parent_id is None
         and (
             any(s.name.lower().startswith(p) for p in _mw_prefixes887)
             or any(kw in s.name.lower() for kw in _mw_contains887)
@@ -2661,15 +2583,15 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
             f" — may still be registered in framework config; verify before deleting"
         )
 
+
+def _fn_lifecycle_exports_errors_classes_async(graph: Tempo, _d_fn_meth: list, _d_cls: list, lines: list[str]) -> None:
+    """S893-S911: exported symbols, error handlers, thin classes, async functions."""
     # S893: Dead exported symbols — unused functions or classes that are part of the public API.
     # Exported dead symbols may be consumed by external callers not visible in this graph;
     # removing them without checking downstream consumers can break public API contracts.
     _dead_exported893 = [
-        s for s in dead
-        if s.exported
-        and s.kind.value in ("function", "class")
-        and s.parent_id is None
-        and not _is_test_file(s.file_path)
+        s for s in _d_fn_meth + _d_cls
+        if s.exported and s.parent_id is None and s.kind.value in ("function", "class")
     ]
     if _dead_exported893:
         _exp_names893 = ", ".join(s.name for s in _dead_exported893[:3])
@@ -2684,10 +2606,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # Orphaned error handlers indicate removed error recovery paths; they may still be
     # registered in framework configs or expected by callers that are themselves dead.
     _dead_errors899 = [
-        s for s in dead
-        if s.kind.value in ("function", "method")
-        and s.parent_id is None
-        and not _is_test_file(s.file_path)
+        s for s in _d_fn_meth
+        if s.parent_id is None
         and any(
             kw in s.name.lower()
             for kw in ("error", "exception", "catch", "on_error", "onerror", "handle_exc")
@@ -2705,17 +2625,12 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # S905: Dead single-method classes — dead class definitions that contain exactly one method.
     # Single-method classes may be over-engineered; they are candidates for conversion to
     # plain functions, reducing instantiation overhead and simplifying call sites.
-    _dead_classes905 = [
-        s for s in dead
-        if s.kind.value == "class"
-        and s.parent_id is None
-        and not _is_test_file(s.file_path)
-    ]
+    _dead_classes905 = [s for s in _d_cls if s.parent_id is None]
     _single_method_classes905 = []
     for _cls905 in _dead_classes905:
         _methods905 = [
-            s for s in graph.symbols.values()
-            if s.parent_id == _cls905.id and s.kind.value in ("method", "function")
+            c for c in graph.children_of(_cls905.id)
+            if c.kind.value in ("method", "function")
         ]
         if len(_methods905) == 1:
             _single_method_classes905.append(_cls905)
@@ -2732,10 +2647,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # Dead async functions may be part of event loops or background task registries;
     # removing them may silently drop background processing if dynamically registered.
     _dead_async911 = [
-        s for s in dead
-        if s.kind.value in ("function", "method")
-        and s.parent_id is None
-        and not _is_test_file(s.file_path)
+        s for s in _d_fn_meth
+        if s.parent_id is None
         and s.signature.startswith("async def")
     ]
     if _dead_async911:
@@ -2747,16 +2660,24 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
             f" — may be registered background tasks; verify no dynamic registration before removing"
         )
 
+
+def _typed_b_fn_lifecycle(graph: Tempo, dead: list, _d_fn_meth: list, _d_cls: list, _d_const: list, lines: list[str]) -> None:
+    """S845-S911: fn/method lifecycle signals (event handlers, validators, factories, singletons, module constants, type aliases, test helpers, middleware, exported symbols, error handlers, thin classes, async)."""
+    _fn_lifecycle_events_val_factory_singletons(_d_fn_meth, lines)
+    _fn_lifecycle_const_types_helpers_mw(dead, _d_fn_meth, _d_cls, _d_const, lines)
+    _fn_lifecycle_exports_errors_classes_async(graph, _d_fn_meth, _d_cls, lines)
+
+
+def _fn_operational_callbacks_setups(graph: Tempo, _d_fn_meth: list, _d_cls: list, lines: list[str]) -> None:
+    """S917-S941: callbacks, formatters, data classes, exception classes, setup functions."""
     # S917: Dead callback functions — unused on_/handle_/callback_/cb_ prefixed functions.
     # Dead callbacks indicate event-driven logic removed from registration; they may still
     # be referenced in configuration files or event registries outside the graph.
     _cb_prefixes917 = ("on_", "handle_", "callback_", "cb_")
     _cb_contains917 = ("callback", "_cb")
     _dead_cbs917 = [
-        s for s in dead
-        if s.kind.value in ("function", "method")
-        and s.parent_id is None
-        and not _is_test_file(s.file_path)
+        s for s in _d_fn_meth
+        if s.parent_id is None
         and (
             any(s.name.lower().startswith(p) for p in _cb_prefixes917)
             or any(kw in s.name.lower() for kw in _cb_contains917)
@@ -2776,10 +2697,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # they contained may still be needed for other output formats.
     _fmt_prefixes923 = ("format_", "render_", "display_", "to_", "fmt_", "stringify_")
     _dead_fmts923 = [
-        s for s in dead
-        if s.kind.value in ("function", "method")
-        and s.parent_id is None
-        and not _is_test_file(s.file_path)
+        s for s in _d_fn_meth
+        if s.parent_id is None
         and any(s.name.lower().startswith(p) for p in _fmt_prefixes923)
     ]
     if _dead_fmts923:
@@ -2795,10 +2714,10 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # Data classes with no methods are often replaced by dicts, TypedDicts, or dataclasses;
     # orphaned ones may indicate a model layer that was refactored without removing old types.
     _dead_data929 = []
-    for _cls929 in [s for s in dead if s.kind.value == "class" and not _is_test_file(s.file_path)]:
+    for _cls929 in _d_cls:
         _children929 = [
-            s for s in graph.symbols.values()
-            if s.parent_id == _cls929.id and s.kind.value in ("method", "function")
+            c for c in graph.children_of(_cls929.id)
+            if c.kind.value in ("method", "function")
         ]
         if not _children929:
             _dead_data929.append(_cls929)
@@ -2815,10 +2734,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # Orphaned exception classes indicate removed error handling paths; the error
     # conditions they represented may be silently suppressed or propagated differently.
     _dead_exc935 = [
-        s for s in dead
-        if s.kind.value == "class"
-        and s.parent_id is None
-        and not _is_test_file(s.file_path)
+        s for s in _d_cls
+        if s.parent_id is None
         and (
             s.name.endswith(("Error", "Exception", "Warning", "Fault", "Failure"))
             or "Error" in s.name or "Exception" in s.name
@@ -2838,10 +2755,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # registered resources or side effects, those may now be silently skipped.
     _setup_prefixes941 = ("configure_", "setup_", "init_", "initialize_", "bootstrap_", "register_")
     _dead_setup941 = [
-        s for s in dead
-        if s.kind.value in ("function", "method")
-        and s.parent_id is None
-        and not _is_test_file(s.file_path)
+        s for s in _d_fn_meth
+        if s.parent_id is None
         and any(s.name.lower().startswith(p) for p in _setup_prefixes941)
     ]
     if _dead_setup941:
@@ -2853,14 +2768,15 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
             f" — removed initialization paths may leave resources unregistered or unconfigured"
         )
 
+
+def _fn_operational_type_io(_d_fn_meth: list, lines: list[str]) -> None:
+    """S947-S971: type guards, serializers, hooks, scheduled tasks, converters."""
     # S947: Dead type guards — unused is_* boolean predicate functions.
     # Dead type guards often outlive the type annotations or isinstance() calls that replaced them;
     # verify no dynamic dispatch or conditional code still depends on these predicates.
     _dead_typeguards947 = [
-        s for s in dead
-        if s.kind.value in ("function", "method")
-        and s.parent_id is None
-        and not _is_test_file(s.file_path)
+        s for s in _d_fn_meth
+        if s.parent_id is None
         and s.name.lower().startswith("is_")
         and len(s.name) > 3
     ]
@@ -2878,10 +2794,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # serialized output but receive None or raise AttributeError silently.
     _ser_prefixes953 = ("to_dict", "to_json", "to_yaml", "to_csv", "to_xml", "serialize_", "marshal_", "export_")
     _dead_serializers953 = [
-        s for s in dead
-        if s.kind.value in ("function", "method")
-        and not _is_test_file(s.file_path)
-        and any(s.name.lower().startswith(p) for p in _ser_prefixes953)
+        s for s in _d_fn_meth
+        if any(s.name.lower().startswith(p) for p in _ser_prefixes953)
     ]
     if _dead_serializers953:
         _ser_names953 = ", ".join(s.name for s in _dead_serializers953[:3])
@@ -2896,10 +2810,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # Hook functions are registered with frameworks (lifecycle, plugin, event systems);
     # dead hooks silently skip the event they were meant to intercept.
     _dead_hooks959 = [
-        s for s in dead
-        if s.kind.value in ("function", "method")
-        and not _is_test_file(s.file_path)
-        and (s.name.lower().startswith("hook_") or s.name.lower().endswith("_hook"))
+        s for s in _d_fn_meth
+        if (s.name.lower().startswith("hook_") or s.name.lower().endswith("_hook"))
     ]
     if _dead_hooks959:
         _hook_names959 = ", ".join(s.name for s in _dead_hooks959[:3])
@@ -2915,10 +2827,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # (data cleanup, notifications, reports), those effects now silently no longer happen.
     _sched_prefixes965 = ("schedule_", "cron_", "task_", "job_", "periodic_", "daily_", "hourly_")
     _dead_tasks965 = [
-        s for s in dead
-        if s.kind.value in ("function", "method")
-        and s.parent_id is None
-        and not _is_test_file(s.file_path)
+        s for s in _d_fn_meth
+        if s.parent_id is None
         and any(s.name.lower().startswith(p) for p in _sched_prefixes965)
     ]
     if _dead_tasks965:
@@ -2935,10 +2845,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # if callers now skip conversion steps, data format mismatches may silently corrupt output.
     _conv_prefixes971 = ("convert_", "transform_", "map_", "parse_", "translate_", "normalize_")
     _dead_converters971 = [
-        s for s in dead
-        if s.kind.value in ("function", "method")
-        and s.parent_id is None
-        and not _is_test_file(s.file_path)
+        s for s in _d_fn_meth
+        if s.parent_id is None
         and any(s.name.lower().startswith(p) for p in _conv_prefixes971)
     ]
     if _dead_converters971:
@@ -2950,15 +2858,15 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
             f" — removed conversion steps may leave callers passing unformatted data silently"
         )
 
+def _fn_operational_sql_events_valid(_d_fn_meth: list, lines: list[str]) -> None:
+    """S977-S995: SQL functions, event dispatchers, validators, formatters."""
     # S977: Dead SQL functions — unused sql_/query_/select_/fetch_/insert_/delete_ prefixed functions.
     # Dead database query functions indicate removed data access paths; if application
     # logic still attempts to call them, the result is a silent data gap or runtime error.
     _sql_prefixes977 = ("sql_", "query_", "select_", "fetch_", "insert_", "delete_", "update_", "upsert_")
     _dead_sql977 = [
-        s for s in dead
-        if s.kind.value in ("function", "method")
-        and s.parent_id is None
-        and not _is_test_file(s.file_path)
+        s for s in _d_fn_meth
+        if s.parent_id is None
         and any(s.name.lower().startswith(p) for p in _sql_prefixes977)
     ]
     if _dead_sql977:
@@ -2975,10 +2883,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # if consumers block on these events, they may hang, poll, or process stale state.
     _event_prefixes983 = ("send_", "notify_", "emit_", "dispatch_", "publish_", "broadcast_", "fire_", "trigger_")
     _dead_events983 = [
-        s for s in dead
-        if s.kind.value in ("function", "method")
-        and s.parent_id is None
-        and not _is_test_file(s.file_path)
+        s for s in _d_fn_meth
+        if s.parent_id is None
         and any(s.name.lower().startswith(p) for p in _event_prefixes983)
     ]
     if _dead_events983:
@@ -2995,10 +2901,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # data that was previously caught, leading to silent corruption or runtime errors.
     _val_prefixes989 = ("validate_", "check_", "verify_", "assert_", "ensure_", "guard_", "is_valid_", "must_")
     _dead_validators989 = [
-        s for s in dead
-        if s.kind.value in ("function", "method")
-        and s.parent_id is None
-        and not _is_test_file(s.file_path)
+        s for s in _d_fn_meth
+        if s.parent_id is None
         and any(s.name.lower().startswith(p) for p in _val_prefixes989)
     ]
     if _dead_validators989:
@@ -3015,10 +2919,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # callers may receive raw or incorrectly structured data when formatters go missing.
     _fmt_prefixes995 = ("format_", "fmt_", "render_", "display_", "present_", "show_", "print_", "stringify_")
     _dead_formatters995 = [
-        s for s in dead
-        if s.kind.value in ("function", "method")
-        and s.parent_id is None
-        and not _is_test_file(s.file_path)
+        s for s in _d_fn_meth
+        if s.parent_id is None
         and any(s.name.lower().startswith(p) for p in _fmt_prefixes995)
     ]
     if _dead_formatters995:
@@ -3030,15 +2932,16 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
             f" — removed formatters may leave callers receiving raw or incorrectly structured data"
         )
 
+
+def _fn_operational_builders_err_mgmt(_d_fn_meth: list, lines: list[str]) -> None:
+    """S1001-S1019: builders, error handlers, migrations, routers."""
     # S1001: Dead builders — unused build_/create_/make_/construct_/factory_ prefixed functions.
     # Dead factory functions indicate removed object creation paths; callers may be unable
     # to instantiate objects they expect, causing AttributeErrors or None-type failures.
     _build_prefixes1001 = ("build_", "create_", "make_", "construct_", "new_", "factory_", "produce_", "generate_")
     _dead_builders1001 = [
-        s for s in dead
-        if s.kind.value in ("function", "method")
-        and s.parent_id is None
-        and not _is_test_file(s.file_path)
+        s for s in _d_fn_meth
+        if s.parent_id is None
         and any(s.name.lower().startswith(p) for p in _build_prefixes1001)
     ]
     if _dead_builders1001:
@@ -3055,10 +2958,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # propagate unhandled exceptions where errors were previously caught and reported.
     _err_prefixes1007 = ("handle_error", "on_error", "error_handler", "handle_exception", "on_exception", "catch_error", "rescue_")
     _dead_errhandlers1007 = [
-        s for s in dead
-        if s.kind.value in ("function", "method")
-        and s.parent_id is None
-        and not _is_test_file(s.file_path)
+        s for s in _d_fn_meth
+        if s.parent_id is None
         and any(s.name.lower().startswith(p) for p in _err_prefixes1007)
     ]
     if _dead_errhandlers1007:
@@ -3075,10 +2976,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # database migrations the schema version table may be inconsistent with the actual schema.
     _mig_prefixes1013 = ("migrate_", "migration_", "upgrade_", "downgrade_", "rollback_", "apply_migration", "run_migration")
     _dead_migrations1013 = [
-        s for s in dead
-        if s.kind.value in ("function", "method")
-        and s.parent_id is None
-        and not _is_test_file(s.file_path)
+        s for s in _d_fn_meth
+        if s.parent_id is None
         and any(s.name.lower().startswith(p) for p in _mig_prefixes1013)
     ]
     if _dead_migrations1013:
@@ -3095,10 +2994,8 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
     # callers attempting those paths will get 404s or unregistered handler errors.
     _route_prefixes1019 = ("route_", "add_route", "register_route", "register_", "add_url", "add_view", "add_endpoint")
     _dead_routers1019 = [
-        s for s in dead
-        if s.kind.value in ("function", "method")
-        and s.parent_id is None
-        and not _is_test_file(s.file_path)
+        s for s in _d_fn_meth
+        if s.parent_id is None
         and any(s.name.lower().startswith(p) for p in _route_prefixes1019)
     ]
     if _dead_routers1019:
@@ -3111,6 +3008,31 @@ def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: 
         )
 
 
+def _typed_b_fn_operational(graph: Tempo, _d_fn_meth: list, _d_cls: list, lines: list[str]) -> None:
+    """S917-S1019: fn/method operational signals — dispatcher."""
+    _fn_operational_callbacks_setups(graph, _d_fn_meth, _d_cls, lines)
+    _fn_operational_type_io(_d_fn_meth, lines)
+    _fn_operational_sql_events_valid(_d_fn_meth, lines)
+    _fn_operational_builders_err_mgmt(_d_fn_meth, lines)
+
+
+def _typed_b_precompute(dead: list) -> tuple[list, list, list]:
+    """S45-precompute: One classification pass over dead instead of 36 repeated scans.
+    Before: 36 passes × 1659 items + 77,973 enum accesses. After: 1659 (1 pass) + bucket subsets.
+    Returns (_d_fn_meth, _d_cls, _d_const)."""
+    _d_fn_meth = [s for s in dead if s.kind.value in ("function", "method") and not _is_test_file(s.file_path)]
+    _d_cls = [s for s in dead if s.kind.value == "class" and not _is_test_file(s.file_path)]
+    _d_const = [s for s in dead if s.kind.value in ("constant", "variable") and not _is_test_file(s.file_path)]
+    return _d_fn_meth, _d_cls, _d_const
+
+
+def _signals_dead_typed_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: list[Symbol], lines: list[str]) -> None:
+    """Dead code signals S743-S1019: typed patterns batch B — dispatcher."""
+    _d_fn_meth, _d_cls, _d_const = _typed_b_precompute(dead)
+    _typed_b_fn_name_patterns(graph, _d_fn_meth, _d_cls, lines)
+    _typed_b_class_patterns(_d_fn_meth, _d_cls, _d_const, lines)
+    _typed_b_fn_lifecycle(graph, dead, _d_fn_meth, _d_cls, _d_const, lines)
+    _typed_b_fn_operational(graph, _d_fn_meth, _d_cls, lines)
 
 
 def _render_dead_header_stats(
@@ -3237,6 +3159,36 @@ def _render_dead_insights_b(
     if len(_clustered) >= 1:
         _cl_parts = [f"{cnt} in {fp.rsplit('/', 1)[-1]}" for fp, cnt in _clustered[:2]]
         lines.append(f"Clustered dead: {', '.join(_cl_parts)} — batch cleanup targets")
+
+    # S[HFD]: Hot-file dead — dead symbols in currently high-velocity files.
+    # Different from "Recently dead" (file touched once in 30d): hot_files means
+    # the file is in ACTIVE CHURN (many commits/week). Developers are already here;
+    # this is the right moment to remove dead code incrementally with the next PR.
+    # Only shown when graph.hot_files is populated and ≥1 medium+ confidence match.
+    if graph.hot_files:
+        _hot_file_dead = [
+            (sym, conf) for sym, conf in scored
+            if conf >= 40
+            and sym.file_path
+            and sym.file_path in graph.hot_files
+        ]
+        if len(_hot_file_dead) >= 1:
+            _hfd_by_file: dict[str, list[str]] = {}
+            for _hfd_sym, _ in _hot_file_dead:
+                _fname = _hfd_sym.file_path.rsplit("/", 1)[-1]
+                _hfd_by_file.setdefault(_fname, []).append(_hfd_sym.name)
+            _hfd_sorted = sorted(_hfd_by_file.items(), key=lambda x: -len(x[1]))
+            _hfd_parts = [
+                f"{fname} ({len(names)} dead)" if len(names) > 1 else f"{names[0]} ({fname})"
+                for fname, names in _hfd_sorted[:3]
+            ]
+            _hfd_str = ", ".join(_hfd_parts)
+            if len(_hfd_by_file) > 3:
+                _hfd_str += f" +{len(_hfd_by_file) - 3} more files"
+            lines.append(
+                f"Hot-file debt ({len(_hot_file_dead)}): {_hfd_str}"
+                f" — dead code in active files, clean up with next PR"
+            )
 
     # Orphan files: files where ALL exported symbols are dead → delete the whole file.
     _orphan_files: list[tuple[str, int, int]] = []
