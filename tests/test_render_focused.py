@@ -3118,3 +3118,114 @@ class TestPairedFunctions:
 
         result = _compute_paired_functions(graph, [seed], seen_ids={seed.id})
         assert result == "", f"No antonym word → should be silent; got: {result!r}"
+
+
+class TestBfsModuleDiversity:
+    """Tests for _compute_bfs_module_diversity: S70 cross-module BFS signal."""
+
+    def _sym(self, name, file_path):
+        return Symbol(
+            id=f"{file_path}::{name}",
+            name=name,
+            qualified_name=name,
+            kind=SymbolKind.FUNCTION,
+            language=Language.PYTHON,
+            file_path=file_path,
+            line_start=1,
+            line_end=10,
+            exported=True,
+        )
+
+    def _ordered(self, *pairs):
+        """Build an ordered list of (Symbol, depth) pairs."""
+        return list(pairs)
+
+    def test_fires_with_three_distinct_modules(self, tmp_path):
+        """Seed in src/, BFS nodes in bench/, tempo/, tempograph/ → signal fires."""
+        from tempograph.render.focused import _compute_bfs_module_diversity
+
+        seed = self._sym("run", "src/core.py")
+        b1 = self._sym("bench_run", "bench/runner.py")
+        b2 = self._sym("plugin_run", "tempo/plugins/run.py")
+        b3 = self._sym("serve", "tempograph/server.py")
+        graph = _make_graph(tmp_path, edges=[], symbols=[seed, b1, b2, b3])
+
+        ordered = [(seed, 0), (b1, 1), (b2, 1), (b3, 2)]
+        result = _compute_bfs_module_diversity(graph, [seed], ordered)
+
+        assert "cross-module BFS" in result, f"Expected signal; got: {result!r}"
+        assert "3" in result, f"Expected module count 3; got: {result!r}"
+        assert "change scope spans layers" in result, f"Expected scope note; got: {result!r}"
+
+    def test_silent_when_only_two_modules(self, tmp_path):
+        """Seed in src/, BFS nodes in bench/ only → 2 modules → silent."""
+        from tempograph.render.focused import _compute_bfs_module_diversity
+
+        seed = self._sym("run", "src/core.py")
+        b1 = self._sym("bench_run", "bench/runner.py")
+        b2 = self._sym("bench_helper", "bench/helpers.py")
+        graph = _make_graph(tmp_path, edges=[], symbols=[seed, b1, b2])
+
+        ordered = [(seed, 0), (b1, 1), (b2, 1)]
+        result = _compute_bfs_module_diversity(graph, [seed], ordered)
+        assert result == "", f"Only 2 non-seed modules → should be silent; got: {result!r}"
+
+    def test_silent_when_bfs_only_tests(self, tmp_path):
+        """BFS nodes only in tests/ → skip test module → silent."""
+        from tempograph.render.focused import _compute_bfs_module_diversity
+
+        seed = self._sym("process", "src/core.py")
+        t1 = self._sym("test_process", "tests/test_core.py")
+        t2 = self._sym("test_utils", "tests/test_utils.py")
+        t3 = self._sym("test_adv", "test/advanced.py")
+        graph = _make_graph(tmp_path, edges=[], symbols=[seed, t1, t2, t3])
+
+        ordered = [(seed, 0), (t1, 1), (t2, 1), (t3, 1)]
+        result = _compute_bfs_module_diversity(graph, [seed], ordered)
+        assert result == "", f"Test-only BFS → should be silent; got: {result!r}"
+
+    def test_skips_seed_own_module(self, tmp_path):
+        """BFS nodes mostly in seed's own module don't count toward diversity."""
+        from tempograph.render.focused import _compute_bfs_module_diversity
+
+        seed = self._sym("core_fn", "src/core.py")
+        same1 = self._sym("helper_a", "src/helpers.py")
+        same2 = self._sym("helper_b", "src/utils.py")
+        other1 = self._sym("db_fn", "db/queries.py")
+        other2 = self._sym("api_fn", "api/routes.py")
+        graph = _make_graph(tmp_path, edges=[], symbols=[seed, same1, same2, other1, other2])
+
+        # 2 nodes in seed's own "src" module + 2 external (db, api) → only 2 external
+        ordered = [(seed, 0), (same1, 1), (same2, 1), (other1, 2), (other2, 2)]
+        result = _compute_bfs_module_diversity(graph, [seed], ordered)
+        assert result == "", f"Only 2 external modules → should be silent; got: {result!r}"
+
+    def test_shows_module_names_in_output(self, tmp_path):
+        """Module names appear in the output for user inspection."""
+        from tempograph.render.focused import _compute_bfs_module_diversity
+
+        seed = self._sym("entry", "src/main.py")
+        n1 = self._sym("alpha", "api/handler.py")
+        n2 = self._sym("beta", "db/models.py")
+        n3 = self._sym("gamma", "cache/store.py")
+        graph = _make_graph(tmp_path, edges=[], symbols=[seed, n1, n2, n3])
+
+        ordered = [(seed, 0), (n1, 1), (n2, 1), (n3, 1)]
+        result = _compute_bfs_module_diversity(graph, [seed], ordered)
+        assert "api" in result, f"Expected api in output; got: {result!r}"
+        assert "db" in result, f"Expected db in output; got: {result!r}"
+        assert "cache" in result, f"Expected cache in output; got: {result!r}"
+
+    def test_fires_with_exactly_three_threshold(self, tmp_path):
+        """Exactly 3 external modules → fires (≥3 threshold)."""
+        from tempograph.render.focused import _compute_bfs_module_diversity
+
+        seed = self._sym("fn", "core/fn.py")
+        a = self._sym("a", "api/a.py")
+        b = self._sym("b", "db/b.py")
+        c = self._sym("c", "utils/c.py")
+        graph = _make_graph(tmp_path, edges=[], symbols=[seed, a, b, c])
+
+        ordered = [(seed, 0), (a, 1), (b, 1), (c, 1)]
+        result = _compute_bfs_module_diversity(graph, [seed], ordered)
+        assert "cross-module BFS" in result, f"Exactly 3 modules → should fire; got: {result!r}"
