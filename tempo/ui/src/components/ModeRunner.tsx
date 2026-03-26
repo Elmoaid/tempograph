@@ -98,6 +98,8 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
           onSearchClose={vm.onSearchClose}
           onSearchNavigate={vm.onSearchNavigate}
           onFeedback={vm.submitFeedback}
+          suggestions={vm.suggestions}
+          onSuggestionClick={vm.runSuggestion}
         />
       </div>
     </>
