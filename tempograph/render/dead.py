@@ -2645,8 +2645,8 @@ def _typed_b_fn_lifecycle(graph: Tempo, dead: list, _d_fn_meth: list, _d_cls: li
         )
 
 
-def _typed_b_fn_operational(graph: Tempo, _d_fn_meth: list, _d_cls: list, lines: list[str]) -> None:
-    """S917-S1019: fn/method operational signals (callbacks, formatters, data classes, exception classes, setup, type guards, serializers, hooks, tasks, converters, SQL, event dispatchers, validators, builders, error handlers, migrations, routers)."""
+def _fn_operational_callbacks_setups(graph: Tempo, _d_fn_meth: list, _d_cls: list, lines: list[str]) -> None:
+    """S917-S941: callbacks, formatters, data classes, exception classes, setup functions."""
     # S917: Dead callback functions — unused on_/handle_/callback_/cb_ prefixed functions.
     # Dead callbacks indicate event-driven logic removed from registration; they may still
     # be referenced in configuration files or event registries outside the graph.
@@ -2745,6 +2745,9 @@ def _typed_b_fn_operational(graph: Tempo, _d_fn_meth: list, _d_cls: list, lines:
             f" — removed initialization paths may leave resources unregistered or unconfigured"
         )
 
+
+def _fn_operational_type_io(_d_fn_meth: list, lines: list[str]) -> None:
+    """S947-S971: type guards, serializers, hooks, scheduled tasks, converters."""
     # S947: Dead type guards — unused is_* boolean predicate functions.
     # Dead type guards often outlive the type annotations or isinstance() calls that replaced them;
     # verify no dynamic dispatch or conditional code still depends on these predicates.
@@ -2832,6 +2835,8 @@ def _typed_b_fn_operational(graph: Tempo, _d_fn_meth: list, _d_cls: list, lines:
             f" — removed conversion steps may leave callers passing unformatted data silently"
         )
 
+def _fn_operational_sql_events_valid(_d_fn_meth: list, lines: list[str]) -> None:
+    """S977-S995: SQL functions, event dispatchers, validators, formatters."""
     # S977: Dead SQL functions — unused sql_/query_/select_/fetch_/insert_/delete_ prefixed functions.
     # Dead database query functions indicate removed data access paths; if application
     # logic still attempts to call them, the result is a silent data gap or runtime error.
@@ -2904,6 +2909,9 @@ def _typed_b_fn_operational(graph: Tempo, _d_fn_meth: list, _d_cls: list, lines:
             f" — removed formatters may leave callers receiving raw or incorrectly structured data"
         )
 
+
+def _fn_operational_builders_err_mgmt(_d_fn_meth: list, lines: list[str]) -> None:
+    """S1001-S1019: builders, error handlers, migrations, routers."""
     # S1001: Dead builders — unused build_/create_/make_/construct_/factory_ prefixed functions.
     # Dead factory functions indicate removed object creation paths; callers may be unable
     # to instantiate objects they expect, causing AttributeErrors or None-type failures.
@@ -2975,6 +2983,14 @@ def _typed_b_fn_operational(graph: Tempo, _d_fn_meth: list, _d_cls: list, lines:
             f"dead routers: {len(_dead_routers1019)} unused routing function(s) ({_route_names1019})"
             f" — removed endpoint registrations; requests to those paths may now return 404 or unregistered errors"
         )
+
+
+def _typed_b_fn_operational(graph: Tempo, _d_fn_meth: list, _d_cls: list, lines: list[str]) -> None:
+    """S917-S1019: fn/method operational signals — dispatcher."""
+    _fn_operational_callbacks_setups(graph, _d_fn_meth, _d_cls, lines)
+    _fn_operational_type_io(_d_fn_meth, lines)
+    _fn_operational_sql_events_valid(_d_fn_meth, lines)
+    _fn_operational_builders_err_mgmt(_d_fn_meth, lines)
 
 
 def _typed_b_precompute(dead: list) -> tuple[list, list, list]:
