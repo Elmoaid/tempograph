@@ -427,19 +427,14 @@ def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: lis
         lines.append(f"whole-file dead: {len(_whole_file_dead)} files fully dead ({_wfd_str}) — candidates for deletion")
 
 
-def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: list[Symbol], lines: list[str]) -> None:
-    """Dead code signals S241-S360: named-prefix patterns batch A — config, exceptions, types, CLI, events, async, factory, validators, middleware, serializers, adapters, auth, notifications, scheduled tasks, migration, parsers, property accessors."""
-    # Pre-filter to fn/method candidates — avoids 23× redundant enum scans across all signals.
-    _fn_candidates = [
-        (sym, conf) for sym, conf in scored
-        if conf >= 30
-        and not _is_test_file(sym.file_path)
-        and sym.kind.value in ("function", "method")
-    ]
-    _fn_candidates_40 = [(sym, conf) for sym, conf in _fn_candidates if conf >= 40]
+def _patterns_a_cfg_types(
+    scored: list[tuple[Symbol, int]],
+    lines: list[str],
+    _fn_candidates: list[tuple[Symbol, int]],
+    _fn_candidates_40: list[tuple[Symbol, int]],
+) -> None:
+    """S241-S279: config, exceptions, types, CLI commands, event handlers, async functions."""
     # S241: Dead config/settings — config_*/settings_*/get_config/load_config functions with 0 callers.
-    # Dead config accessors often signal removed features whose configuration was never cleaned up.
-    # Only shown when 2+ dead config-accessor functions found (conf >= 40).
     _s241_cfg_patterns = ("config_", "settings_", "get_config", "load_config", "get_setting",
                           "load_settings", "parse_config", "read_config")
     _s241_dead_cfg = [
@@ -447,8 +442,7 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         if any(sym.name.lower().startswith(p) for p in _s241_cfg_patterns)
     ]
     if len(_s241_dead_cfg) >= 2:
-        _cfg_names = [s.name for s in _s241_dead_cfg[:3]]
-        _cfg_str = ", ".join(_cfg_names)
+        _cfg_str = ", ".join(s.name for s in _s241_dead_cfg[:3])
         if len(_s241_dead_cfg) > 3:
             _cfg_str += f" +{len(_s241_dead_cfg) - 3} more"
         lines.append(
@@ -457,9 +451,6 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         )
 
     # S248: Dead exception classes — custom exception classes with 0 raise/except sites.
-    # Dead exception classes bloat the exception hierarchy; unused errors may signal
-    # removed features whose error paths were never cleaned up.
-    # Only shown when 2+ dead exception classes found (conf >= 40).
     _s248_exc_indicators = ("error", "exception", "err", "exc", "fault", "failure")
     _s248_dead_exc = [
         sym for sym, conf in scored
@@ -469,8 +460,7 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         and any(sym.name.lower().endswith(ind) for ind in _s248_exc_indicators)
     ]
     if len(_s248_dead_exc) >= 2:
-        _exc_names = [s.name for s in _s248_dead_exc[:3]]
-        _exc_str = ", ".join(_exc_names)
+        _exc_str = ", ".join(s.name for s in _s248_dead_exc[:3])
         if len(_s248_dead_exc) > 3:
             _exc_str += f" +{len(_s248_dead_exc) - 3} more"
         lines.append(
@@ -478,11 +468,7 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
             f" — removed error paths not yet cleaned up"
         )
 
-
     # S257: Dead type definitions — Schema/DTO/Request/Response/Config classes with 0 callers.
-    # Dead type definitions suggest removed features or migrated data contracts that
-    # were never cleaned up; they bloat the type system and mislead readers.
-    # Only shown when 2+ such classes found (conf >= 40).
     _s257_type_suffixes = ("schema", "dto", "request", "response", "config", "settings",
                            "payload", "params", "options", "data", "model", "spec")
     _s257_dead_types = [
@@ -493,8 +479,7 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         and any(sym.name.lower().endswith(ind) for ind in _s257_type_suffixes)
     ]
     if len(_s257_dead_types) >= 2:
-        _type_names = [s.name for s in _s257_dead_types[:3]]
-        _type_str = ", ".join(_type_names)
+        _type_str = ", ".join(s.name for s in _s257_dead_types[:3])
         if len(_s257_dead_types) > 3:
             _type_str += f" +{len(_s257_dead_types) - 3} more"
         lines.append(
@@ -502,11 +487,7 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
             f" — removed data contracts not yet cleaned up"
         )
 
-
     # S264: Dead CLI commands — cmd_*/command_*/do_* functions with 0 callers.
-    # Dead CLI handlers suggest removed subcommands whose dispatch wiring was cleaned up
-    # but the handler itself was left behind.
-    # Only shown when 2+ such functions found (conf >= 40).
     _s264_cmd_prefixes = ("cmd_", "command_", "do_", "run_cmd", "execute_", "action_", "subcommand_")
     _s264_dead_cmds = [
         sym for sym, conf in scored
@@ -516,8 +497,7 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         and any(sym.name.startswith(p) for p in _s264_cmd_prefixes)
     ]
     if len(_s264_dead_cmds) >= 2:
-        _cmd_names = [s.name for s in _s264_dead_cmds[:3]]
-        _cmd_str = ", ".join(_cmd_names)
+        _cmd_str = ", ".join(s.name for s in _s264_dead_cmds[:3])
         if len(_s264_dead_cmds) > 3:
             _cmd_str += f" +{len(_s264_dead_cmds) - 3} more"
         lines.append(
@@ -525,11 +505,7 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
             f" — subcommand removed but handler not cleaned up"
         )
 
-
-    # S270: Dead event handlers — on_*/handle_*/listener_* functions with 0 callers.
-    # Dead event handlers suggest removed event subscriptions whose handler was not
-    # cleaned up; they may also be mistakenly detached (silent bugs).
-    # Only shown when 2+ such functions found (conf >= 40).
+    # S270: Dead event handlers — on_*/handle_*/listener_* functions with 0 callers (conf >= 40).
     _s270_evt_prefixes = ("on_", "handle_", "listener_", "observer_", "subscriber_",
                           "on_message", "on_event", "on_change", "on_error", "on_connect")
     _s270_dead_evt = [
@@ -540,8 +516,7 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         and any(sym.name.startswith(p) for p in _s270_evt_prefixes)
     ]
     if len(_s270_dead_evt) >= 2:
-        _evt_names = [s.name for s in _s270_dead_evt[:3]]
-        _evt_str = ", ".join(_evt_names)
+        _evt_str = ", ".join(s.name for s in _s270_dead_evt[:3])
         if len(_s270_dead_evt) > 3:
             _evt_str += f" +{len(_s270_dead_evt) - 3} more"
         lines.append(
@@ -549,11 +524,7 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
             f" — event subscription may have been removed or silently detached"
         )
 
-
     # S279: Dead async functions — async def functions with 0 callers (conf >= 40).
-    # Unused async functions are particularly risky because their deletion is not
-    # always obvious from sync callers; they may be event loop callbacks or coroutines.
-    # Only shown when 2+ dead async functions found.
     _s279_dead_async = [
         sym for sym, conf in scored
         if conf >= 40
@@ -562,8 +533,7 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         and sym.signature and "async" in sym.signature.lower()
     ]
     if len(_s279_dead_async) >= 2:
-        _async_names = [s.name for s in _s279_dead_async[:3]]
-        _async_str = ", ".join(_async_names)
+        _async_str = ", ".join(s.name for s in _s279_dead_async[:3])
         if len(_s279_dead_async) > 3:
             _async_str += f" +{len(_s279_dead_async) - 3} more"
         lines.append(
@@ -572,10 +542,14 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         )
 
 
+def _patterns_a_factories_adapters(
+    scored: list[tuple[Symbol, int]],
+    lines: list[str],
+    _fn_candidates: list[tuple[Symbol, int]],
+    _fn_candidates_40: list[tuple[Symbol, int]],
+) -> None:
+    """S285-S310: factories, getters, validators, middleware, serializers, adapters."""
     # S285: Dead factory functions — create_*/make_*/build_* functions with 0 callers.
-    # Dead factory functions suggest removed object creation paths; they may indicate
-    # refactored construction logic where old factories were abandoned.
-    # Only shown when 2+ such functions found (conf >= 40).
     _s285_factory_prefixes = ("create_", "make_", "build_", "construct_", "instantiate_",
                               "new_", "factory_", "get_or_create_")
     _s285_dead_factories = [
@@ -586,8 +560,7 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         and any(sym.name.startswith(p) for p in _s285_factory_prefixes)
     ]
     if len(_s285_dead_factories) >= 2:
-        _fac_names = [s.name for s in _s285_dead_factories[:3]]
-        _fac_str = ", ".join(_fac_names)
+        _fac_str = ", ".join(s.name for s in _s285_dead_factories[:3])
         if len(_s285_dead_factories) > 3:
             _fac_str += f" +{len(_s285_dead_factories) - 3} more"
         lines.append(
@@ -595,11 +568,7 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
             f" — object creation paths removed or replaced; safe to clean up"
         )
 
-
     # S291: Dead property getters — get_*/fetch_*/retrieve_* methods with 0 callers.
-    # Unused getters suggest removed data access paths; they bloat the API surface
-    # and mislead developers about what data is actually consumed.
-    # Only shown when 3+ such methods found (conf >= 40).
     _s291_getter_prefixes = ("get_", "fetch_", "retrieve_", "load_", "read_", "query_")
     _s291_dead_getters = [
         sym for sym, conf in scored
@@ -609,8 +578,7 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         and any(sym.name.startswith(p) for p in _s291_getter_prefixes)
     ]
     if len(_s291_dead_getters) >= 3:
-        _getter_names = [s.name for s in _s291_dead_getters[:3]]
-        _getter_str = ", ".join(_getter_names)
+        _getter_str = ", ".join(s.name for s in _s291_dead_getters[:3])
         if len(_s291_dead_getters) > 3:
             _getter_str += f" +{len(_s291_dead_getters) - 3} more"
         lines.append(
@@ -618,20 +586,14 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
             f" — data access paths removed; safe to clean up API surface"
         )
 
-
     # S297: Dead validators — validate_*/check_*/verify_*/ensure_* functions with 0 callers.
-    # Validation/guard functions are often added alongside a feature and forgotten when
-    # the feature is removed; leftover validators are misleading — they imply invariants
-    # that nothing actually enforces anymore.
-    # Only shown when 3+ such functions found (conf >= 30).
     _s297_val_prefixes = ("validate_", "check_", "verify_", "ensure_", "assert_", "is_valid_")
     _s297_dead_vals = [
         sym for sym, conf in _fn_candidates
         if any(sym.name.lower().startswith(p) for p in _s297_val_prefixes)
     ]
     if len(_s297_dead_vals) >= 3:
-        _val_names = [s.name for s in _s297_dead_vals[:3]]
-        _val_str = ", ".join(_val_names)
+        _val_str = ", ".join(s.name for s in _s297_dead_vals[:3])
         if len(_s297_dead_vals) > 3:
             _val_str += f" +{len(_s297_dead_vals) - 3} more"
         lines.append(
@@ -640,9 +602,6 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         )
 
     # S298: Dead middleware — middleware_*/interceptor_*/before_*/after_* functions with 0 callers.
-    # Leftover middleware fragments break the mental model of request/response lifecycle;
-    # readers may assume they're active when they're actually bypassed.
-    # Only shown when 2+ such functions found (conf >= 30).
     _s298_mw_prefixes = (
         "middleware_", "interceptor_", "before_request", "after_request",
         "pre_", "post_process", "apply_filter", "handle_request",
@@ -652,18 +611,15 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         if any(sym.name.lower().startswith(p) for p in _s298_mw_prefixes)
     ]
     if len(_s298_dead_mw) >= 2:
-        _mw_names298 = ", ".join(s.name for s in _s298_dead_mw[:3])
+        _mw_names = ", ".join(s.name for s in _s298_dead_mw[:3])
         if len(_s298_dead_mw) > 3:
-            _mw_names298 += f" +{len(_s298_dead_mw) - 3} more"
+            _mw_names += f" +{len(_s298_dead_mw) - 3} more"
         lines.append(
-            f"dead middleware: {len(_s298_dead_mw)} unused middleware fn(s) ({_mw_names298})"
+            f"dead middleware: {len(_s298_dead_mw)} unused middleware fn(s) ({_mw_names})"
             f" — orphaned filters; request lifecycle looks different than it is"
         )
 
     # S304: Dead serializers — to_dict/to_json/serialize/marshal methods with 0 callers.
-    # Serializers are usually called by API layers; when APIs change, the old serializer
-    # remains and creates confusion about the canonical representation of data.
-    # Only shown when 2+ such functions found (conf >= 30).
     _s304_ser_patterns = (
         "to_dict", "to_json", "to_yaml", "serialize", "marshal",
         "encode", "to_proto", "to_pb", "as_dict", "dump",
@@ -676,18 +632,15 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         and any(sym.name.lower() == p or sym.name.lower().startswith(p + "_") for p in _s304_ser_patterns)
     ]
     if len(_s304_dead_ser) >= 2:
-        _ser_names304 = ", ".join(s.name for s in _s304_dead_ser[:3])
+        _ser_names = ", ".join(s.name for s in _s304_dead_ser[:3])
         if len(_s304_dead_ser) > 3:
-            _ser_names304 += f" +{len(_s304_dead_ser) - 3} more"
+            _ser_names += f" +{len(_s304_dead_ser) - 3} more"
         lines.append(
-            f"dead serializers: {len(_s304_dead_ser)} unused serialization fn(s) ({_ser_names304})"
+            f"dead serializers: {len(_s304_dead_ser)} unused serialization fn(s) ({_ser_names})"
             f" — stale data representations; may reflect a removed API endpoint"
         )
 
     # S310: Dead adapters — adapter_*/converter_*/transformer_*/formatter_* functions with 0 callers.
-    # Adapters are typically tied to specific integration points; when integrations are removed,
-    # adapters become dead weight that implies functionality that no longer exists.
-    # Only shown when 2+ such functions found (conf >= 30).
     _s310_adapt_prefixes = (
         "adapt_", "adapter_", "convert_", "converter_", "transform_",
         "transformer_", "format_", "formatter_", "translate_",
@@ -697,18 +650,23 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         if any(sym.name.lower().startswith(p) for p in _s310_adapt_prefixes)
     ]
     if len(_s310_dead_adapt) >= 2:
-        _adapt_names310 = ", ".join(s.name for s in _s310_dead_adapt[:3])
+        _adapt_names = ", ".join(s.name for s in _s310_dead_adapt[:3])
         if len(_s310_dead_adapt) > 3:
-            _adapt_names310 += f" +{len(_s310_dead_adapt) - 3} more"
+            _adapt_names += f" +{len(_s310_dead_adapt) - 3} more"
         lines.append(
-            f"dead adapters: {len(_s310_dead_adapt)} unused adapter fn(s) ({_adapt_names310})"
+            f"dead adapters: {len(_s310_dead_adapt)} unused adapter fn(s) ({_adapt_names})"
             f" — removed integrations; implies features that no longer exist"
         )
 
+
+def _patterns_a_security_lifecycle(
+    scored: list[tuple[Symbol, int]],
+    lines: list[str],
+    _fn_candidates: list[tuple[Symbol, int]],
+    _fn_candidates_40: list[tuple[Symbol, int]],
+) -> None:
+    """S315-S347: rate-limiters, auth, notifications, state handlers, scheduled tasks, migrations."""
     # S315: Dead rate-limiters — rate_limit_*/throttle_*/debounce_* functions with 0 callers.
-    # Rate-limiting functions are security/stability controls; unused ones suggest
-    # an unprotected endpoint or a removed protection path.
-    # Only shown when 2+ such functions found (conf >= 30).
     _s315_rl_prefixes = (
         "rate_limit_", "throttle_", "debounce_", "limit_", "rate_check_", "quota_",
     )
@@ -717,18 +675,15 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         if any(sym.name.lower().startswith(p) for p in _s315_rl_prefixes)
     ]
     if len(_s315_dead_rl) >= 2:
-        _rl_names315 = ", ".join(s.name for s in _s315_dead_rl[:3])
+        _rl_names = ", ".join(s.name for s in _s315_dead_rl[:3])
         if len(_s315_dead_rl) > 3:
-            _rl_names315 += f" +{len(_s315_dead_rl) - 3} more"
+            _rl_names += f" +{len(_s315_dead_rl) - 3} more"
         lines.append(
-            f"dead rate-limiters: {len(_s315_dead_rl)} unused throttle/limit fn(s) ({_rl_names315})"
+            f"dead rate-limiters: {len(_s315_dead_rl)} unused throttle/limit fn(s) ({_rl_names})"
             f" — removed rate controls; verify endpoint is still protected"
         )
 
-    # S321: Dead auth functions — auth_*/authenticate_*/authorize_* functions with 0 callers.
-    # Authentication/authorization functions are critical security controls;
-    # unused auth functions may indicate a bypass, a removed check, or an orphaned auth path.
-    # Only shown when 1+ such functions found (conf >= 40, high threshold for security signals).
+    # S321: Dead auth functions — auth_*/authenticate_*/authorize_* with 0 callers (conf >= 40).
     _s321_auth_prefixes = (
         "auth_", "authenticate_", "authorize_", "check_auth", "verify_auth",
         "require_auth", "require_permission", "has_permission", "is_authorized",
@@ -738,17 +693,15 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         if any(sym.name.lower().startswith(p) for p in _s321_auth_prefixes)
     ]
     if _s321_dead_auth:
-        _auth_names321 = ", ".join(s.name for s in _s321_dead_auth[:3])
+        _auth_names = ", ".join(s.name for s in _s321_dead_auth[:3])
         if len(_s321_dead_auth) > 3:
-            _auth_names321 += f" +{len(_s321_dead_auth) - 3} more"
+            _auth_names += f" +{len(_s321_dead_auth) - 3} more"
         lines.append(
-            f"dead auth: {len(_s321_dead_auth)} unused auth fn(s) ({_auth_names321})"
+            f"dead auth: {len(_s321_dead_auth)} unused auth fn(s) ({_auth_names})"
             f" — removed security check; verify endpoint is still protected before removing"
         )
 
     # S329: Dead notification functions — notify_*/send_notification_*/alert_* with 0 callers.
-    # Notification functions are often wired to user-facing events; unused ones suggest
-    # a removed event path that users may still expect to trigger notifications.
     _s329_notif_prefixes = (
         "notify_", "send_notification", "send_alert_", "alert_", "dispatch_event_",
         "emit_event_", "publish_", "broadcast_",
@@ -758,18 +711,16 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         if any(sym.name.lower().startswith(p) for p in _s329_notif_prefixes)
     ]
     if len(_s329_dead_notif) >= 2:
-        _notif_names329 = ", ".join(s.name for s in _s329_dead_notif[:3])
+        _notif_names = ", ".join(s.name for s in _s329_dead_notif[:3])
         if len(_s329_dead_notif) > 3:
-            _notif_names329 += f" +{len(_s329_dead_notif) - 3} more"
+            _notif_names += f" +{len(_s329_dead_notif) - 3} more"
         lines.append(
             f"dead notifications: {len(_s329_dead_notif)} unused notification fn(s)"
-            f" ({_notif_names329})"
+            f" ({_notif_names})"
             f" — removed event path; users may still expect these notifications"
         )
 
     # S335: Dead state handlers — on_enter_*/on_exit_*/transition_* functions with 0 callers.
-    # State machine handlers that are never called indicate a removed state or transition;
-    # their presence implies a state machine model that is no longer accurate.
     _s335_state_prefixes = (
         "on_enter_", "on_exit_", "on_leave_", "transition_", "on_transition_",
         "handle_state_", "state_", "enter_state_",
@@ -779,18 +730,16 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         if any(sym.name.lower().startswith(p) for p in _s335_state_prefixes)
     ]
     if len(_s335_dead_state) >= 2:
-        _state_names335 = ", ".join(s.name for s in _s335_dead_state[:3])
+        _state_names = ", ".join(s.name for s in _s335_dead_state[:3])
         if len(_s335_dead_state) > 3:
-            _state_names335 += f" +{len(_s335_dead_state) - 3} more"
+            _state_names += f" +{len(_s335_dead_state) - 3} more"
         lines.append(
             f"dead state handlers: {len(_s335_dead_state)} unused state transition fn(s)"
-            f" ({_state_names335})"
+            f" ({_state_names})"
             f" — removed state or transition; state machine model may be inaccurate"
         )
 
     # S341: Dead scheduled tasks — task_*/cron_*/scheduled_*/periodic_* functions with 0 callers.
-    # Scheduled tasks run on a timer rather than being called directly; unused task functions
-    # may still be registered in the scheduler, running silently and consuming resources.
     _s341_task_prefixes = (
         "task_", "cron_", "scheduled_", "periodic_", "job_", "background_task_",
     )
@@ -799,17 +748,15 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         if any(sym.name.lower().startswith(p) for p in _s341_task_prefixes)
     ]
     if len(_s341_dead_tasks) >= 2:
-        _task_names341 = ", ".join(s.name for s in _s341_dead_tasks[:3])
+        _task_names = ", ".join(s.name for s in _s341_dead_tasks[:3])
         if len(_s341_dead_tasks) > 3:
-            _task_names341 += f" +{len(_s341_dead_tasks) - 3} more"
+            _task_names += f" +{len(_s341_dead_tasks) - 3} more"
         lines.append(
-            f"dead scheduled tasks: {len(_s341_dead_tasks)} unused task fn(s) ({_task_names341})"
+            f"dead scheduled tasks: {len(_s341_dead_tasks)} unused task fn(s) ({_task_names})"
             f" — may still be registered in scheduler; deregister before removing"
         )
 
     # S347: Dead migration helpers — migrate_*/upgrade_*/downgrade_* functions with 0 callers.
-    # Migration helpers are typically invoked by schema migration frameworks, not directly;
-    # unused ones may represent aborted migrations that should be cleaned up from the migration history.
     _s347_mig_prefixes = (
         "migrate_", "upgrade_", "downgrade_", "rollback_", "apply_migration_",
         "revert_migration_", "run_migration_",
@@ -819,17 +766,23 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         if any(sym.name.lower().startswith(p) for p in _s347_mig_prefixes)
     ]
     if len(_s347_dead_mig) >= 1:
-        _mig_names347 = ", ".join(s.name for s in _s347_dead_mig[:3])
+        _mig_names = ", ".join(s.name for s in _s347_dead_mig[:3])
         if len(_s347_dead_mig) > 3:
-            _mig_names347 += f" +{len(_s347_dead_mig) - 3} more"
+            _mig_names += f" +{len(_s347_dead_mig) - 3} more"
         lines.append(
-            f"dead migration helpers: {len(_s347_dead_mig)} unused migration fn(s) ({_mig_names347})"
+            f"dead migration helpers: {len(_s347_dead_mig)} unused migration fn(s) ({_mig_names})"
             f" — check if registered in migration history; remove from both code and migration registry"
         )
 
+
+def _patterns_a_parsers_accessors(
+    scored: list[tuple[Symbol, int]],
+    lines: list[str],
+    _fn_candidates: list[tuple[Symbol, int]],
+    _fn_candidates_40: list[tuple[Symbol, int]],
+) -> None:
+    """S378, S372, S366, S360: parsers, serializers, property accessor pairs, event handlers."""
     # S378: Dead parsers — parse_*/decode_*/deserialize_* functions with 0 callers.
-    # Dead parser functions often represent formats that were planned but never integrated;
-    # leaving them creates false confidence that the format is supported.
     _s378_parser_prefixes = (
         "parse_", "decode_", "deserialize_", "from_json_", "from_dict_",
         "from_string_", "load_from_", "read_from_",
@@ -839,17 +792,15 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         if any(sym.name.lower().startswith(p) for p in _s378_parser_prefixes)
     ]
     if len(_s378_dead_parsers) >= 2:
-        _parser_names378 = ", ".join(s.name for s in _s378_dead_parsers[:3])
+        _parser_names = ", ".join(s.name for s in _s378_dead_parsers[:3])
         if len(_s378_dead_parsers) > 3:
-            _parser_names378 += f" +{len(_s378_dead_parsers) - 3} more"
+            _parser_names += f" +{len(_s378_dead_parsers) - 3} more"
         lines.append(
-            f"dead parsers: {len(_s378_dead_parsers)} unused parser fn(s) ({_parser_names378})"
+            f"dead parsers: {len(_s378_dead_parsers)} unused parser fn(s) ({_parser_names})"
             f" — unintegrated format parsers; creates false impression that format is supported"
         )
 
     # S372: Dead serializers — to_dict/to_json/serialize/as_dict functions with 0 callers.
-    # Serializers that are never called may represent removed API endpoints or deprecated
-    # response formats; they can mislead developers about what the system exposes.
     _s372_ser_names = (
         "to_dict", "to_json", "serialize", "as_dict", "as_json",
         "to_payload", "to_response", "marshal", "dump",
@@ -862,17 +813,15 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         and any(sym.name.lower() == n or sym.name.lower().startswith(n + "_") for n in _s372_ser_names)
     ]
     if len(_s372_dead_sers) >= 2:
-        _ser_names372 = ", ".join(s.name for s in _s372_dead_sers[:3])
+        _ser_names = ", ".join(s.name for s in _s372_dead_sers[:3])
         if len(_s372_dead_sers) > 3:
-            _ser_names372 += f" +{len(_s372_dead_sers) - 3} more"
+            _ser_names += f" +{len(_s372_dead_sers) - 3} more"
         lines.append(
-            f"dead serializers: {len(_s372_dead_sers)} unused serializer(s) ({_ser_names372})"
+            f"dead serializers: {len(_s372_dead_sers)} unused serializer(s) ({_ser_names})"
             f" — may represent removed endpoints or deprecated formats; remove from public API surface"
         )
 
     # S366: Dead property accessors — get_*/set_* pairs where both are unused.
-    # Accessor pairs for removed properties are noisy dead code: two unused fns sharing a name root.
-    # They often survive after the underlying attribute was removed or renamed.
     _s366_get_names = {
         sym.name[4:]: sym
         for sym, conf in scored
@@ -895,17 +844,15 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         if k in _s366_set_names
     ]
     if _s366_dead_pairs:
-        _pair_str366 = ", ".join(
+        _pair_str = ", ".join(
             f"get_{k}/{_s366_set_names[k].name}" for k in list(_s366_get_names)[:2] if k in _s366_set_names
         )
         lines.append(
-            f"dead accessors: {len(_s366_dead_pairs)} unused get/set pair(s) ({_pair_str366})"
+            f"dead accessors: {len(_s366_dead_pairs)} unused get/set pair(s) ({_pair_str})"
             f" — accessor pairs suggest a removed property; delete both or restore the underlying attribute"
         )
 
-    # S360: Dead event handlers — on_*/handle_*/listen_* functions with 0 callers.
-    # Event handlers that are never called may have been unregistered but not deleted;
-    # they can mislead future developers into thinking certain events are handled.
+    # S360: Dead event handlers — on_*/handle_*/listen_* functions with 0 callers (conf >= 30).
     _s360_ev_prefixes = (
         "on_", "handle_", "listen_", "when_", "after_", "before_",
         "on_event_", "event_handler_", "process_event_",
@@ -915,13 +862,29 @@ def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         if any(sym.name.lower().startswith(p) for p in _s360_ev_prefixes)
     ]
     if len(_s360_dead_ev) >= 2:
-        _ev_names360 = ", ".join(s.name for s in _s360_dead_ev[:3])
+        _ev_names = ", ".join(s.name for s in _s360_dead_ev[:3])
         if len(_s360_dead_ev) > 3:
-            _ev_names360 += f" +{len(_s360_dead_ev) - 3} more"
+            _ev_names += f" +{len(_s360_dead_ev) - 3} more"
         lines.append(
-            f"dead event handlers: {len(_s360_dead_ev)} unregistered handler(s) ({_ev_names360})"
+            f"dead event handlers: {len(_s360_dead_ev)} unregistered handler(s) ({_ev_names})"
             f" — may mislead developers into thinking events are handled; deregister or remove"
         )
+
+
+def _signals_dead_patterns_a(graph: Tempo, scored: list[tuple[Symbol, int]], dead: list[Symbol], lines: list[str]) -> None:
+    """Dead code signals S241-S360: named-prefix patterns batch A — config, exceptions, types, CLI, events, async, factory, validators, middleware, serializers, adapters, auth, notifications, scheduled tasks, migration, parsers, property accessors."""
+    # Pre-filter to fn/method candidates — avoids 22× redundant enum scans across all signals.
+    _fn_candidates = [
+        (sym, conf) for sym, conf in scored
+        if conf >= 30
+        and not _is_test_file(sym.file_path)
+        and sym.kind.value in ("function", "method")
+    ]
+    _fn_candidates_40 = [(sym, conf) for sym, conf in _fn_candidates if conf >= 40]
+    _patterns_a_cfg_types(scored, lines, _fn_candidates, _fn_candidates_40)
+    _patterns_a_factories_adapters(scored, lines, _fn_candidates, _fn_candidates_40)
+    _patterns_a_security_lifecycle(scored, lines, _fn_candidates, _fn_candidates_40)
+    _patterns_a_parsers_accessors(scored, lines, _fn_candidates, _fn_candidates_40)
 
 
 def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dead: list[Symbol], lines: list[str]) -> None:
