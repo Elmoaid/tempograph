@@ -2866,3 +2866,164 @@ class TestDeadSeedNote:
         assert "dead candidate" not in output, (
             f"Active symbol should have no dead annotation; got:\n{output[:300]}"
         )
+
+
+class TestHiddenCalleeSummary:
+    """S68: hidden callee overflow label enriched with sole-use/untested/hot counts."""
+
+    def _fn(self, name, fp="app/core.py", kind=None, exported=True):
+        return Symbol(
+            id=f"{fp}::{name}",
+            name=name,
+            qualified_name=name,
+            kind=kind or SymbolKind.FUNCTION,
+            language=Language.PYTHON,
+            file_path=fp,
+            line_start=1,
+            line_end=5,
+            exported=exported,
+        )
+
+    def _make_seed_with_callees(self, tmp_path, n_shown, n_hidden, sole_use_hidden=0):
+        """Create seed + N_shown + N_hidden callees. First N_shown shared callees,
+        last N_hidden sole-use (only called by seed)."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn("orchestrate", "app/core.py")
+        # Shared callees (have external callers too — not sole-use)
+        shared_caller = self._fn("other", "app/other.py")
+        shown_callees = [self._fn(f"_shared_{i}", "app/core.py") for i in range(n_shown)]
+        # Hidden callees — sole-use if requested
+        hidden_callees = [self._fn(f"_hidden_{i}", "app/core.py") for i in range(n_hidden)]
+
+        edges = []
+        for c in shown_callees:
+            edges.append(Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c.id))
+            # Give them a shared caller so they're not sole-use
+            edges.append(Edge(kind=EdgeKind.CALLS, source_id=shared_caller.id, target_id=c.id))
+        for i, c in enumerate(hidden_callees):
+            edges.append(Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c.id))
+            if i >= n_hidden - sole_use_hidden:
+                pass  # sole-use: no other callers added
+            else:
+                edges.append(Edge(kind=EdgeKind.CALLS, source_id=shared_caller.id, target_id=c.id))
+
+        syms = [seed, shared_caller] + shown_callees + hidden_callees
+        graph = _make_graph(tmp_path, edges=edges, symbols=syms)
+        return seed, graph, _build_callees_block
+
+    def test_overflow_sole_use_hidden_shows_count(self, tmp_path):
+        """Hidden sole-use callees appear in overflow label as 'N sole-use'."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn("orchestrate", "app/core.py")
+        shared_caller = self._fn("other", "app/other.py")
+
+        # 8 non-sole-use callees shown, 3 sole-use callees hidden
+        shown_callees = [self._fn(f"_shared_{i}", "app/core.py") for i in range(8)]
+        sole_callees = [self._fn(f"_private_{i}", "app/core.py") for i in range(3)]
+
+        edges = []
+        for c in shown_callees:
+            edges.append(Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c.id))
+            edges.append(Edge(kind=EdgeKind.CALLS, source_id=shared_caller.id, target_id=c.id))
+        for c in sole_callees:
+            edges.append(Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c.id))
+            # sole-use: no other callers
+
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, shared_caller] + shown_callees + sole_callees)
+        result = _build_callees_block(seed, 0, graph, "")
+        calls_line = "\n".join(result)
+
+        assert "+3 more" in calls_line or "+11 more" in calls_line or "more" in calls_line, (
+            f"Expected overflow label; got:\n{calls_line}"
+        )
+        assert "sole-use" in calls_line, (
+            f"Expected 'sole-use' in overflow label for hidden sole-use callees; got:\n{calls_line}"
+        )
+
+    def test_overflow_no_attributes_shows_bare_count(self, tmp_path):
+        """Hidden callees with no notable attributes show plain '(+N more)'."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn("orchestrate", "app/core.py")
+        shared_caller = self._fn("other", "app/other.py")
+
+        # 9 callees, all with shared callers (not sole-use) and not in hot_files
+        callees = [self._fn(f"_helper_{i}", "app/utils.py") for i in range(9)]
+        edges = []
+        for c in callees:
+            edges.append(Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c.id))
+            edges.append(Edge(kind=EdgeKind.CALLS, source_id=shared_caller.id, target_id=c.id))
+
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, shared_caller] + callees)
+        result = _build_callees_block(seed, 0, graph, "")
+        calls_line = "\n".join(result)
+
+        # Overflow fires but no attributes (not sole-use — all have shared_caller too)
+        assert "+1 more" in calls_line, f"Expected '+1 more'; got:\n{calls_line}"
+        # Should NOT have "sole-use" in overflow (shared_caller also calls them)
+        overflow_part = calls_line.split("(+")[1] if "(+" in calls_line else ""
+        assert "sole-use" not in overflow_part, (
+            f"Expected no 'sole-use' in overflow for non-sole-use hidden callees; got:\n{calls_line}"
+        )
+
+    def test_overflow_depth1_shows_bare_count(self, tmp_path):
+        """At depth=1, overflow label is plain '(+N more)' — no attribute summary."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn("orchestrate", "app/core.py")
+        # 9 sole-use callees (only called from seed)
+        callees = [self._fn(f"_priv_{i}", "app/core.py") for i in range(9)]
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c.id) for c in callees]
+
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + callees)
+        result = _build_callees_block(seed, 1, graph, "")  # depth=1
+        calls_line = "\n".join(result)
+
+        # At depth=1, no attribute summary
+        assert "more" in calls_line, f"Expected overflow; got:\n{calls_line}"
+        assert "sole-use" not in calls_line, (
+            f"At depth=1, expected no 'sole-use' in overflow; got:\n{calls_line}"
+        )
+
+    def test_overflow_hot_hidden_shows_hot_count(self, tmp_path):
+        """Hidden callees in hot_files show 'N hot' in overflow label.
+        Hot callees are ordered first — to get one in the hidden set, we need 9 hot callees
+        so the first 8 fill shown slots and the 9th is hidden.
+        """
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn("orchestrate", "app/core.py")
+        shared = self._fn("other", "app/other.py")
+
+        # 9 callees all in hot_files — first 8 shown, last 1 hidden with [hot]
+        hot_callees = [self._fn(f"_hot_{i}", "app/hot.py") for i in range(9)]
+
+        edges = []
+        for c in hot_callees:
+            edges.append(Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c.id))
+            edges.append(Edge(kind=EdgeKind.CALLS, source_id=shared.id, target_id=c.id))
+
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, shared] + hot_callees)
+        graph.hot_files = {"app/hot.py"}  # mark the hot file
+
+        result = _build_callees_block(seed, 0, graph, "")
+        calls_line = "\n".join(result)
+
+        assert "+1 more" in calls_line, f"Expected '+1 more'; got:\n{calls_line}"
+        assert "1 hot" in calls_line, f"Expected '1 hot' in overflow; got:\n{calls_line}"
+
+    def test_overflow_no_callees_no_overflow(self, tmp_path):
+        """Exactly 8 callees — no overflow label."""
+        from tempograph.render.focused import _build_callees_block
+
+        seed = self._fn("orchestrate", "app/core.py")
+        callees = [self._fn(f"_c{i}", "app/core.py") for i in range(8)]
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c.id) for c in callees]
+
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + callees)
+        result = _build_callees_block(seed, 0, graph, "")
+        calls_line = "\n".join(result)
+
+        assert "more" not in calls_line, f"No overflow expected for 8 callees; got:\n{calls_line}"
