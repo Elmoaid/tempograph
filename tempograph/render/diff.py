@@ -1010,8 +1010,8 @@ def _signals_diff_graph_a(
     for _fp187 in normalized:
         if _is_test_file(_fp187):
             continue
-        for _sym187 in graph.symbols.values():
-            if _sym187.file_path != _fp187 or not _sym187.exported:
+        for _sym187 in graph.symbols_in_file(_fp187):
+            if not _sym187.exported:
                 continue
             if _sym187.kind.value not in ("function", "method", "class"):
                 continue
@@ -1087,9 +1087,7 @@ def _signals_diff_graph_a(
     for _fp163 in normalized:
         if _is_test_file(_fp163):
             continue
-        for _sym163 in graph.symbols.values():
-            if _sym163.file_path != _fp163:
-                continue
+        for _sym163 in graph.symbols_in_file(_fp163):
             for _caller163 in graph.callers_of(_sym163.id):
                 if _caller163.file_path not in _s163_changed_fps:
                     _s163_ext_callers.add(_caller163.file_path)
@@ -1389,9 +1387,8 @@ def _signals_diff_graph_a(
             if _is_test_file(_fp276):
                 continue
             _callers276 = len([
-                s for s in graph.symbols.values()
-                if s.file_path == _fp276
-                and len([c for c in graph.callers_of(s.id) if c.file_path != _fp276]) >= 2
+                s for s in graph.symbols_in_file(_fp276)
+                if len([c for c in graph.callers_of(s.id) if c.file_path != _fp276]) >= 2
             ])
             if _callers276 > 0:
                 _s276_scores.append((_callers276, _fp276))
@@ -1652,7 +1649,7 @@ def _signals_diff_graph_b(
     if changed_files:
         _s369_dense: list[tuple[str, int]] = []
         for _cf369 in changed_files:
-            _file_syms369 = [s for s in graph.symbols.values() if s.file_path == _cf369]
+            _file_syms369 = graph.symbols_in_file(_cf369)
             if len(_file_syms369) >= 20:  # 20+ symbols = dense file
                 _s369_dense.append((_cf369, len(_file_syms369)))
         if _s369_dense:
@@ -1973,8 +1970,8 @@ def _signals_diff_graph_b(
     _s485_base_files: list[str] = []
     for _fp485 in changed_files:
         _syms485 = [
-            s for s in graph.symbols.values()
-            if s.file_path == _fp485 and s.kind.value == "class"
+            s for s in graph.symbols_in_file(_fp485)
+            if s.kind.value == "class"
             and any(s.name.startswith(p) for p in _s485_base_prefixes)
         ]
         if _syms485:
@@ -2053,11 +2050,11 @@ def _signals_diff_graph_c(
     if graph.symbols and changed_files:
         _normalized534 = {f.replace("\\", "/") for f in changed_files}
         _caller_counts534: list[tuple[int, str, str]] = []
-        for _sym534 in graph.symbols.values():
-            if not _is_test_file(_sym534.file_path) and _sym534.kind.value in ("function", "method"):
-                _n534 = len(graph.callers_of(_sym534.id))
-                if _n534 >= 3:
-                    _caller_counts534.append((_n534, _sym534.name, _sym534.file_path))
+        for _sid534, _cs534 in graph._callers.items():
+            if len(_cs534) >= 3:
+                _sym534 = graph.symbols.get(_sid534)
+                if _sym534 and not _is_test_file(_sym534.file_path) and _sym534.kind.value in ("function", "method"):
+                    _caller_counts534.append((len(_cs534), _sym534.name, _sym534.file_path))
         _caller_counts534.sort(reverse=True)
         _top5_files534 = {fp for _, _, fp in _caller_counts534[:5]}
         _hot_changed534 = _top5_files534 & _normalized534
@@ -2445,16 +2442,9 @@ def _signals_diff_graph_c(
         for _chf945 in normalized:
             if _is_test_file(_chf945):
                 continue
-            _file_syms945 = [
-                s for s in graph.symbols.values()
-                if s.file_path == _chf945
-                or (not _chf945.startswith("/") and _chf945 in s.file_path)
-            ]
             _importers945 = {
-                c.file_path
-                for s in _file_syms945
-                for c in graph.callers_of(s.id)
-                if not _is_test_file(c.file_path) and c.file_path != _chf945
+                i for i in graph.importers_of(_chf945)
+                if not _is_test_file(i) and i != _chf945
             }
             if len(_importers945) >= 5:
                 lines.append(
