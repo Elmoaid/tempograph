@@ -20,6 +20,7 @@ interface RunModeConfig {
   setRunDuration: (v: number | null) => void;
   setCachedModes: (updater: (prev: Set<string>) => Set<string>) => void;
   setHistory: (v: string[]) => void;
+  onRunSuccess?: (mode: string, args: string) => void;
 }
 
 export function useRunMode({
@@ -40,6 +41,7 @@ export function useRunMode({
   setRunDuration,
   setCachedModes,
   setHistory,
+  onRunSuccess,
 }: RunModeConfig) {
   // Monotonically increasing serial — cancel checks serial to ignore stale results
   const runSerial = useRef(0);
@@ -50,8 +52,8 @@ export function useRunMode({
     setModeOutput("[Cancelled]");
   }, [setModeRunning, setModeOutput]);
 
-  const runMode = useCallback(async () => {
-    if (!repoPath || modeRunning) return;
+  const runMode = useCallback(async (): Promise<boolean> => {
+    if (!repoPath || modeRunning) return false;
     const serial = ++runSerial.current;
     const cacheKey = activeKit ? `kit:${activeKit}` : activeMode;
     runStart.current = Date.now();
@@ -80,7 +82,7 @@ export function useRunMode({
         r = await runTempo(repoPath, activeMode, args);
       }
       // If cancelled while awaiting, discard result
-      if (serial !== runSerial.current) return;
+      if (serial !== runSerial.current) return false;
       const out = r.output || "No output";
       const now = Date.now();
       const dur = runStart.current ? (now - runStart.current) / 1000 : null;
@@ -91,6 +93,7 @@ export function useRunMode({
       setOutputTs(now);
       if (dur !== null) setRunDuration(dur);
       setCachedModes(prev => new Set(prev).add(cacheKey));
+      onRunSuccess?.(activeKit ? `kit:${activeKit}` : activeMode, modeArgs);
       if (!activeKit) {
         const raw = modeArgs.trim();
         const modeInfo = MODES.find(m => m.mode === activeMode);
@@ -99,12 +102,15 @@ export function useRunMode({
           setHistory(loadHistory(activeMode));
         }
       }
+      if (serial === runSerial.current) setModeRunning(false);
+      return true;
     } catch {
-      if (serial !== runSerial.current) return;
+      if (serial !== runSerial.current) return false;
       setModeOutput("Failed to run mode. Check that tempo is installed.");
     }
     if (serial === runSerial.current) setModeRunning(false);
-  }, [repoPath, activeMode, activeKit, modeArgs, modeRunning, excludeDirs]);
+    return false;
+  }, [repoPath, activeMode, activeKit, modeArgs, modeRunning, excludeDirs, onRunSuccess]);
 
   return { runMode, cancelMode };
 }
