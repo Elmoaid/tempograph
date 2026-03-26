@@ -53,6 +53,8 @@ interface OutputPanelProps {
   onSearchClose: () => void;
   onSearchNavigate: (dir: "next" | "prev") => void;
   onFeedback: (helpful: boolean) => void;
+  runHistory?: { mode: string; args: string }[];
+  onRunHistoryEntry?: (entry: { mode: string; args: string }) => void;
   suggestions: string[];
   onSuggestionClick: (mode: string) => void;
 }
@@ -192,7 +194,7 @@ export function OutputPanel(props: OutputPanelProps) {
     onArgsChange, onHistoryOpen, onHistorySelect, onRun, onCancel, onCopy, onSave,
     onFilterToggle, onFilterChange, onFilterClose,
     onSearchChange, onSearchClose, onSearchNavigate,
-    onFeedback, saved, suggestions, onSuggestionClick,
+    onFeedback, saved, runHistory, onRunHistoryEntry, suggestions, onSuggestionClick,
   } = props;
 
   const isKitMode = activeMode.startsWith("kit:");
@@ -292,6 +294,25 @@ export function OutputPanel(props: OutputPanelProps) {
           onHistoryOpen={onHistoryOpen}
           onHistorySelect={onHistorySelect}
         />
+        {runHistory && runHistory.length > 0 && onRunHistoryEntry && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
+            {runHistory.map((entry, i) => {
+              const truncArgs = entry.args.length > 20 ? entry.args.slice(0, 20) + "…" : entry.args;
+              const label = truncArgs ? `${entry.mode} ${truncArgs}` : entry.mode;
+              return (
+                <button
+                  key={i}
+                  className="btn btn-ghost"
+                  onClick={() => onRunHistoryEntry(entry)}
+                  title={entry.args ? `${entry.mode} ${entry.args}` : entry.mode}
+                  style={{ fontSize: 10, padding: "2px 7px", borderRadius: 10, opacity: 0.75 }}
+                >
+                  ⟳ {label}
+                </button>
+              );
+            })}
+          </div>
+        )}
         {modeRunning ? (
           <div style={{ color: "var(--text-tertiary)", fontSize: 11, padding: 16, textAlign: "center" }}>
             <span style={{ animation: "pulse 1.2s ease-in-out infinite", display: "inline-block" }}>
