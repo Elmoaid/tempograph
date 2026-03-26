@@ -5081,6 +5081,65 @@ def _compute_paired_functions(
     return f"↳ {label}: {', '.join(parts_out)} — not in BFS"
 
 
+def _compute_bfs_module_diversity(
+    graph: "Tempo",
+    seeds: "list[Symbol]",
+    ordered: "list[tuple[Symbol, int]]",
+) -> str:
+    """S70: BFS module diversity — detect when BFS spans 3+ distinct top-level modules.
+
+    BFS follows both callers and callees. When the traversal crosses into multiple
+    top-level directories (e.g., bench/, tempo/, tempograph/), the function has
+    cross-layer scope: a change here ripples through modules that may have different
+    owners, release cycles, or test suites.
+
+    Different from 'cross-cutting' (which counts caller subsystems — incoming blast).
+    This measures outgoing + incoming BFS breadth across the whole traversal.
+
+    Fires only when ≥3 distinct non-test modules appear, excluding the seed's own module.
+    Silent for single-module codebases and shallow BFS results.
+    """
+    root = getattr(graph, "root", "") or ""
+    root_norm = root.replace("\\", "/").rstrip("/")
+
+    def _module_of(file_path: str) -> str:
+        fp = file_path.replace("\\", "/")
+        if root_norm and fp.startswith(root_norm + "/"):
+            rel = fp[len(root_norm) + 1:]
+        else:
+            # Fallback: use last 2+ components
+            rel = fp
+        parts = rel.split("/")
+        return parts[0] if parts else ""
+
+    seed_modules = {_module_of(s.file_path) for s in seeds}
+
+    bfs_modules: dict[str, int] = {}
+    for sym, _depth in ordered:
+        mod = _module_of(sym.file_path)
+        # Skip test directories and seed's own modules
+        if not mod or mod.lower() in ("tests", "test", "spec") or mod in seed_modules:
+            continue
+        bfs_modules[mod] = bfs_modules.get(mod, 0) + 1
+
+    if len(bfs_modules) < 3:
+        return ""
+
+    # Show top modules by symbol count (most represented first)
+    sorted_mods = sorted(bfs_modules, key=lambda m: -bfs_modules[m])
+    shown = sorted_mods[:4]
+    overflow = len(sorted_mods) - len(shown)
+    mod_str = ", ".join(shown)
+    if overflow:
+        mod_str += f" +{overflow} more"
+
+    n = len(bfs_modules)
+    return (
+        f"↳ cross-module BFS: {n} modules in call graph ({mod_str})"
+        f" — change scope spans layers"
+    )
+
+
 def _compute_change_exposure(graph: "Tempo", seeds: "list[Symbol]") -> str:
     """One-line change risk synthesizer.
 
@@ -5409,6 +5468,10 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     _pair_note = _compute_paired_functions(graph, seeds, seen_ids)
     if _pair_note:
         lines.append(_pair_note)
+        lines.append("")
+    _module_diversity = _compute_bfs_module_diversity(graph, seeds, ordered)
+    if _module_diversity:
+        lines.append(_module_diversity)
         lines.append("")
     seen_files: set[str] = set()
     token_count = 0
