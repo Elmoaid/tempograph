@@ -372,6 +372,7 @@ export function OutputPanel(props: OutputPanelProps) {
               runDuration={runDuration}
               outputTs={outputTs}
               outputLength={modeOutput.length}
+              outputLines={modeOutput.split("\n").length}
               onFeedback={onFeedback}
             />
             {suggestions.length > 0 && (
