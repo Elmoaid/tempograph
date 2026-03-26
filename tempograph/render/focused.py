@@ -5161,6 +5161,34 @@ def _render_context_sections(
     return token_count
 
 
+def _compute_bfs_scope_note(ordered: "list[tuple[Symbol, int]]") -> str:
+    """S66: BFS scope signal — fires when BFS never reached depth=3.
+
+    When a hub function's depth-1 and depth-2 neighbors fill all 50 BFS slots,
+    depth=3 is completely excluded. The agent sees a truncated picture without
+    knowing it. This tells them to use blast_radius for the full scope.
+
+    Condition: total nodes = 50 AND zero depth-3 nodes collected.
+    This means the BFS was so dense at depth-1/2 that it exhausted the cap
+    before reaching depth=3 at all — a true hub truncation, not just a
+    deep-graph cutoff.
+
+    Suppressed for sparse neighborhoods (< 50 nodes, or depth=3 was reached)
+    since those already got a complete or extended BFS picture.
+    """
+    total = len(ordered)
+    if total < 50:
+        return ""
+    depth_3_count = sum(1 for _, d in ordered if d == 3)
+    if depth_3_count > 0:
+        return ""
+    depth_1_count = sum(1 for _, d in ordered if d == 1)
+    return (
+        f"↳ hub BFS: {depth_1_count} depth-1 neighbors"
+        f" — depth=3 cut (50-node cap); use blast_radius for full scope"
+    )
+
+
 def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     """Task-focused rendering with BFS graph traversal.
     Starts from search results, then follows call/render/import edges
@@ -5187,6 +5215,10 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     _exposure = _compute_change_exposure(graph, seeds)
     if _exposure:
         lines.append(_exposure)
+        lines.append("")
+    _scope_note = _compute_bfs_scope_note(ordered)
+    if _scope_note:
+        lines.append(_scope_note)
         lines.append("")
     seen_files: set[str] = set()
     token_count = 0
