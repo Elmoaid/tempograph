@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { FolderOpen, Plus, X, RefreshCw } from "lucide-react";
 import { useRecentRepos } from "../hooks/useRecentRepos";
+import { useRepoStats, formatAge } from "../hooks/useRepoStats";
 import { RecentRepos } from "./RecentRepos";
 
 interface WorkspaceTabsProps {
@@ -21,6 +22,15 @@ export function WorkspaceTabs({ workspaces, activeIdx, loading, onSelect, onRemo
   const [newWsPath, setNewWsPath] = useState("");
   const addInputRef = useRef<HTMLInputElement>(null);
   const { recentRepos, addRecentRepo, removeRecentRepo, clearRecentRepos } = useRecentRepos();
+  const activeRepoPath = workspaces[activeIdx] || "";
+  const stats = useRepoStats(activeRepoPath);
+  const [, forceUpdate] = useState(0);
+
+  // Refresh age display every 30s
+  useEffect(() => {
+    const id = setInterval(() => forceUpdate((n) => n + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
 
   useEffect(() => {
     if (addingWs) addInputRef.current?.focus();
@@ -79,6 +89,11 @@ export function WorkspaceTabs({ workspaces, activeIdx, loading, onSelect, onRemo
         <button className="ws-tab ws-add" onClick={() => setAddingWs(true)} title="Add workspace">
           <Plus size={12} />
         </button>
+      )}
+      {stats && (
+        <span className="ws-stats-badge" title={`${stats.symbols.toLocaleString()} symbols · ${stats.files} files · indexed ${formatAge(stats.fetchedAt)}`}>
+          {(stats.symbols / 1000).toFixed(1)}K sym · {stats.files} files · {formatAge(stats.fetchedAt)}
+        </span>
       )}
     </div>
     <RecentRepos
