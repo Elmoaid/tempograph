@@ -2454,3 +2454,194 @@ class TestFocusUpstreamReach:
         assert "upstream reach" in joined, f"Expected signal; got:\n{joined}"
         assert "1 direct caller" in joined, f"Expected singular '1 direct caller'; got:\n{joined}"
         assert "amplifies to" in joined, f"Expected 'amplifies' (singular); got:\n{joined}"
+
+
+class TestChangeExposure:
+    """Tests for _compute_change_exposure: the focus-mode risk synthesizer."""
+
+    def _fn(self, name, file_path):
+        return Symbol(
+            id=f"{file_path}::{name}",
+            name=name,
+            qualified_name=name,
+            kind=SymbolKind.FUNCTION,
+            language=Language.PYTHON,
+            file_path=file_path,
+            line_start=1,
+            line_end=20,
+            exported=False,
+            complexity=0,
+        )
+
+    def _test_caller(self, name, caller_file, seed):
+        return self._fn(name, caller_file)
+
+    def test_no_factors_silent(self, tmp_path):
+        """Zero risk factors → empty string (no noise for safe symbols)."""
+        from tempograph.render.focused import _compute_change_exposure
+
+        seed = self._fn("helper", "app/utils.py")
+        c1 = self._fn("main", "app/main.py")
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=c1.id, target_id=seed.id)]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1])
+
+        result = _compute_change_exposure(graph, [seed])
+        assert result == "", f"Low-risk should be silent; got: {result!r}"
+
+    def test_empty_seeds_silent(self, tmp_path):
+        """Empty seeds list → silent."""
+        from tempograph.render.focused import _compute_change_exposure
+
+        graph = _make_graph(tmp_path, edges=[], symbols=[])
+        assert _compute_change_exposure(graph, []) == ""
+
+    def test_high_caller_files_medium(self, tmp_path):
+        """8+ distinct cross-file callers → MEDIUM."""
+        from tempograph.render.focused import _compute_change_exposure
+
+        seed = self._fn("hub", "app/hub.py")
+        callers = [self._fn(f"caller_{i}", f"app/mod_{i}.py") for i in range(8)]
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=c.id, target_id=seed.id) for c in callers]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + callers)
+
+        result = _compute_change_exposure(graph, [seed])
+        assert "MEDIUM" in result, f"Expected MEDIUM; got: {result!r}"
+        assert "caller files" in result, f"Expected 'caller files' factor; got: {result!r}"
+
+    def test_seven_caller_files_silent(self, tmp_path):
+        """7 caller files (below threshold 8) → silent."""
+        from tempograph.render.focused import _compute_change_exposure
+
+        seed = self._fn("hub", "app/hub.py")
+        callers = [self._fn(f"caller_{i}", f"app/mod_{i}.py") for i in range(7)]
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=c.id, target_id=seed.id) for c in callers]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + callers)
+
+        result = _compute_change_exposure(graph, [seed])
+        assert result == "", f"7 callers should be silent; got: {result!r}"
+
+    def test_hot_callees_medium(self, tmp_path):
+        """≥2 hot callees → MEDIUM."""
+        from tempograph.render.focused import _compute_change_exposure
+
+        seed = self._fn("orchestrate", "app/core.py")
+        hot1 = self._fn("parse", "app/parser.py")
+        hot2 = self._fn("validate", "app/validator.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=hot1.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=hot2.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, hot1, hot2])
+        graph.hot_files = {"app/parser.py", "app/validator.py"}
+
+        result = _compute_change_exposure(graph, [seed])
+        assert "MEDIUM" in result, f"Expected MEDIUM; got: {result!r}"
+        assert "hot callee" in result, f"Expected 'hot callee' factor; got: {result!r}"
+
+    def test_one_hot_callee_silent(self, tmp_path):
+        """Only 1 hot callee (below threshold 2) → silent."""
+        from tempograph.render.focused import _compute_change_exposure
+
+        seed = self._fn("fn", "app/core.py")
+        hot1 = self._fn("dep", "app/dep.py")
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=hot1.id)]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, hot1])
+        graph.hot_files = {"app/dep.py"}
+
+        result = _compute_change_exposure(graph, [seed])
+        assert result == "", f"1 hot callee should be silent; got: {result!r}"
+
+    def test_seed_in_hot_file_medium(self, tmp_path):
+        """Seed itself in a hot file → MEDIUM."""
+        from tempograph.render.focused import _compute_change_exposure
+
+        seed = self._fn("active_fn", "app/hotmodule.py")
+        graph = _make_graph(tmp_path, edges=[], symbols=[seed])
+        graph.hot_files = {"app/hotmodule.py"}
+
+        result = _compute_change_exposure(graph, [seed])
+        assert "MEDIUM" in result, f"Expected MEDIUM; got: {result!r}"
+        assert "seed in active file" in result, f"Expected 'seed in active file'; got: {result!r}"
+
+    def test_coverage_gap_medium(self, tmp_path):
+        """≥3 cross-file callees, ≥50% untested → MEDIUM."""
+        from tempograph.render.focused import _compute_change_exposure
+
+        seed = self._fn("caller", "app/main.py")
+        # 3 untested callees (no test callers for them)
+        c1 = self._fn("dep1", "app/dep1.py")
+        c2 = self._fn("dep2", "app/dep2.py")
+        c3 = self._fn("dep3", "app/dep3.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c1.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c2.id),
+            Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=c3.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, c1, c2, c3])
+
+        result = _compute_change_exposure(graph, [seed])
+        assert "MEDIUM" in result, f"Expected MEDIUM; got: {result!r}"
+        assert "coverage gap" in result, f"Expected 'coverage gap'; got: {result!r}"
+
+    def test_two_factors_high(self, tmp_path):
+        """2 factors → HIGH."""
+        from tempograph.render.focused import _compute_change_exposure
+
+        seed = self._fn("hub", "app/hub.py")
+        callers = [self._fn(f"c{i}", f"app/c{i}.py") for i in range(8)]
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=c.id, target_id=seed.id) for c in callers]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + callers)
+        # seed in hot file = 2nd factor
+        graph.hot_files = {"app/hub.py"}
+
+        result = _compute_change_exposure(graph, [seed])
+        assert "HIGH" in result, f"Expected HIGH; got: {result!r}"
+        assert "caller files" in result and "seed in active file" in result
+
+    def test_three_factors_critical(self, tmp_path):
+        """3+ factors → CRITICAL."""
+        from tempograph.render.focused import _compute_change_exposure
+
+        seed = self._fn("nexus", "app/hot.py")
+        callers = [self._fn(f"c{i}", f"app/c{i}.py") for i in range(8)]
+        hot1 = self._fn("hotdep1", "app/hd1.py")
+        hot2 = self._fn("hotdep2", "app/hd2.py")
+        edges = (
+            [Edge(kind=EdgeKind.CALLS, source_id=c.id, target_id=seed.id) for c in callers]
+            + [
+                Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=hot1.id),
+                Edge(kind=EdgeKind.CALLS, source_id=seed.id, target_id=hot2.id),
+            ]
+        )
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + callers + [hot1, hot2])
+        graph.hot_files = {"app/hot.py", "app/hd1.py", "app/hd2.py"}
+
+        result = _compute_change_exposure(graph, [seed])
+        assert "CRITICAL" in result, f"Expected CRITICAL; got: {result!r}"
+
+    def test_integration_render_focused_shows_exposure(self, tmp_path):
+        """render_focused emits change exposure line near the top when factors present."""
+        from tempograph.render.focused import render_focused
+
+        seed = self._fn("hotfn", "app/hot.py")
+        callers = [self._fn(f"c{i}", f"app/c{i}.py") for i in range(8)]
+        edges = [Edge(kind=EdgeKind.CALLS, source_id=c.id, target_id=seed.id) for c in callers]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + callers)
+        graph.hot_files = {"app/hot.py"}
+
+        output = render_focused(graph, "hotfn")
+        lines = output.splitlines()
+        # Exposure line should appear early (within first 5 lines)
+        early = "\n".join(lines[:5])
+        assert "change exposure" in early, f"Expected exposure in first 5 lines; got:\n{early}"
+        assert "HIGH" in early or "CRITICAL" in early or "MEDIUM" in early
+
+    def test_integration_low_risk_no_exposure_line(self, tmp_path):
+        """render_focused has NO change exposure line for a low-risk isolated symbol."""
+        from tempograph.render.focused import render_focused
+
+        seed = self._fn("isolated", "app/utils.py")
+        graph = _make_graph(tmp_path, edges=[], symbols=[seed])
+
+        output = render_focused(graph, "isolated")
+        assert "change exposure" not in output, f"Low-risk should have no exposure line; got:\n{output[:200]}"
