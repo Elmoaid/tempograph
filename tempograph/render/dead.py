@@ -1202,28 +1202,19 @@ def _patterns_b_data_lifecycle(_fn_candidates: list, lines: list[str]) -> None:
         )
 
 
-def _patterns_b_cm_event_scans(graph: Tempo, _fn_candidates_40: list, lines: list[str]) -> None:
+def _patterns_b_cm_event_scans(graph: Tempo, _fn_candidates_40: list, lines: list[str], _s487_enter: list) -> None:
     """S487/S493: dead context managers and event handlers (graph symbol scans)."""
     # S487: Dead context managers — class defines __enter__/__exit__ but is never imported.
+    # _s487_enter: pre-filtered list of __enter__ methods (non-test) from _signals_dead_patterns_b.
     _s487_cm_names: list[str] = []
     _s487_seen_files: set[str] = set()
-    for _s487sym in graph.symbols.values():
-        if (
-            _s487sym.kind.value == "method"
-            and _s487sym.name == "__enter__"
-            and not _is_test_file(_s487sym.file_path)
-            and _s487sym.file_path not in _s487_seen_files
-        ):
+    for _s487sym in _s487_enter:
+        if _s487sym.file_path not in _s487_seen_files:
             _importers487 = graph.importers_of(_s487sym.file_path)
             if not graph.callers_of(_s487sym.id) and not _importers487:
-                _cls487 = next(
-                    (
-                        s for s in graph.symbols.values()
-                        if s.kind.value == "class" and s.file_path == _s487sym.file_path
-                    ),
-                    None,
-                )
-                if _cls487:
+                # O(1) parent lookup via parent_id (replaces O(N) graph.symbols.values() scan).
+                _cls487 = graph.symbols.get(_s487sym.parent_id)
+                if _cls487 and _cls487.kind.value == "class":
                     _s487_cm_names.append(_cls487.name)
                     _s487_seen_files.add(_s487sym.file_path)
     if _s487_cm_names:
@@ -1250,24 +1241,21 @@ def _patterns_b_cm_event_scans(graph: Tempo, _fn_candidates_40: list, lines: lis
         )
 
 
-def _patterns_b_class_property_scans(graph: Tempo, lines: list[str]) -> None:
-    """S499/S505/S512: dead class methods, property methods, and test utilities (graph symbol scans)."""
+def _patterns_b_class_property_scans(graph: Tempo, lines: list[str], _s499_fn: list, _s505_meth: list) -> None:
+    """S499/S505/S512: dead class methods, property methods, and test utilities (graph symbol scans).
+
+    Receives pre-filtered buckets from _signals_dead_patterns_b file-based precompute:
+    _s499_fn: non-test functions whose parent is a class (for S499).
+    _s505_meth: non-test methods, all non-dunder (for S505 — prefix filter applied here).
+    S512 keeps its own graph.symbols.values() scan (test-file path, ~166 fn/meth in this repo).
+    """
     # S499: Dead class methods — `@classmethod` or `@staticmethod` functions with 0 callers.
     # Parser assigns kind="function" to @classmethod/@staticmethod (not "method")
     # and requires a parent class to distinguish from top-level functions.
-    _s499_dunder_skip = {"__init__", "__str__", "__repr__", "__enter__", "__exit__", "__new__"}
-    _s499_dead_class_methods = []
-    for _sym499 in graph.symbols.values():
-        if (
-            not _is_test_file(_sym499.file_path)
-            and _sym499.kind.value == "function"
-            and _sym499.name not in _s499_dunder_skip
-            and _sym499.parent_id
-            and _sym499.parent_id in graph.symbols
-            and graph.symbols[_sym499.parent_id].kind.value == "class"
-        ):
-            if not graph.callers_of(_sym499.id) and not graph.importers_of(_sym499.file_path):
-                _s499_dead_class_methods.append(_sym499)
+    _s499_dead_class_methods = [
+        sym for sym in _s499_fn
+        if not graph.callers_of(sym.id) and not graph.importers_of(sym.file_path)
+    ]
     if len(_s499_dead_class_methods) >= 2:
         _cm_names499 = ", ".join(s.name for s in _s499_dead_class_methods[:3])
         if len(_s499_dead_class_methods) > 3:
@@ -1281,13 +1269,11 @@ def _patterns_b_class_property_scans(graph: Tempo, lines: list[str]) -> None:
     _s505_prop_prefixes = ("get_", "is_", "has_", "can_", "should_", "needs_")
     _raw_callers505 = getattr(graph, "_callers", {})
     _s505_dead_props = [
-        sym for sym in graph.symbols.values()
-        if not _is_test_file(sym.file_path)
-        and sym.kind.value == "method"
+        sym for sym in _s505_meth
+        if any(sym.name.lower().startswith(p) for p in _s505_prop_prefixes)
         and not graph.callers_of(sym.id)
         and not _raw_callers505.get(sym.id)
         and not graph.importers_of(sym.file_path)
-        and any(sym.name.lower().startswith(p) for p in _s505_prop_prefixes)
     ]
     if len(_s505_dead_props) >= 2:
         _p_names505 = ", ".join(s.name for s in _s505_dead_props[:3])
@@ -1300,13 +1286,14 @@ def _patterns_b_class_property_scans(graph: Tempo, lines: list[str]) -> None:
 
     # S512: Dead test utilities — setup_/teardown_/fixture_ functions with 0 callers in test files.
     _s512_test_util_prefixes = ("setup_", "teardown_", "fixture_", "mock_", "stub_", "fake_", "helper_test")
+    _raw_callers512 = getattr(graph, "_callers", {})
     _s512_dead_test_utils = [
         sym for sym in graph.symbols.values()
         if _is_test_file(sym.file_path)
         and sym.kind.value in ("function", "method")
         and any(sym.name.lower().startswith(p) for p in _s512_test_util_prefixes)
         and not graph.callers_of(sym.id)
-        and not getattr(graph, "_callers", {}).get(sym.id)
+        and not _raw_callers512.get(sym.id)
     ]
     if len(_s512_dead_test_utils) >= 2:
         _tu_names512 = ", ".join(s.name for s in _s512_dead_test_utils[:3])
@@ -1329,12 +1316,35 @@ def _signals_dead_patterns_b(graph: Tempo, scored: list[tuple[Symbol, int]], dea
         and sym.kind.value in ("function", "method")
     ]
     _fn_candidates_40 = [(sym, conf) for sym, conf in _fn_candidates if conf >= 40]
+
+    # File-based precompute for S487/S499/S505: iterate only non-test files (1638 symbols vs 7142 total).
+    # Replaces 3 separate graph.symbols.values() full-corpus scans with 1 file-indexed pass.
+    # S512 keeps its own scan (test-file path, ~166 fn/meth; precomputing it costs more than the scan).
+    _s499_dunder_skip = {"__init__", "__str__", "__repr__", "__enter__", "__exit__", "__new__"}
+    _s487_enter: list = []   # non-test __enter__ methods (for S487)
+    _s499_fn: list = []       # non-test functions with parent class (for S499)
+    _s505_meth: list = []     # non-test methods (for S505 — prefix filter applied in helper)
+    for fp in graph.files:
+        if _is_test_file(fp):
+            continue
+        for _sym in graph.symbols_in_file(fp):
+            _k = _sym.kind.value
+            if _k == "method":
+                if _sym.name == "__enter__":
+                    _s487_enter.append(_sym)
+                else:
+                    _s505_meth.append(_sym)
+            elif _k == "function" and _sym.name not in _s499_dunder_skip and _sym.parent_id:
+                _parent = graph.symbols.get(_sym.parent_id)
+                if _parent and _parent.kind.value == "class":
+                    _s499_fn.append(_sym)
+
     _patterns_b_creation_ops(_fn_candidates, lines)
     _patterns_b_validation_tasks(_fn_candidates, lines)
     _patterns_b_infra_patterns(_fn_candidates, lines)
     _patterns_b_data_lifecycle(_fn_candidates, lines)
-    _patterns_b_cm_event_scans(graph, _fn_candidates_40, lines)
-    _patterns_b_class_property_scans(graph, lines)
+    _patterns_b_cm_event_scans(graph, _fn_candidates_40, lines, _s487_enter)
+    _patterns_b_class_property_scans(graph, lines, _s499_fn, _s505_meth)
 
 
 def _typed_a_precompute(graph: Tempo) -> tuple[list, list, list, list]:
