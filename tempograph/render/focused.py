@@ -1748,7 +1748,45 @@ def _build_callees_block(
         callee_strs.append(f"{c.qualified_name}{_cx_ann}{_hot_ann}{_cb_ann}{_sole_ann}{_recursive_ann}{_untested_ann}")
     lines.append(f"{indent}  calls: {', '.join(callee_strs)}")
     if len(callees) > shown:
-        lines[-1] += f" (+{len(callees) - shown} more)"
+        # S68: enrich overflow label with hidden-callee attribute summary (depth=0 only).
+        # "(+25 more)" tells agents nothing. "(+25 more: 14 sole-use, 11 untested)" tells them
+        # whether the hidden tail is full of private helpers / test blind spots worth digging into.
+        if depth == 0:
+            _hidden_cs = (hot_callees + cold_callees)[shown:]
+            _h_hot = [
+                c for c in _hidden_cs
+                if c.file_path in graph.hot_files and not _is_test_file(c.file_path)
+            ]
+            _h_sole: list = []
+            _h_unt: list = []
+            for _hc68 in _hidden_cs:
+                if _hc68.kind.value in ("function", "method"):
+                    _hc68_prod = [
+                        cr for cr in graph.callers_of(_hc68.id)
+                        if not _is_test_file(cr.file_path)
+                    ]
+                    if len(_hc68_prod) == 1 and _hc68_prod[0].id == sym.id:
+                        _h_sole.append(_hc68)
+                    if (
+                        _seed_is_tested
+                        and not _is_test_file(_hc68.file_path)
+                        and not any(_is_test_file(cr.file_path) for cr in graph.callers_of(_hc68.id))
+                    ):
+                        _h_unt.append(_hc68)
+            _h_parts: list[str] = []
+            if _h_hot:
+                _h_parts.append(f"{len(_h_hot)} hot")
+            if _h_sole:
+                _h_parts.append(f"{len(_h_sole)} sole-use")
+            if _h_unt:
+                _h_parts.append(f"{len(_h_unt)} untested")
+            _overflow68 = f" (+{len(_hidden_cs)} more"
+            if _h_parts:
+                _overflow68 += f": {', '.join(_h_parts)}"
+            _overflow68 += ")"
+            lines[-1] += _overflow68
+        else:
+            lines[-1] += f" (+{len(callees) - shown} more)"
     # S54: recursive summary — fire once when seed calls itself, at depth=0 only.
     if depth == 0 and any(c.id == sym.id for c in callees):
         lines.append(f"{indent}  \u21b3 recursive \u2014 self-referential; verify base case before modifying")
