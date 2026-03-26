@@ -3027,3 +3027,94 @@ class TestHiddenCalleeSummary:
         calls_line = "\n".join(result)
 
         assert "more" not in calls_line, f"No overflow expected for 8 callees; got:\n{calls_line}"
+
+
+class TestPairedFunctions:
+    """Tests for _compute_paired_functions: S69 paired operation detection."""
+
+    def _fn(self, name, file_path="app/core.py", kind=SymbolKind.FUNCTION, parent_id=None):
+        sym = Symbol(
+            id=f"{file_path}::{name}",
+            name=name,
+            qualified_name=name,
+            kind=kind,
+            language=Language.PYTHON,
+            file_path=file_path,
+            line_start=10,
+            line_end=30,
+            exported=True,
+        )
+        if parent_id:
+            object.__setattr__(sym, "parent_id", parent_id)
+        return sym
+
+    def test_fires_when_complement_absent_from_bfs(self, tmp_path):
+        """Seed 'start_worker', complement 'stop_worker' exists but not in BFS."""
+        from tempograph.render.focused import _compute_paired_functions
+
+        seed = self._fn("start_worker", "app/core.py")
+        stop = self._fn("stop_worker", "app/core.py")
+        graph = _make_graph(tmp_path, edges=[], symbols=[seed, stop])
+
+        result = _compute_paired_functions(graph, [seed], seen_ids={seed.id})
+        assert "paired op" in result, f"Expected paired op signal; got: {result!r}"
+        assert "stop_worker" in result, f"Expected stop_worker in output; got: {result!r}"
+        assert "not in BFS" in result, f"Expected 'not in BFS' in output; got: {result!r}"
+
+    def test_silent_when_complement_already_in_bfs(self, tmp_path):
+        """Seed 'start_worker', complement 'stop_worker' IS in seen_ids → silent."""
+        from tempograph.render.focused import _compute_paired_functions
+
+        seed = self._fn("start_worker", "app/core.py")
+        stop = self._fn("stop_worker", "app/core.py")
+        graph = _make_graph(tmp_path, edges=[], symbols=[seed, stop])
+
+        result = _compute_paired_functions(graph, [seed], seen_ids={seed.id, stop.id})
+        assert result == "", f"Should be silent when complement in BFS; got: {result!r}"
+
+    def test_silent_when_complement_not_in_graph(self, tmp_path):
+        """Seed 'start_worker' but no 'stop_worker' in graph → silent."""
+        from tempograph.render.focused import _compute_paired_functions
+
+        seed = self._fn("start_worker", "app/core.py")
+        graph = _make_graph(tmp_path, edges=[], symbols=[seed])
+
+        result = _compute_paired_functions(graph, [seed], seen_ids={seed.id})
+        assert result == "", f"Should be silent when complement absent from graph; got: {result!r}"
+
+    def test_prefers_same_class_method(self, tmp_path):
+        """For class methods, same-class complement preferred over cross-file."""
+        from tempograph.render.focused import _compute_paired_functions
+
+        parent_id = "app/svc.py::Service"
+        seed = self._fn("enable", "app/svc.py", kind=SymbolKind.METHOD, parent_id=parent_id)
+        # Correct complement: same class
+        class_disable = self._fn("disable", "app/svc.py", kind=SymbolKind.METHOD, parent_id=parent_id)
+        # Also exists in another file (should not be preferred)
+        other_disable = self._fn("disable", "utils/misc.py")
+        graph = _make_graph(tmp_path, edges=[], symbols=[seed, class_disable, other_disable])
+
+        result = _compute_paired_functions(graph, [seed], seen_ids={seed.id})
+        assert "svc.py" in result, f"Should prefer same-class complement; got: {result!r}"
+        assert "misc.py" not in result, f"Should not prefer cross-file; got: {result!r}"
+
+    def test_multiple_antonym_pairs(self, tmp_path):
+        """Seed 'open_connection', complement 'close_connection' → fires."""
+        from tempograph.render.focused import _compute_paired_functions
+
+        seed = self._fn("open_connection", "db/pool.py")
+        close = self._fn("close_connection", "db/pool.py")
+        graph = _make_graph(tmp_path, edges=[], symbols=[seed, close])
+
+        result = _compute_paired_functions(graph, [seed], seen_ids={seed.id})
+        assert "close_connection" in result, f"Expected close_connection; got: {result!r}"
+
+    def test_no_pair_word_in_name(self, tmp_path):
+        """Seed 'process_data' has no antonym word → silent."""
+        from tempograph.render.focused import _compute_paired_functions
+
+        seed = self._fn("process_data", "app/core.py")
+        graph = _make_graph(tmp_path, edges=[], symbols=[seed])
+
+        result = _compute_paired_functions(graph, [seed], seen_ids={seed.id})
+        assert result == "", f"No antonym word → should be silent; got: {result!r}"

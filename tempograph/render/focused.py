@@ -4989,6 +4989,109 @@ def _signals_focused_fn_advanced(
     return lines
 
 
+_PAIR_ANTONYMS: tuple[tuple[str, str], ...] = (
+    ("start", "stop"),
+    ("open", "close"),
+    ("create", "destroy"),
+    ("create", "delete"),
+    ("acquire", "release"),
+    ("begin", "end"),
+    ("connect", "disconnect"),
+    ("lock", "unlock"),
+    ("push", "pop"),
+    ("encode", "decode"),
+    ("serialize", "deserialize"),
+    ("encrypt", "decrypt"),
+    ("load", "unload"),
+    ("register", "unregister"),
+    ("enable", "disable"),
+    ("add", "remove"),
+    ("enter", "exit"),
+    ("subscribe", "unsubscribe"),
+    ("activate", "deactivate"),
+    ("attach", "detach"),
+    ("bind", "unbind"),
+    ("mount", "unmount"),
+    ("watch", "unwatch"),
+    ("run", "stop"),
+)
+
+
+def _compute_paired_functions(
+    graph: "Tempo",
+    seeds: "list[Symbol]",
+    seen_ids: "set[str]",
+) -> str:
+    """S69: Paired function detection — complement operations absent from BFS.
+
+    Functions come in semantic pairs: start/stop, open/close, acquire/release.
+    When you focus on one half, the complement is invisible unless BFS happened
+    to include it. This fires only when the complement EXISTS but is NOT in BFS —
+    the exact gap where agents forget the cleanup or symmetric counterpart.
+
+    Prefers same-class match (for methods), then same-file, then any file.
+    Only triggers for function/method symbols. Silent when both sides are already
+    in BFS (no noise if the pair is already visible).
+    """
+    if not seeds:
+        return ""
+
+    by_name: dict[str, list] = {}
+    for sym in graph.symbols.values():
+        if sym.kind.value not in ("function", "method"):
+            continue
+        by_name.setdefault(sym.name.lower(), []).append(sym)
+
+    found_pairs: list[tuple] = []
+
+    for seed in seeds:
+        parts = seed.name.lower().split("_")
+        seen_complements: set[str] = set()
+
+        for a, b in _PAIR_ANTONYMS:
+            if a in parts:
+                new_parts = list(parts)
+                new_parts[parts.index(a)] = b
+                swap = "_".join(new_parts)
+            elif b in parts:
+                new_parts = list(parts)
+                new_parts[parts.index(b)] = a
+                swap = "_".join(new_parts)
+            else:
+                continue
+
+            if swap == seed.name.lower() or swap in seen_complements:
+                continue
+            seen_complements.add(swap)
+
+            candidates = [c for c in by_name.get(swap, []) if c.id not in seen_ids]
+            if not candidates:
+                continue
+
+            same_class = [c for c in candidates if seed.parent_id and c.parent_id == seed.parent_id]
+            same_file = [c for c in candidates if c.file_path == seed.file_path]
+            best = (same_class or same_file or candidates)[0]
+            found_pairs.append((seed, best))
+
+    if not found_pairs:
+        return ""
+
+    seen_comp_ids: set[str] = set()
+    parts_out: list[str] = []
+    for _seed, comp in found_pairs:
+        if comp.id in seen_comp_ids:
+            continue
+        seen_comp_ids.add(comp.id)
+        comp_file = comp.file_path.rsplit("/", 1)[-1]
+        short_id = comp.id.rsplit("::", 1)[-1] if "::" in comp.id else comp.name
+        parts_out.append(f"{short_id} ({comp_file}:L{comp.line_start})")
+
+    if not parts_out:
+        return ""
+
+    label = "paired op" if len(parts_out) == 1 else "paired ops"
+    return f"↳ {label}: {', '.join(parts_out)} — not in BFS"
+
 
 def _compute_change_exposure(graph: "Tempo", seeds: "list[Symbol]") -> str:
     """One-line change risk synthesizer.
@@ -5314,6 +5417,10 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     _scope_note = _compute_bfs_scope_note(ordered)
     if _scope_note:
         lines.append(_scope_note)
+        lines.append("")
+    _pair_note = _compute_paired_functions(graph, seeds, seen_ids)
+    if _pair_note:
+        lines.append(_pair_note)
         lines.append("")
     seen_files: set[str] = set()
     token_count = 0
