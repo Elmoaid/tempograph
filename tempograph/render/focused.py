@@ -5189,6 +5189,47 @@ def _compute_bfs_scope_note(ordered: "list[tuple[Symbol, int]]") -> str:
     )
 
 
+def _compute_dead_seed_note(graph: "Tempo", seeds: "list[Symbol]") -> str:
+    """S67: Dead seed annotation — fires when the focus seed itself is a dead candidate.
+
+    Running focus on dead code is the meta-error nobody catches: you get a full BFS expansion
+    of callees, coverage gaps, upstream reach — all analyzing something nobody calls.
+    This fires early (before BFS blocks) so agents can recalibrate before reading further.
+
+    Condition: ≥1 seed has dead_code_confidence ≥ 50.
+    Threshold 50 = at minimum: no callers (+30) + no file importers (+25) — a truly isolated symbol.
+    Test-file seeds are excluded by _dead_code_confidence (-50 penalty).
+
+    For multi-seed focus, only dead-candidate seeds are named individually.
+    Single-seed case omits the name (already shown in the Focus header).
+    """
+    dead_seeds: list[tuple[Symbol, int]] = []
+    for sym in seeds:
+        # Skip symbols in entry-point scripts: files with no importers are standalone runners
+        # (main.py, analyze.py, etc.) — they're not called from code, so "no callers" is expected.
+        if not graph.importers_of(sym.file_path):
+            continue
+        conf = _dead_code_confidence(sym, graph)
+        if conf >= 50:
+            dead_seeds.append((sym, conf))
+
+    if not dead_seeds:
+        return ""
+
+    if len(dead_seeds) == 1 and len(seeds) == 1:
+        _, conf = dead_seeds[0]
+        return (
+            f"↳ dead candidate: no callers (confidence: {conf}%)"
+            f" — verify intent; full analysis in dead_code mode"
+        )
+
+    parts = ", ".join(f"{sym.name} ({conf}%)" for sym, conf in dead_seeds)
+    return (
+        f"↳ dead candidates: {parts}"
+        f" — these seeds have no callers; verify intent; full analysis in dead_code mode"
+    )
+
+
 def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     """Task-focused rendering with BFS graph traversal.
     Starts from search results, then follows call/render/import edges
@@ -5212,6 +5253,10 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     if _depth_extended:
         _focus_header += f"  [depth +1 — sparse ({len(ordered)} nodes)]"
     lines = [_focus_header, ""]
+    _dead_note = _compute_dead_seed_note(graph, seeds)
+    if _dead_note:
+        lines.append(_dead_note)
+        lines.append("")
     _exposure = _compute_change_exposure(graph, seeds)
     if _exposure:
         lines.append(_exposure)
