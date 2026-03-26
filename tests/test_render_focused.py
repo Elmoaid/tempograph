@@ -2728,3 +2728,141 @@ class TestBfsScopeNote:
         assert "hub BFS" in result
         assert "20" in result  # depth-1 count
         assert "depth=3 cut" in result
+
+
+class TestDeadSeedNote:
+    """Tests for _compute_dead_seed_note: S67 dead seed annotation."""
+
+    def _fn(self, name, file_path="app/lib.py", exported=True, line_end=60):
+        # line_end=60 → line_count=60 > 50 → +15 size bonus in _dead_code_confidence.
+        # Without size bonus: +30 (no callers) +10 (no renderers) = 40 < threshold.
+        # With size bonus: 40+15 = 55 ≥ 50 → fires correctly.
+        return Symbol(
+            id=f"{file_path}::{name}",
+            name=name,
+            qualified_name=name,
+            kind=SymbolKind.FUNCTION,
+            language=Language.PYTHON,
+            file_path=file_path,
+            line_start=1,
+            line_end=line_end,
+            exported=exported,
+        )
+
+    def _graph_with_importer(self, tmp_path, seed, caller=None):
+        """Build graph where seed's file has an importer (library file, not entry script)."""
+        importer_sym = self._fn("main_fn", "app/main.py")
+        edges = [
+            Edge(kind=EdgeKind.IMPORTS, source_id="app/main.py", target_id=seed.file_path),
+        ]
+        if caller:
+            edges.append(Edge(kind=EdgeKind.CALLS, source_id=caller.id, target_id=seed.id))
+        symbols = [seed, importer_sym]
+        if caller:
+            symbols.append(caller)
+        return _make_graph(tmp_path, edges=edges, symbols=symbols)
+
+    def _graph_no_importer(self, tmp_path, seed):
+        """Build graph where seed's file has no importers (entry script)."""
+        return _make_graph(tmp_path, edges=[], symbols=[seed])
+
+    def test_fires_for_orphan_in_imported_file(self, tmp_path):
+        """Dead seed in an imported file: no callers + file has importers → fires."""
+        from tempograph.render.focused import _compute_dead_seed_note
+
+        seed = self._fn("process_old_data", "app/lib.py")
+        graph = self._graph_with_importer(tmp_path, seed)
+        result = _compute_dead_seed_note(graph, [seed])
+        assert "dead candidate" in result, f"Expected dead candidate signal; got: {result!r}"
+        assert "confidence" in result, f"Expected confidence score; got: {result!r}"
+        assert "dead_code mode" in result, f"Expected dead_code mode hint; got: {result!r}"
+
+    def test_silent_for_entry_script(self, tmp_path):
+        """Seed in a file with no importers (entry script) → annotation suppressed."""
+        from tempograph.render.focused import _compute_dead_seed_note
+
+        seed = self._fn("main", "scripts/run.py")
+        graph = self._graph_no_importer(tmp_path, seed)
+        result = _compute_dead_seed_note(graph, [seed])
+        assert result == "", f"Entry script should be silent; got: {result!r}"
+
+    def test_silent_for_active_symbol_with_callers(self, tmp_path):
+        """Seed with callers → annotation suppressed regardless of file import status."""
+        from tempograph.render.focused import _compute_dead_seed_note
+
+        seed = self._fn("active_fn", "app/lib.py")
+        caller = self._fn("do_work", "app/main.py")
+        graph = self._graph_with_importer(tmp_path, seed, caller=caller)
+        result = _compute_dead_seed_note(graph, [seed])
+        assert result == "", f"Active symbol should be silent; got: {result!r}"
+
+    def test_silent_for_test_file_seed(self, tmp_path):
+        """Seed in a test file → annotation suppressed (test runner calls it, not code)."""
+        from tempograph.render.focused import _compute_dead_seed_note
+
+        seed = self._fn("test_something", "tests/test_lib.py")
+        importer = self._fn("runner", "conftest.py")
+        edges = [Edge(kind=EdgeKind.IMPORTS, source_id="conftest.py", target_id="tests/test_lib.py")]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, importer])
+        result = _compute_dead_seed_note(graph, [seed])
+        assert result == "", f"Test file seed should be silent; got: {result!r}"
+
+    def test_multi_seed_names_dead_candidates(self, tmp_path):
+        """Multi-seed: one dead, one active → names only the dead seed."""
+        from tempograph.render.focused import _compute_dead_seed_note
+
+        dead_seed = self._fn("old_util", "app/lib.py")
+        active_seed = self._fn("build_graph", "app/core.py")
+        caller = self._fn("caller_fn", "app/main.py")
+        edges = [
+            Edge(kind=EdgeKind.IMPORTS, source_id="app/main.py", target_id="app/lib.py"),
+            Edge(kind=EdgeKind.IMPORTS, source_id="app/main.py", target_id="app/core.py"),
+            Edge(kind=EdgeKind.CALLS, source_id=caller.id, target_id=active_seed.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[dead_seed, active_seed, caller])
+        result = _compute_dead_seed_note(graph, [dead_seed, active_seed])
+        assert "dead candidate" in result, f"Expected dead candidate signal; got: {result!r}"
+        assert "old_util" in result, f"Expected dead seed name in result; got: {result!r}"
+
+    def test_single_seed_format_omits_name(self, tmp_path):
+        """Single dead seed → format omits the name (already in Focus header)."""
+        from tempograph.render.focused import _compute_dead_seed_note
+
+        seed = self._fn("orphan_fn", "app/lib.py")
+        graph = self._graph_with_importer(tmp_path, seed)
+        result = _compute_dead_seed_note(graph, [seed])
+        # Single seed format: "↳ dead candidate: no callers (confidence: NN%)"
+        # The name is NOT included (it's already in the "Focus:" header)
+        assert "orphan_fn" not in result, f"Single seed should omit name; got: {result!r}"
+        assert "no callers" in result, f"Expected 'no callers' in message; got: {result!r}"
+
+    def test_integration_dead_seed_in_render_focused(self, tmp_path):
+        """Integration: render_focused includes dead seed annotation when seed is orphan."""
+        from tempograph.render.focused import render_focused
+
+        seed = self._fn("orphan_fn", "app/lib.py", line_end=60)  # large enough for +15
+        importer = self._fn("main_fn", "app/main.py")
+        edges = [Edge(kind=EdgeKind.IMPORTS, source_id="app/main.py", target_id="app/lib.py")]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, importer])
+
+        output = render_focused(graph, "orphan_fn")
+        assert "dead candidate" in output, (
+            f"render_focused should include dead seed annotation; got:\n{output[:500]}"
+        )
+
+    def test_integration_no_annotation_for_active_symbol(self, tmp_path):
+        """Integration: render_focused has no dead annotation for a symbol with callers."""
+        from tempograph.render.focused import render_focused
+
+        seed = self._fn("active_fn", "app/lib.py")
+        caller = self._fn("do_work", "app/main.py")
+        edges = [
+            Edge(kind=EdgeKind.IMPORTS, source_id="app/main.py", target_id="app/lib.py"),
+            Edge(kind=EdgeKind.CALLS, source_id=caller.id, target_id=seed.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, caller])
+
+        output = render_focused(graph, "active_fn")
+        assert "dead candidate" not in output, (
+            f"Active symbol should have no dead annotation; got:\n{output[:300]}"
+        )
