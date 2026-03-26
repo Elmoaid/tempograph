@@ -797,11 +797,8 @@ def _compute_callee_depth_anns(
     graph: "Tempo",
 ) -> tuple[str, str]:
     """Compute callee-count and callee-depth annotation strings for the depth-0 header."""
-    _callee_ids = {
-        e.target_id for e in graph.edges
-        if e.kind == EdgeKind.CALLS and e.source_id == sym.id
-    }
-    callee_ann = f" [calls: {len(_callee_ids)}]" if len(_callee_ids) >= 5 else ""
+    _direct_callees = graph.callees_of(sym.id)
+    callee_ann = f" [calls: {len(_direct_callees)}]" if len(_direct_callees) >= 5 else ""
     _bfs_q: list[tuple[str, int]] = [(sym.id, 0)]
     _bfs_seen: set[str] = {sym.id}
     _max_callee_depth = 0
@@ -811,10 +808,10 @@ def _compute_callee_depth_anns(
             _max_callee_depth = _cur_lvl
         if _cur_lvl >= 8:
             continue
-        for _e in graph.edges:
-            if _e.kind == EdgeKind.CALLS and _e.source_id == _cur_id and _e.target_id not in _bfs_seen:
-                _bfs_seen.add(_e.target_id)
-                _bfs_q.append((_e.target_id, _cur_lvl + 1))
+        for _callee in graph.callees_of(_cur_id):
+            if _callee.id not in _bfs_seen:
+                _bfs_seen.add(_callee.id)
+                _bfs_q.append((_callee.id, _cur_lvl + 1))
     depth_ann = f" [callee depth: {_max_callee_depth}]" if _max_callee_depth >= 3 else ""
     return callee_ann, depth_ann
 
@@ -904,18 +901,12 @@ def _compute_recursion_label(
     """Detect self or mutual recursion; return the annotation label string."""
     if sym.kind.value not in ("function", "method"):
         return ""
-    _seed_callee_ids = {
-        e.target_id for e in graph.edges
-        if e.kind == EdgeKind.CALLS and e.source_id == sym.id
-    }
+    _seed_callees = graph.callees_of(sym.id)
+    _seed_callee_ids = {c.id for c in _seed_callees}
     if sym.id in _seed_callee_ids:
         return "[recursive]"
-    for _callee_s in graph.callees_of(sym.id)[:10]:
-        _callee_callees = {
-            e.target_id for e in graph.edges
-            if e.kind == EdgeKind.CALLS and e.source_id == _callee_s.id
-        }
-        if sym.id in _callee_callees:
+    for _callee_s in _seed_callees[:10]:
+        if sym.id in {c.id for c in graph.callees_of(_callee_s.id)}:
             return f"[recursive: mutual with {_callee_s.name}]"
     return ""
 
@@ -2817,18 +2808,21 @@ def _signals_focused_coupling_hidden(
     if graph.root:
         try:
             from ..git import cochange_pairs as _cp, is_git_repo as _igr
-            from ..types import EdgeKind as _EK
             if _igr(graph.root):
                 _seed_fp = _prim.file_path
                 _static_neighbors: set[str] = set()
-                for _e in graph.edges:
-                    if _e.kind in (_EK.CALLS, _EK.IMPORTS):
-                        _src = _e.source_id.split("::")[0]
-                        _tgt = _e.target_id.split("::")[0]
-                        if _src == _seed_fp:
-                            _static_neighbors.add(_tgt)
-                        elif _tgt == _seed_fp:
-                            _static_neighbors.add(_src)
+                # CALLS: use indexed per-symbol lookups (O(k) vs O(30K edge scan))
+                for _s in graph.symbols_in_file(_seed_fp):
+                    for _c in graph.callees_of(_s.id):
+                        _static_neighbors.add(_c.file_path)
+                    for _c in graph.callers_of(_s.id):
+                        _static_neighbors.add(_c.file_path)
+                # IMPORTS: use reverse-indexed file-level lookup
+                _static_neighbors.update(graph.importers_of(_seed_fp))
+                _static_neighbors.update(
+                    _fp for _fp, _imp_list in graph._importers.items()
+                    if _seed_fp in _imp_list
+                )
                 _pairs = _cp(graph.root, _seed_fp, n=10)
                 _hidden = [
                     p for p in _pairs
