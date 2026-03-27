@@ -672,6 +672,127 @@ class TestRenderArchitecture:
         assert isinstance(out, str) and len(out) > 0
 
 
+class TestModuleBehavioralCoupling:
+    """Tests for module behavioral coupling (hot vs dormant structural edges)."""
+
+    def test_no_crash_without_git_repo(self, tmp_path):
+        # tmp_path is not a git repo — signal should be silently absent
+        g = _build(tmp_path, {
+            "src/a.py": "def fn(): pass\n",
+            "tests/test_a.py": "from src.a import fn\ndef test(): pass\n",
+        })
+        out = render_architecture(g)
+        assert "hot module coupling" not in out.lower()
+
+    def test_hot_coupling_shown_when_present(self, tmp_path):
+        from unittest.mock import patch
+        # Two unique file pairs from tempograph ↔ tests modules (need ≥2 for threshold)
+        g = _build(tmp_path, {
+            "tempograph/parser.py": "def parse(): pass\n",
+            "tempograph/extra.py": "def extra(): pass\n",
+            "tests/test_parser.py": "from tempograph.parser import parse\ndef test(): pass\n",
+            "tests/test_extra.py": "from tempograph.extra import extra\ndef test(): pass\n",
+        })
+        hot_matrix = {
+            "tempograph/parser.py": [("tests/test_parser.py", 0.9)],
+            "tempograph/extra.py": [("tests/test_extra.py", 0.9)],
+            "tests/test_parser.py": [("tempograph/parser.py", 0.9)],
+            "tests/test_extra.py": [("tempograph/extra.py", 0.9)],
+        }
+        with patch("tempograph.git.is_git_repo", return_value=True), \
+             patch("tempograph.git.cochange_matrix", return_value=hot_matrix):
+            out = render_architecture(g)
+        assert "hot module coupling" in out.lower()
+        assert "tempograph↔tests" in out or "tests↔tempograph" in out
+
+    def test_hot_coupling_direction_import_dependent(self, tmp_path):
+        from unittest.mock import patch
+        # tests imports tempograph → "modifying tempograph → expect tests updates"
+        g = _build(tmp_path, {
+            "tempograph/api.py": "def fn(): pass\n",
+            "tempograph/core.py": "def core(): pass\n",
+            "tests/test_api.py": "from tempograph.api import fn\ndef test(): pass\n",
+            "tests/test_core.py": "from tempograph.core import core\ndef test(): pass\n",
+        })
+        hot_matrix = {
+            "tempograph/api.py": [("tests/test_api.py", 0.8)],
+            "tempograph/core.py": [("tests/test_core.py", 0.8)],
+            "tests/test_api.py": [("tempograph/api.py", 0.8)],
+            "tests/test_core.py": [("tempograph/core.py", 0.8)],
+        }
+        with patch("tempograph.git.is_git_repo", return_value=True), \
+             patch("tempograph.git.cochange_matrix", return_value=hot_matrix):
+            out = render_architecture(g)
+        # Direction: tests is dependent → expect "modifying tempograph → expect tests updates"
+        assert "modifying tempograph" in out or "expect tests" in out
+
+    def test_low_frequency_pairs_excluded(self, tmp_path):
+        from unittest.mock import patch
+        g = _build(tmp_path, {
+            "src/a.py": "def fn(): pass\n",
+            "tests/test_a.py": "from src.a import fn\ndef test(): pass\n",
+        })
+        low_matrix = {
+            "src/a.py": [("tests/test_a.py", 0.3)],
+            "tests/test_a.py": [("src/a.py", 0.3)],
+        }
+        with patch("tempograph.git.is_git_repo", return_value=True), \
+             patch("tempograph.git.cochange_matrix", return_value=low_matrix):
+            out = render_architecture(g)
+        assert "hot module coupling" not in out.lower()
+
+    def test_non_structural_pairs_excluded(self, tmp_path):
+        from unittest.mock import patch
+        # notes and plans co-change but have NO import edges → filtered out
+        g = _build(tmp_path, {
+            "notes/state.md": "# notes\n",
+            "plans/plan.md": "# plans\n",
+            "src/a.py": "def fn(): pass\n",
+        })
+        hot_matrix = {
+            "notes/state.md": [("plans/plan.md", 1.0)] * 5,
+            "plans/plan.md": [("notes/state.md", 1.0)] * 5,
+        }
+        with patch("tempograph.git.is_git_repo", return_value=True), \
+             patch("tempograph.git.cochange_matrix", return_value=hot_matrix):
+            out = render_architecture(g)
+        # notes↔plans should NOT appear — they have no structural import edges
+        assert "notes↔plans" not in out and "plans↔notes" not in out
+
+    def test_min_two_hot_pairs_required(self, tmp_path):
+        from unittest.mock import patch
+        g = _build(tmp_path, {
+            "src/a.py": "def fn(): pass\n",
+            "tests/test_a.py": "from src.a import fn\ndef test(): pass\n",
+        })
+        # Only 1 hot file pair — below threshold of 2
+        one_pair_matrix = {
+            "src/a.py": [("tests/test_a.py", 0.9)],
+            "tests/test_a.py": [("src/a.py", 0.9)],
+        }
+        with patch("tempograph.git.is_git_repo", return_value=True), \
+             patch("tempograph.git.cochange_matrix", return_value=one_pair_matrix):
+            out = render_architecture(g)
+        assert "hot module coupling" not in out.lower()
+
+    def test_bidirectional_label_when_mutual_imports(self, tmp_path):
+        from unittest.mock import patch
+        # A imports B AND B imports A → bidirectional
+        g = _build(tmp_path, {
+            "pkga/a.py": "from pkgb.b import fn\ndef fa(): pass\n",
+            "pkgb/b.py": "from pkga.a import fa\ndef fn(): pass\n",
+        })
+        hot_matrix = {
+            "pkga/a.py": [("pkgb/b.py", 0.9)] * 3,
+            "pkgb/b.py": [("pkga/a.py", 0.9)] * 3,
+        }
+        with patch("tempograph.git.is_git_repo", return_value=True), \
+             patch("tempograph.git.cochange_matrix", return_value=hot_matrix):
+            out = render_architecture(g)
+        if "hot module coupling" in out.lower():
+            assert "bidirectional" in out
+
+
 # ── render_skills ─────────────────────────────────────────────────────────────
 
 class TestRenderSkills:

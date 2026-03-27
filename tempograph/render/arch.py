@@ -147,6 +147,68 @@ def render_architecture(graph: Tempo) -> str:
             _hubs.sort(key=lambda x: -x[0])
             _hub_parts = [f"{m} ({n_mods} dependents, {n_edges} edges)" for n_edges, n_mods, m in _hubs[:2]]
             lines.append(f"Hub modules: {', '.join(_hub_parts)} — high change risk")
+
+        # S-NEW: Module behavioral coupling — which structural edges are HOT (frequent co-change).
+        # Structural coupling (imports) is visible. But two modules can import each other and
+        # NEVER evolve together (dormant coupling). Or they can import + co-change at ≥50%
+        # frequency (live coupling). This signal reveals the LIVE ones — where modifying one
+        # module reliably triggers commits in the other.
+        # Only shown for module pairs that have structural import edges (filters out docs/notes).
+        _mod_coupling: dict[tuple[str, str], int] = {}
+        if graph.root:
+            try:
+                from ..git import cochange_matrix as _bc_cm, is_git_repo as _bc_igr
+                if _bc_igr(graph.root):
+                    _bc_matrix = _bc_cm(graph.root, n_commits=200)
+                    _bc_seen: set[tuple[str, str]] = set()  # deduplicate symmetric pairs
+                    for _bc_fp, _bc_partners in _bc_matrix.items():
+                        _bc_src_parts = _bc_fp.replace("\\", "/").split("/")
+                        _bc_src_mod = _bc_src_parts[0] if len(_bc_src_parts) > 1 else "."
+                        if _bc_fp not in graph.files:
+                            continue
+                        for _bc_partner, _bc_freq in _bc_partners:
+                            if _bc_freq < 0.5 or _bc_partner not in graph.files:
+                                continue
+                            _bc_tgt_parts = _bc_partner.replace("\\", "/").split("/")
+                            _bc_tgt_mod = _bc_tgt_parts[0] if len(_bc_tgt_parts) > 1 else "."
+                            if _bc_src_mod == _bc_tgt_mod:
+                                continue
+                            _bc_fp_key = tuple(sorted([_bc_fp, _bc_partner]))
+                            if _bc_fp_key in _bc_seen:
+                                continue
+                            _bc_seen.add(_bc_fp_key)
+                            _bc_key = tuple(sorted([_bc_src_mod, _bc_tgt_mod]))
+                            _mod_coupling[_bc_key] = _mod_coupling.get(_bc_key, 0) + 1
+            except Exception:
+                pass
+
+        # Filter: only show pairs where BOTH modules are in the structural import graph.
+        # This excludes docs/notes directories that co-change but have no import edges.
+        _all_dep_mods: set[str] = set()
+        for _dep_src in all_deps:
+            _all_dep_mods.add(_dep_src)
+            for _dep_tgt in all_deps[_dep_src]:
+                _all_dep_mods.add(_dep_tgt)
+        _hot_pairs = [
+            (k, v) for k, v in _mod_coupling.items()
+            if v >= 2 and k[0] in _all_dep_mods and k[1] in _all_dep_mods
+        ]
+        if _hot_pairs:
+            _hot_pairs.sort(key=lambda x: -x[1])
+            lines.append("\nHot module coupling (co-change ≥50%):")
+            for (_hp_a, _hp_b), _hp_count in _hot_pairs[:4]:
+                _a_to_b = bool(all_deps.get(_hp_a, {}).get(_hp_b))
+                _b_to_a = bool(all_deps.get(_hp_b, {}).get(_hp_a))
+                if _a_to_b and not _b_to_a:
+                    _direction = f"modifying {_hp_b} → expect {_hp_a} updates"
+                elif _b_to_a and not _a_to_b:
+                    _direction = f"modifying {_hp_a} → expect {_hp_b} updates"
+                else:
+                    _direction = "bidirectional — changes in either often require updates in both"
+                lines.append(f"  {_hp_a}↔{_hp_b}: {_hp_count} hot file pairs — {_direction}")
+            _hp_overflow = len(_hot_pairs) - 4
+            if _hp_overflow > 0:
+                lines.append(f"  +{_hp_overflow} more hot module couplings")
     else:
         lines.append("No cross-module dependencies detected.")
 
