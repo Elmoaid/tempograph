@@ -482,6 +482,15 @@ tempograph-server
 | `learn_recommendation` | `repo_path` | Data-driven mode suggestions based on feedback history |
 | `report_feedback` | `repo_path`, `mode`, `helpful`, `note` | Log whether a tool's output was useful (feeds learn engine) |
 
+| `search_semantic` | `repo_path`, `query` | Hybrid semantic+structural symbol search (FTS5 + sqlite-vec + ranking) |
+| `cochange_context` | `repo_path`, `file_path` | Git-correlated speculative context — files that historically change together |
+| `suggest_next` | `repo_path` | Markov-chain next-mode prediction from usage history |
+| `run_kit` | `repo_path`, `kit_name` | Run a composable multi-mode workflow (5 built-in + custom) |
+| `watch_repo` / `unwatch_repo` | `repo_path` | Start/stop live file watching for incremental graph updates |
+| `embed_repo` | `repo_path` | Generate vector embeddings for semantic search |
+
+All tools accept `output_format="json"` for structured responses and `exclude_dirs` for filtering.
+
 Add it to Claude settings (`~/.claude/settings.json`):
 
 ```json
@@ -494,6 +503,29 @@ Add it to Claude settings (`~/.claude/settings.json`):
   }
 }
 ```
+
+## Desktop App (Tempo)
+
+Tempograph includes a native desktop app built with Tauri v2 + React 19.
+
+```bash
+cd tempo/ui
+pnpm install
+pnpm tauri dev    # dev mode on port 4902
+pnpm tauri build  # production binary
+```
+
+**Interactive Code Graph** — Force-directed visualization powered by Cytoscape.js. Directory-level clusters drill down to file-level nodes on double-click. Nodes are health-colored: green (healthy), yellow (hotspot), red (dead code), gray (stable). Hover highlights connections, click opens detail panel with file stats and quick analysis buttons.
+
+**Dashboard View** — Health metric cards (files, symbols, lines, dead code %), top 5 hotspots ranked by risk score. Three async mode runs on view open.
+
+**Drag-and-Drop** — Drop a folder from Finder to index it. Native file picker via `tauri-plugin-dialog`. Recent repos persisted. Pre-indexed snapshots for popular OSS repos.
+
+**14-Mode Runner** — Sidebar with all modes, per-mode argument history, command palette (Cmd+K), run history chips. Output with search, filtering, diff view, copy, save, font size control, token counting.
+
+**Keyboard-First** — Cmd+1-9 switch modes, Cmd+K palette, Cmd+R run, Cmd+F filter, Cmd+S save, Cmd+B sidebar toggle, Cmd+L focus args, ? shortcut overlay.
+
+**Multi-Workspace** — Open multiple repos in tabs. Each workspace maintains independent state.
 
 ## Python API
 
@@ -547,12 +579,16 @@ Switch branches, rebase, cherry-pick — if the file contents are unchanged, Tem
 
 ## Why Tempograph?
 
-- **Only tool with triple search**: structural graph (tree-sitter) + semantic vectors (sqlite-vec) + keyword search (FTS5)
-- **Only tool publishing retrieval F1**: +18.6% improvement, statistically significant
-- **Sub-25ms warm builds**: Content-hashed SQLite, no rebuild on branch switch
+- **Only tool with triple search**: structural graph (tree-sitter) + semantic vectors (sqlite-vec) + keyword search (FTS5), fused via RRF
+- **Only tool publishing retrieval F1**: +18.6% improvement (p=0.049), statistically significant, across 25 OSS repos
+- **21ms warm queries**: Content-hashed SQLite with BLOB caching, no rebuild on branch switch
 - **170+ languages**: tree-sitter-language-pack with custom handlers for 10 core languages
-- **Zero-config adaptive gating**: Knows when NOT to inject context (avoids harm)
-- **Local-first**: Everything runs on your machine. No API keys, no cloud, no data leaves your laptop.
+- **24 MCP tools**: Purpose-built for AI agents — not a general-purpose search engine
+- **Interactive code graph**: Desktop app with force-directed visualization (Cytoscape.js, LOD dir→file→symbol)
+- **Self-improving**: L1/L2/L3 telemetry learns which modes work for which tasks and adapts
+- **Zero-config adaptive gating**: Knows when NOT to inject context (avoids harm on diffuse commits)
+- **Local-first**: Everything runs on your machine. No API keys, no cloud, no data leaves your laptop
+- **3,948 tests**: 5:1 test-to-code ratio across pytest + vitest
 
 ## License
 
