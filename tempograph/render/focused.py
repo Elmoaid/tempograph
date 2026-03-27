@@ -353,8 +353,20 @@ def _bfs_expand(
             ordered.append((sym, depth))
 
             if depth < _bfs_max_depth:
-                caller_limit = 8 if depth == 0 else 5 if depth == 1 else 3
-                callee_limit = 8 if depth == 0 else 5 if depth == 1 else 3
+                if depth == 0:
+                    # Hub-adaptive caller budget: seeds called from many files
+                    # get a tighter caller limit so callees (query-relevant
+                    # dependencies) are not crowded out of the 50-node cap.
+                    _cross_callers = sum(
+                        1 for cid in graph._callers.get(sym.id, [])
+                        if cid in graph.symbols
+                        and graph.symbols[cid].file_path != sym.file_path
+                    )
+                    caller_limit = 8 if _cross_callers < 10 else 3 if _cross_callers < 20 else 1
+                    callee_limit = 8
+                else:
+                    caller_limit = 5 if depth == 1 else 3
+                    callee_limit = 5 if depth == 1 else 3
                 _imp_key = lambda s: -_cached_importance(s)
                 # Hub suppression: skip expanding callers of widely-used utility symbols.
                 # A symbol used across 15+ unique files is a global hub — expanding its
@@ -423,6 +435,17 @@ def _handle_overflow(
         return True, block_tokens
     return False, block_tokens
 
+
+def _extend_tracked(lines: list[str], new_lines: list[str], token_count: int) -> int:
+    """Extend lines with new_lines and return updated token_count.
+
+    Used in render_focused to keep a running token budget across all
+    _signals_focused_* sections so each section sees the correct remaining budget
+    and output does not silently overflow max_tokens."""
+    if new_lines:
+        lines.extend(new_lines)
+        token_count += count_tokens("\n".join(new_lines))
+    return token_count
 
 
 def _render_cochange_section(graph, seed_file_paths: list[str]) -> str:
@@ -4979,13 +5002,13 @@ def _signals_focused_fn_advanced(
 ) -> list[str]:
     """Focused-mode signals: fn_advanced (dispatches to sub-helpers)."""
     lines: list[str] = []
-    lines += _signals_fn_recursion(graph, _seed_syms, token_count, max_tokens)
-    lines += _signals_fn_oop(graph, _seed_syms, token_count, max_tokens)
-    lines += _signals_fn_signature(graph, _seed_syms, token_count, max_tokens)
-    lines += _signals_fn_conventions(graph, _seed_syms, token_count, max_tokens)
-    lines += _signals_fn_quality(graph, _seed_syms, token_count, max_tokens)
-    lines += _signals_fn_focus_props_a(graph, _seed_syms, token_count, max_tokens)
-    lines += _signals_fn_focus_props_b(graph, _seed_syms, token_count, max_tokens)
+    token_count = _extend_tracked(lines, _signals_fn_recursion(graph, _seed_syms, token_count, max_tokens), token_count)
+    token_count = _extend_tracked(lines, _signals_fn_oop(graph, _seed_syms, token_count, max_tokens), token_count)
+    token_count = _extend_tracked(lines, _signals_fn_signature(graph, _seed_syms, token_count, max_tokens), token_count)
+    token_count = _extend_tracked(lines, _signals_fn_conventions(graph, _seed_syms, token_count, max_tokens), token_count)
+    token_count = _extend_tracked(lines, _signals_fn_quality(graph, _seed_syms, token_count, max_tokens), token_count)
+    token_count = _extend_tracked(lines, _signals_fn_focus_props_a(graph, _seed_syms, token_count, max_tokens), token_count)
+    _extend_tracked(lines, _signals_fn_focus_props_b(graph, _seed_syms, token_count, max_tokens), token_count)
     return lines
 
 
@@ -5036,18 +5059,15 @@ def _compute_paired_functions(
     if not seeds:
         return ""
 
-    by_name: dict[str, list] = {}
-    for sym in graph.symbols.values():
-        if sym.kind.value not in ("function", "method"):
-            continue
-        by_name.setdefault(sym.name.lower(), []).append(sym)
-
-    found_pairs: list[tuple] = []
-
+    # Step 1: Compute target swap names from seed names.
+    # Most seeds have no antonym words (94% of fn/method symbols) → early exit
+    # avoids the full corpus scan for typical focus queries.
+    per_seed_swaps: dict[str, list[str]] = {}
+    target_names: set[str] = set()
     for seed in seeds:
         parts = seed.name.lower().split("_")
+        swaps: list[str] = []
         seen_complements: set[str] = set()
-
         for a, b in _PAIR_ANTONYMS:
             if a in parts:
                 new_parts = list(parts)
@@ -5059,11 +5079,30 @@ def _compute_paired_functions(
                 swap = "_".join(new_parts)
             else:
                 continue
-
             if swap == seed.name.lower() or swap in seen_complements:
                 continue
             seen_complements.add(swap)
+            swaps.append(swap)
+            target_names.add(swap)
+        per_seed_swaps[seed.id] = swaps
 
+    if not target_names:
+        return ""
+
+    # Step 2: Targeted corpus scan — only collect fn/method symbols whose name
+    # is in target_names. O(1) set check filters 94% of symbols before kind check.
+    by_name: dict[str, list] = {}
+    for sym in graph.symbols.values():
+        n = sym.name.lower()
+        if n not in target_names:
+            continue
+        if sym.kind.value not in ("function", "method"):
+            continue
+        by_name.setdefault(n, []).append(sym)
+
+    found_pairs: list[tuple] = []
+    for seed in seeds:
+        for swap in per_seed_swaps.get(seed.id, []):
             candidates = [c for c in by_name.get(swap, []) if c.id not in seen_ids]
             if not candidates:
                 continue
@@ -5091,6 +5130,65 @@ def _compute_paired_functions(
 
     label = "paired op" if len(parts_out) == 1 else "paired ops"
     return f"↳ {label}: {', '.join(parts_out)} — not in BFS"
+
+
+def _compute_bfs_module_diversity(
+    graph: "Tempo",
+    seeds: "list[Symbol]",
+    ordered: "list[tuple[Symbol, int]]",
+) -> str:
+    """S70: BFS module diversity — detect when BFS spans 3+ distinct top-level modules.
+
+    BFS follows both callers and callees. When the traversal crosses into multiple
+    top-level directories (e.g., bench/, tempo/, tempograph/), the function has
+    cross-layer scope: a change here ripples through modules that may have different
+    owners, release cycles, or test suites.
+
+    Different from 'cross-cutting' (which counts caller subsystems — incoming blast).
+    This measures outgoing + incoming BFS breadth across the whole traversal.
+
+    Fires only when ≥3 distinct non-test modules appear, excluding the seed's own module.
+    Silent for single-module codebases and shallow BFS results.
+    """
+    root = getattr(graph, "root", "") or ""
+    root_norm = root.replace("\\", "/").rstrip("/")
+
+    def _module_of(file_path: str) -> str:
+        fp = file_path.replace("\\", "/")
+        if root_norm and fp.startswith(root_norm + "/"):
+            rel = fp[len(root_norm) + 1:]
+        else:
+            # Fallback: use last 2+ components
+            rel = fp
+        parts = rel.split("/")
+        return parts[0] if parts else ""
+
+    seed_modules = {_module_of(s.file_path) for s in seeds}
+
+    bfs_modules: dict[str, int] = {}
+    for sym, _depth in ordered:
+        mod = _module_of(sym.file_path)
+        # Skip test directories and seed's own modules
+        if not mod or mod.lower() in ("tests", "test", "spec") or mod in seed_modules:
+            continue
+        bfs_modules[mod] = bfs_modules.get(mod, 0) + 1
+
+    if len(bfs_modules) < 3:
+        return ""
+
+    # Show top modules by symbol count (most represented first)
+    sorted_mods = sorted(bfs_modules, key=lambda m: -bfs_modules[m])
+    shown = sorted_mods[:4]
+    overflow = len(sorted_mods) - len(shown)
+    mod_str = ", ".join(shown)
+    if overflow:
+        mod_str += f" +{overflow} more"
+
+    n = len(bfs_modules)
+    return (
+        f"↳ cross-module BFS: {n} modules in call graph ({mod_str})"
+        f" — change scope spans layers"
+    )
 
 
 def _compute_change_exposure(graph: "Tempo", seeds: "list[Symbol]") -> str:
@@ -5194,6 +5292,32 @@ def _collect_multi_seeds(
     return seeds, seed_files, query_tokens, _parts
 
 
+def _adaptive_bfs_depth(graph: Tempo, seeds: list[Symbol], hot_seeds: bool) -> int:
+    """Choose initial BFS depth based on seed connectivity profile.
+
+    - Wide hub (≥15 unique cross-file caller files): depth=2 — BFS budget is
+      exhausted by depth-1/2 callers anyway; avoid pointless depth-3 expansion.
+    - Deep chain (≥6 callees, ≤3 cross-file caller files): depth=4 or 5 to
+      trace long callee chains that are the core of the query's relevance.
+    - Default: 4 if hot files, else 3 (preserves prior behaviour).
+    """
+    caller_files: set[str] = set()
+    callee_count = 0
+    seed_fps = {s.file_path for s in seeds}
+    for seed in seeds:
+        for cid in graph._callers.get(seed.id, []):
+            if cid in graph.symbols and graph.symbols[cid].file_path not in seed_fps:
+                caller_files.add(graph.symbols[cid].file_path)
+        callee_count += len(graph._callees.get(seed.id, []))
+
+    n_caller_files = len(caller_files)
+    if n_caller_files >= 15:
+        return 2  # Hub: BFS floods at depth 1-2 regardless; cap early
+    if callee_count >= 6 and n_caller_files <= 3:
+        return 5 if hot_seeds else 4  # Deep chain: trace callee tree further
+    return 4 if hot_seeds else 3
+
+
 def _run_bfs_with_orbit(
     graph: Tempo, seeds: list[Symbol], seed_files: set[str],
     query_tokens: list[str],
@@ -5213,7 +5337,7 @@ def _run_bfs_with_orbit(
             orbit_seed_meta[sym.id] = (sym.file_path, freq)
 
     _hot_seeds = any(s.file_path in graph.hot_files for s in seeds)
-    _initial_depth = 4 if _hot_seeds else 3
+    _initial_depth = _adaptive_bfs_depth(graph, seeds, _hot_seeds)
     ordered, seen_ids = _bfs_expand(
         graph, seeds, seed_files, secondary_seeds=orbit_secondary or None,
         max_depth=_initial_depth,
@@ -5422,8 +5546,15 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     if _pair_note:
         lines.append(_pair_note)
         lines.append("")
+    _module_diversity = _compute_bfs_module_diversity(graph, seeds, ordered)
+    if _module_diversity:
+        lines.append(_module_diversity)
+        lines.append("")
     seen_files: set[str] = set()
-    token_count = 0
+    # Count header sections already written to lines (change_exposure, scope_note,
+    # pair_note, module_diversity) so the BFS loop and signal sections start with
+    # an accurate token budget rather than assuming zero overhead.
+    token_count = count_tokens("\n".join(lines))
 
     # Callsite line index: (caller_id, callee_id) → sorted non-zero line numbers.
     _callsite_lines: dict[tuple[str, str], list[int]] = {}
@@ -5466,36 +5597,38 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     )
 
     # --- Focused signal-group helpers ---
-    lines.extend(_signals_focused_test(
+    # token_count is updated after each section so later sections see the correct
+    # remaining budget and output stays within max_tokens.
+    token_count = _extend_tracked(lines, _signals_focused_test(
         graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
-    ))
-    lines.extend(_signals_focused_complexity(
+    ), token_count)
+    token_count = _extend_tracked(lines, _signals_focused_complexity(
         graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
-    ))
-    lines.extend(_signals_focused_structure(
+    ), token_count)
+    token_count = _extend_tracked(lines, _signals_focused_structure(
         graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
-    ))
-    lines.extend(_signals_focused_class_hierarchy(
+    ), token_count)
+    token_count = _extend_tracked(lines, _signals_focused_class_hierarchy(
         graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
-    ))
-    lines.extend(_signals_focused_class_patterns(
+    ), token_count)
+    token_count = _extend_tracked(lines, _signals_focused_class_patterns(
         graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
-    ))
-    lines.extend(_signals_focused_coupling(
+    ), token_count)
+    token_count = _extend_tracked(lines, _signals_focused_coupling(
         graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
-    ))
-    lines.extend(_signals_focused_naming(
+    ), token_count)
+    token_count = _extend_tracked(lines, _signals_focused_naming(
         graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
-    ))
-    lines.extend(_signals_focused_fn_traits(
+    ), token_count)
+    token_count = _extend_tracked(lines, _signals_focused_fn_traits(
         graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
-    ))
-    lines.extend(_signals_focused_fn_patterns(
+    ), token_count)
+    token_count = _extend_tracked(lines, _signals_focused_fn_patterns(
         graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
-    ))
-    lines.extend(_signals_focused_fn_advanced(
+    ), token_count)
+    _extend_tracked(lines, _signals_focused_fn_advanced(
         graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
-    ))
+    ), token_count)
 
     return "\n".join(lines)
 
