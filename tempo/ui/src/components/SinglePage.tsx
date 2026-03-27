@@ -11,6 +11,7 @@ import { TopBar } from "./TopBar";
 import { WorkspaceTabs } from "./WorkspaceTabs";
 import { InfoPanel } from "./InfoPanel";
 import { SnapshotPanel } from "./SnapshotPanel";
+import { ViewNav, type AppView } from "./ViewNav";
 import { useWorkspaceData } from "../hooks/useWorkspaceData";
 
 interface Props {
@@ -33,6 +34,9 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
   const [showClaude, setShowClaude] = useState(false);
   const [showSnapshots, setShowSnapshots] = useState(false);
   const [homeDir, setHomeDir] = useState("");
+  const [activeView, setActiveView] = useState<AppView>(
+    () => (localStorage.getItem("tempo-active-view") as AppView) || "modes"
+  );
   const [rightHidden, setRightHidden] = useState(() =>
     localStorage.getItem("tempo-right-hidden") === "true"
   );
@@ -116,6 +120,14 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
         onAdd={addWorkspace}
       />
 
+      <ViewNav
+        activeView={activeView}
+        onViewChange={(v) => {
+          setActiveView(v);
+          localStorage.setItem("tempo-active-view", v);
+        }}
+      />
+
       {showSnapshots && homeDir && (
         <ErrorBoundary label="Snapshots">
           <SnapshotPanel
@@ -132,7 +144,27 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
         </ErrorBoundary>
       )}
 
-      <div className={`grid-shell${rightHidden ? " right-hidden" : ""}`} style={{ display: showClaude ? "none" : undefined }}>
+      {activeView === "graph" && !showClaude && (
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12, color: "var(--text-tertiary)" }}>
+          <div style={{ fontSize: 32, opacity: 0.3 }}>⬡</div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-secondary)" }}>Graph View</div>
+          <div style={{ fontSize: 12, maxWidth: 360, textAlign: "center", lineHeight: 1.6 }}>
+            Interactive force-directed graph of file and symbol dependencies. Coming soon — requires Cytoscape.js integration.
+          </div>
+        </div>
+      )}
+
+      {activeView === "dashboard" && !showClaude && (
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12, color: "var(--text-tertiary)" }}>
+          <div style={{ fontSize: 32, opacity: 0.3 }}>▦</div>
+          <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-secondary)" }}>Dashboard View</div>
+          <div style={{ fontSize: 12, maxWidth: 360, textAlign: "center", lineHeight: 1.6 }}>
+            Codebase health metrics, complexity heatmaps, and change trends. Coming soon — requires recharts integration.
+          </div>
+        </div>
+      )}
+
+      <div className={`grid-shell${rightHidden ? " right-hidden" : ""}`} style={{ display: (showClaude || activeView !== "modes") ? "none" : undefined }}>
         <ErrorBoundary label="Modes">
           <ModeRunner
             key={repoPath}

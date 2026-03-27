@@ -20,6 +20,38 @@
   letter-spacing: -0.5px;
 }
 
+/* View navigation */
+.view-nav {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 0 16px;
+  background: var(--bg-primary);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.view-nav-tab {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 14px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+.view-nav-tab:hover {
+  color: var(--text-secondary);
+}
+.view-nav-tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+
 /* Workspace strip */
 .ws-strip {
   display: flex;
