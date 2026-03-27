@@ -285,7 +285,7 @@ def _prefetch_next(current_tool: str, repo_path: str, exclude_dirs: list[str] | 
                     "dead_code": lambda g: render_dead_code(g),
                     "stats": None,  # cheap enough, skip
                     "architecture": lambda g: render_architecture(g),
-                    "file_map": lambda g: render_map(g, max_tokens=4000),
+                    "file_map": lambda g: render_map(g),
                     "dependencies": lambda g: render_dependencies(g),
                 }
                 fn = _prefetch_renderers.get(next_mode)
@@ -301,16 +301,21 @@ def _prefetch_next(current_tool: str, repo_path: str, exclude_dirs: list[str] | 
 
 
 @mcp.tool()
-def suggest_next(repo_path: str, current_tool: str = "", output_format: str = "text") -> str:
+def suggest_next(
+    repo_path: str, current_tool: str = "", prev_tool: str = "", output_format: str = "text"
+) -> str:
     """Suggest the most useful next tool based on learned session patterns.
 
-    Analyzes 68K+ historical usage events to predict what tool agents typically
-    call next. Helps agents follow optimal workflows without memorizing sequences.
+    Analyzes historical usage events to predict what tool agents typically call next.
+    When prev_tool is provided, uses second-order Markov (prev→current→next) which is
+    significantly more accurate than first-order on repeated workflows.
 
-    Example: after calling 'focus', this returns 'hotspots (60%), blast_radius (20%)'
+    Example: suggest_next(current_tool='focus', prev_tool='overview') returns
+    'hotspots (100%)' instead of the less certain 'hotspots (58%)' from first-order.
 
     repo_path: absolute path to repository
     current_tool: the tool you just called (e.g. 'focus', 'overview')
+    prev_tool: the tool called before current_tool (optional; enables second-order prediction)
     """
     start = time.time()
     p, err = _validate_repo(repo_path)
@@ -318,12 +323,19 @@ def suggest_next(repo_path: str, current_tool: str = "", output_format: str = "t
         return err
 
     try:
-        from .predict import predict_next as _predict
-        predictions = _predict(p, current_tool, top_k=5)
+        if prev_tool:
+            from .predict import predict_next_2nd as _predict_2nd
+            predictions = _predict_2nd(p, prev_tool, current_tool, top_k=5)
+            header = f"After '{prev_tool}' → '{current_tool}', agents typically call:"
+        else:
+            from .predict import predict_next as _predict
+            predictions = _predict(p, current_tool, top_k=5)
+            header = f"After '{current_tool}', agents typically call:"
+
         if not predictions:
             output = f"No predictions for '{current_tool}' — not enough usage data yet."
         else:
-            lines = [f"After '{current_tool}', agents typically call:"]
+            lines = [header]
             for mode, prob in predictions:
                 bar = "#" * int(prob * 20)
                 lines.append(f"  {mode:25s} {prob:5.0%}  {bar}")
@@ -621,7 +633,7 @@ def symbols(repo_path: str, max_tokens: int = 8000, exclude_dirs: str = "", outp
     max_tokens: cap output (default 8000; 0 = use default)
     exclude_dirs: comma-separated directory prefixes to skip
     output_format: "text" (default) or "json" for structured response"""
-    cap = min(max_tokens if max_tokens > 0 else 8000, 8000)
+    cap = max_tokens if max_tokens > 0 else 8000
     return _run_tool("symbols", repo_path, output_format,
                      lambda g: render_symbols(g, max_tokens=cap),
                      exclude_dirs=exclude_dirs)
