@@ -1429,16 +1429,6 @@ def _graph_b_test_quality(
                 f" — strong test coverage for this diff; good TDD signal"
             )
 
-    # S363: Test-only diff — all changed files are test files (no source touched).
-    if changed_files:
-        _s363_test_changed = [f for f in changed_files if _is_test_file(f)]
-        _s363_src_changed = [f for f in changed_files if not _is_test_file(f)]
-        if _s363_test_changed and not _s363_src_changed:
-            lines.append(
-                f"test-only diff: {len(_s363_test_changed)} test file(s) changed, 0 source files"
-                f" — no source modified; verify tests reflect actual behavior, not just updated snapshots"
-            )
-
     # S423: Test-only diff (all changed files are tests).
     if changed_files:
         _s423_all_test = all(_is_test_file(f) for f in changed_files)
