@@ -171,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("repo", help="Path to the repository root")
     parser.add_argument(
         "--mode", "-m",
-        choices=("overview", "map", "symbols", "focus", "lookup", "blast", "diff", "hotspots", "deps", "dead", "arch", "stats", "prepare", "skills", "report", "serve", "ambient"),
+        choices=("overview", "map", "symbols", "focus", "lookup", "blast", "diff", "hotspots", "deps", "dead", "arch", "stats", "prepare", "skills", "report", "serve", "ambient", "graph_data"),
         default="overview",
         help="Rendering mode (default: overview)",
     )
@@ -352,6 +352,79 @@ def main(argv: list[str] | None = None) -> int:
         write_ambient(contents, repo)
         dirs_written = len(contents)
         print(f"Wrote {_CTXF} to {dirs_written} director{'y' if dirs_written == 1 else 'ies'}")
+        return 0
+
+    # graph_data mode: lightweight JSON for UI graph canvas
+    if args.mode == "graph_data":
+        from collections import defaultdict
+        dir_stats: dict[str, dict] = defaultdict(lambda: {"files": 0, "lines": 0, "symbols": 0, "languages": set()})
+        file_nodes = []
+        edge_map: dict[tuple[str, str], int] = defaultdict(int)
+
+        for fp, fi in graph.files.items():
+            parts = fp.split("/")
+            dir_name = parts[0] + "/" if len(parts) > 1 else "./"
+            ds = dir_stats[dir_name]
+            ds["files"] += 1
+            ds["lines"] += fi.line_count
+            ds["symbols"] += len(fi.symbols)
+            ds["languages"].add(fi.language.value)
+
+            # Compute file-level health
+            sym_count = len(fi.symbols)
+            dead_count = sum(1 for sid in fi.symbols if sid in graph.symbols and len(graph.callers_of(sid)) == 0 and graph.symbols[sid].exported)
+            dead_pct = (dead_count / sym_count * 100) if sym_count > 0 else 0
+            avg_cx = 0
+            if sym_count > 0:
+                cxs = [graph.symbols[sid].complexity for sid in fi.symbols if sid in graph.symbols and graph.symbols[sid].complexity]
+                avg_cx = sum(cxs) / len(cxs) if cxs else 0
+
+            health = "stable"
+            if dead_pct > 80:
+                health = "dead"
+            elif avg_cx > 50:
+                health = "hotspot"
+            elif sym_count > 0 and dead_pct < 20 and avg_cx < 20:
+                health = "healthy"
+
+            file_nodes.append({
+                "id": fp,
+                "dir": dir_name,
+                "lines": fi.line_count,
+                "lang": fi.language.value,
+                "syms": sym_count,
+                "cx": round(avg_cx, 1),
+                "dead_pct": round(dead_pct, 1),
+                "health": health,
+            })
+
+        # Aggregate edges at file level
+        for edge in graph.edges:
+            src_file = graph.symbols[edge.source_id].file_path if edge.source_id in graph.symbols else None
+            tgt_file = graph.symbols[edge.target_id].file_path if edge.target_id in graph.symbols else None
+            if src_file and tgt_file and src_file != tgt_file:
+                key = (src_file, tgt_file) if src_file < tgt_file else (tgt_file, src_file)
+                edge_map[key] += 1
+
+        directories = [
+            {"id": d, "files": s["files"], "lines": s["lines"], "syms": s["symbols"], "langs": sorted(s["languages"])}
+            for d, s in sorted(dir_stats.items())
+        ]
+
+        edges = [
+            {"s": s, "t": t, "w": w}
+            for (s, t), w in sorted(edge_map.items(), key=lambda x: -x[1])[:2000]  # cap at 2000 edges
+        ]
+
+        result = {
+            "repo": graph.root,
+            "stats": stats,
+            "build_ms": int(elapsed * 1000),
+            "directories": directories,
+            "files": file_nodes,
+            "edges": edges,
+        }
+        print(json.dumps(result))
         return 0
 
     def _diff_files(args, repo_root: str) -> list[str]:

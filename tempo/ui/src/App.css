@@ -985,3 +985,64 @@ textarea.input {
   border-color: var(--border);
   color: var(--text-primary);
 }
+
+/* ── Graph Canvas ── */
+.graph-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.graph-control-btn {
+  padding: 3px 10px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.graph-control-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+.graph-level-label {
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+.graph-info-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.graph-info-bar strong {
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+}
+.graph-info-hint {
+  margin-left: auto;
+  color: var(--text-tertiary);
+  font-style: italic;
+}
+.graph-health-badge {
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+.graph-health-healthy { background: rgba(74,222,128,0.15); color: #4ade80; }
+.graph-health-hotspot { background: rgba(251,191,36,0.15); color: #fbbf24; }
+.graph-health-dead { background: rgba(248,113,113,0.15); color: #f87171; }
+.graph-health-stable { background: rgba(107,114,128,0.15); color: #6b7280; }

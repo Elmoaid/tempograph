@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { getHomeDir } from "./tempo";
 import { LandingPage } from "./LandingPage";
+import { GraphCanvas } from "./GraphCanvas";
+import { useGraphData } from "../hooks/useGraphData";
 import { ClaudePanel } from "./ClaudePanel";
 import { ModeRunner } from "./ModeRunner";
 import { QualityPanel } from "./QualityPanel";
@@ -50,6 +52,8 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
     openNote, handleNoteCreated, browseTo, viewFile,
     clearNoteContent, clearFileView,
   } = useWorkspaceData(repoPath);
+
+  const graphResult = useGraphData(repoPath);
 
   useEffect(() => {
     getHomeDir().then(setHomeDir);
@@ -138,13 +142,21 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
       )}
 
       {activeView === "graph" && !showClaude && (
-        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12, color: "var(--text-tertiary)" }}>
-          <div style={{ fontSize: 32, opacity: 0.3 }}>⬡</div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-secondary)" }}>Graph View</div>
-          <div style={{ fontSize: 12, maxWidth: 360, textAlign: "center", lineHeight: 1.6 }}>
-            Interactive force-directed graph of file and symbol dependencies. Coming soon — requires Cytoscape.js integration.
+        graphResult.loading ? (
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-tertiary)", fontSize: 13 }}>
+            Loading graph…
           </div>
-        </div>
+        ) : graphResult.error ? (
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-tertiary)", fontSize: 13 }}>
+            {graphResult.error}
+          </div>
+        ) : graphResult.data ? (
+          <GraphCanvas data={graphResult.data} />
+        ) : (
+          <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-tertiary)", fontSize: 13 }}>
+            Open a repository to see the graph
+          </div>
+        )
       )}
 
       {activeView === "dashboard" && !showClaude && (
