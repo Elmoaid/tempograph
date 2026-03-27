@@ -1,4 +1,7 @@
-"""Tests for importance-aware token truncation in focus mode (S22)."""
+"""Tests for importance-aware token truncation in focus mode (S22).
+
+Also covers C2: token budget tracking across signal sections (_extend_tracked).
+"""
 from __future__ import annotations
 
 
@@ -128,3 +131,108 @@ class TestSymImportance:
         score = _sym_importance(g, helper_sym)
         # 0 cross-file callers, not exported (private) → score = 0
         assert score < 3, f"expected score < 3 for private same-file helper, got {score}"
+
+
+class TestExtendTracked:
+    """_extend_tracked keeps running token budget so signal sections respect max_tokens."""
+
+    def test_extend_tracked_returns_updated_count(self):
+        from tempograph.render.focused import _extend_tracked
+        from tempograph.render._utils import count_tokens
+
+        lines: list[str] = []
+        new_lines = ["some content line", "another line here"]
+        result = _extend_tracked(lines, new_lines, 100)
+        expected = 100 + count_tokens("\n".join(new_lines))
+        assert result == expected
+        assert lines == new_lines
+
+    def test_extend_tracked_empty_new_lines_unchanged(self):
+        from tempograph.render.focused import _extend_tracked
+
+        lines: list[str] = ["existing"]
+        result = _extend_tracked(lines, [], 200)
+        assert result == 200
+        assert lines == ["existing"]
+
+    def test_focus_output_respects_max_tokens(self, tmp_path):
+        """render_focused output must not exceed max_tokens."""
+        import textwrap
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        from tempograph.render._utils import count_tokens
+
+        # Build a repo with enough symbols to trigger multiple signal sections.
+        (tmp_path / "core.py").write_text(textwrap.dedent("""\
+            class Config:
+                x: int = 1
+                y: int = 2
+
+            def process(cfg: Config) -> str:
+                return str(cfg.x)
+
+            def validate(cfg: Config) -> bool:
+                return cfg.x > 0
+
+            def serialize(cfg: Config) -> dict:
+                return {"x": cfg.x, "y": cfg.y}
+        """))
+        for i in range(8):
+            (tmp_path / f"consumer_{i}.py").write_text(textwrap.dedent(f"""\
+                from core import process, validate
+                def task_{i}():
+                    cfg = object()
+                    process(cfg)
+                    validate(cfg)
+            """))
+        # Test files so S116/S174 signals fire
+        (tmp_path / "test_core.py").write_text(textwrap.dedent("""\
+            from core import process, validate
+            def test_process():
+                pass
+            def test_validate():
+                pass
+        """))
+
+        g = build_graph(str(tmp_path), use_cache=False)
+        max_tokens = 800
+        out = render_focused(g, "process", max_tokens=max_tokens)
+        actual_tokens = count_tokens(out)
+        # Allow small headroom for signal section granularity (one signal may fire
+        # and push slightly over if its content is > remaining budget).
+        assert actual_tokens <= max_tokens + 100, (
+            f"render_focused exceeded max_tokens={max_tokens} by "
+            f"{actual_tokens - max_tokens} tokens (total={actual_tokens})"
+        )
+
+    def test_focus_signal_sections_budget_reduces_over_time(self, tmp_path):
+        """With a tight budget, later signal sections should be suppressed."""
+        import textwrap
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        from tempograph.render._utils import count_tokens
+
+        # Simple single-file repo — BFS fills up the budget quickly.
+        (tmp_path / "mod.py").write_text(textwrap.dedent("""\
+            def alpha():
+                beta()
+                gamma()
+
+            def beta():
+                pass
+
+            def gamma():
+                delta()
+
+            def delta():
+                pass
+        """))
+        g = build_graph(str(tmp_path), use_cache=False)
+        # 300 tokens is tight: BFS symbols alone may nearly fill it.
+        max_tokens = 300
+        out = render_focused(g, "alpha", max_tokens=max_tokens)
+        actual = count_tokens(out)
+        # Must not wildly overshoot (>200 tokens over cap = signal sections ignoring budget)
+        assert actual <= max_tokens + 200, (
+            f"signal sections ignored token budget: {actual} tokens (max={max_tokens})"
+        )

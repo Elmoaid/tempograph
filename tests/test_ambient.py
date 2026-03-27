@@ -2,11 +2,18 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from tempograph.builder import build_graph
-from tempograph.ambient import generate_ambient, write_ambient, CONTEXT_FILENAME
+from tempograph.ambient import (
+    generate_ambient,
+    write_ambient,
+    CONTEXT_FILENAME,
+    _parse_changed_lines,
+    _recently_changed_symbols_section,
+)
 
 
 def _build(tmp_path: Path, files: dict[str, str]) -> object:
@@ -150,3 +157,106 @@ class TestAmbientWriteFiles:
         for k, v in result.items():
             assert isinstance(k, str)
             assert isinstance(v, str)
+
+
+class TestParseChangedLines:
+    def test_single_line_added(self):
+        diff = "@@ -0,0 +1 @@\n+def foo(): pass\n"
+        assert _parse_changed_lines(diff) == {1}
+
+    def test_multi_line_hunk(self):
+        diff = "@@ -5,0 +5,3 @@\n+line1\n+line2\n+line3\n"
+        assert _parse_changed_lines(diff) == {5, 6, 7}
+
+    def test_pure_deletion_excluded(self):
+        # length=0 means deletion only — no new lines
+        diff = "@@ -10,3 +10,0 @@\n-deleted\n"
+        assert _parse_changed_lines(diff) == set()
+
+    def test_multiple_hunks(self):
+        diff = "@@ -1,0 +1,2 @@\n+a\n+b\n@@ -20,0 +22,1 @@\n+c\n"
+        assert _parse_changed_lines(diff) == {1, 2, 22}
+
+    def test_no_hunk_headers(self):
+        diff = "diff --git a/foo.py b/foo.py\nindex 1234..5678\n"
+        assert _parse_changed_lines(diff) == set()
+
+
+class TestRecentlyChangedSymbolsSection:
+    def test_absent_when_no_hot_files(self, tmp_path, monkeypatch):
+        """Section is empty string when all files are older than 7 days."""
+        g = _build(tmp_path, {"mod.py": "def alpha(): pass\n"})
+        monkeypatch.setattr("tempograph.ambient.file_last_modified_days", lambda r, fp: 90)
+        section = _recently_changed_symbols_section(str(tmp_path), g, ["mod.py"])
+        assert section == ""
+
+    def test_absent_when_git_returns_empty(self, tmp_path, monkeypatch):
+        """Section is empty string when git log returns no output."""
+        g = _build(tmp_path, {"mod.py": "def alpha(): pass\n"})
+        monkeypatch.setattr("tempograph.ambient.file_last_modified_days", lambda r, fp: 0)
+        mock_result = MagicMock(returncode=0, stdout="")
+        with patch("tempograph.ambient.subprocess.run", return_value=mock_result):
+            section = _recently_changed_symbols_section(str(tmp_path), g, ["mod.py"])
+        assert section == ""
+
+    def test_shows_changed_symbol(self, tmp_path, monkeypatch):
+        """Symbol whose line range overlaps the diff hunk appears in output."""
+        # alpha() is at line 1, beta() at line 2
+        g = _build(tmp_path, {"mod.py": "def alpha(): pass\ndef beta(): pass\n"})
+        monkeypatch.setattr("tempograph.ambient.file_last_modified_days", lambda r, fp: 0)
+        # Diff covers only line 1 (alpha's range)
+        fake_diff = "@@ -0,0 +1,1 @@\n+def alpha(): pass\n"
+        mock_result = MagicMock(returncode=0, stdout=fake_diff)
+        with patch("tempograph.ambient.subprocess.run", return_value=mock_result):
+            section = _recently_changed_symbols_section(str(tmp_path), g, ["mod.py"])
+        assert "alpha" in section
+        assert "beta" not in section
+
+    def test_excludes_unchanged_symbol(self, tmp_path, monkeypatch):
+        """Symbol outside the diff hunk range does not appear."""
+        g = _build(tmp_path, {
+            "mod.py": "def alpha(): pass\n\n\n\ndef beta(): pass\n",
+        })
+        monkeypatch.setattr("tempograph.ambient.file_last_modified_days", lambda r, fp: 0)
+        # Only line 5 changed — beta's range
+        fake_diff = "@@ -4,0 +5,1 @@\n+def beta(): pass\n"
+        mock_result = MagicMock(returncode=0, stdout=fake_diff)
+        with patch("tempograph.ambient.subprocess.run", return_value=mock_result):
+            section = _recently_changed_symbols_section(str(tmp_path), g, ["mod.py"])
+        assert "beta" in section
+        assert "alpha" not in section
+
+    def test_overflow_cap(self, tmp_path, monkeypatch):
+        """More than _MAX_RECENT_SYMS_PER_FILE shows overflow count."""
+        code = "\n".join(f"def fn{i}(): pass" for i in range(6)) + "\n"
+        g = _build(tmp_path, {"mod.py": code})
+        monkeypatch.setattr("tempograph.ambient.file_last_modified_days", lambda r, fp: 0)
+        # All 6 lines changed
+        fake_diff = "@@ -0,0 +1,6 @@\n" + "".join(f"+def fn{i}(): pass\n" for i in range(6))
+        mock_result = MagicMock(returncode=0, stdout=fake_diff)
+        with patch("tempograph.ambient.subprocess.run", return_value=mock_result):
+            section = _recently_changed_symbols_section(str(tmp_path), g, ["mod.py"])
+        # Should show 3 names + overflow
+        assert "+3 more" in section or "+2 more" in section or "+1 more" in section
+
+    def test_integrated_into_generate_ambient(self, tmp_path, monkeypatch):
+        """generate_ambient includes recently-changed section when symbols found."""
+        g = _build(tmp_path, {"app.py": "def main(): pass\n"})
+        monkeypatch.setattr("tempograph.ambient.file_last_modified_days", lambda r, fp: 0)
+        # Mock the batch function: app.py changed at line 1 (where main() is defined)
+        monkeypatch.setattr(
+            "tempograph.ambient._batch_changed_lines",
+            lambda repo, files, days: {"app.py": {1}},
+        )
+        contents = generate_ambient(g, str(tmp_path), hot_only=False)
+        combined = "\n".join(contents.values())
+        assert "Recently changed" in combined
+        assert "main" in combined
+
+    def test_section_absent_in_generate_ambient_when_stale(self, tmp_path, monkeypatch):
+        """generate_ambient omits section for stale files."""
+        g = _build(tmp_path, {"app.py": "def main(): pass\n"})
+        monkeypatch.setattr("tempograph.ambient.file_last_modified_days", lambda r, fp: 90)
+        contents = generate_ambient(g, str(tmp_path), hot_only=False)
+        combined = "\n".join(contents.values())
+        assert "Recently changed" not in combined

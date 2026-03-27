@@ -56,5 +56,13 @@ def log_feedback(repo_path: str, **kwargs) -> None:
 
 def is_empty_result(output: str) -> bool:
     """Detect low-value/empty results from known render.py patterns."""
-    prefixes = ("No symbols matching", "File '", "No dead code", "No results for", "No external dependencies", "No changed files")
+    prefixes = (
+        "No symbols matching",
+        "File '",
+        "No dead code",
+        "No results for",
+        "No external dependencies",
+        "No changed files",
+        "None of the changed files",  # diff_context: files not found in graph
+    )
     return any(output.startswith(p) for p in prefixes)

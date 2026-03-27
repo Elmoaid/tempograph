@@ -1,11 +1,14 @@
 import { useState, useEffect, useCallback, type RefObject } from "react";
-import { Copy, Check, X } from "lucide-react";
+import { Copy, Check } from "lucide-react";
 import { MODES, type ModeInfo } from "./modes";
 import { ArgsInput } from "./ArgsInput";
 import { OutputPanelHeader } from "./OutputPanelHeader";
 import { KitSectionAccordion } from "./KitSectionAccordion";
 import { OutputSearchBar } from "./OutputSearchBar";
 import { OutputFooter } from "./OutputFooter";
+import { HighlightedOutput } from "./HighlightedOutput";
+import { DiffOutput } from "./DiffOutput";
+import { OutputFilterBar } from "./OutputFilterBar";
 
 const FONT_SIZE_MIN = 9;
 const FONT_SIZE_MAX = 16;
@@ -72,116 +75,6 @@ function parseKitSections(output: string): Array<{ mode: string; content: string
     mode,
     content: (parts[i + 1] || "").trim(),
   })).filter(s => s.content.length > 0);
-}
-
-function HighlightedOutput({
-  text, query, searchText, currentSearchMatch, style,
-}: {
-  text: string;
-  query: string;
-  searchText?: string;
-  currentSearchMatch?: number;
-  style: React.CSSProperties;
-}) {
-  // Scroll to active search match when it changes
-  useEffect(() => {
-    if (!searchText?.trim() || !currentSearchMatch) return;
-    const el = document.getElementById(`osm-${currentSearchMatch}`);
-    el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
-  }, [searchText, currentSearchMatch]);
-
-  // Search highlighting takes priority over filter highlighting
-  const activeQuery = searchText?.trim() ? searchText : query;
-  const isSearch = Boolean(searchText?.trim());
-
-  if (!activeQuery.trim()) {
-    return <pre className="output" role="region" aria-label="Mode output" aria-live="polite" style={style}>{text}</pre>;
-  }
-
-  const lowerQ = activeQuery.toLowerCase();
-  const qLen = activeQuery.length;
-  const lines = text.split("\n");
-  let matchIndex = 0;
-
-  return (
-    <pre className="output" role="region" aria-label="Mode output" aria-live="polite" style={style}>
-      {lines.map((line, i) => {
-        const parts: React.ReactNode[] = [];
-        let rest = line;
-        while (rest) {
-          const idx = rest.toLowerCase().indexOf(lowerQ);
-          if (idx === -1) { parts.push(rest); break; }
-          if (idx > 0) parts.push(rest.slice(0, idx));
-          matchIndex++;
-          const isActive = isSearch && matchIndex === currentSearchMatch;
-          parts.push(
-            <mark
-              key={parts.length}
-              id={isSearch ? `osm-${matchIndex}` : undefined}
-              style={{
-                background: isSearch
-                  ? isActive ? "#ffd700" : "rgba(255,215,0,0.35)"
-                  : "var(--accent-dim, rgba(99,102,241,0.25))",
-                color: isActive ? "#000" : "inherit",
-                borderRadius: 2,
-                padding: "0 1px",
-                outline: isActive ? "1px solid #ffd700" : "none",
-              }}
-            >
-              {rest.slice(idx, idx + qLen)}
-            </mark>
-          );
-          rest = rest.slice(idx + qLen);
-        }
-        return <span key={i}>{parts}{i < lines.length - 1 ? "\n" : ""}</span>;
-      })}
-    </pre>
-  );
-}
-
-type DiffLine = { type: "add" | "remove" | "same"; line: string };
-
-function computeLineDiff(prev: string, curr: string): DiffLine[] {
-  const prevLines = prev.split("\n");
-  const currLines = curr.split("\n");
-  const prevCount = new Map<string, number>();
-  for (const l of prevLines) prevCount.set(l, (prevCount.get(l) ?? 0) + 1);
-  const result: DiffLine[] = [];
-  for (const line of currLines) {
-    const count = prevCount.get(line) ?? 0;
-    if (count > 0) {
-      result.push({ type: "same", line });
-      prevCount.set(line, count - 1);
-    } else {
-      result.push({ type: "add", line });
-    }
-  }
-  for (const line of prevLines) {
-    const count = prevCount.get(line) ?? 0;
-    if (count > 0) {
-      result.push({ type: "remove", line });
-      prevCount.set(line, count - 1);
-    }
-  }
-  return result;
-}
-
-function DiffOutput({ prev, curr, style }: { prev: string; curr: string; style: React.CSSProperties }) {
-  const lines = computeLineDiff(prev, curr);
-  return (
-    <pre className="output" role="region" aria-label="Mode output diff" aria-live="polite" style={style}>
-      {lines.map((l, i) => (
-        <span key={i} style={{
-          display: "block",
-          background: l.type === "add" ? "rgba(34, 197, 94, 0.15)" : l.type === "remove" ? "rgba(239, 68, 68, 0.15)" : "transparent",
-          color: l.type === "remove" ? "var(--text-tertiary)" : "inherit",
-        }}>
-          <span style={{ userSelect: "none", opacity: 0.6 }}>{l.type === "add" ? "+ " : l.type === "remove" ? "- " : "  "}</span>
-          {l.line}
-        </span>
-      ))}
-    </pre>
-  );
 }
 
 export function OutputPanel(props: OutputPanelProps) {
@@ -344,26 +237,13 @@ export function OutputPanel(props: OutputPanelProps) {
               </button>
             )}
             {filterVisible && (
-              <div style={{ display: "flex", gap: 4, alignItems: "center", marginBottom: 4 }}>
-                <input
-                  ref={filterInputRef}
-                  className="input"
-                  placeholder="Filter lines…"
-                  aria-label="Filter output lines"
-                  value={outputFilter}
-                  onChange={e => onFilterChange(e.target.value)}
-                  onKeyDown={e => { if (e.key === "Escape") onFilterClose(); }}
-                  style={{ flex: 1, fontSize: 10, padding: "2px 6px" }}
-                />
-                {filterMatchCount !== null && (
-                  <span style={{ fontSize: 9, color: "var(--text-tertiary)", whiteSpace: "nowrap" }} aria-live="polite" aria-atomic="true">
-                    {filterMatchCount} lines
-                  </span>
-                )}
-                <button className="btn btn-ghost" onClick={onFilterClose} style={{ padding: "2px 4px" }} aria-label="Close filter">
-                  <X size={9} aria-hidden="true" />
-                </button>
-              </div>
+              <OutputFilterBar
+                filterInputRef={filterInputRef}
+                value={outputFilter}
+                matchCount={filterMatchCount}
+                onChange={onFilterChange}
+                onClose={onFilterClose}
+              />
             )}
             {hasKitSections ? (
               <KitSectionAccordion
