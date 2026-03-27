@@ -46,7 +46,6 @@ function App() {
 
   const addWorkspace = useCallback((path: string) => {
     if (!path || workspaces.includes(path)) {
-      // If already exists, just switch to it
       const idx = workspaces.indexOf(path);
       if (idx >= 0) setActiveIdx(idx);
       return;
@@ -55,6 +54,12 @@ function App() {
     setWorkspaces(next);
     setActiveIdx(next.length - 1);
     saveWorkspaces(next);
+    try {
+      const raw = localStorage.getItem("tempo-recent-repos");
+      const recent: string[] = raw ? JSON.parse(raw) : [];
+      const updated = [path, ...recent.filter(r => r !== path)].slice(0, 5);
+      localStorage.setItem("tempo-recent-repos", JSON.stringify(updated));
+    } catch { /* ignore */ }
   }, [workspaces]);
 
   const removeWorkspace = useCallback((idx: number) => {

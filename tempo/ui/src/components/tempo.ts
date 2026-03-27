@@ -212,3 +212,19 @@ export async function reportFeedback(
     return { success: false, output: String(e), mode: "feedback" };
   }
 }
+
+export async function openFolderDialog(): Promise<string | null> {
+  try {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const result = await open({
+      directory: true,
+      multiple: false,
+      title: "Select a repository folder",
+    });
+    if (typeof result === "string") return result;
+    if (Array.isArray(result) && result.length > 0) return result[0];
+    return null;
+  } catch {
+    return null;
+  }
+}
