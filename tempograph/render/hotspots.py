@@ -1321,11 +1321,12 @@ def _signals_hotspots_core_b_concentration(
             # Proxy: file is "multi-commit" if it has symbols with many cross-file callers AND
             # is NOT a test file. Already captured by the main hotspot score; add extra context
             # when the top file's symbol count also suggests high activity.
-            _file_syms326 = [s for s in graph.symbols.values() if s.file_path == _file326]
+            _file_syms326 = graph.symbols_in_file(_file326)
+            _sym_ids326 = {s.id for s in _file_syms326}
+            _CALLS326 = EdgeKind.CALLS
             _callee_count326 = sum(
                 1 for e in graph.edges
-                if e.kind.value == "calls"
-                and any(s.id == e.source_id for s in _file_syms326)
+                if e.kind is _CALLS326 and e.source_id in _sym_ids326
             )
             if len(_file_syms326) >= 10 and _callee_count326 >= 20:
                 out.append(

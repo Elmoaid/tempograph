@@ -101,7 +101,7 @@ def _detect_module_conventions(graph) -> list[dict]:
     for fpath, finfo in graph.files.items():
         if finfo.language is None:
             continue
-        syms = [s for s in graph.symbols.values() if s.file_path == fpath]
+        syms = graph.symbols_in_file(fpath)
         if not syms:
             continue
 
