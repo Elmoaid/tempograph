@@ -151,7 +151,7 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
             {graphResult.error}
           </div>
         ) : graphResult.data ? (
-          <GraphCanvas data={graphResult.data} />
+          <GraphCanvas data={graphResult.data} repoPath={repoPath} />
         ) : (
           <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-tertiary)", fontSize: 13 }}>
             Open a repository to see the graph

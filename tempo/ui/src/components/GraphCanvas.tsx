@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import cytoscape from "cytoscape";
 import fcose from "cytoscape-fcose";
 import type { GraphData, FileNode, DirNode } from "../hooks/useGraphData";
+import { GraphDetailPanel } from "./GraphDetailPanel";
 
 cytoscape.use(fcose);
 
@@ -15,18 +16,20 @@ const HEALTH_COLORS: Record<string, string> = {
 
 interface GraphCanvasProps {
   data: GraphData;
+  repoPath: string;
   onSelectFile?: (fileId: string) => void;
   onSelectDir?: (dirId: string) => void;
 }
 
 type ViewLevel = "dirs" | "files";
 
-export function GraphCanvas({ data, onSelectFile, onSelectDir }: GraphCanvasProps) {
+export function GraphCanvas({ data, repoPath, onSelectFile, onSelectDir }: GraphCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const cyRef = useRef<cytoscape.Core | null>(null);
   const [viewLevel, setViewLevel] = useState<ViewLevel>("dirs");
   const [expandedDir, setExpandedDir] = useState<string | null>(null);
   const [selectedNode, setSelectedNode] = useState<string | null>(null);
+  const [showDetail, setShowDetail] = useState(false);
 
   // Build cytoscape elements for directory-level view
   const buildDirElements = useCallback(() => {
@@ -204,10 +207,11 @@ export function GraphCanvas({ data, onSelectFile, onSelectDir }: GraphCanvasProp
       cy.elements().removeClass("dimmed").removeClass("highlighted");
     });
 
-    // Click: select node
+    // Click: select node + show detail panel
     cy.on("tap", "node", (e) => {
       const nodeId = e.target.id();
       setSelectedNode(nodeId);
+      setShowDetail(true);
       if (viewLevel === "dirs") {
         onSelectDir?.(nodeId);
       } else {
@@ -228,6 +232,7 @@ export function GraphCanvas({ data, onSelectFile, onSelectDir }: GraphCanvasProp
     cy.on("tap", (e) => {
       if (e.target === cy) {
         setSelectedNode(null);
+        setShowDetail(false);
       }
     });
 
@@ -272,12 +277,23 @@ export function GraphCanvas({ data, onSelectFile, onSelectDir }: GraphCanvasProp
         style={{ flex: 1, background: "var(--bg)" }}
       />
 
-      {/* Selected node info */}
-      {selectedNode && (
+      {/* Selected node info bar */}
+      {selectedNode && !showDetail && (
         <SelectedNodeInfo
           nodeId={selectedNode}
           data={data}
           viewLevel={viewLevel}
+        />
+      )}
+
+      {/* Detail panel */}
+      {showDetail && selectedNode && (
+        <GraphDetailPanel
+          nodeId={selectedNode}
+          data={data}
+          viewLevel={viewLevel}
+          onClose={() => setShowDetail(false)}
+          repoPath={repoPath}
         />
       )}
     </div>
