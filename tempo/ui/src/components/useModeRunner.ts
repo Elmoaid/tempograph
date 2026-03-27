@@ -19,21 +19,21 @@ export function updateRunHistory(prev: RunHistoryEntry[], entry: RunHistoryEntry
 }
 
 // Static suggest_next map (suggest_next is MCP-only, not a CLI mode)
-const SUGGEST_NEXT_MAP: Record<string, string[]> = {
-  overview:      ["hotspots", "dead_code", "focus"],
-  focus:         ["blast_radius", "hotspots"],
-  blast_radius:  ["focus", "hotspots"],
-  hotspots:      ["dead_code", "focus"],
-  dead_code:     ["hotspots", "focus"],
-  diff_context:  ["focus", "blast_radius"],
-  deps:          ["focus", "blast_radius"],
-  arch:          ["hotspots", "deps"],
-  map:           ["focus", "hotspots"],
-  context:       ["focus", "blast_radius"],
-  prepare:       ["focus", "hotspots"],
-  quality:       ["hotspots", "focus"],
-  token_stats:   ["focus", "hotspots"],
-  learn:         ["focus", "overview"],
+export const SUGGEST_NEXT_MAP: Record<string, string[]> = {
+  overview:    ["hotspots", "dead_code", "focus"],
+  focus:       ["blast", "hotspots"],
+  blast:       ["focus", "hotspots"],
+  hotspots:    ["dead_code", "focus"],
+  dead_code:   ["hotspots", "focus"],
+  diff:        ["focus", "blast"],
+  deps:        ["focus", "blast"],
+  arch:        ["hotspots", "deps"],
+  map:         ["focus", "hotspots"],
+  context:     ["focus", "blast"],
+  prepare:     ["focus", "hotspots"],
+  quality:     ["hotspots", "focus"],
+  token_stats: ["focus", "hotspots"],
+  learn:       ["focus", "overview"],
 };
 
 export interface ModeRunnerState {

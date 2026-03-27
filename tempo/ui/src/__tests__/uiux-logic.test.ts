@@ -8,7 +8,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { MODE_HINTS } from "../components/modeHints";
 import { MODES, formatAge, loadRecentCommands, saveRecentCommand, type RecentCommand } from "../components/modes";
-import { updateRunHistory, type RunHistoryEntry } from "../components/useModeRunner";
+import { updateRunHistory, SUGGEST_NEXT_MAP, type RunHistoryEntry } from "../components/useModeRunner";
 
 // ── modeHints coverage ────────────────────────────────────────────────────────
 
@@ -155,5 +155,48 @@ describe("updateRunHistory", () => {
     expect(result).toHaveLength(2);
     expect(result[0]).toEqual({ mode: "focus", args: "--query Bar" });
     expect(result.filter(e => e.mode === "focus").length).toBe(1);
+  });
+
+  it("does not deduplicate same mode with different args", () => {
+    const prev: RunHistoryEntry[] = [{ mode: "focus", args: "--query Foo" }];
+    const result = updateRunHistory(prev, { mode: "focus", args: "--query Bar" });
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual({ mode: "focus", args: "--query Bar" });
+  });
+
+  it("respects custom max parameter", () => {
+    const prev: RunHistoryEntry[] = [{ mode: "a", args: "" }, { mode: "b", args: "" }];
+    const result = updateRunHistory(prev, { mode: "c", args: "" }, 2);
+    expect(result).toHaveLength(2);
+    expect(result[0]).toEqual({ mode: "c", args: "" });
+  });
+});
+
+// ── SUGGEST_NEXT_MAP ──────────────────────────────────────────────────────────
+
+describe("SUGGEST_NEXT_MAP", () => {
+  const modeIds = MODES.map(m => m.mode);
+
+  it("all suggestion targets are valid mode IDs", () => {
+    for (const [src, targets] of Object.entries(SUGGEST_NEXT_MAP)) {
+      for (const t of targets) {
+        expect(modeIds, `SUGGEST_NEXT_MAP["${src}"] → "${t}" is not a known mode`).toContain(t);
+      }
+    }
+  });
+
+  it("no mode suggests itself", () => {
+    for (const [src, targets] of Object.entries(SUGGEST_NEXT_MAP)) {
+      expect(targets, `SUGGEST_NEXT_MAP["${src}"] should not suggest itself`).not.toContain(src);
+    }
+  });
+
+  it("overview suggests hotspots and dead_code", () => {
+    expect(SUGGEST_NEXT_MAP["overview"]).toContain("hotspots");
+    expect(SUGGEST_NEXT_MAP["overview"]).toContain("dead_code");
+  });
+
+  it("focus suggests blast", () => {
+    expect(SUGGEST_NEXT_MAP["focus"]).toContain("blast");
   });
 });

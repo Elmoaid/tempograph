@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, type RefObject } from "react";
 import { Copy, Check } from "lucide-react";
-import { MODES, type ModeInfo } from "./modes";
+import { type ModeInfo } from "./modes";
 import { ArgsInput } from "./ArgsInput";
 import { OutputPanelHeader } from "./OutputPanelHeader";
 import { KitSectionAccordion } from "./KitSectionAccordion";
@@ -9,6 +9,8 @@ import { OutputFooter } from "./OutputFooter";
 import { HighlightedOutput } from "./HighlightedOutput";
 import { DiffOutput } from "./DiffOutput";
 import { OutputFilterBar } from "./OutputFilterBar";
+import { RunHistoryChips } from "./RunHistoryChips";
+import { SuggestNextChips } from "./SuggestNextChips";
 
 const FONT_SIZE_MIN = 9;
 const FONT_SIZE_MAX = 16;
@@ -189,24 +191,8 @@ export function OutputPanel(props: OutputPanelProps) {
           onHistoryOpen={onHistoryOpen}
           onHistorySelect={onHistorySelect}
         />
-        {runHistory && runHistory.length > 0 && onRunHistoryEntry && (
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 4 }}>
-            {runHistory.map((entry, i) => {
-              const truncArgs = entry.args.length > 20 ? entry.args.slice(0, 20) + "…" : entry.args;
-              const label = truncArgs ? `${entry.mode} ${truncArgs}` : entry.mode;
-              return (
-                <button
-                  key={i}
-                  className="btn btn-ghost"
-                  onClick={() => onRunHistoryEntry(entry)}
-                  title={entry.args ? `${entry.mode} ${entry.args}` : entry.mode}
-                  style={{ fontSize: 10, padding: "2px 7px", borderRadius: 10, opacity: 0.75 }}
-                >
-                  ⟳ {label}
-                </button>
-              );
-            })}
-          </div>
+        {runHistory && onRunHistoryEntry && (
+          <RunHistoryChips runHistory={runHistory} onRunHistoryEntry={onRunHistoryEntry} />
         )}
         {modeRunning ? (
           <div style={{ color: "var(--text-tertiary)", fontSize: 11, padding: 16, textAlign: "center" }}>
@@ -286,25 +272,7 @@ export function OutputPanel(props: OutputPanelProps) {
               outputLines={modeOutput.split("\n").length}
               onFeedback={onFeedback}
             />
-            {suggestions.length > 0 && (
-              <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 6, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 9, color: "var(--text-tertiary)", opacity: 0.7, marginRight: 2 }}>↳ try:</span>
-                {suggestions.map(mode => {
-                  const modeInfo = MODES.find(m => m.mode === mode);
-                  return (
-                    <button
-                      key={mode}
-                      className="btn btn-ghost"
-                      onClick={() => onSuggestionClick(mode)}
-                      style={{ fontSize: 9, padding: "1px 7px", borderRadius: 10, opacity: 0.8 }}
-                      title={modeInfo?.desc ?? `Switch to ${mode} mode`}
-                    >
-                      {modeInfo?.label ?? mode}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
+            <SuggestNextChips suggestions={suggestions} onSuggestionClick={onSuggestionClick} />
           </>
         ) : (
           <div style={{ color: "var(--text-tertiary)", fontSize: 11, padding: 16, textAlign: "center" }}>
