@@ -2476,6 +2476,46 @@ def _signals_diff_graph_c(
                 f" verify behavior across all target environments, not just local"
             )
 
+    # S1028: Symbol-level blast preview — when a changed (non-test) file contains a
+    # function/method with ≥10 cross-file callers OUTSIDE the diff, surface the specific
+    # symbol and its top consumer files.
+    # Different from S80 ("change risk: HIGH — blast: N files") which counts file-level
+    # importers and produces a verdict. Different from "Risk: parser.py (blast:60)" which
+    # shows file-level import fan-in. This is symbol-level: "FileParser.parse specifically
+    # has 35 cross-file callers" — agents know exactly which function is the blast center
+    # and can reason about its consumers without running blast_radius separately.
+    _blast_syms1028: list[tuple[int, "Symbol", list[str]]] = []
+    for _fp1028 in normalized:
+        if _is_test_file(_fp1028) or _fp1028 not in graph.files:
+            continue
+        for _sid1028 in graph.files[_fp1028].symbols:
+            _sym1028 = graph.symbols.get(_sid1028)
+            if not _sym1028 or _sym1028.kind.value not in ("function", "method"):
+                continue
+            # Count cross-file callers outside the diff
+            _caller_files1028 = {
+                c.file_path
+                for c in graph.callers_of(_sid1028)
+                if c.file_path != _fp1028 and c.file_path not in normalized
+            }
+            if len(_caller_files1028) >= 10:
+                _blast_syms1028.append((len(_caller_files1028), _sym1028, sorted(_caller_files1028)))
+    if _blast_syms1028:
+        _blast_syms1028.sort(key=lambda x: -x[0])
+        for _cnt1028, _bsym1028, _bfiles1028 in _blast_syms1028[:2]:
+            _top_names1028 = [
+                "/".join(f.replace("\\", "/").rstrip("/").split("/")[-2:]) if "/" in f else f
+                for f in _bfiles1028[:2]
+            ]
+            _rem1028 = _cnt1028 - len(_top_names1028)
+            _consumers1028 = ", ".join(_top_names1028)
+            if _rem1028 > 0:
+                _consumers1028 += f" +{_rem1028} more"
+            lines.append(
+                f"blast preview: {_bsym1028.name} has {_cnt1028} cross-file callers"
+                f" — top consumers: {_consumers1028}; high-impact symbol change"
+            )
+
 
 def _load_diff_velocity(graph: Tempo) -> tuple[dict[str, float], dict[str, int]]:
     """Load per-file velocity and churn counts from git. Returns empty dicts on failure."""
