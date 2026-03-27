@@ -277,6 +277,28 @@ class TestRenderBlastRadius:
         g = _build(tmp_path, {"a.py": "def foo():\n    pass\n"})
         assert isinstance(render_blast_radius(g, "a.py"), str)
 
+    def test_ambiguous_suffix_shows_candidates(self, tmp_path):
+        # When multiple files share the same basename, blast should list candidates
+        # instead of silently returning "not found".
+        # Note: use "mod1" / "mod2" (not "pkg" which is in the default exclude list).
+        g = _build(tmp_path, {
+            "mod1/utils.py": "def helper():\n    pass\n",
+            "mod2/utils.py": "def other():\n    pass\n",
+        })
+        out = render_blast_radius(g, "utils.py")
+        assert "Ambiguous" in out or "ambiguous" in out
+        assert "mod1/utils.py" in out or "mod2/utils.py" in out
+
+    def test_unambiguous_suffix_resolves(self, tmp_path):
+        # A short suffix that uniquely matches should resolve and show blast output.
+        g = _build(tmp_path, {
+            "mod1/core.py": "def run():\n    pass\n",
+            "lib/other.py": "def other():\n    pass\n",
+        })
+        out = render_blast_radius(g, "core.py")
+        assert "core.py" in out
+        assert "not found" not in out.lower()
+
 
 # ── render_hotspots ───────────────────────────────────────────────────────────
 
