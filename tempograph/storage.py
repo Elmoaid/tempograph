@@ -17,7 +17,7 @@ from .types import Edge, EdgeKind, FileInfo, Language, Symbol, SymbolKind
 
 CACHE_DIR = ".tempograph"
 DB_FILE = "graph.db"
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 # Module-level enum lookup dicts — O(1) vs try/except, ~31% faster in load_all()
 _SYMBOL_KIND_MAP: dict[str, SymbolKind] = {v.value: v for v in SymbolKind}
@@ -285,6 +285,36 @@ class GraphDB:
                 self._conn.execute("DELETE FROM symbols_blob")
                 self._conn.execute("UPDATE meta SET value='10' WHERE key='schema_version'")
                 self._conn.commit()
+            except Exception:
+                pass
+        if version < 11:
+            # Prune stale blob rows that accumulate when edge/symbol counts change across
+            # builds. Each build with new counts adds a row; old rows are never cleaned up.
+            # Measured on a long-running repo: 103 indexes_blob rows (69 MB), 55 symbols_blob
+            # rows (~100 MB), 94 resolved_edges_blob rows (~84 MB), 123 edges_blob rows
+            # (~357 MB) = 657 MB total DB. After pruning: ~15 MB. Full DB fits in OS page
+            # cache → all blob reads become near-instant on repeated warm builds.
+            # Keep only the row with the highest key (most recent build).
+            try:
+                for table, key_col in [
+                    ("indexes_blob", "edge_count"),
+                    ("edges_blob", "edge_count"),
+                    ("symbols_blob", "sym_count"),
+                    ("files_blob", "file_count"),
+                ]:
+                    self._conn.execute(
+                        f"DELETE FROM {table} WHERE {key_col} != "
+                        f"(SELECT MAX({key_col}) FROM {table})"
+                    )
+                # resolved_edges_blob uses composite text key — keep highest rowid
+                self._conn.execute(
+                    "DELETE FROM resolved_edges_blob WHERE rowid != "
+                    "(SELECT MAX(rowid) FROM resolved_edges_blob)"
+                )
+                self._conn.execute("UPDATE meta SET value='11' WHERE key='schema_version'")
+                self._conn.commit()
+                # Reclaim freed pages. VACUUM outside any active transaction.
+                self._conn.execute("VACUUM")
             except Exception:
                 pass
 
@@ -738,6 +768,10 @@ class GraphDB:
                 "INSERT OR REPLACE INTO indexes_blob (edge_count, data) VALUES (?, ?)",
                 (edge_count, sqlite3.Binary(pickle.dumps(interned, protocol=5))),
             )
+            # Delete stale rows — different edge counts from prior builds are never valid.
+            self._conn.execute(
+                "DELETE FROM indexes_blob WHERE edge_count != ?", (edge_count,)
+            )
             self._conn.commit()
         except Exception:
             pass
@@ -771,6 +805,9 @@ class GraphDB:
             self._conn.execute(
                 "INSERT OR REPLACE INTO edges_blob (edge_count, data) VALUES (?, ?)",
                 (edge_count, sqlite3.Binary(pickle.dumps(edge_rows, protocol=5))),
+            )
+            self._conn.execute(
+                "DELETE FROM edges_blob WHERE edge_count != ?", (edge_count,)
             )
             self._conn.commit()
         except Exception:
@@ -837,6 +874,9 @@ class GraphDB:
                 "INSERT OR REPLACE INTO symbols_blob (sym_count, data) VALUES (?, ?)",
                 (sym_count, sqlite3.Binary(pickle.dumps(cols, protocol=5))),
             )
+            self._conn.execute(
+                "DELETE FROM symbols_blob WHERE sym_count != ?", (sym_count,)
+            )
             self._conn.commit()
         except Exception:
             pass
@@ -870,6 +910,9 @@ class GraphDB:
             self._conn.execute(
                 "INSERT OR REPLACE INTO files_blob (file_count, data) VALUES (?, ?)",
                 (file_count, sqlite3.Binary(pickle.dumps(file_rows, protocol=5))),
+            )
+            self._conn.execute(
+                "DELETE FROM files_blob WHERE file_count != ?", (file_count,)
             )
             self._conn.commit()
         except Exception:
@@ -935,6 +978,9 @@ class GraphDB:
             self._conn.execute(
                 "INSERT OR REPLACE INTO resolved_edges_blob (edge_sym_key, data) VALUES (?, ?)",
                 (key, sqlite3.Binary(pickle.dumps((kinds, srcs, tgts, lines), protocol=5))),
+            )
+            self._conn.execute(
+                "DELETE FROM resolved_edges_blob WHERE edge_sym_key != ?", (key,)
             )
             self._conn.commit()
         except Exception:

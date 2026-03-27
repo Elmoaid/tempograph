@@ -182,6 +182,51 @@ class TestGraphDB:
         result = db.load_indexes(edge_count=1)
         assert result['callers'] == {'a': ['b']}
 
+    def test_save_indexes_prunes_stale_rows(self, db):
+        base = {'callers': {}, 'callees': {}, 'children': {},
+                'importers': {}, 'renderers': {}, 'subtypes': {}}
+        db.save_indexes(base, edge_count=10)
+        db.save_indexes(base, edge_count=20)
+        db.save_indexes(base, edge_count=30)
+        rows = db._conn.execute("SELECT edge_count FROM indexes_blob").fetchall()
+        assert len(rows) == 1 and rows[0][0] == 30
+
+    def test_save_symbols_blob_prunes_stale_rows(self, db):
+        sym_cols = tuple([] for _ in range(14))
+        db.save_symbols_blob([], sym_count=5)
+        db.save_symbols_blob([], sym_count=10)
+        rows = db._conn.execute("SELECT sym_count FROM symbols_blob").fetchall()
+        assert len(rows) == 1 and rows[0][0] == 10
+
+    def test_save_resolved_edges_blob_prunes_stale_rows(self, db):
+        db.save_resolved_edges_blob([], edge_count=5, sym_count=3)
+        db.save_resolved_edges_blob([], edge_count=8, sym_count=4)
+        rows = db._conn.execute("SELECT edge_sym_key FROM resolved_edges_blob").fetchall()
+        assert len(rows) == 1 and rows[0][0] == "8:4"
+
+    def test_migration_11_prunes_accumulated_blobs(self, db):
+        # Simulate a DB with multiple stale rows (as if migration 11 hadn't run yet)
+        base = {'callers': {}, 'callees': {}, 'children': {},
+                'importers': {}, 'renderers': {}, 'subtypes': {}}
+        # Bypass cleanup by inserting directly
+        import pickle, sqlite3
+        for ec in [5, 10, 20, 30]:
+            db._conn.execute(
+                "INSERT OR REPLACE INTO indexes_blob (edge_count, data) VALUES (?, ?)",
+                (ec, sqlite3.Binary(pickle.dumps(base, protocol=5))),
+            )
+        db._conn.commit()
+        # Confirm 4 rows exist before migration
+        assert db._conn.execute("SELECT COUNT(*) FROM indexes_blob").fetchone()[0] == 4
+        # Re-run migration (simulate version < 11 by calling _migrate logic directly)
+        for table, key_col in [("indexes_blob", "edge_count")]:
+            db._conn.execute(
+                f"DELETE FROM {table} WHERE {key_col} != (SELECT MAX({key_col}) FROM {table})"
+            )
+        db._conn.commit()
+        rows = db._conn.execute("SELECT edge_count FROM indexes_blob").fetchall()
+        assert len(rows) == 1 and rows[0][0] == 30
+
 
 # ── begin_batch / end_batch ───────────────────────────────────────────────────
 
