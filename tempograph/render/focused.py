@@ -5507,6 +5507,40 @@ def _compute_dead_seed_note(graph: "Tempo", seeds: "list[Symbol]") -> str:
     )
 
 
+def _compute_stability_mismatch(graph: "Tempo", seeds: "list[Symbol]") -> str:
+    """S71: Stability mismatch — stable seed with hot callers.
+
+    Fires when ALL seeds are in stable (non-hot) files but ≥2 distinct hot
+    (recently-modified) files call into them. The seed hasn't changed but the
+    active code around it has — callers may be evolving their expectations.
+
+    Distinct from S59 (caller volatility, fires per-symbol inside BFS at any stability)
+    and S62 (contract drift, hot callees). This fires only when the seed is
+    specifically STABLE under caller pressure from ≥2 hot files — signalling that
+    the stable API may need to adapt to the active callers around it.
+    """
+    hot = graph.hot_files
+    if not hot or not seeds:
+        return ""
+    if any(s.file_path in hot for s in seeds):
+        return ""
+
+    def _is_test(fp: str) -> bool:
+        return "/test" in fp or fp.startswith("test") or "tests/" in fp or fp.endswith("_test.py")
+
+    hot_caller_files: set[str] = set()
+    for sym in seeds:
+        for c in graph.callers_of(sym.id):
+            if c.file_path in hot and not _is_test(c.file_path) and c.file_path != sym.file_path:
+                hot_caller_files.add(c.file_path)
+    if len(hot_caller_files) < 2:
+        return ""
+    return (
+        f"↳ stability mismatch: stable seed, {len(hot_caller_files)} hot caller files"
+        f" — callers are changing; review for API pressure"
+    )
+
+
 def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     """Task-focused rendering with BFS graph traversal.
     Starts from search results, then follows call/render/import edges
@@ -5549,6 +5583,10 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     _module_diversity = _compute_bfs_module_diversity(graph, seeds, ordered)
     if _module_diversity:
         lines.append(_module_diversity)
+        lines.append("")
+    _stability_mismatch = _compute_stability_mismatch(graph, seeds)
+    if _stability_mismatch:
+        lines.append(_stability_mismatch)
         lines.append("")
     seen_files: set[str] = set()
     # Count header sections already written to lines (change_exposure, scope_note,

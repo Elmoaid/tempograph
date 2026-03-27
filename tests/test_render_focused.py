@@ -3421,3 +3421,91 @@ class TestHubAdaptiveCallerLimit:
         assert len(depth1_callers) >= 8, (
             f"9-caller seed should get all 8 allowed; got {len(depth1_callers)}"
         )
+
+
+class TestStabilityMismatch:
+    """Tests for _compute_stability_mismatch: S71 stable seed with hot callers."""
+
+    def _fn(self, name, file_path):
+        return Symbol(
+            id=f"{file_path}::{name}",
+            name=name,
+            qualified_name=name,
+            kind=SymbolKind.FUNCTION,
+            language=Language.PYTHON,
+            file_path=file_path,
+            line_start=1,
+            line_end=10,
+            exported=True,
+        )
+
+    def test_stable_seed_two_hot_callers_fires(self, tmp_path):
+        """Stable seed with ≥2 hot caller files → stability mismatch fires."""
+        from tempograph.render.focused import _compute_stability_mismatch
+
+        seed = self._fn("process", "app/stable.py")
+        caller_a = self._fn("use_a", "app/hot_a.py")
+        caller_b = self._fn("use_b", "app/hot_b.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=caller_a.id, target_id=seed.id),
+            Edge(kind=EdgeKind.CALLS, source_id=caller_b.id, target_id=seed.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, caller_a, caller_b])
+        graph.hot_files = {"app/hot_a.py", "app/hot_b.py"}
+
+        result = _compute_stability_mismatch(graph, [seed])
+        assert "stability mismatch" in result, f"Expected signal; got: {result!r}"
+        assert "2 hot caller files" in result, f"Expected file count; got: {result!r}"
+        assert "API pressure" in result, f"Expected action hint; got: {result!r}"
+
+    def test_hot_seed_suppressed(self, tmp_path):
+        """Seed in a hot file → signal suppressed (not a mismatch, seed itself is active)."""
+        from tempograph.render.focused import _compute_stability_mismatch
+
+        seed = self._fn("process", "app/active.py")
+        caller_a = self._fn("use_a", "app/hot_a.py")
+        caller_b = self._fn("use_b", "app/hot_b.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=caller_a.id, target_id=seed.id),
+            Edge(kind=EdgeKind.CALLS, source_id=caller_b.id, target_id=seed.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, caller_a, caller_b])
+        graph.hot_files = {"app/active.py", "app/hot_a.py", "app/hot_b.py"}
+
+        result = _compute_stability_mismatch(graph, [seed])
+        assert result == "", f"Hot seed should suppress signal; got: {result!r}"
+
+    def test_one_hot_caller_file_suppressed(self, tmp_path):
+        """Only 1 distinct hot caller file → below threshold, no signal."""
+        from tempograph.render.focused import _compute_stability_mismatch
+
+        seed = self._fn("validate", "app/stable.py")
+        hot_caller = self._fn("use_hot", "app/hot.py")
+        cold_caller = self._fn("use_cold", "app/cold.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=hot_caller.id, target_id=seed.id),
+            Edge(kind=EdgeKind.CALLS, source_id=cold_caller.id, target_id=seed.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, hot_caller, cold_caller])
+        graph.hot_files = {"app/hot.py"}
+
+        result = _compute_stability_mismatch(graph, [seed])
+        assert result == "", f"1 hot caller file should not fire; got: {result!r}"
+
+    def test_test_file_callers_excluded(self, tmp_path):
+        """Hot callers in test files are excluded from the count."""
+        from tempograph.render.focused import _compute_stability_mismatch
+
+        seed = self._fn("compute", "app/stable.py")
+        test_caller = self._fn("test_compute", "tests/test_app.py")
+        hot_caller = self._fn("use_it", "app/hot.py")
+        edges = [
+            Edge(kind=EdgeKind.CALLS, source_id=test_caller.id, target_id=seed.id),
+            Edge(kind=EdgeKind.CALLS, source_id=hot_caller.id, target_id=seed.id),
+        ]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed, test_caller, hot_caller])
+        graph.hot_files = {"tests/test_app.py", "app/hot.py"}
+
+        result = _compute_stability_mismatch(graph, [seed])
+        # Only 1 non-test hot caller file → should not fire
+        assert result == "", f"Test callers should not count; got: {result!r}"

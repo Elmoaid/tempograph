@@ -12,6 +12,7 @@ import { WorkspaceTabs } from "./WorkspaceTabs";
 import { InfoPanel } from "./InfoPanel";
 import { SnapshotPanel } from "./SnapshotPanel";
 import { ViewNav, type AppView } from "./ViewNav";
+import { DashboardView } from "./DashboardView";
 import { useWorkspaceData } from "../hooks/useWorkspaceData";
 
 interface Props {
@@ -155,13 +156,7 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
       )}
 
       {activeView === "dashboard" && !showClaude && (
-        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column", gap: 12, color: "var(--text-tertiary)" }}>
-          <div style={{ fontSize: 32, opacity: 0.3 }}>▦</div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text-secondary)" }}>Dashboard View</div>
-          <div style={{ fontSize: 12, maxWidth: 360, textAlign: "center", lineHeight: 1.6 }}>
-            Codebase health metrics, complexity heatmaps, and change trends. Coming soon — requires recharts integration.
-          </div>
-        </div>
+        <DashboardView repoPath={repoPath} />
       )}
 
       <div className={`grid-shell${rightHidden ? " right-hidden" : ""}`} style={{ display: (showClaude || activeView !== "modes") ? "none" : undefined }}>
