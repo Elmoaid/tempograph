@@ -447,6 +447,97 @@ def _signals_coupling_depth(graph: Tempo) -> list[str]:
     return lines
 
 
+def _dep_layer_health(graph: Tempo) -> list[str]:
+    """Compact dep-layer stratification + foundation health signal for overview.
+
+    Shows how many dependency layers exist and which files form each tier.
+    Flags when foundation files are unexpectedly hot (architecture instability).
+    Skipped when < 3 layers or < 8 non-test source files are layered.
+    Uses graph.dependency_layers() (Kahn's algorithm on import edges).
+    """
+    try:
+        raw_layers = graph.dependency_layers()
+    except Exception:
+        return []
+
+    # Filter test files from all layers; drop now-empty layers.
+    layers = [[fp for fp in layer if not _is_test_file(fp)] for layer in raw_layers]
+    layers = [layer for layer in layers if layer]
+
+    total_files = sum(len(layer) for layer in layers)
+    if len(layers) < 3 or total_files < 8:
+        return []
+
+    lines: list[str] = []
+
+    def _short(fp: str) -> str:
+        parts = fp.split("/")
+        return "/".join(parts[-2:]) if len(parts) > 2 else fp
+
+    def _rank_files(files: list[str]) -> list[str]:
+        """Sort by importer count desc so most-relied-upon files appear first."""
+        return sorted(files, key=lambda f: (-len(graph.importers_of(f)), f.rsplit("/", 1)[-1]))
+
+    max_layer = len(layers) - 1
+
+    # Show 3 tiers: L0 (foundation), L1 (core), L{max} (interface / top).
+    # Compress middle layers into a count. For shallow hierarchies (≤ 3 layers),
+    # show all of them with appropriate labels.
+    tier_indices: list[int] = [0]  # always show L0
+    if max_layer >= 1:
+        tier_indices.append(1)  # L1 core
+    if max_layer >= 2 and max_layer not in tier_indices:
+        tier_indices.append(max_layer)  # L{max} interface
+
+    tier_labels = {
+        0: "L0 foundation",
+        1: "L1 core",
+        max_layer: f"L{max_layer} interface",
+    }
+    # When there are only 3 layers, middle label is just L2 not "interface"
+    if max_layer == 2:
+        tier_labels[2] = "L2 interface"
+
+    layer_strs: list[str] = []
+    for idx in tier_indices:
+        files = layers[idx]
+        ranked = _rank_files(files)
+        names = [_short(f) for f in ranked[:2]]
+        overflow = f" +{len(files) - 2}" if len(files) > 2 else ""
+        hot_count = sum(1 for f in files if f in graph.hot_files)
+        hot_note = f", {hot_count} hot" if hot_count > 0 and len(files) >= 4 else ""
+        label = tier_labels.get(idx, f"L{idx}")
+        layer_strs.append(f"{label} ({len(files)}{hot_note}): {', '.join(names)}{overflow}")
+
+    # Prefix with total depth for context (depth ≥ 4 is notable)
+    depth_note = f" ({max_layer + 1} levels)" if max_layer >= 3 else ""
+    if layer_strs:
+        lines.append(f"dep layers{depth_note}: {' | '.join(layer_strs)}")
+
+    # Foundation health: flag when L0 is proportionally hotter than top layers — unusual.
+    # Normal gradient: interface/top layers change more than foundation (L0).
+    # Use the actual top half of the filtered layer list (index-agnostic).
+    if len(layers) >= 3 and graph.hot_files:
+        l0_files = layers[0]
+        _top_start = max(1, len(layers) // 2)
+        l3plus_files = [fp for layer in layers[_top_start:] for fp in layer]
+        if l0_files and l3plus_files:
+            l0_hot = sum(1 for fp in l0_files if fp in graph.hot_files)
+            l3_hot = sum(1 for fp in l3plus_files if fp in graph.hot_files)
+            l0_frac = l0_hot / len(l0_files)
+            l3_frac = l3_hot / len(l3plus_files)
+            if l0_frac > 0.5 and l0_frac > l3_frac:
+                hot_names = ", ".join(
+                    _short(fp) for fp in sorted(l0_files)[:3] if fp in graph.hot_files
+                )
+                lines.append(
+                    f"⚠ foundation churn: {l0_hot}/{len(l0_files)} foundation files active"
+                    f" ({l0_frac:.0%}) — architecture under active change: {hot_names}"
+                )
+
+    return lines
+
+
 def _signals_coupling_structure(
     graph: Tempo, *, modules: dict[str, list[str]],
 ) -> list[str]:
@@ -621,6 +712,7 @@ def _signals_coupling(
     lines.extend(_signals_coupling_fanin(graph))
     lines.extend(_signals_coupling_fanout_cochange(graph))
     lines.extend(_signals_coupling_depth(graph))
+    lines.extend(_dep_layer_health(graph))
     lines.extend(_signals_coupling_structure(graph, modules=modules))
     return lines
 
