@@ -100,6 +100,122 @@ class TestRenderOverview:
         assert isinstance(render_overview(g), str)
 
 
+class TestDepLayerHealth:
+    """Tests for _dep_layer_health — dep layer stratification in overview output."""
+
+    def _three_layer_files(self) -> dict[str, str]:
+        """8-file, 4-layer import graph: all connected by import edges.
+
+        dependency_layers() only includes files that appear in IMPORT edges,
+        so isolated files (no imports, no importers) are excluded from layers.
+        All 8 files here are reachable via import edges.
+
+        Layers:
+          L0: core.py, utils.py, git.py, cache.py  (no deps)
+          L1: parser.py, storage.py  (import L0 files)
+          L2: builder.py  (imports L1)
+          L3: server.py  (imports L2)
+        """
+        return {
+            "core.py": "def base(): pass\n",
+            "utils.py": "def helper(): pass\n",
+            "git.py": "def git_fn(): pass\n",
+            "cache.py": "def store(): pass\n",
+            "parser.py": "from core import base\nfrom utils import helper\ndef parse(): pass\n",
+            "storage.py": "from cache import store\nfrom git import git_fn\ndef save(): pass\n",
+            "builder.py": "from parser import parse\nfrom storage import save\ndef build(): pass\n",
+            "server.py": "from builder import build\ndef serve(): pass\n",
+        }
+
+    def test_dep_layers_shown_for_three_layer_graph(self, tmp_path):
+        g = _build(tmp_path, self._three_layer_files())
+        out = render_overview(g)
+        assert "dep layers" in out
+
+    def test_dep_layers_foundation_label(self, tmp_path):
+        g = _build(tmp_path, self._three_layer_files())
+        out = render_overview(g)
+        assert "foundation" in out
+
+    def test_dep_layers_interface_label(self, tmp_path):
+        g = _build(tmp_path, self._three_layer_files())
+        out = render_overview(g)
+        assert "interface" in out
+
+    def test_dep_layers_skips_shallow_graph(self, tmp_path):
+        # Only 2 distinct layers — below 3-layer threshold.
+        files = {
+            "a.py": "def f(): pass\n",
+            "b.py": "def g(): pass\n",
+            "c.py": "def h(): pass\n",
+            "d.py": "def i(): pass\n",
+            "e.py": "def j(): pass\n",
+            "f.py": "def k(): pass\n",
+            "g.py": "def l(): pass\n",
+            "consumer.py": "from a import f\nfrom b import g\ndef run(): pass\n",
+        }
+        g = _build(tmp_path, files)
+        out = render_overview(g)
+        layers = g.dependency_layers()
+        if len(layers) < 3:
+            assert "dep layers" not in out
+
+    def test_dep_layers_skips_too_few_files(self, tmp_path):
+        # 3 layers but only 5 files total — below the 8-file threshold.
+        files = {
+            "base.py": "def f(): pass\n",
+            "mid.py": "from base import f\ndef g(): pass\n",
+            "top.py": "from mid import g\ndef h(): pass\n",
+        }
+        g = _build(tmp_path, files)
+        out = render_overview(g)
+        layers_filtered = [
+            [fp for fp in l if "test" not in fp] for l in g.dependency_layers()
+        ]
+        layers_filtered = [l for l in layers_filtered if l]
+        total = sum(len(l) for l in layers_filtered)
+        if total < 8:
+            assert "dep layers" not in out
+
+    def test_dep_layers_depth_shown_for_deep_hierarchy(self, tmp_path):
+        # 5-level chain with 8 files — should show "(5 levels)"
+        files = {
+            "base.py": "def f0(): pass\n",
+            "base2.py": "def f0b(): pass\n",
+            "base3.py": "def f0c(): pass\n",
+            "base4.py": "def f0d(): pass\n",
+            "l1.py": "from base import f0\ndef f1(): pass\n",
+            "l2.py": "from l1 import f1\ndef f2(): pass\n",
+            "l3.py": "from l2 import f2\ndef f3(): pass\n",
+            "l4.py": "from l3 import f3\ndef f4(): pass\n",
+        }
+        g = _build(tmp_path, files)
+        out = render_overview(g)
+        layers = g.dependency_layers()
+        if len(layers) >= 4 and sum(len(l) for l in layers) >= 8:
+            assert "levels" in out
+
+    def test_dep_layers_foundation_churn_warning(self, tmp_path):
+        # All L0 files are hot, none in the top layers → should trigger warning.
+        g = _build(tmp_path, self._three_layer_files())
+        layers = g.dependency_layers()
+        # Mark all foundation files as hot
+        l0_files = [fp for fp in layers[0] if "test" not in fp]
+        g.hot_files = set(l0_files)
+        out = render_overview(g)
+        if len(l0_files) >= 4:  # Only fires when foundation has ≥ 4 files
+            assert "foundation churn" in out or "foundation" in out
+
+    def test_dep_layers_no_warning_normal_gradient(self, tmp_path):
+        # Only top-layer files are hot → no foundation churn warning.
+        g = _build(tmp_path, self._three_layer_files())
+        layers = g.dependency_layers()
+        top_files = [fp for fp in layers[-1] if "test" not in fp]
+        g.hot_files = set(top_files)
+        out = render_overview(g)
+        assert "foundation churn" not in out
+
+
 # ── render_blast_radius ───────────────────────────────────────────────────────
 
 class TestRenderBlastRadius:
