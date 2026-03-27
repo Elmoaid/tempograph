@@ -8,6 +8,8 @@ All file paths from graph.files and sym.file_path are relative to repo_root.
 """
 from __future__ import annotations
 
+import re
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -23,6 +25,11 @@ CONTEXT_FILENAME = ".tempograph-context.md"
 _MAX_SYMBOLS_PER_DIR = 20
 _MAX_EDGES_PER_SYMBOL = 3
 _HOT_DAYS = 30
+_RECENT_DAYS = 7
+_MAX_RECENT_SYMS_PER_FILE = 3
+
+# Regex for unified diff hunk headers: @@ -oldstart[,oldlen] +newstart[,newlen] @@
+_HUNK_RE = re.compile(r"@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
 
 
 def _is_hot_dir(repo_root: str, dir_files: list[str]) -> bool:
@@ -135,6 +142,67 @@ def _freshness_section(repo_root: str, dir_files: list[str]) -> str:
     return "\n".join(lines)
 
 
+def _parse_changed_lines(diff_output: str) -> set[int]:
+    """Parse unified diff output (--unified=0) and return set of changed new-file line numbers."""
+    changed: set[int] = set()
+    for m in _HUNK_RE.finditer(diff_output):
+        start = int(m.group(1))
+        length = int(m.group(2)) if m.group(2) is not None else 1
+        if length == 0:
+            continue  # pure deletion — no new lines
+        for ln in range(start, start + length):
+            changed.add(ln)
+    return changed
+
+
+def _recently_changed_symbols_section(repo_root: str, graph: "Tempo", dir_files: list[str]) -> str:
+    """Symbol-level recency: which functions changed in the last 7 days.
+
+    Intersects git diff line ranges with graph symbol boundaries to identify
+    specific functions that were recently edited — not just files.
+
+    Returns empty string when no recently-changed symbols are found (section omitted).
+    """
+    lines: list[str] = ["## Recently changed (7d)"]
+    found = False
+    for fp in sorted(dir_files):
+        days = file_last_modified_days(repo_root, fp)
+        if days is None or days > _RECENT_DAYS:
+            continue
+        # Get the diff for this file across recent commits
+        try:
+            proc = subprocess.run(
+                ["git", "log", f"--since={_RECENT_DAYS} days ago", "-p", "--unified=0", "--", fp],
+                capture_output=True, text=True, cwd=repo_root, timeout=5,
+            )
+            if proc.returncode != 0 or not proc.stdout.strip():
+                continue
+            changed_lines = _parse_changed_lines(proc.stdout)
+        except Exception:
+            continue
+        if not changed_lines:
+            continue
+        # Map changed lines back to symbols using their line ranges
+        syms = graph.symbols_in_file(fp)
+        recent_syms = [
+            s for s in syms
+            if s.line_start is not None and s.line_end is not None
+            and any(ln in changed_lines for ln in range(s.line_start, s.line_end + 1))
+        ]
+        if not recent_syms:
+            continue
+        names = [s.name for s in recent_syms[:_MAX_RECENT_SYMS_PER_FILE]]
+        overflow = max(0, len(recent_syms) - _MAX_RECENT_SYMS_PER_FILE)
+        name_str = ", ".join(names)
+        if overflow:
+            name_str += f" (+{overflow} more)"
+        lines.append(f"`{Path(fp).name}`: {name_str}")
+        found = True
+    if not found:
+        return ""
+    return "\n".join(lines)
+
+
 def generate_ambient(graph: "Tempo", repo_root: str, hot_only: bool = True) -> dict[str, str]:
     """Generate per-directory LOD-1 context markdown content.
 
@@ -170,7 +238,12 @@ def generate_ambient(graph: "Tempo", repo_root: str, hot_only: bool = True) -> d
         cross = _cross_file_section(graph, dir_files)
         tests = _test_mapping_section(graph, dir_files)
         fresh = _freshness_section(repo_root, dir_files)
-        result[dir_path] = f"{header}\n\n{lod1}\n\n{cross}\n\n{tests}\n\n{fresh}\n"
+        recent = _recently_changed_symbols_section(repo_root, graph, dir_files)
+        body = f"{header}\n\n{lod1}\n\n{cross}\n\n{tests}\n\n{fresh}"
+        if recent:
+            body += f"\n\n{recent}"
+        body += "\n"
+        result[dir_path] = body
 
     return result
 
