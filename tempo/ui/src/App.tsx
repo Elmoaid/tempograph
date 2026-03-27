@@ -56,8 +56,10 @@ function App() {
     saveWorkspaces(next);
     try {
       const raw = localStorage.getItem("tempo-recent-repos");
-      const recent: string[] = raw ? JSON.parse(raw) : [];
-      const updated = [path, ...recent.filter(r => r !== path)].slice(0, 5);
+      const parsed: unknown[] = raw ? JSON.parse(raw) : [];
+      // Migrate from string[] to {path, addedAt}[]
+      const recent = parsed.map(r => typeof r === "string" ? { path: r } : r as { path: string; addedAt?: number });
+      const updated = [{ path, addedAt: Date.now() }, ...recent.filter(r => r.path !== path)].slice(0, 5);
       localStorage.setItem("tempo-recent-repos", JSON.stringify(updated));
     } catch { /* ignore */ }
   }, [workspaces]);
