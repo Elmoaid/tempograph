@@ -5541,7 +5541,7 @@ def _compute_stability_mismatch(graph: "Tempo", seeds: "list[Symbol]") -> str:
     )
 
 
-def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
+def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000, _staleness_map: "dict[str, int | None] | None" = None) -> str:
     """Task-focused rendering with BFS graph traversal.
     Starts from search results, then follows call/render/import edges
     to build a connected subgraph relevant to the query.
@@ -5606,11 +5606,16 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     _staleness_cache: dict[str, int | None] = {}
     # S40: pre-populate staleness cache with one batch git call instead of N individual
     # `git log -1 -- <file>` subprocesses (one per unique caller file in BFS).
-    try:
-        from ..git import batch_file_modification_map as _bfmm  # noqa: PLC0415
-        _staleness_cache.update(_bfmm(graph.root))
-    except Exception:
-        pass
+    # C7: if caller (e.g. render_prepare) already ran batch_file_modification_map once
+    # and passes the result via _staleness_map, skip the subprocess entirely.
+    if _staleness_map is not None:
+        _staleness_cache.update(_staleness_map)
+    else:
+        try:
+            from ..git import batch_file_modification_map as _bfmm  # noqa: PLC0415
+            _staleness_cache.update(_bfmm(graph.root))
+        except Exception:
+            pass
 
     for _sym_idx, (sym, depth) in enumerate(ordered):
         orbit_note = ""

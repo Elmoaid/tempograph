@@ -245,8 +245,18 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
         # specific symbols. This prevents "req" (len=3) from blocking "resp" (len=4).
         effective_keywords = [kw for kw in keywords if len(kw) >= 4][:3]
         _query_tokens = effective_keywords
+        # C7: pre-compute git staleness map once for all per-keyword render_focused calls.
+        # Without this, each render_focused call spawns its own `git log` subprocess (~66ms).
+        # For 3 keywords: saves ~132ms (2× 66ms avoided) at the cost of one upfront call.
+        _cl_staleness_map: "dict[str, int | None] | None" = None
+        if effective_keywords:
+            try:
+                from .git import batch_file_modification_map as _bfmm_prepare  # noqa: PLC0415
+                _cl_staleness_map = _bfmm_prepare(graph.root)
+            except Exception:
+                pass
         for kw in effective_keywords:
-            focused = render_focused(graph, kw, max_tokens=focus_budget)
+            focused = render_focused(graph, kw, max_tokens=focus_budget, _staleness_map=_cl_staleness_map)
             no_match = not focused or "No symbols matching" in focused or "No exact match" in focused
             if not no_match:
                 kw_files = _extract_focus_files(focused)
