@@ -417,7 +417,7 @@ def _handle_overflow(
     If graph is provided, lists up to 5 high-importance (score >= 3) dropped
     symbol names so agents know which hub symbols were truncated."""
     block_tokens = count_tokens(block)
-    if token_count + block_tokens > max_tokens:
+    if token_count + block_tokens + 1 > max_tokens:  # +1 for separator "\n" in final join
         remaining = len(ordered) - len([l for l in lines if l and not l.startswith("...")])
         if remaining > 0:
             hi_names: list[tuple[int, str]] = []
@@ -523,6 +523,9 @@ def _render_all_callers_section(
 
     total = sum(len(v) for v in by_file.values())
     if total < 2:
+        return ""
+
+    if max_tokens > 0 and token_count > max_tokens - 100:
         return ""
 
     # Sort files by number of callers (most first), take top 5
@@ -2052,7 +2055,7 @@ def _signals_focused_test_coverage(
     lines: list[str] = []
     # Test coverage section: which test files call the primary seed symbols?
     # Only consider depth-0 (seed) symbols to avoid noise from BFS expansion.
-    if token_count < max_tokens - 40:
+    if token_count < max_tokens - 180:
         _test_callers: dict[str, int] = {}
         _has_source_callers = False
         for _ts, _td in ordered:
@@ -2064,7 +2067,14 @@ def _signals_focused_test_coverage(
                 else:
                     _has_source_callers = True
         if _test_callers:
-            _tcov = "\nTests:\n" + "\n".join(f"  {_tfp} ({_tcount} caller{'s' if _tcount != 1 else ''})" for _tfp, _tcount in sorted(_test_callers.items()))
+            _sorted_tc = sorted(_test_callers.items())
+            _cap = 15
+            _shown_tc = _sorted_tc[:_cap]
+            _hidden_tc = len(_sorted_tc) - len(_shown_tc)
+            _rows = [f"  {_tfp} ({_tcount} caller{'s' if _tcount != 1 else ''})" for _tfp, _tcount in _shown_tc]
+            if _hidden_tc:
+                _rows.append(f"  ... +{_hidden_tc} more test file{'s' if _hidden_tc != 1 else ''}")
+            _tcov = "\nTests:\n" + "\n".join(_rows)
             lines.append(_tcov)
             token_count += count_tokens(_tcov)
         elif _has_source_callers:
@@ -5378,10 +5388,11 @@ def _render_context_sections(
         lines.append(mono_block)
         token_count += mono_tokens
 
-    related_section = _render_related_files_section(graph, ordered, seen_files)
-    if related_section:
-        lines.append(related_section)
-        token_count += count_tokens(related_section)
+    if token_count < max_tokens - 150:
+        related_section = _render_related_files_section(graph, ordered, seen_files)
+        if related_section:
+            lines.append(related_section)
+            token_count += count_tokens(related_section)
 
     blast_section = _render_blast_risk_section(graph, ordered, token_count, max_tokens)
     if blast_section:
@@ -5399,20 +5410,23 @@ def _render_context_sections(
         lines.append(volatile_section)
         token_count += count_tokens(volatile_section)
 
-    recent_section = _render_recent_changes_section(graph, seed_file_paths)
-    if recent_section:
-        lines.append(recent_section)
-        token_count += count_tokens(recent_section)
+    if token_count < max_tokens - 100:
+        recent_section = _render_recent_changes_section(graph, seed_file_paths)
+        if recent_section:
+            lines.append(recent_section)
+            token_count += count_tokens(recent_section)
 
-    cochange_section = _render_cochange_section(graph, seed_file_paths)
-    if cochange_section:
-        lines.append(cochange_section)
-        token_count += count_tokens(cochange_section)
+    if token_count < max_tokens - 100:
+        cochange_section = _render_cochange_section(graph, seed_file_paths)
+        if cochange_section:
+            lines.append(cochange_section)
+            token_count += count_tokens(cochange_section)
 
-    cohort_section = _render_cochange_cohort_section(graph, seed_file_paths, seen_files)
-    if cohort_section:
-        lines.append(cohort_section)
-        token_count += count_tokens(cohort_section)
+    if token_count < max_tokens - 100:
+        cohort_section = _render_cochange_cohort_section(graph, seed_file_paths, seen_files)
+        if cohort_section:
+            lines.append(cohort_section)
+            token_count += count_tokens(cohort_section)
 
     _tcov_lines = _signals_focused_test_coverage(
         graph, ordered=ordered, token_count=token_count, max_tokens=max_tokens,
@@ -5628,10 +5642,14 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000, _stalene
         if should_break:
             break
         lines.append(block)
-        token_count += block_tokens
+        token_count += block_tokens + 1  # +1 for separator "\n" in final join
         seen_files.add(sym.file_path)
 
     _seed_syms = [sym for sym, d in ordered if d == 0]
+
+    # BFS block tokens were summed individually; "\n".join(lines) adds separator newlines
+    # that aren't counted. Recount once for accuracy before remaining budget checks.
+    token_count = count_tokens("\n".join(lines))
 
     token_count = _render_context_sections(
         graph, lines=lines, ordered=ordered, seen_files=seen_files,
