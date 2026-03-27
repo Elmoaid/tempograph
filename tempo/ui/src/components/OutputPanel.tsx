@@ -60,6 +60,7 @@ interface OutputPanelProps {
   onRunHistoryEntry?: (entry: { mode: string; args: string }) => void;
   suggestions: string[];
   onSuggestionClick: (mode: string) => void;
+  statusText?: string;
 }
 
 interface KitSection {
@@ -88,6 +89,7 @@ export function OutputPanel(props: OutputPanelProps) {
     onFilterToggle, onFilterChange, onFilterClose,
     onSearchChange, onSearchClose, onSearchNavigate,
     onFeedback, saved, runHistory, onRunHistoryEntry, suggestions, onSuggestionClick,
+    statusText,
   } = props;
 
   const isKitMode = activeMode.startsWith("kit:");
@@ -224,6 +226,14 @@ export function OutputPanel(props: OutputPanelProps) {
             >
               Cancel
             </button>
+            {statusText && (
+              <div
+                data-testid="run-status-text"
+                style={{ marginTop: 8, fontSize: 10, color: "var(--accent)", opacity: 0.8, fontFamily: "var(--font-mono)", animation: "pulse 1.4s ease-in-out infinite" }}
+              >
+                {statusText}
+              </div>
+            )}
           </div>
         ) : modeOutput ? (
           <>
