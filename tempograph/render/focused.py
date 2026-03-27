@@ -436,6 +436,17 @@ def _handle_overflow(
     return False, block_tokens
 
 
+def _extend_tracked(lines: list[str], new_lines: list[str], token_count: int) -> int:
+    """Extend lines with new_lines and return updated token_count.
+
+    Used in render_focused to keep a running token budget across all
+    _signals_focused_* sections so each section sees the correct remaining budget
+    and output does not silently overflow max_tokens."""
+    if new_lines:
+        lines.extend(new_lines)
+        token_count += count_tokens("\n".join(new_lines))
+    return token_count
+
 
 def _render_cochange_section(graph, seed_file_paths: list[str]) -> str:
     """Build the 'Co-changed with (basename):' section for render_focused."""
@@ -4991,13 +5002,13 @@ def _signals_focused_fn_advanced(
 ) -> list[str]:
     """Focused-mode signals: fn_advanced (dispatches to sub-helpers)."""
     lines: list[str] = []
-    lines += _signals_fn_recursion(graph, _seed_syms, token_count, max_tokens)
-    lines += _signals_fn_oop(graph, _seed_syms, token_count, max_tokens)
-    lines += _signals_fn_signature(graph, _seed_syms, token_count, max_tokens)
-    lines += _signals_fn_conventions(graph, _seed_syms, token_count, max_tokens)
-    lines += _signals_fn_quality(graph, _seed_syms, token_count, max_tokens)
-    lines += _signals_fn_focus_props_a(graph, _seed_syms, token_count, max_tokens)
-    lines += _signals_fn_focus_props_b(graph, _seed_syms, token_count, max_tokens)
+    token_count = _extend_tracked(lines, _signals_fn_recursion(graph, _seed_syms, token_count, max_tokens), token_count)
+    token_count = _extend_tracked(lines, _signals_fn_oop(graph, _seed_syms, token_count, max_tokens), token_count)
+    token_count = _extend_tracked(lines, _signals_fn_signature(graph, _seed_syms, token_count, max_tokens), token_count)
+    token_count = _extend_tracked(lines, _signals_fn_conventions(graph, _seed_syms, token_count, max_tokens), token_count)
+    token_count = _extend_tracked(lines, _signals_fn_quality(graph, _seed_syms, token_count, max_tokens), token_count)
+    token_count = _extend_tracked(lines, _signals_fn_focus_props_a(graph, _seed_syms, token_count, max_tokens), token_count)
+    _extend_tracked(lines, _signals_fn_focus_props_b(graph, _seed_syms, token_count, max_tokens), token_count)
     return lines
 
 
@@ -5540,7 +5551,10 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
         lines.append(_module_diversity)
         lines.append("")
     seen_files: set[str] = set()
-    token_count = 0
+    # Count header sections already written to lines (change_exposure, scope_note,
+    # pair_note, module_diversity) so the BFS loop and signal sections start with
+    # an accurate token budget rather than assuming zero overhead.
+    token_count = count_tokens("\n".join(lines))
 
     # Callsite line index: (caller_id, callee_id) → sorted non-zero line numbers.
     _callsite_lines: dict[tuple[str, str], list[int]] = {}
@@ -5583,36 +5597,38 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     )
 
     # --- Focused signal-group helpers ---
-    lines.extend(_signals_focused_test(
+    # token_count is updated after each section so later sections see the correct
+    # remaining budget and output stays within max_tokens.
+    token_count = _extend_tracked(lines, _signals_focused_test(
         graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
-    ))
-    lines.extend(_signals_focused_complexity(
+    ), token_count)
+    token_count = _extend_tracked(lines, _signals_focused_complexity(
         graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
-    ))
-    lines.extend(_signals_focused_structure(
+    ), token_count)
+    token_count = _extend_tracked(lines, _signals_focused_structure(
         graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
-    ))
-    lines.extend(_signals_focused_class_hierarchy(
+    ), token_count)
+    token_count = _extend_tracked(lines, _signals_focused_class_hierarchy(
         graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
-    ))
-    lines.extend(_signals_focused_class_patterns(
+    ), token_count)
+    token_count = _extend_tracked(lines, _signals_focused_class_patterns(
         graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
-    ))
-    lines.extend(_signals_focused_coupling(
+    ), token_count)
+    token_count = _extend_tracked(lines, _signals_focused_coupling(
         graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
-    ))
-    lines.extend(_signals_focused_naming(
+    ), token_count)
+    token_count = _extend_tracked(lines, _signals_focused_naming(
         graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
-    ))
-    lines.extend(_signals_focused_fn_traits(
+    ), token_count)
+    token_count = _extend_tracked(lines, _signals_focused_fn_traits(
         graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
-    ))
-    lines.extend(_signals_focused_fn_patterns(
+    ), token_count)
+    token_count = _extend_tracked(lines, _signals_focused_fn_patterns(
         graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
-    ))
-    lines.extend(_signals_focused_fn_advanced(
+    ), token_count)
+    _extend_tracked(lines, _signals_focused_fn_advanced(
         graph, _seed_syms=_seed_syms, token_count=token_count, max_tokens=max_tokens,
-    ))
+    ), token_count)
 
     return "\n".join(lines)
 
