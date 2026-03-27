@@ -2020,12 +2020,9 @@ def _signals_diff_graph_c(
     # S528: Complexity spike — diff touches the highest-complexity function in the repo.
     # Modifying the most complex symbol in the codebase is the highest-risk single change possible;
     # it has the most execution paths to test and is often already the most brittle part of the system.
+    # _top_complexity_sym_id is pre-computed once in build_indexes() — O(1) dict lookup vs O(N) scan.
     if graph.symbols:
-        _s528_top = max(
-            (s for s in graph.symbols.values() if not _is_test_file(s.file_path) and s.complexity),
-            key=lambda s: s.complexity or 0,
-            default=None,
-        )
+        _s528_top = graph.symbols.get(graph._top_complexity_sym_id)
         if _s528_top and (_s528_top.complexity or 0) >= 10:
             _normalized528 = [f.replace("\\", "/") for f in changed_files]
             if _s528_top.file_path.replace("\\", "/") in _normalized528:
