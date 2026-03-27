@@ -448,14 +448,93 @@ def embed_repo(repo_path: str, exclude_dirs: str = "", output_format: str = "tex
 def overview(repo_path: str, exclude_dirs: str = "", output_format: str = "text") -> str:
     """Repo orientation: project type, languages, biggest/most complex files,
     module dependencies, circular import warnings. ~500 tokens.
-    Use this to understand the codebase before diving in.
+    Use this to understand the codebase structure. For coding tasks, call
+    prepare_context(task="...") next — it selects the right context automatically.
 
     exclude_dirs: comma-separated directory prefixes to skip (e.g. "archive,vendor")
     output_format: "text" (default) or "json" for structured {status, data, tokens, duration_ms}."""
     return _run_tool("overview", repo_path, output_format, render_overview, exclude_dirs=exclude_dirs)
 
+# ── Tool 3: Prepare context ─────────────────────────────────────────
 
-# ── Tool 3: Focus ───────────────────────────────────────────────────
+@mcp.tool()
+def prepare_context(repo_path: str, task: str, task_type: str = "",
+                    max_tokens: int = 6000, exclude_dirs: str = "",
+                    baseline_predicted_files: list[str] | None = None,
+                    precision_filter: bool = False,
+                    definition_first: bool = True,
+                    output_format: str = "text") -> str:
+    """The recommended tool for coding tasks. Give it your task and get back a
+    token-budgeted context with the right files, symbols, and hotspots — all in one call.
+    Proven +18.6% file prediction improvement (p=0.049*, n=45). 95% helpful rate.
+    Use this instead of calling index_repo → focus → blast_radius manually.
+
+    task: describe what you're working on. Two modes are auto-selected:
+      - PR/commit titles ("Merge pull request #123 from org/fix-auth-bug",
+        "fix: prevent null pointer in handler", "Fix teardown callbacks (#5928)")
+        → keyword extraction from branch name → per-keyword symbol focus → KEY FILES list
+        → proven +7% file prediction improvement on real PRs (canonical n=159, p=0.035*)
+      - General coding tasks ("add pagination to user list", "refactor database layer")
+        → fuzzy symbol search → overview fallback if no match
+    task_type: optional hint — "changelocal" forces keyword-extraction path regardless
+               of task format; also accepts "debug", "feature", "refactor", "review"
+    max_tokens: total token budget for the response (default 6000)
+    exclude_dirs: comma-separated directory prefixes to skip
+    baseline_predicted_files: optional list of files already predicted by the model
+      (for adaptive injection). Two skip conditions:
+      1. If len(baseline) ≥ 3 → returns "" (model is highly confident with 3+ predictions;
+         any context disagrees more than it helps). Evidence: falcon bl=1.000, 3 correct preds
+         → av2 without this guard injected anyway → F1 1.0→0.5 (commit 988960b/d4eb3c8).
+      2. If overlap(baseline ∩ KEY FILES) ≥ 50% → returns "" (model already knows the files).
+      Otherwise: returns full context (model needs the structural graph bridge).
+      Bench (canonical): python3 -m bench.changelocal.analyze --canonical --conditions baseline,tempograph_adaptive
+      Canonical result (n=159 Python+JS): +6.9% F1 (p=0.035*). Cost: 2× inference for ~37% of tasks.
+    precision_filter: if True, skip context when >4 key files are found (topic too broad).
+      Canonical bench: python3 -m bench.changelocal.analyze --canonical --conditions baseline,tempograph_precision
+      Canonical result (n=159 Python+JS): +3.7% F1 (p=0.21, ns). Default False (plain tempograph = +6.0%
+      outperforms precision_filter on canonical corpus). Enable only for high-baseline repos.
+    definition_first: if True, when a keyword produces too-broad focus (>10 files) and no path match,
+      fall back to the *defining file* of the top-ranked symbol (requires score≥10 and ≤2 defining files).
+      Handles "redirect" → flask/helpers.py instead of injecting nothing.
+      Phase 5.31 bench: +16.0% F1 (p=0.012*, n=93). Default True (enabled).
+    output_format: "text" (default) or "json" for structured response
+
+    Returns: overview summary + focused context + KEY FILES + hotspot warnings,
+    all within the token budget. JSON format adds `key_files` (parsed list) and `injected` (bool).
+    """
+    import re as _re
+    p, err = _validate_repo(repo_path)
+    if err:
+        return _error(err, f"Directory not found: {repo_path}", output_format)
+    excludes = _resolve_excludes(p, exclude_dirs)
+    start = time.time()
+    result = _get_or_build_graph(p, exclude_dirs=excludes or None)
+    if isinstance(result, str):
+        code, _, msg = result.partition(":")
+        return _error(code, msg or "Graph build failed", output_format)
+    try:
+        output = render_prepare(result, task, max_tokens=max_tokens, task_type=task_type,
+                                baseline_predicted_files=baseline_predicted_files,
+                                precision_filter=precision_filter,
+                                definition_first=definition_first)
+    except Exception as exc:
+        return _error("RENDER_FAILED", f"prepare_context render error: {exc}", output_format)
+    elapsed = time.time() - start
+    tokens = count_tokens(output)
+    _log_tool("prepare_context", p, output, elapsed, task=task, task_type=task_type)
+    if output_format == "json":
+        m = _re.search(r'KEY FILES[^:]*:\n((?:  \S+\n?)+)', output)
+        # Strip :start-end line range annotations — key_files are bare paths for use
+        # as baseline_predicted_files. Line ranges are available in result["data"] text.
+        key_files = [_re.sub(r':\d+(-\d+)?$', '', ln.strip())
+                     for ln in m.group(1).split('\n') if ln.strip()] if m else []
+        return _success(output, tokens, elapsed, output_format,
+                        key_files=key_files, injected=bool(output.strip()))
+    return output
+
+
+
+# ── Tool 4: Focus ───────────────────────────────────────────────────
 
 @mcp.tool()
 def focus(repo_path: str, query: str, max_tokens: int = 4000, exclude_dirs: str = "", output_format: str = "text") -> str:
@@ -478,7 +557,7 @@ def focus(repo_path: str, query: str, max_tokens: int = 4000, exclude_dirs: str 
                      exclude_dirs=exclude_dirs, query=query)
 
 
-# ── Tool 4: Hotspots ────────────────────────────────────────────────
+# ── Tool 5: Hotspots ────────────────────────────────────────────────
 
 @mcp.tool()
 def hotspots(repo_path: str, top_n: int = 15, exclude_dirs: str = "", output_format: str = "text") -> str:
@@ -494,7 +573,7 @@ def hotspots(repo_path: str, top_n: int = 15, exclude_dirs: str = "", output_for
                      exclude_dirs=exclude_dirs)
 
 
-# ── Tool 5: Blast radius ────────────────────────────────────────────
+# ── Tool 6: Blast radius ────────────────────────────────────────────
 
 @mcp.tool()
 def blast_radius(repo_path: str, file_path: str = "", query: str = "", exclude_dirs: str = "", output_format: str = "text") -> str:
@@ -826,84 +905,7 @@ def learn_recommendation(repo_path: str, task_type: str = "", output_format: str
     return _success(output, tokens, elapsed, output_format)
 
 
-# ── Tool 16: Prepare context (batch) ─────────────────────────────
-
-@mcp.tool()
-def prepare_context(repo_path: str, task: str, task_type: str = "",
-                    max_tokens: int = 6000, exclude_dirs: str = "",
-                    baseline_predicted_files: list[str] | None = None,
-                    precision_filter: bool = False,
-                    definition_first: bool = True,
-                    output_format: str = "text") -> str:
-    """One-shot context preparation for a task. Runs the optimal combination of
-    tools and returns a single, token-budgeted response. Use this instead of
-    calling index_repo → focus → blast_radius manually.
-
-    task: describe what you're working on. Two modes are auto-selected:
-      - PR/commit titles ("Merge pull request #123 from org/fix-auth-bug",
-        "fix: prevent null pointer in handler", "Fix teardown callbacks (#5928)")
-        → keyword extraction from branch name → per-keyword symbol focus → KEY FILES list
-        → proven +7% file prediction improvement on real PRs (canonical n=159, p=0.035*)
-      - General coding tasks ("add pagination to user list", "refactor database layer")
-        → fuzzy symbol search → overview fallback if no match
-    task_type: optional hint — "changelocal" forces keyword-extraction path regardless
-               of task format; also accepts "debug", "feature", "refactor", "review"
-    max_tokens: total token budget for the response (default 6000)
-    exclude_dirs: comma-separated directory prefixes to skip
-    baseline_predicted_files: optional list of files already predicted by the model
-      (for adaptive injection). Two skip conditions:
-      1. If len(baseline) ≥ 3 → returns "" (model is highly confident with 3+ predictions;
-         any context disagrees more than it helps). Evidence: falcon bl=1.000, 3 correct preds
-         → av2 without this guard injected anyway → F1 1.0→0.5 (commit 988960b/d4eb3c8).
-      2. If overlap(baseline ∩ KEY FILES) ≥ 50% → returns "" (model already knows the files).
-      Otherwise: returns full context (model needs the structural graph bridge).
-      Bench (canonical): python3 -m bench.changelocal.analyze --canonical --conditions baseline,tempograph_adaptive
-      Canonical result (n=159 Python+JS): +6.9% F1 (p=0.035*). Cost: 2× inference for ~37% of tasks.
-    precision_filter: if True, skip context when >4 key files are found (topic too broad).
-      Canonical bench: python3 -m bench.changelocal.analyze --canonical --conditions baseline,tempograph_precision
-      Canonical result (n=159 Python+JS): +3.7% F1 (p=0.21, ns). Default False (plain tempograph = +6.0%
-      outperforms precision_filter on canonical corpus). Enable only for high-baseline repos.
-    definition_first: if True, when a keyword produces too-broad focus (>10 files) and no path match,
-      fall back to the *defining file* of the top-ranked symbol (requires score≥10 and ≤2 defining files).
-      Handles "redirect" → flask/helpers.py instead of injecting nothing.
-      Phase 5.31 bench: +16.0% F1 (p=0.012*, n=93). Default True (enabled).
-    output_format: "text" (default) or "json" for structured response
-
-    Returns: overview summary + focused context + KEY FILES + hotspot warnings,
-    all within the token budget. JSON format adds `key_files` (parsed list) and `injected` (bool).
-    """
-    import re as _re
-    p, err = _validate_repo(repo_path)
-    if err:
-        return _error(err, f"Directory not found: {repo_path}", output_format)
-    excludes = _resolve_excludes(p, exclude_dirs)
-    start = time.time()
-    result = _get_or_build_graph(p, exclude_dirs=excludes or None)
-    if isinstance(result, str):
-        code, _, msg = result.partition(":")
-        return _error(code, msg or "Graph build failed", output_format)
-    try:
-        output = render_prepare(result, task, max_tokens=max_tokens, task_type=task_type,
-                                baseline_predicted_files=baseline_predicted_files,
-                                precision_filter=precision_filter,
-                                definition_first=definition_first)
-    except Exception as exc:
-        return _error("RENDER_FAILED", f"prepare_context render error: {exc}", output_format)
-    elapsed = time.time() - start
-    tokens = count_tokens(output)
-    _log_tool("prepare_context", p, output, elapsed, task=task, task_type=task_type)
-    if output_format == "json":
-        m = _re.search(r'KEY FILES[^:]*:\n((?:  \S+\n?)+)', output)
-        # Strip :start-end line range annotations — key_files are bare paths for use
-        # as baseline_predicted_files. Line ranges are available in result["data"] text.
-        key_files = [_re.sub(r':\d+(-\d+)?$', '', ln.strip())
-                     for ln in m.group(1).split('\n') if ln.strip()] if m else []
-        return _success(output, tokens, elapsed, output_format,
-                        key_files=key_files, injected=bool(output.strip()))
-    return output
-
-
-# ── Tool 17: Skills / pattern catalog ────────────────────────────
+# ── Tool 16: Skills / pattern catalog ────────────────────────────
 
 @mcp.tool()
 def get_patterns(repo_path: str, query: str = "", max_tokens: int = 4000,
@@ -929,7 +931,7 @@ def get_patterns(repo_path: str, query: str = "", max_tokens: int = 4000,
                      exclude_dirs=exclude_dirs, query=query)
 
 
-# ── Tool 18: Run kit ─────────────────────────────────────────────
+# ── Tool 17: Run kit ─────────────────────────────────────────────
 
 @mcp.tool()
 def run_kit(repo_path: str, kit: str, query: str = "", max_tokens: int = 4000,
