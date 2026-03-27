@@ -498,18 +498,15 @@ class TestPrepareContext:
             )
 
     def test_json_output_injected_false_on_gating(self):
-        # v5 gate: pred>=2 → skip injection. injected=False, key_files=[].
+        # v6 gate: pred>=2 with NO overlap → skip injection. injected=False, key_files=[].
         task = "Merge pull request #1 from org/fix-render-focused"
         base_r = assert_ok(prepare_context(REPO_PATH, task=task, output_format="json"))
         if not base_r.get("key_files"):
             pytest.skip("Task produces no KEY FILES")
-        # Ensure we pass >=2 files to trigger v5 gate
-        baseline_files = base_r["key_files"]
-        if len(baseline_files) < 2:
-            baseline_files = baseline_files + ["extra/padding.py"]
+        # Use >=2 unrelated files (zero overlap with tempograph key_files) → gate fires
         gated_r = assert_ok(prepare_context(
             REPO_PATH, task=task,
-            baseline_predicted_files=baseline_files,
+            baseline_predicted_files=["unrelated/a.py", "unrelated/b.py"],
             output_format="json",
         ))
         assert gated_r["injected"] is False
@@ -549,6 +546,39 @@ class TestPrepareContext:
         assert gated_r["data"].strip() == "", (
             "pred≥3 guard: 3 unrelated baseline files should suppress injection"
         )
+
+    def test_adaptive_gating_v6_overlap_injects(self):
+        # v6 gate: pred>=2 BUT overlap with key_files → inject (reinforces model's prediction).
+        # Fixes celery/langchain 0% regression where gate fired every commit on diffuse repos.
+        task = "Merge pull request #1 from org/fix-render-focused"
+        base_r = assert_ok(prepare_context(REPO_PATH, task=task, output_format="json"))
+        if not base_r.get("key_files"):
+            pytest.skip("Task produces no KEY FILES")
+        # Pass >=2 files INCLUDING one actual key file → overlap=1 → inject
+        actual_key = base_r["key_files"][0]
+        gated_r = assert_ok(prepare_context(
+            REPO_PATH, task=task,
+            baseline_predicted_files=[actual_key, "other/file.py"],
+            output_format="json",
+        ))
+        assert gated_r["injected"] is True, (
+            "v6: overlap ≥1 should inject even when baseline predicts ≥2 files"
+        )
+        assert len(gated_r["key_files"]) > 0
+
+    def test_adaptive_gating_v6_no_overlap_skips(self):
+        # v6 gate: pred>=2 with zero overlap → skip (same as v5 behavior).
+        task = "Merge pull request #1 from org/fix-render-focused"
+        base_r = assert_ok(prepare_context(REPO_PATH, task=task, output_format="json"))
+        if not base_r.get("key_files"):
+            pytest.skip("Task produces no KEY FILES")
+        gated_r = assert_ok(prepare_context(
+            REPO_PATH, task=task,
+            baseline_predicted_files=["unrelated/x.py", "unrelated/y.py"],
+            output_format="json",
+        ))
+        assert gated_r["injected"] is False
+        assert gated_r["data"].strip() == ""
 
     def test_docs_component_branch_no_injection(self):
         # Branches with "docs" as a component (e.g. pr/5309-docs-view-custom-auth)
