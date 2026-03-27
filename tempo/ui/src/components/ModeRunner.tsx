@@ -102,6 +102,7 @@ export function ModeRunner({ repoPath, excludeDirs }: Props) {
           onRunHistoryEntry={vm.runHistoryEntry}
           suggestions={vm.suggestions}
           onSuggestionClick={vm.runSuggestion}
+          statusText={vm.statusText}
         />
       </div>
     </>

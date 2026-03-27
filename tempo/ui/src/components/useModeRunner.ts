@@ -74,6 +74,7 @@ export interface ModeRunnerState {
   searchCurrentMatch: number;
   runHistory: RunHistoryEntry[];
   suggestions: string[];
+  statusText: string;
 }
 
 export interface ModeRunnerActions {
@@ -315,7 +316,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   // Auto-run overview on mount
   useEffect(() => { runModeRef.current?.(); }, []);
 
-  const { runMode: _runMode, cancelMode } = useRunMode({
+  const { runMode: _runMode, cancelMode, statusText } = useRunMode({
     repoPath,
     excludeDirs,
     activeMode,
@@ -440,6 +441,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     searchCurrentMatch,
     runHistory,
     suggestions,
+    statusText,
     // actions
     setActiveMode,
     setSidebarTab,
