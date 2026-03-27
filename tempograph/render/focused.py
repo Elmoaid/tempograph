@@ -353,8 +353,20 @@ def _bfs_expand(
             ordered.append((sym, depth))
 
             if depth < _bfs_max_depth:
-                caller_limit = 8 if depth == 0 else 5 if depth == 1 else 3
-                callee_limit = 8 if depth == 0 else 5 if depth == 1 else 3
+                if depth == 0:
+                    # Hub-adaptive caller budget: seeds called from many files
+                    # get a tighter caller limit so callees (query-relevant
+                    # dependencies) are not crowded out of the 50-node cap.
+                    _cross_callers = sum(
+                        1 for cid in graph._callers.get(sym.id, [])
+                        if cid in graph.symbols
+                        and graph.symbols[cid].file_path != sym.file_path
+                    )
+                    caller_limit = 8 if _cross_callers < 10 else 3 if _cross_callers < 20 else 1
+                    callee_limit = 8
+                else:
+                    caller_limit = 5 if depth == 1 else 3
+                    callee_limit = 5 if depth == 1 else 3
                 _imp_key = lambda s: -_cached_importance(s)
                 # Hub suppression: skip expanding callers of widely-used utility symbols.
                 # A symbol used across 15+ unique files is a global hub — expanding its
@@ -5269,6 +5281,32 @@ def _collect_multi_seeds(
     return seeds, seed_files, query_tokens, _parts
 
 
+def _adaptive_bfs_depth(graph: Tempo, seeds: list[Symbol], hot_seeds: bool) -> int:
+    """Choose initial BFS depth based on seed connectivity profile.
+
+    - Wide hub (≥15 unique cross-file caller files): depth=2 — BFS budget is
+      exhausted by depth-1/2 callers anyway; avoid pointless depth-3 expansion.
+    - Deep chain (≥6 callees, ≤3 cross-file caller files): depth=4 or 5 to
+      trace long callee chains that are the core of the query's relevance.
+    - Default: 4 if hot files, else 3 (preserves prior behaviour).
+    """
+    caller_files: set[str] = set()
+    callee_count = 0
+    seed_fps = {s.file_path for s in seeds}
+    for seed in seeds:
+        for cid in graph._callers.get(seed.id, []):
+            if cid in graph.symbols and graph.symbols[cid].file_path not in seed_fps:
+                caller_files.add(graph.symbols[cid].file_path)
+        callee_count += len(graph._callees.get(seed.id, []))
+
+    n_caller_files = len(caller_files)
+    if n_caller_files >= 15:
+        return 2  # Hub: BFS floods at depth 1-2 regardless; cap early
+    if callee_count >= 6 and n_caller_files <= 3:
+        return 5 if hot_seeds else 4  # Deep chain: trace callee tree further
+    return 4 if hot_seeds else 3
+
+
 def _run_bfs_with_orbit(
     graph: Tempo, seeds: list[Symbol], seed_files: set[str],
     query_tokens: list[str],
@@ -5288,7 +5326,7 @@ def _run_bfs_with_orbit(
             orbit_seed_meta[sym.id] = (sym.file_path, freq)
 
     _hot_seeds = any(s.file_path in graph.hot_files for s in seeds)
-    _initial_depth = 4 if _hot_seeds else 3
+    _initial_depth = _adaptive_bfs_depth(graph, seeds, _hot_seeds)
     ordered, seen_ids = _bfs_expand(
         graph, seeds, seed_files, secondary_seeds=orbit_secondary or None,
         max_depth=_initial_depth,
