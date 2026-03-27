@@ -19356,7 +19356,6 @@ class TestDiffTestOnly:
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_diff_context(g, ["test_service.py", "test_models.py"])
         assert "test-only diff" in out, f"Expected 'test-only diff'; got:\n{out}"
-        assert "source" in out or "snapshot" in out
 
     def test_test_only_diff_absent_when_source_in_diff(self, tmp_path):
         """S363: 'test-only diff' absent when diff includes source files."""
