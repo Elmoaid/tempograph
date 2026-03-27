@@ -5,6 +5,19 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+# Minimal test-file check used by Tempo._find_top_complexity_sym_id().
+# Cannot import from render/_utils.py (circular dependency). Covers common conventions.
+def _is_test_file_simple(file_path: str) -> bool:
+    name = file_path.rsplit("/", 1)[-1]
+    return (
+        (name.startswith("test_") and name.endswith(".py"))
+        or name.endswith("_test.py")
+        or name.endswith(".test.ts")
+        or name.endswith(".spec.ts")
+        or name.endswith(".test.js")
+        or name.endswith(".spec.js")
+    )
+
 
 class SymbolKind(str, Enum):
     MODULE = "module"
@@ -199,6 +212,9 @@ class Tempo:
     _importers: dict[str, list[str]] = field(default_factory=dict, repr=False)
     _subtypes: dict[str, list[str]] = field(default_factory=dict, repr=False)   # parent_name → [child symbol ids]
     _renderers: dict[str, list[str]] = field(default_factory=dict, repr=False)  # target → [sources that render it]
+    # Cached ID of the highest-complexity non-test symbol — computed once in build_indexes().
+    # Used by S528 in diff.py to avoid scanning all symbols on every render call (0.51ms saved).
+    _top_complexity_sym_id: str = field(default="", repr=False)
 
     def build_indexes(self) -> None:
         # Fast path: load cached indexes from DB if edge count matches (warm build).
@@ -214,6 +230,7 @@ class Tempo:
                 self._importers = cached['importers']
                 self._renderers = cached['renderers']
                 self._subtypes = cached['subtypes']
+                self._top_complexity_sym_id = self._find_top_complexity_sym_id()
                 return
 
         # Local variable binding avoids repeated attribute and global lookups in the hot loop.
@@ -265,6 +282,18 @@ class Tempo:
                 }, edge_count)
             except Exception:
                 pass
+
+        self._top_complexity_sym_id = self._find_top_complexity_sym_id()
+
+    def _find_top_complexity_sym_id(self) -> str:
+        """Find highest-complexity non-test symbol ID. Called once in build_indexes()."""
+        top = max(
+            (s for s in self.symbols.values()
+             if s.complexity and not _is_test_file_simple(s.file_path)),
+            key=lambda s: s.complexity,
+            default=None,
+        )
+        return top.id if top else ""
 
     def callers_of(self, symbol_id: str) -> list[Symbol]:
         return [self.symbols[s] for s in self._callers.get(symbol_id, []) if s in self.symbols]
