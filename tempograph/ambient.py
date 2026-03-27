@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .git import file_last_modified_days
+from .git import file_last_modified_days, prime_file_age_cache
 
 if TYPE_CHECKING:
     from .types import Tempo
@@ -30,6 +30,8 @@ _MAX_RECENT_SYMS_PER_FILE = 3
 
 # Regex for unified diff hunk headers: @@ -oldstart[,oldlen] +newstart[,newlen] @@
 _HUNK_RE = re.compile(r"@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+# Regex for splitting combined git diff output by file header
+_DIFF_FILE_RE = re.compile(r"^diff --git a/(.+?) b/.+$", re.MULTILINE)
 
 
 def _is_hot_dir(repo_root: str, dir_files: list[str]) -> bool:
@@ -155,7 +157,41 @@ def _parse_changed_lines(diff_output: str) -> set[int]:
     return changed
 
 
-def _recently_changed_symbols_section(repo_root: str, graph: "Tempo", dir_files: list[str]) -> str:
+def _batch_changed_lines(repo_root: str, files: list[str], days: int) -> dict[str, set[int]]:
+    """ONE git log call for all files → {fp: set_of_changed_line_numbers}.
+
+    Replaces N per-file subprocess calls with a single call, then splits
+    the combined diff output by file header.
+    """
+    if not files:
+        return {}
+    try:
+        proc = subprocess.run(
+            ["git", "log", f"--since={days} days ago", "-p", "--unified=0", "--"] + list(files),
+            capture_output=True, text=True, cwd=repo_root, timeout=30,
+        )
+        if proc.returncode != 0 or not proc.stdout.strip():
+            return {}
+    except Exception:
+        return {}
+    result: dict[str, set[int]] = {}
+    sections = _DIFF_FILE_RE.split(proc.stdout)
+    # sections[0] = preamble; alternating: fp, diff_content
+    for i in range(1, len(sections), 2):
+        fp = sections[i]
+        content = sections[i + 1] if i + 1 < len(sections) else ""
+        changed = _parse_changed_lines(content)
+        if changed:
+            result[fp] = changed
+    return result
+
+
+def _recently_changed_symbols_section(
+    repo_root: str,
+    graph: "Tempo",
+    dir_files: list[str],
+    _prefetched: "dict[str, set[int]] | None" = None,
+) -> str:
     """Symbol-level recency: which functions changed in the last 7 days.
 
     Intersects git diff line ranges with graph symbol boundaries to identify
@@ -169,17 +205,21 @@ def _recently_changed_symbols_section(repo_root: str, graph: "Tempo", dir_files:
         days = file_last_modified_days(repo_root, fp)
         if days is None or days > _RECENT_DAYS:
             continue
-        # Get the diff for this file across recent commits
-        try:
-            proc = subprocess.run(
-                ["git", "log", f"--since={_RECENT_DAYS} days ago", "-p", "--unified=0", "--", fp],
-                capture_output=True, text=True, cwd=repo_root, timeout=5,
-            )
-            if proc.returncode != 0 or not proc.stdout.strip():
+        # Fast path: use pre-computed batch data from generate_ambient
+        if _prefetched is not None:
+            changed_lines = _prefetched.get(fp, set())
+        else:
+            # Per-file fallback (used when called outside generate_ambient)
+            try:
+                proc = subprocess.run(
+                    ["git", "log", f"--since={_RECENT_DAYS} days ago", "-p", "--unified=0", "--", fp],
+                    capture_output=True, text=True, cwd=repo_root, timeout=5,
+                )
+                if proc.returncode != 0 or not proc.stdout.strip():
+                    continue
+                changed_lines = _parse_changed_lines(proc.stdout)
+            except Exception:
                 continue
-            changed_lines = _parse_changed_lines(proc.stdout)
-        except Exception:
-            continue
         if not changed_lines:
             continue
         # Map changed lines back to symbols using their line ranges
@@ -220,6 +260,23 @@ def generate_ambient(graph: "Tempo", repo_root: str, hot_only: bool = True) -> d
     result: dict[str, str] = {}
     now_str = datetime.now().strftime("%Y-%m-%dT%H:%M")
 
+    # Pre-populate file age prime cache: ONE git call for all tracked files.
+    # Avoids 471 per-file subprocess calls in file_last_modified_days.
+    prime_file_age_cache(repo_root)
+
+    # Pre-compute changed-lines for hot files WITH symbols in ONE git subprocess call.
+    # Skip files with no graph symbols (markdown, JSON, etc.) — they can never appear
+    # in the recently-changed output, so fetching their diffs is pure waste.
+    all_hot_files = [
+        fp
+        for dir_files in dir_to_files.values()
+        for fp in dir_files
+        if (d := file_last_modified_days(repo_root, fp)) is not None
+        and d <= _RECENT_DAYS
+        and graph.symbols_in_file(fp)
+    ]
+    _prefetched_lines = _batch_changed_lines(repo_root, all_hot_files, _RECENT_DAYS)
+
     for dir_path, dir_files in sorted(dir_to_files.items()):
         if hot_only and not _is_hot_dir(repo_root, dir_files):
             continue
@@ -238,7 +295,7 @@ def generate_ambient(graph: "Tempo", repo_root: str, hot_only: bool = True) -> d
         cross = _cross_file_section(graph, dir_files)
         tests = _test_mapping_section(graph, dir_files)
         fresh = _freshness_section(repo_root, dir_files)
-        recent = _recently_changed_symbols_section(repo_root, graph, dir_files)
+        recent = _recently_changed_symbols_section(repo_root, graph, dir_files, _prefetched=_prefetched_lines)
         body = f"{header}\n\n{lod1}\n\n{cross}\n\n{tests}\n\n{fresh}"
         if recent:
             body += f"\n\n{recent}"
