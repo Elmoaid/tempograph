@@ -2382,6 +2382,21 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                 f" update callers together\n"
                 f"(stub files are not graph-indexed; run mypy/pyright to check downstream impact)"
             )
+        # Fallback: check if the path is an ambiguous suffix (multiple files match).
+        # This converts a silent empty result into actionable candidates.
+        _needle = file_path.lstrip("/").lstrip("./").replace("\\", "/")
+        if _needle:
+            _candidates = sorted(
+                fp for fp in graph.files if fp == _needle or fp.endswith("/" + _needle)
+            )
+            if len(_candidates) > 1:
+                _cand_lines = "\n".join(f"  {fp}" for fp in _candidates[:8])
+                _hint = f"  Try: --file '{_candidates[0]}'" if _candidates else ""
+                return (
+                    f"Ambiguous path '{file_path}' — {len(_candidates)} files match:\n"
+                    f"{_cand_lines}\n"
+                    f"{_hint}"
+                ).rstrip()
         return f"File '{file_path}' not found."
 
     lines = [f"Blast radius for {file_path}:", ""]
