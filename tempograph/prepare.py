@@ -299,13 +299,17 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
             # Bench evidence (Phase 5.26, n=111): precision_filter=+3.9% (p=0.085, ns).
             if precision_filter and len(key_files) > 4:
                 return ""  # Too broad — skip context entirely
-            # Adaptive gating v5: skip injection when baseline predicts >=2 files.
-            # Bench evidence (Phase 5.30, n=114): v5 +7.6% F1, p=0.013 (significant).
-            # pred>=2 means the model is confident enough — context adds noise.
-            # Eliminates ALL repo-level regressions (express -3.8% → +15.4%).
-            if baseline_predicted_files is not None:
-                if len(baseline_predicted_files) >= 2:
-                    return ""  # model already confident — skip injection
+            # Adaptive gating v6: overlap-aware skip when baseline predicts >=2 files.
+            # v5 basis (Phase 5.30, n=114): pred>=2 → skip, +7.6% F1 on focused repos.
+            # v6 change: inject when key_files OVERLAP with baseline prediction (≥1 shared file).
+            # Overlap = model and tempograph agree on what changed → injection reinforces.
+            # No-overlap = context diverges from model's prediction → injection misleads → skip.
+            # Evidence: celery/langchain 0% with v5 (gate fires every commit, diffuse repos).
+            # With v6, when tempograph finds the same files baseline predicted → inject anyway.
+            if baseline_predicted_files is not None and len(baseline_predicted_files) >= 2:
+                _predicted_set = set(baseline_predicted_files)
+                if not any(f in _predicted_set for f in key_files):
+                    return ""  # no overlap — our context diverges from baseline → skip
             if key_files:
                 kf_ranges = _extract_focus_ranges("\n\n".join(focus_parts), key_files[:5])
                 kf_lines = [f"  {f}:{kf_ranges[f]}" if f in kf_ranges else f"  {f}" for f in key_files[:5]]
@@ -324,14 +328,10 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
             # All symbol searches were too broad, but path matching found specific files.
             # E.g. "demo" fails symbol focus (15+ matches) but path match → demos/ directory.
             if baseline_predicted_files is not None and len(baseline_predicted_files) >= 2:
-                return ""  # v5 gate: model confident — skip path fallback too
-                # Path-only context (no BFS graph) is weak when model already has a focused prediction.
-                # If baseline predicted exactly 1 file with no overlap to path-match, the model is
-                # likely correct on that file and the path hint would redirect it incorrectly.
-                # Evidence (DRF authtoken-import): baseline=0.5 (auth.py, pred=1, correct),
-                # path=authtoken/models.py (non-overlapping) → injection drops F1 to 0.
-                if overlap == 0 and len(predicted_set) == 1:
-                    return ""  # single focused prediction doesn't align with path hint → risky
+                # v6 gate: path-only context (no BFS graph) is weak — only inject if paths overlap.
+                _predicted_set = set(baseline_predicted_files)
+                if not any(f in _predicted_set for f in path_fallback_files):
+                    return ""  # no overlap — path hint diverges from baseline → skip
             if precision_filter and len(path_fallback_files) > 4:
                 return ""  # Too broad (path match) — skip context entirely
             _context_files = path_fallback_files[:5]
