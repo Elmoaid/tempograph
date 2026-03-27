@@ -243,10 +243,12 @@ class TestRecentlyChangedSymbolsSection:
         """generate_ambient includes recently-changed section when symbols found."""
         g = _build(tmp_path, {"app.py": "def main(): pass\n"})
         monkeypatch.setattr("tempograph.ambient.file_last_modified_days", lambda r, fp: 0)
-        fake_diff = "@@ -0,0 +1,1 @@\n+def main(): pass\n"
-        mock_result = MagicMock(returncode=0, stdout=fake_diff)
-        with patch("tempograph.ambient.subprocess.run", return_value=mock_result):
-            contents = generate_ambient(g, str(tmp_path), hot_only=False)
+        # Mock the batch function: app.py changed at line 1 (where main() is defined)
+        monkeypatch.setattr(
+            "tempograph.ambient._batch_changed_lines",
+            lambda repo, files, days: {"app.py": {1}},
+        )
+        contents = generate_ambient(g, str(tmp_path), hot_only=False)
         combined = "\n".join(contents.values())
         assert "Recently changed" in combined
         assert "main" in combined
