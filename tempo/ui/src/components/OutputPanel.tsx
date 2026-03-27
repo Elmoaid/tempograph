@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, type RefObject } from "react";
-import { Copy, Check, X } from "lucide-react";
+import { Copy, Check } from "lucide-react";
 import { MODES, type ModeInfo } from "./modes";
 import { ArgsInput } from "./ArgsInput";
 import { OutputPanelHeader } from "./OutputPanelHeader";
@@ -8,6 +8,7 @@ import { OutputSearchBar } from "./OutputSearchBar";
 import { OutputFooter } from "./OutputFooter";
 import { HighlightedOutput } from "./HighlightedOutput";
 import { DiffOutput } from "./DiffOutput";
+import { OutputFilterBar } from "./OutputFilterBar";
 
 const FONT_SIZE_MIN = 9;
 const FONT_SIZE_MAX = 16;
@@ -236,26 +237,13 @@ export function OutputPanel(props: OutputPanelProps) {
               </button>
             )}
             {filterVisible && (
-              <div style={{ display: "flex", gap: 4, alignItems: "center", marginBottom: 4 }}>
-                <input
-                  ref={filterInputRef}
-                  className="input"
-                  placeholder="Filter lines…"
-                  aria-label="Filter output lines"
-                  value={outputFilter}
-                  onChange={e => onFilterChange(e.target.value)}
-                  onKeyDown={e => { if (e.key === "Escape") onFilterClose(); }}
-                  style={{ flex: 1, fontSize: 10, padding: "2px 6px" }}
-                />
-                {filterMatchCount !== null && (
-                  <span style={{ fontSize: 9, color: "var(--text-tertiary)", whiteSpace: "nowrap" }} aria-live="polite" aria-atomic="true">
-                    {filterMatchCount} lines
-                  </span>
-                )}
-                <button className="btn btn-ghost" onClick={onFilterClose} style={{ padding: "2px 4px" }} aria-label="Close filter">
-                  <X size={9} aria-hidden="true" />
-                </button>
-              </div>
+              <OutputFilterBar
+                filterInputRef={filterInputRef}
+                value={outputFilter}
+                matchCount={filterMatchCount}
+                onChange={onFilterChange}
+                onClose={onFilterClose}
+              />
             )}
             {hasKitSections ? (
               <KitSectionAccordion
