@@ -3087,6 +3087,56 @@ def _signals_hotspots_core_d(
                     f" — whole-file risk with no sibling context; changes are harder to scope safely"
                 )
 
+    # S1026: Semantic drift — read-named hotspot calls write-named callees.
+    # Naming convention implies read-only (get_*, fetch_*, load_*, find_*, is_*) but
+    # the body calls write operations (save_*, update_*, delete_*, create_*, insert_*).
+    # This is a silent contract violation: agents (and humans) assume read-safety based on
+    # the name, but the function actually mutates state. High-scoring hotspot + name-behavior
+    # mismatch = highest priority refactor or rename target.
+    _READ_PREFIXES_1026 = (
+        "get_", "fetch_", "load_", "find_", "lookup_",
+        "check_", "is_", "has_", "list_", "read_", "search_", "query_",
+    )
+    _WRITE_PREFIXES_1026 = (
+        "save_", "update_", "set_", "delete_", "remove_", "insert_",
+        "create_", "write_", "put_", "post_", "push_", "store_",
+        "reset_", "clear_", "flush_", "commit_", "persist_", "emit_",
+    )
+
+    def _is_read_named_1026(name: str) -> bool:
+        n = name.lower()
+        return any(n.startswith(p) for p in _READ_PREFIXES_1026)
+
+    def _is_write_named_1026(name: str) -> bool:
+        n = name.lower()
+        return any(n.startswith(p) for p in _WRITE_PREFIXES_1026)
+
+    _drift_hits: list[tuple[float, Symbol, list[str]]] = []
+    for _sc1026, _sym1026 in scores[:top_n]:
+        if _is_test_file(_sym1026.file_path):
+            continue
+        if _sym1026.kind.value not in ("function", "method"):
+            continue
+        if not _is_read_named_1026(_sym1026.name):
+            continue
+        _write_callees1026 = [
+            c.name for c in graph.callees_of(_sym1026.id)
+            if _is_write_named_1026(c.name) and not _is_test_file(c.file_path or "")
+        ]
+        if len(_write_callees1026) >= 2:
+            _drift_hits.append((_sc1026, _sym1026, _write_callees1026))
+
+    if _drift_hits:
+        # Show top 2 drift suspects — enough to establish the pattern without noise
+        for _sc1026, _sym1026, _wc1026 in sorted(_drift_hits, key=lambda x: -x[0])[:2]:
+            _wc_preview = ", ".join(_wc1026[:3])
+            if len(_wc1026) > 3:
+                _wc_preview += f" +{len(_wc1026) - 3} more"
+            out.append(
+                f"\nsemantic drift: {_sym1026.name} is read-named but calls {len(_wc1026)} write-op(s)"
+                f" ({_wc_preview}) — naming implies read-safe but body mutates state; rename or refactor"
+            )
+
 
 
 def _collect_hotspots_signals(
