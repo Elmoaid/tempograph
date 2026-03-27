@@ -3229,3 +3229,195 @@ class TestBfsModuleDiversity:
         ordered = [(seed, 0), (a, 1), (b, 1), (c, 1)]
         result = _compute_bfs_module_diversity(graph, [seed], ordered)
         assert "cross-module BFS" in result, f"Exactly 3 modules → should fire; got: {result!r}"
+
+
+class TestAdaptiveBfsDepth:
+    """Tests for _adaptive_bfs_depth: C1 adaptive BFS depth based on seed connectivity."""
+
+    def _sym(self, name, file_path):
+        return Symbol(
+            id=f"{file_path}::{name}",
+            name=name,
+            qualified_name=name,
+            kind=SymbolKind.FUNCTION,
+            language=Language.PYTHON,
+            file_path=file_path,
+            line_start=1,
+            line_end=10,
+            exported=True,
+        )
+
+    def _make_hub_graph(self, tmp_path, n_caller_files: int):
+        """Seed called from n_caller_files distinct files."""
+        from tempograph.types import Edge, EdgeKind
+        seed = self._sym("hub_fn", "src/hub.py")
+        callers = [
+            self._sym(f"caller_{i}", f"module_{i}/caller_{i}.py")
+            for i in range(n_caller_files)
+        ]
+        edges = [Edge(EdgeKind.CALLS, c.id, seed.id) for c in callers]
+        return _make_graph(tmp_path, edges=edges, symbols=[seed] + callers), seed
+
+    def _make_chain_graph(self, tmp_path, n_callees: int, n_caller_files: int = 0):
+        """Seed with n_callees callees and n_caller_files cross-file callers."""
+        from tempograph.types import Edge, EdgeKind
+        seed = self._sym("chain_fn", "src/chain.py")
+        callees = [self._sym(f"step_{i}", "src/steps.py") for i in range(n_callees)]
+        callers = [self._sym(f"caller_{i}", f"module_{i}/c.py") for i in range(n_caller_files)]
+        edges = (
+            [Edge(EdgeKind.CALLS, seed.id, c.id) for c in callees]
+            + [Edge(EdgeKind.CALLS, c.id, seed.id) for c in callers]
+        )
+        return _make_graph(tmp_path, edges=edges, symbols=[seed] + callees + callers), seed
+
+    def test_wide_hub_returns_depth2(self, tmp_path):
+        """Seed called from ≥15 files → depth=2 to avoid BFS flooding."""
+        from tempograph.render.focused import _adaptive_bfs_depth
+        graph, seed = self._make_hub_graph(tmp_path, n_caller_files=15)
+        result = _adaptive_bfs_depth(graph, [seed], hot_seeds=False)
+        assert result == 2, f"Wide hub should get depth=2; got {result}"
+
+    def test_very_wide_hub_returns_depth2(self, tmp_path):
+        """Seed called from 25 files → still depth=2 (not further reduced)."""
+        from tempograph.render.focused import _adaptive_bfs_depth
+        graph, seed = self._make_hub_graph(tmp_path, n_caller_files=25)
+        result = _adaptive_bfs_depth(graph, [seed], hot_seeds=True)
+        assert result == 2, f"Very wide hub should get depth=2; got {result}"
+
+    def test_moderate_hub_returns_default(self, tmp_path):
+        """Seed called from 8 files (below threshold) → default depth."""
+        from tempograph.render.focused import _adaptive_bfs_depth
+        graph, seed = self._make_hub_graph(tmp_path, n_caller_files=8)
+        result = _adaptive_bfs_depth(graph, [seed], hot_seeds=False)
+        assert result == 3, f"8-file hub should get default depth=3; got {result}"
+
+    def test_deep_chain_returns_depth4(self, tmp_path):
+        """Seed with 6 callees and ≤3 cross-file callers → depth=4."""
+        from tempograph.render.focused import _adaptive_bfs_depth
+        graph, seed = self._make_chain_graph(tmp_path, n_callees=6, n_caller_files=2)
+        result = _adaptive_bfs_depth(graph, [seed], hot_seeds=False)
+        assert result == 4, f"Deep chain (cold) should get depth=4; got {result}"
+
+    def test_deep_chain_hot_returns_depth5(self, tmp_path):
+        """Seed with 6 callees, ≤3 caller files, hot → depth=5."""
+        from tempograph.render.focused import _adaptive_bfs_depth
+        graph, seed = self._make_chain_graph(tmp_path, n_callees=6, n_caller_files=1)
+        # Mark seed's file as hot
+        from tempograph.types import FileInfo
+        graph.hot_files = {seed.file_path}
+        result = _adaptive_bfs_depth(graph, [seed], hot_seeds=True)
+        assert result == 5, f"Deep chain (hot) should get depth=5; got {result}"
+
+    def test_sparse_default_depth3(self, tmp_path):
+        """Seed with few callees and few callers → default depth=3."""
+        from tempograph.render.focused import _adaptive_bfs_depth
+        graph, seed = self._make_chain_graph(tmp_path, n_callees=2, n_caller_files=2)
+        result = _adaptive_bfs_depth(graph, [seed], hot_seeds=False)
+        assert result == 3, f"Sparse seed should get depth=3; got {result}"
+
+    def test_hot_default_depth4(self, tmp_path):
+        """Hot seed with few callees and few callers → depth=4."""
+        from tempograph.render.focused import _adaptive_bfs_depth
+        graph, seed = self._make_chain_graph(tmp_path, n_callees=2, n_caller_files=2)
+        result = _adaptive_bfs_depth(graph, [seed], hot_seeds=True)
+        assert result == 4, f"Hot sparse seed should get depth=4; got {result}"
+
+    def test_same_file_callers_not_counted_as_cross_file(self, tmp_path):
+        """Callers in the same file as the seed don't count toward the hub threshold."""
+        from tempograph.render.focused import _adaptive_bfs_depth
+        from tempograph.types import Edge, EdgeKind
+
+        seed = self._sym("fn", "src/core.py")
+        # 20 callers but ALL in the same file as seed
+        same_file_callers = [self._sym(f"helper_{i}", "src/core.py") for i in range(20)]
+        edges = [Edge(EdgeKind.CALLS, c.id, seed.id) for c in same_file_callers]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + same_file_callers)
+        result = _adaptive_bfs_depth(graph, [seed], hot_seeds=False)
+        # Should NOT be depth=2 since all callers are in the same file
+        assert result != 2, f"Same-file callers should not trigger hub reduction; got {result}"
+
+
+class TestHubAdaptiveCallerLimit:
+    """Tests for hub-adaptive caller_limit in _bfs_expand: C1 hub caller budget."""
+
+    def _sym(self, name, file_path):
+        return Symbol(
+            id=f"{file_path}::{name}",
+            name=name,
+            qualified_name=name,
+            kind=SymbolKind.FUNCTION,
+            language=Language.PYTHON,
+            file_path=file_path,
+            line_start=1,
+            line_end=10,
+            exported=True,
+        )
+
+    def test_hub_seed_limits_callers_at_depth0(self, tmp_path):
+        """Hub seed (≥20 cross-file callers) gets only 1 caller slot at depth=0."""
+        from tempograph.render.focused import _bfs_expand
+        from tempograph.types import Edge, EdgeKind
+
+        seed = self._sym("hub_fn", "src/hub.py")
+        # 25 callers from distinct files
+        callers = [self._sym(f"caller_{i}", f"mod_{i}/caller.py") for i in range(25)]
+        # 5 callees in a separate file
+        callees = [self._sym(f"dep_{i}", "src/deps.py") for i in range(5)]
+        edges = (
+            [Edge(EdgeKind.CALLS, c.id, seed.id) for c in callers]
+            + [Edge(EdgeKind.CALLS, seed.id, d.id) for d in callees]
+        )
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + callers + callees)
+
+        ordered, _ = _bfs_expand(graph, [seed], {seed.file_path}, max_depth=3)
+        depth1 = [sym for sym, d in ordered if d == 1]
+        depth1_callers = [s for s in depth1 if s.file_path != seed.file_path and s.file_path.startswith("mod_")]
+        depth1_callees = [s for s in depth1 if s.file_path == "src/deps.py"]
+
+        # Hub seed: caller_limit=1 → at most 1 caller at depth=1
+        assert len(depth1_callers) <= 1, (
+            f"Hub seed should limit depth-1 callers to 1; got {len(depth1_callers)}"
+        )
+        # Callees should still appear (callee_limit=8)
+        assert len(depth1_callees) == 5, (
+            f"Hub seed should keep all 5 callees at depth=1; got {len(depth1_callees)}"
+        )
+
+    def test_moderate_hub_limits_callers_to_3(self, tmp_path):
+        """Seed with 15 cross-file callers → caller_limit=3 at depth=0."""
+        from tempograph.render.focused import _bfs_expand
+        from tempograph.types import Edge, EdgeKind
+
+        seed = self._sym("util_fn", "src/util.py")
+        callers = [self._sym(f"user_{i}", f"service_{i}/handler.py") for i in range(15)]
+        edges = [Edge(EdgeKind.CALLS, c.id, seed.id) for c in callers]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + callers)
+
+        ordered, _ = _bfs_expand(graph, [seed], {seed.file_path}, max_depth=3)
+        depth1_callers = [
+            sym for sym, d in ordered
+            if d == 1 and sym.file_path != seed.file_path
+        ]
+        assert len(depth1_callers) <= 3, (
+            f"15-caller seed → limit=3; got {len(depth1_callers)}"
+        )
+
+    def test_low_caller_count_keeps_8(self, tmp_path):
+        """Seed with <10 cross-file callers → caller_limit=8 (no hub reduction)."""
+        from tempograph.render.focused import _bfs_expand
+        from tempograph.types import Edge, EdgeKind
+
+        seed = self._sym("fn", "src/fn.py")
+        callers = [self._sym(f"caller_{i}", f"mod_{i}/c.py") for i in range(9)]
+        edges = [Edge(EdgeKind.CALLS, c.id, seed.id) for c in callers]
+        graph = _make_graph(tmp_path, edges=edges, symbols=[seed] + callers)
+
+        ordered, _ = _bfs_expand(graph, [seed], {seed.file_path}, max_depth=3)
+        depth1_callers = [
+            sym for sym, d in ordered
+            if d == 1 and sym.file_path != seed.file_path
+        ]
+        # All 9 callers should appear (limit=8, but 9 callers → up to 8)
+        assert len(depth1_callers) >= 8, (
+            f"9-caller seed should get all 8 allowed; got {len(depth1_callers)}"
+        )
