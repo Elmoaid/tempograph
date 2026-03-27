@@ -1,6 +1,13 @@
-import { useCallback, useRef } from "react";
+import { useCallback, useRef, useState } from "react";
 import { runTempo } from "../components/tempo";
 import { MODES, loadHistory, saveHistory } from "../components/modes";
+
+/** Returns the phase label for the current run based on elapsed ms. */
+export function getRunPhaseLabel(elapsedMs: number): string {
+  if (elapsedMs < 800) return "Indexing...";
+  if (elapsedMs < 2500) return "Analyzing...";
+  return "Rendering...";
+}
 
 interface RunModeConfig {
   repoPath: string;
@@ -45,9 +52,14 @@ export function useRunMode({
 }: RunModeConfig) {
   // Monotonically increasing serial — cancel checks serial to ignore stale results
   const runSerial = useRef(0);
+  const [statusText, setStatusText] = useState("");
+  const statusTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   const cancelMode = useCallback(() => {
     runSerial.current++;
+    statusTimers.current.forEach(clearTimeout);
+    statusTimers.current = [];
+    setStatusText("");
     setModeRunning(false);
     setModeOutput("[Cancelled]");
   }, [setModeRunning, setModeOutput]);
@@ -60,6 +72,12 @@ export function useRunMode({
     setElapsed(0);
     setModeRunning(true);
     setModeOutput("");
+    // Phase labels: simulate progress stages (cleared when result arrives)
+    statusTimers.current.forEach(clearTimeout);
+    statusTimers.current = [];
+    setStatusText("Indexing...");
+    statusTimers.current.push(setTimeout(() => setStatusText("Analyzing..."), 800));
+    statusTimers.current.push(setTimeout(() => setStatusText("Rendering..."), 2500));
     try {
       let r;
       if (activeKit) {
@@ -83,6 +101,9 @@ export function useRunMode({
       }
       // If cancelled while awaiting, discard result
       if (serial !== runSerial.current) return false;
+      statusTimers.current.forEach(clearTimeout);
+      statusTimers.current = [];
+      setStatusText("");
       const out = r.output || "No output";
       const now = Date.now();
       const dur = runStart.current ? (now - runStart.current) / 1000 : null;
@@ -106,11 +127,14 @@ export function useRunMode({
       return true;
     } catch {
       if (serial !== runSerial.current) return false;
+      statusTimers.current.forEach(clearTimeout);
+      statusTimers.current = [];
+      setStatusText("");
       setModeOutput("Failed to run mode. Check that tempo is installed.");
     }
     if (serial === runSerial.current) setModeRunning(false);
     return false;
   }, [repoPath, activeMode, activeKit, modeArgs, modeRunning, excludeDirs, onRunSuccess]);
 
-  return { runMode, cancelMode };
+  return { runMode, cancelMode, statusText };
 }
