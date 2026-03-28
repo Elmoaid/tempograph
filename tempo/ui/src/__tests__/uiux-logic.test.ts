@@ -4,11 +4,13 @@
  * Covers:
  *   - modeHints.ts: completeness + format invariants
  *   - modes.ts: formatAge, loadRecentCommands, saveRecentCommand
+ *   - useSuggestions.ts: SUGGEST_NEXT_MAP invariants, computeSuggestions logic
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { MODE_HINTS } from "../components/modeHints";
 import { MODES, formatAge, loadRecentCommands, saveRecentCommand, type RecentCommand } from "../components/modes";
-import { updateRunHistory, SUGGEST_NEXT_MAP, type RunHistoryEntry } from "../components/useModeRunner";
+import { updateRunHistory, type RunHistoryEntry } from "../components/useModeRunner";
+import { SUGGEST_NEXT_MAP, computeSuggestions } from "../hooks/useSuggestions";
 
 // ── modeHints coverage ────────────────────────────────────────────────────────
 
@@ -198,5 +200,44 @@ describe("SUGGEST_NEXT_MAP", () => {
 
   it("focus suggests blast", () => {
     expect(SUGGEST_NEXT_MAP["focus"]).toContain("blast");
+  });
+});
+
+// ── computeSuggestions ────────────────────────────────────────────────────────
+
+describe("computeSuggestions", () => {
+  it("returns suggestions for known mode with output", () => {
+    const result = computeSuggestions("some output", false, "overview", null);
+    expect(result.length).toBeGreaterThan(0);
+    expect(result).toContain("hotspots");
+  });
+
+  it("returns empty array when running", () => {
+    expect(computeSuggestions("some output", true, "overview", null)).toEqual([]);
+  });
+
+  it("returns empty array when output is empty", () => {
+    expect(computeSuggestions("", false, "overview", null)).toEqual([]);
+  });
+
+  it("returns empty array when kit is active", () => {
+    expect(computeSuggestions("some output", false, "overview", "my-kit")).toEqual([]);
+  });
+
+  it("returns empty array for cancelled output", () => {
+    expect(computeSuggestions("[Cancelled] operation", false, "focus", null)).toEqual([]);
+  });
+
+  it("returns empty array for failed output", () => {
+    expect(computeSuggestions("Failed to run mode", false, "focus", null)).toEqual([]);
+  });
+
+  it("caps results at 3", () => {
+    const result = computeSuggestions("output", false, "overview", null);
+    expect(result.length).toBeLessThanOrEqual(3);
+  });
+
+  it("returns empty array for unknown mode", () => {
+    expect(computeSuggestions("output", false, "nonexistent_mode", null)).toEqual([]);
   });
 });

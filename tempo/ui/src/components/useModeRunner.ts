@@ -8,6 +8,7 @@ import { useOutputFilter } from "../hooks/useOutputFilter";
 import { useOutputSearch } from "../hooks/useOutputSearch";
 import { useCustomKits } from "../hooks/useCustomKits";
 import { useOutputActions } from "../hooks/useOutputActions";
+import { useSuggestions } from "../hooks/useSuggestions";
 
 export interface RunHistoryEntry {
   mode: string;
@@ -19,23 +20,6 @@ export function updateRunHistory(prev: RunHistoryEntry[], entry: RunHistoryEntry
   return [entry, ...deduped].slice(0, max);
 }
 
-// Static suggest_next map (suggest_next is MCP-only, not a CLI mode)
-export const SUGGEST_NEXT_MAP: Record<string, string[]> = {
-  overview:    ["hotspots", "dead_code", "focus"],
-  focus:       ["blast", "hotspots"],
-  blast:       ["focus", "hotspots"],
-  hotspots:    ["dead_code", "focus"],
-  dead_code:   ["hotspots", "focus"],
-  diff:        ["focus", "blast"],
-  deps:        ["focus", "blast"],
-  arch:        ["hotspots", "deps"],
-  map:         ["focus", "hotspots"],
-  context:     ["focus", "blast"],
-  prepare:     ["focus", "hotspots"],
-  quality:     ["hotspots", "focus"],
-  token_stats: ["focus", "hotspots"],
-  learn:       ["focus", "overview"],
-};
 
 export interface ModeRunnerState {
   activeMode: string;
@@ -144,7 +128,6 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [showHelp, setHelpOpen] = useState(false);
   const [showWhichKey, setWhichKeyVisible] = useState(false);
-  const [suggestions, setSuggestions] = useState<string[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState<string[]>(() => loadHistory(localStorage.getItem(lastModeKey(repoPath)) || "overview"));
   const feedbackGiven = useRef<Map<string, boolean>>(new Map<string, boolean>());
@@ -189,6 +172,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   } = useOutputSearch(filteredOutput);
 
   const { copied, saved, copyOutput, handleSaveOutput, saveOutputRef } = useOutputActions(modeOutput, activeMode, activeKit);
+  const { suggestions } = useSuggestions(modeOutput, modeRunning, activeMode, activeKit);
 
   // Stable refs so keyboard/auto-run closures always call the latest functions
   const runModeRef = useRef<(() => void) | null>(null);
@@ -276,18 +260,6 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     }, 250);
     return () => clearInterval(id);
   }, [modeRunning]);
-
-  // Suggest follow-up modes after each run (static map; suggest_next is MCP-only)
-  useEffect(() => {
-    if (modeRunning) { setSuggestions([]); return; }
-    if (!modeOutput || activeKit ||
-        modeOutput.startsWith("[Cancelled]") ||
-        modeOutput.startsWith("Failed to run")) {
-      setSuggestions([]);
-      return;
-    }
-    setSuggestions((SUGGEST_NEXT_MAP[activeMode] ?? []).slice(0, 3));
-  }, [modeOutput, modeRunning, activeMode, activeKit]);
 
   // Auto-run overview on mount
   useEffect(() => { runModeRef.current?.(); }, []);
