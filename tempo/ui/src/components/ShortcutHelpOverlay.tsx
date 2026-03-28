@@ -11,6 +11,9 @@ const SHORTCUTS = [
   { key: "⌘N", desc: "New kit" },
   { key: "⌘+/⌘−", desc: "Output font size up / down" },
   { key: "⌘0", desc: "Reset output font size" },
+  { key: "⌘M", desc: "Switch to Modes view" },
+  { key: "⌘G", desc: "Switch to Graph view" },
+  { key: "⌘D", desc: "Switch to Dashboard view" },
   { key: "Escape", desc: "Cancel run / close palette / clear output" },
   { key: "?", desc: "Toggle this overlay" },
 ];
