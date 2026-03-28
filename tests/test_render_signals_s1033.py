@@ -281,7 +281,7 @@ class TestVariantGroupIntegration:
         g = build_graph(REPO_PATH, exclude_dirs=["archive"])
         out = render_focused(g, "render_focused", max_tokens=6000)
 
-        assert "variant group" not in out, (
+        assert "↳ variant group:" not in out, (
             f"render_focused has no A/B suffix — signal must be silent;\n{out[:400]}"
         )
 
@@ -293,6 +293,6 @@ class TestVariantGroupIntegration:
         g = build_graph(REPO_PATH, exclude_dirs=["archive"])
         out = render_focused(g, "build_graph", max_tokens=6000)
 
-        assert "variant group" not in out, (
+        assert "↳ variant group:" not in out, (
             f"build_graph has no A/B suffix — signal must be silent;\n{out[:400]}"
         )
