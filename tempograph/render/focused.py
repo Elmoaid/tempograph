@@ -3147,128 +3147,126 @@ def _signals_focused_naming(
 
 
 # ---------------------------------------------------------------------------
+# Signal group helper: fn_traits (decomposed sub-helpers)
+# ---------------------------------------------------------------------------
+
+def _fn_trait_leaf(graph: Tempo, prim: "Symbol") -> "str | None":
+    """S198: Leaf function — 0 external callees, ≥5 callers."""
+    if prim.kind.value not in ("function", "method"):
+        return None
+    ext_callees = [c for c in graph.callees_of(prim.id) if c.file_path != prim.file_path]
+    caller_count = len(graph.callers_of(prim.id))
+    if len(ext_callees) == 0 and caller_count >= 5:
+        return (
+            f"\nleaf function: {prim.name} has {caller_count} callers"
+            f" and 0 external callees — stable leaf, safe to refactor internals"
+        )
+    return None
+
+
+def _fn_trait_async(prim: "Symbol") -> "str | None":
+    """S204: Async function — 'async' in signature."""
+    if prim.kind.value not in ("function", "method"):
+        return None
+    if "async" in (prim.signature or ""):
+        return (
+            f"\nasync fn: {prim.name} — callers must await,"
+            f" changes affect async context propagation"
+        )
+    return None
+
+
+def _fn_trait_private_callers(graph: Tempo, prim: "Symbol") -> "str | None":
+    """S214: Private symbol with external non-test callers."""
+    if not prim.name.startswith("_") or prim.name.startswith("__"):
+        return None
+    ext_callers = [
+        c for c in graph.callers_of(prim.id)
+        if c.file_path != prim.file_path and not _is_test_file(c.file_path)
+    ]
+    if ext_callers:
+        return (
+            f"\nprivate symbol with external callers: {prim.name}"
+            f" called from {len(ext_callers)} external file(s)"
+            f" — underscore naming convention violated"
+        )
+    return None
+
+
+def _fn_trait_recursive(graph: Tempo, prim: "Symbol") -> "str | None":
+    """S221: Recursive function — calls itself directly."""
+    if prim.kind.value not in ("function", "method"):
+        return None
+    if any(c.id == prim.id for c in graph.callees_of(prim.id)):
+        return (
+            f"\nrecursive fn: {prim.name} calls itself"
+            f" — changes must preserve loop invariants and base cases"
+        )
+    return None
+
+
+def _fn_trait_property(prim: "Symbol") -> "str | None":
+    """S244: Property accessor — @property or getter with no extra params."""
+    if prim.kind.value != "method":
+        return None
+    sig = prim.signature or ""
+    name = prim.name
+    is_property = (
+        "@property" in sig
+        or sig.strip().startswith("@property")
+        or (
+            name.startswith("get_") and "(" in sig
+            and "self" in sig
+            and sig.count(",") == 0
+        )
+    )
+    if is_property:
+        return (
+            f"\nproperty accessor: {name} is accessed as an attribute"
+            f" — type or name changes break all usages silently"
+        )
+    return None
+
+
+def _fn_trait_abstract(graph: Tempo, prim: "Symbol") -> "str | None":
+    """S249: Abstract method — cascades signature changes to all implementations."""
+    if prim.kind.value not in ("function", "method"):
+        return None
+    sig = prim.signature or ""
+    if "abstractmethod" not in sig and "@abc.abstractmethod" not in sig:
+        return None
+    impl_count = sum(
+        1 for s in graph.symbols.values()
+        if s.name == prim.name
+        and s.file_path != prim.file_path
+        and s.kind.value in ("function", "method")
+    )
+    return (
+        f"\nabstract method: {prim.name} must be implemented by all subclasses"
+        + (f" — {impl_count} implementation(s) found" if impl_count else "")
+        + " — signature changes cascade to all concrete classes"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Signal group helper: fn_traits
 # ---------------------------------------------------------------------------
 def _signals_focused_fn_traits(
     graph: Tempo, *, _seed_syms: list, token_count: int, max_tokens: int,
 ) -> list[str]:
     """Focused-mode signals: fn_traits."""
-    lines: list[str] = []
-    # S198: Leaf function — the focused symbol calls nothing externally but has many callers.
-    # Zero outgoing dependencies = very stable; many callers = widely relied upon. Positive signal.
-    # Only shown when seed has 0 external callees AND >= 5 total callers.
-    if _seed_syms and token_count < max_tokens - 30:
-        _prim198 = _seed_syms[0]
-        if _prim198.kind.value in ("function", "method"):
-            _ext_callees198 = [
-                c for c in graph.callees_of(_prim198.id)
-                if c.file_path != _prim198.file_path
-            ]
-            _caller_count198 = len(graph.callers_of(_prim198.id))
-            if len(_ext_callees198) == 0 and _caller_count198 >= 5:
-                lines.append(
-                    f"\nleaf function: {_prim198.name} has {_caller_count198} callers"
-                    f" and 0 external callees — stable leaf, safe to refactor internals"
-                )
-
-    # S204: Async function — the focused symbol is declared with async.
-    # Async fns require await at call sites; changes affect async context propagation.
-    # Only shown when seed is a fn/method and 'async' appears in its signature.
-    if _seed_syms and token_count < max_tokens - 30:
-        _prim204 = _seed_syms[0]
-        if _prim204.kind.value in ("function", "method"):
-            _sig204 = _prim204.signature or ""
-            if "async" in _sig204:
-                lines.append(
-                    f"\nasync fn: {_prim204.name} — callers must await,"
-                    f" changes affect async context propagation"
-                )
-
-    # S214: Private symbol with external callers — symbol named with leading underscore
-    # is called from other files, leaking an implementation detail into the public interface.
-    # Only shown when seed starts with '_' (single) and has >= 1 external non-test caller.
-    if _seed_syms and token_count < max_tokens - 30:
-        _prim214 = _seed_syms[0]
-        if _prim214.name.startswith("_") and not _prim214.name.startswith("__"):
-            _ext_callers214 = [
-                c for c in graph.callers_of(_prim214.id)
-                if c.file_path != _prim214.file_path and not _is_test_file(c.file_path)
-            ]
-            if _ext_callers214:
-                lines.append(
-                    f"\nprivate symbol with external callers: {_prim214.name}"
-                    f" called from {len(_ext_callers214)} external file(s)"
-                    f" — underscore naming convention violated"
-                )
-
-    # S221: Recursive function — the focused symbol calls itself directly.
-    # Recursive fns have loop invariants and base-case contracts that break non-obviously.
-    # Only shown when seed is a fn/method that appears in its own callees.
-    if _seed_syms and token_count < max_tokens - 30:
-        _prim221 = _seed_syms[0]
-        if _prim221.kind.value in ("function", "method"):
-            _is_recursive221 = any(
-                c.id == _prim221.id for c in graph.callees_of(_prim221.id)
-            )
-            if _is_recursive221:
-                lines.append(
-                    f"\nrecursive fn: {_prim221.name} calls itself"
-                    f" — changes must preserve loop invariants and base cases"
-                )
-
-    # S244: Property accessor — focused symbol is a @property method.
-    # Callers access it like an attribute (no parentheses); renaming or changing type is
-    # a breaking change even if the source looks like a function change.
-    if _seed_syms and token_count < max_tokens - 30:
-        _prim244 = _seed_syms[0]
-        if _prim244.kind.value == "method":
-            _sig244 = _prim244.signature or ""
-            _name244 = _prim244.name
-            # Detect property: signature starts with "@property" or name matches Python/TS getter patterns
-            _is_property = (
-                "@property" in _sig244
-                or _sig244.strip().startswith("@property")
-                or (
-                    _name244.startswith("get_") and "(" in _sig244
-                    and "self" in _sig244
-                    and _sig244.count(",") == 0  # no params other than self
-                )
-            )
-            if _is_property:
-                lines.append(
-                    f"\nproperty accessor: {_name244} is accessed as an attribute"
-                    f" — type or name changes break all usages silently"
-                )
-
-    # S249: Abstract method — focused symbol is abstract (must be implemented by subclasses).
-    # Any signature change cascades to ALL concrete implementations — harder blast than normal.
-    # Detection: @abstractmethod in signature/decorators, or body is just `raise NotImplementedError`.
-    if _seed_syms and token_count < max_tokens - 30:
-        _prim249 = _seed_syms[0]
-        if _prim249.kind.value in ("function", "method"):
-            _sig249 = _prim249.signature or ""
-            _is_abstract = (
-                "abstractmethod" in _sig249
-                or "@abc.abstractmethod" in _sig249
-            )
-            if _is_abstract:
-                # Count concrete implementations (subclasses that have same-named method)
-                _prim249_name = _prim249.name
-                _impl249 = [
-                    s for s in graph.symbols.values()
-                    if s.name == _prim249_name
-                    and s.file_path != _prim249.file_path
-                    and s.kind.value in ("function", "method")
-                ]
-                _n_impl249 = len(_impl249)
-                lines.append(
-                    f"\nabstract method: {_prim249_name} must be implemented by all subclasses"
-                    + (f" — {_n_impl249} implementation(s) found" if _n_impl249 else "")
-                    + " — signature changes cascade to all concrete classes"
-                )
-
-
-    return lines
+    if not _seed_syms or token_count >= max_tokens - 30:
+        return []
+    prim = _seed_syms[0]
+    checks = [
+        _fn_trait_leaf(graph, prim),
+        _fn_trait_async(prim),
+        _fn_trait_private_callers(graph, prim),
+        _fn_trait_recursive(graph, prim),
+        _fn_trait_property(prim),
+        _fn_trait_abstract(graph, prim),
+    ]
+    return [line for line in checks if line is not None]
 
 
 # ---------------------------------------------------------------------------
