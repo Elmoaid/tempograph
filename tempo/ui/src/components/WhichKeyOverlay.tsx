@@ -11,6 +11,9 @@ const CMD_SHORTCUTS = [
   { key: "⌘1–9", desc: "Switch mode" },
   { key: "⌘+/−", desc: "Font size" },
   { key: "⌘0", desc: "Reset font" },
+  { key: "⌘M", desc: "Modes view" },
+  { key: "⌘G", desc: "Graph view" },
+  { key: "⌘D", desc: "Dashboard" },
 ];
 
 const overlayStyle: CSSProperties = {
