@@ -4,12 +4,8 @@ from ..types import Tempo, Symbol, SymbolKind
 from ._utils import _is_test_file, count_tokens
 
 
-def _signals_diff_pre_a(
-    graph: "Tempo", changed_files: list[str], normalized: set[str], lines: list[str]
-) -> None:
+def _pre_a_config_name(changed_files: list[str], lines: list[str]) -> None:
     # S447: Config-only change — all changed files are settings/config files.
-    # Moved here (before early return) so it fires even when config files are not
-    # in the graph (config files are often not parsed as source files).
     _s447_config_keywords = ("config", "settings", "conf", "env", "dotenv", "secrets", "options")
     _s447_non_config = [
         f for f in changed_files
@@ -23,22 +19,17 @@ def _signals_diff_pre_a(
             f" — config changes affect runtime behavior silently; verify flag interactions and defaults"
         )
 
-    # S477: Multi-module diff — diff spans 5+ distinct top-level directories.
-    # Moved before early return so it fires even when changed files aren't in the graph.
-    _s477_top_dirs: set[str] = set()
-    for _f477 in changed_files:
-        _parts477 = _f477.replace("\\", "/").split("/")
-        _top477 = _parts477[0] if _parts477 else ""
-        if _top477 and _top477 != ".":
-            _s477_top_dirs.add(_top477)
-    if len(_s477_top_dirs) >= 5:
+    # S723: Config-only diff — all changed files are configuration/constants/exceptions files.
+    _cfg_names723 = {"config.py", "settings.py", "constants.py", "exceptions.py", "errors.py", "env.py"}
+    if changed_files and all(f.replace("\\", "/").rsplit("/", 1)[-1] in _cfg_names723 for f in changed_files):
         lines.append(
-            f"multi-module diff: changes span {len(_s477_top_dirs)} top-level directories"
-            f" — split into focused PRs per module to reduce review complexity"
+            f"config-only diff: all {len(changed_files)} changed file(s) are config/constants files"
+            f" — verify that all consumers are compatible with updated values"
         )
 
+
+def _pre_a_config_ext(changed_files: list[str], lines: list[str]) -> None:
     # S561: Config-only diff — all changed files have config/data file extensions.
-    # Moved before early return so it fires even when config files aren't indexed as source.
     _config_exts561 = (".yaml", ".yml", ".json", ".toml", ".ini", ".env", ".cfg", ".conf")
     _cfg_files561 = [f for f in changed_files if any(f.lower().endswith(e) for e in _config_exts561)]
     if changed_files and len(_cfg_files561) == len(changed_files):
@@ -47,68 +38,7 @@ def _signals_diff_pre_a(
             f" — no code changes, but config errors can change behavior, timeouts, or security policies"
         )
 
-    # S603: Migration file in diff — moved before early return (migration files aren't indexed).
-    _migration_patterns603_early = ("/migrations/", "/migration/", "/migrate/", "/alembic/")
-    _migration_exts603_early = (".sql", ".migration")
-    _mig_early603 = [
-        f for f in changed_files
-        if any(p in f.replace("\\", "/") for p in _migration_patterns603_early)
-        or any(f.lower().endswith(e) for e in _migration_exts603_early)
-    ]
-    if _mig_early603:
-        _mig_name603_early = _mig_early603[0].rsplit("/", 1)[-1]
-        lines.append(
-            f"migration in diff: {_mig_name603_early} ({len(_mig_early603)} migration file(s))"
-            f" — database migrations are irreversible; ensure rollback plan exists before deploying"
-        )
-
-    # S609: Wide diff — diff touches 20+ files simultaneously.
-    # Moved before early return so it fires even when files aren't indexed.
-    if len(changed_files) >= 20:
-        lines.append(
-            f"wide diff: {len(changed_files)} files changed in one diff"
-            f" — large changesets are harder to review; consider splitting into smaller PRs"
-        )
-
-    # S615: Secrets/env file in diff — diff includes a .env, .envrc, or secrets file.
-    # Credentials files in a diff indicate secrets may be stored in version control,
-    # or that environment configuration is being leaked in a review.
-    _secrets_exts615 = (".env", ".envrc", ".secret", ".secrets", ".pem", ".key", ".p12", ".pfx")
-    _secrets_names615 = (".env", ".envrc", "secrets.yml", "secrets.yaml", "id_rsa", "id_ed25519")
-    _secret_files615 = [
-        f for f in changed_files
-        if f.rsplit("/", 1)[-1].lower() in _secrets_names615
-        or any(f.lower().endswith(e) for e in _secrets_exts615)
-    ]
-    if _secret_files615:
-        _sec_name615 = _secret_files615[0].rsplit("/", 1)[-1]
-        lines.append(
-            f"secrets in diff: {_sec_name615} ({len(_secret_files615)} credential/env file(s))"
-            f" — verify no secrets are tracked in VCS; rotate any credentials if leaked"
-        )
-
-    # S621: Test file removed — diff includes deletion of a test file (path-based heuristic).
-    # Removing test files silently drops coverage; this is a high-risk operation that
-    # may hide regressions in the removed tests' coverage area.
-    _deleted_tests621 = [
-        f for f in changed_files
-        if _is_test_file(f)
-        and (
-            f.rsplit("/", 1)[-1].startswith("test_")
-            or f.rsplit("/", 1)[-1].endswith("_test.py")
-        )
-        and f.endswith(".py")
-    ]
-    if _deleted_tests621:
-        _del_name621 = _deleted_tests621[0].rsplit("/", 1)[-1]
-        lines.append(
-            f"test files in diff: {_del_name621} ({len(_deleted_tests621)} test file(s) changed)"
-            f" — verify test removals don't silently drop coverage for modified areas"
-        )
-
-    # S627: Config file in diff — diff includes a configuration file (.cfg, .ini, .toml, .yaml, .json).
-    # Config changes affect runtime behavior without touching code; they're easy to overlook
-    # in code review and can change feature flags, timeouts, or connection strings silently.
+    # S627: Config file in diff — diff includes a configuration file.
     _config_exts627 = (".cfg", ".ini", ".toml", ".yaml", ".yml", ".json", ".conf", ".config")
     _config_excludes627 = ("test", "spec", "fixture", "mock", "lock", "package-lock", "yarn.lock")
     _config_files627 = [
@@ -124,41 +54,127 @@ def _signals_diff_pre_a(
             f" — config changes silently affect runtime behavior; review for feature flags or credentials"
         )
 
-    # S633: Generated file in diff — diff includes auto-generated files (_pb2.py, *_generated*, etc.).
-    # Generated files should not be hand-edited; their presence in a diff may indicate
-    # accidental modification or a regeneration that needs review for correctness.
-    _gen_suffixes633 = ("_pb2.py", "_pb2_grpc.py", "_generated.py", "_gen.py", "_auto.py")
-    _gen_patterns633 = ("generated", "_pb2", "autogenerated", "do not edit", "do_not_edit")
-    _gen_files633 = [
+    # S741: Config data file in diff — diff includes non-Python data/config files.
+    _data_exts741 = {".json", ".yaml", ".yml", ".toml", ".env", ".ini", ".cfg", ".csv"}
+    _data_files741 = [
         f for f in changed_files
-        if any(f.lower().endswith(s) for s in _gen_suffixes633)
-        or any(p in f.lower().replace("/", "_") for p in _gen_patterns633)
+        if any(f.endswith(ext) for ext in _data_exts741)
     ]
-    if _gen_files633:
-        _gen_name633 = _gen_files633[0].rsplit("/", 1)[-1]
+    if _data_files741:
+        _df_name741 = _data_files741[0].replace("\\", "/").rsplit("/", 1)[-1]
         lines.append(
-            f"generated file in diff: {_gen_name633} ({len(_gen_files633)} auto-generated file(s))"
-            f" — generated files should not be hand-edited; verify this is a regeneration"
+            f"config data file: {_df_name741} is a data/config file in the diff"
+            f" — runtime behavior change without code change; verify all environments updated"
         )
 
-    # S639: Polyglot diff — diff spans 3+ different file language extensions.
-    # A change touching many language runtimes (Python + JS + Go + SQL) has a wide
-    # blast radius across toolchains and may require multiple reviewers.
-    _diff_exts639: dict[str, int] = {}
-    for f in changed_files:
-        _ext639 = f.rsplit(".", 1)[-1].lower() if "." in f else ""
-        if _ext639 and _ext639 not in ("md", "txt", "rst", "json", "yaml", "yml", "toml", "cfg", "ini"):
-            _diff_exts639[_ext639] = _diff_exts639.get(_ext639, 0) + 1
-    if len(_diff_exts639) >= 3:
-        _ext_list639 = ", ".join(f".{e}" for e in sorted(_diff_exts639)[:5])
+
+def _pre_a_diff_scale(changed_files: list[str], lines: list[str]) -> None:
+    # S609: Wide diff — diff touches 20+ files simultaneously.
+    if len(changed_files) >= 20:
         lines.append(
-            f"polyglot diff: {len(_diff_exts639)} languages in diff ({_ext_list639})"
-            f" — cross-runtime change; may require multiple specialists to review correctly"
+            f"wide diff: {len(changed_files)} files changed in one diff"
+            f" — large changesets are harder to review; consider splitting into smaller PRs"
         )
 
-    # S645: Lockfile in diff — diff includes a dependency lockfile.
-    # Lockfile changes signal dependency updates; these deserve extra scrutiny
-    # since transitive dependency updates can introduce breaking changes or vulnerabilities.
+    # S687: Large diff — diff spans 5+ files.
+    if len(changed_files) >= 5:
+        lines.append(
+            f"multi-file diff: {len(changed_files)} files changed"
+            f" — consider splitting into smaller focused PRs for easier review"
+        )
+
+    # S705: Single-file diff — diff spans exactly 1 file.
+    if len(changed_files) == 1:
+        lines.append(
+            f"single-file diff: only {changed_files[0].rsplit('/', 1)[-1]} changed"
+            f" — focused change; verify blast radius of this file before merging"
+        )
+
+
+def _pre_a_diff_layout(changed_files: list[str], lines: list[str]) -> None:
+    # S477: Multi-module diff — diff spans 5+ distinct top-level directories.
+    _s477_top_dirs: set[str] = set()
+    for _f477 in changed_files:
+        _parts477 = _f477.replace("\\", "/").split("/")
+        _top477 = _parts477[0] if _parts477 else ""
+        if _top477 and _top477 != ".":
+            _s477_top_dirs.add(_top477)
+    if len(_s477_top_dirs) >= 5:
+        lines.append(
+            f"multi-module diff: changes span {len(_s477_top_dirs)} top-level directories"
+            f" — split into focused PRs per module to reduce review complexity"
+        )
+
+    # S717: Same-directory diff — all changed files are in the same directory.
+    if len(changed_files) >= 2:
+        _dirs717 = [f.replace("\\", "/").rsplit("/", 1)[0] for f in changed_files]
+        if len(set(_dirs717)) == 1:
+            lines.append(
+                f"same-directory diff: all {len(changed_files)} changed files are in {_dirs717[0]}/"
+                f" — cohesive change; cross-module dependencies unlikely but verify shared utils"
+            )
+
+
+def _pre_a_migration(changed_files: list[str], lines: list[str]) -> None:
+    # S603: Migration file in diff — path/extension-based detection.
+    _migration_patterns603_early = ("/migrations/", "/migration/", "/migrate/", "/alembic/")
+    _migration_exts603_early = (".sql", ".migration")
+    _mig_early603 = [
+        f for f in changed_files
+        if any(p in f.replace("\\", "/") for p in _migration_patterns603_early)
+        or any(f.lower().endswith(e) for e in _migration_exts603_early)
+    ]
+    if _mig_early603:
+        _mig_name603_early = _mig_early603[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"migration in diff: {_mig_name603_early} ({len(_mig_early603)} migration file(s))"
+            f" — database migrations are irreversible; ensure rollback plan exists before deploying"
+        )
+
+    # S693: Migration file in diff — keyword-based detection.
+    _migration_keywords693 = ("migration", "migrate", "alembic", "schema", "flyway", "liquibase")
+    _migration_files693 = [
+        f for f in changed_files
+        if any(kw in f.replace("\\", "/").lower() for kw in _migration_keywords693)
+    ]
+    if _migration_files693:
+        _mig_names693 = ", ".join(f.rsplit("/", 1)[-1] for f in _migration_files693[:2])
+        lines.append(
+            f"migration in diff: {_mig_names693} ({len(_migration_files693)} migration file(s))"
+            f" — schema change; verify backward compatibility and deployment order"
+        )
+
+    # S735: Schema or migration file in diff — deployment-order signal.
+    _schema_kws735 = ("migration", "migrate", "schema", "alembic")
+    _schema_files735 = [
+        f for f in changed_files
+        if any(kw in f.replace("\\", "/").lower() for kw in _schema_kws735)
+    ]
+    if _schema_files735:
+        _schema_name735 = _schema_files735[0].replace("\\", "/").rsplit("/", 1)[-1]
+        lines.append(
+            f"schema diff: {_schema_name735} is a migration/schema file"
+            f" — verify deployment order: DB migration must run in coordination with code changes"
+        )
+
+
+def _pre_a_security(changed_files: list[str], lines: list[str]) -> None:
+    # S615: Secrets/env file in diff.
+    _secrets_exts615 = (".env", ".envrc", ".secret", ".secrets", ".pem", ".key", ".p12", ".pfx")
+    _secrets_names615 = (".env", ".envrc", "secrets.yml", "secrets.yaml", "id_rsa", "id_ed25519")
+    _secret_files615 = [
+        f for f in changed_files
+        if f.rsplit("/", 1)[-1].lower() in _secrets_names615
+        or any(f.lower().endswith(e) for e in _secrets_exts615)
+    ]
+    if _secret_files615:
+        _sec_name615 = _secret_files615[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"secrets in diff: {_sec_name615} ({len(_secret_files615)} credential/env file(s))"
+            f" — verify no secrets are tracked in VCS; rotate any credentials if leaked"
+        )
+
+    # S645: Lockfile in diff — dependency update signal.
     _lock_names645 = (
         "requirements.txt", "requirements.lock", "pipfile.lock", "poetry.lock",
         "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "cargo.lock",
@@ -175,28 +191,7 @@ def _signals_diff_pre_a(
             f" — dependency update; review transitive changes for breaking or vulnerable packages"
         )
 
-    # S651: Schema file in diff — diff includes a database schema or ORM model file.
-    # Schema migrations affect database structure; any mismatch between code and schema
-    # causes runtime failures that are hard to detect without migration review.
-    _schema_names651 = ("schema.py", "models.py", "model.py", "tables.py", "entities.py")
-    _schema_exts651 = (".sql",)
-    _schema_patterns651 = ("migration", "schema", "models")
-    _schema_files651 = [
-        f for f in changed_files
-        if f.rsplit("/", 1)[-1].lower() in _schema_names651
-        or any(f.lower().endswith(e) for e in _schema_exts651)
-        or any(p in f.lower().replace("/", "_") for p in _schema_patterns651)
-    ]
-    if _schema_files651:
-        _sch_name651 = _schema_files651[0].rsplit("/", 1)[-1]
-        lines.append(
-            f"schema in diff: {_sch_name651} ({len(_schema_files651)} schema/model file(s) changed)"
-            f" — database or ORM changes require migration review; verify schema/code parity"
-        )
-
-    # S657: CI/CD config in diff — diff includes a CI/CD or build configuration file.
-    # CI changes affect the entire team's workflow; build script changes can silently
-    # break the deployment pipeline and may go unnoticed until the next push.
+    # S657: CI/CD config in diff.
     _ci_names657 = (
         "jenkinsfile", "makefile", "dockerfile", ".travis.yml", "circle.yml",
         "azure-pipelines.yml", "buildspec.yml", "tox.ini", "noxfile.py",
@@ -214,9 +209,69 @@ def _signals_diff_pre_a(
             f" — build/deploy workflow changes; verify no pipeline regressions before merging"
         )
 
-    # S663: Package init in diff — diff includes a __init__.py file (package restructuring).
-    # Changes to __init__.py affect the entire package's public API surface;
-    # symbol additions/removals or re-exports here change what consumers can import.
+
+def _pre_a_test_signals(changed_files: list[str], lines: list[str]) -> None:
+    # S621: Test file in diff.
+    _deleted_tests621 = [
+        f for f in changed_files
+        if _is_test_file(f)
+        and (
+            f.rsplit("/", 1)[-1].startswith("test_")
+            or f.rsplit("/", 1)[-1].endswith("_test.py")
+        )
+        and f.endswith(".py")
+    ]
+    if _deleted_tests621:
+        _del_name621 = _deleted_tests621[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"test files in diff: {_del_name621} ({len(_deleted_tests621)} test file(s) changed)"
+            f" — verify test removals don't silently drop coverage for modified areas"
+        )
+
+    # S681: Test-only diff — all changed files are test files.
+    if changed_files and all(_is_test_file(f) for f in changed_files):
+        lines.append(
+            f"test-only diff: all {len(changed_files)} changed file(s) are test files"
+            f" — lower risk change; confirm no production logic was added to test files"
+        )
+
+    # S711: Test without source in diff.
+    _test_files711 = [f for f in changed_files if _is_test_file(f)]
+    _src_files711 = [f for f in changed_files if not _is_test_file(f)]
+    if _test_files711 and not _src_files711:
+        _test_name711 = _test_files711[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"test without source: {_test_name711} changed with no source file"
+            f" — verify tests reflect correct expected behavior; no production code changed"
+        )
+
+    # S729: Mixed test and source diff.
+    _diff_tests729 = [f for f in changed_files if _is_test_file(f)]
+    _diff_src729 = [f for f in changed_files if not _is_test_file(f)]
+    if _diff_tests729 and _diff_src729:
+        lines.append(
+            f"mixed diff: {len(_diff_src729)} source and {len(_diff_tests729)} test file(s) changed"
+            f" — verify test coverage matches all changed source paths"
+        )
+
+
+def _pre_a_file_meta(changed_files: list[str], lines: list[str]) -> None:
+    # S633: Generated file in diff.
+    _gen_suffixes633 = ("_pb2.py", "_pb2_grpc.py", "_generated.py", "_gen.py", "_auto.py")
+    _gen_patterns633 = ("generated", "_pb2", "autogenerated", "do not edit", "do_not_edit")
+    _gen_files633 = [
+        f for f in changed_files
+        if any(f.lower().endswith(s) for s in _gen_suffixes633)
+        or any(p in f.lower().replace("/", "_") for p in _gen_patterns633)
+    ]
+    if _gen_files633:
+        _gen_name633 = _gen_files633[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"generated file in diff: {_gen_name633} ({len(_gen_files633)} auto-generated file(s))"
+            f" — generated files should not be hand-edited; verify this is a regeneration"
+        )
+
+    # S663: Package init in diff.
     _init_files663 = [
         f for f in changed_files
         if f.rsplit("/", 1)[-1] == "__init__.py" or f == "__init__.py"
@@ -229,10 +284,7 @@ def _signals_diff_pre_a(
             f" — package public API changed; verify re-exports and downstream consumers"
         )
 
-    # S669: Documentation file in diff — diff includes a .md, .rst, or .txt file.
-    # Docs changes alongside code changes signal an intentional API or behavior update;
-    # docs-only diffs with no code changes may indicate stale documentation being corrected.
-    _doc_exts669 = {".md", ".rst", ".txt"}
+    # S669: Documentation file in diff.
     _doc_files669 = [
         f for f in changed_files
         if "." in f.rsplit("/", 1)[-1]
@@ -247,9 +299,7 @@ def _signals_diff_pre_a(
             f" — verify code and docs stay in sync; doc-only diffs may lag actual behavior"
         )
 
-    # S675: Version file in diff — diff includes a version tracking file.
-    # Version bumps signal a release boundary; changes alongside a version bump
-    # will ship immediately and should be held to a higher quality bar.
+    # S675: Version file in diff.
     _version_names675 = {
         "version.py", "__version__.py", "VERSION", "VERSION.txt",
         "pyproject.toml", "package.json", "Cargo.toml", "setup.cfg",
@@ -265,42 +315,39 @@ def _signals_diff_pre_a(
             f" — release boundary; co-changed code ships immediately; hold to higher quality bar"
         )
 
-    # S681: Test-only diff — all changed files are test files (no production code modified).
-    # A diff touching only tests either adds coverage or modifies test behaviour;
-    # test-only changes are lower risk but should verify no production logic crept in.
-    if changed_files and all(_is_test_file(f) for f in changed_files):
+
+def _pre_a_lang_spread(changed_files: list[str], lines: list[str]) -> None:
+    # S639: Polyglot diff — diff spans 3+ different file language extensions.
+    _diff_exts639: dict[str, int] = {}
+    for f in changed_files:
+        _ext639 = f.rsplit(".", 1)[-1].lower() if "." in f else ""
+        if _ext639 and _ext639 not in ("md", "txt", "rst", "json", "yaml", "yml", "toml", "cfg", "ini"):
+            _diff_exts639[_ext639] = _diff_exts639.get(_ext639, 0) + 1
+    if len(_diff_exts639) >= 3:
+        _ext_list639 = ", ".join(f".{e}" for e in sorted(_diff_exts639)[:5])
         lines.append(
-            f"test-only diff: all {len(changed_files)} changed file(s) are test files"
-            f" — lower risk change; confirm no production logic was added to test files"
+            f"polyglot diff: {len(_diff_exts639)} languages in diff ({_ext_list639})"
+            f" — cross-runtime change; may require multiple specialists to review correctly"
         )
 
-    # S687: Large diff — diff spans 5+ files.
-    # Large diffs are harder to review atomically; reviewers lose context across many files
-    # and are more likely to miss subtle interactions between the changes.
-    if len(changed_files) >= 5:
-        lines.append(
-            f"multi-file diff: {len(changed_files)} files changed"
-            f" — consider splitting into smaller focused PRs for easier review"
-        )
-
-    # S693: Migration file in diff — diff includes a database migration or schema file.
-    # Database migrations change live data structures; they require backward compatibility
-    # checks and careful coordination with deployment order.
-    _migration_keywords693 = ("migration", "migrate", "alembic", "schema", "flyway", "liquibase")
-    _migration_files693 = [
+    # S651: Schema file in diff — ORM/schema model names.
+    _schema_names651 = ("schema.py", "models.py", "model.py", "tables.py", "entities.py")
+    _schema_exts651 = (".sql",)
+    _schema_patterns651 = ("migration", "schema", "models")
+    _schema_files651 = [
         f for f in changed_files
-        if any(kw in f.replace("\\", "/").lower() for kw in _migration_keywords693)
+        if f.rsplit("/", 1)[-1].lower() in _schema_names651
+        or any(f.lower().endswith(e) for e in _schema_exts651)
+        or any(p in f.lower().replace("/", "_") for p in _schema_patterns651)
     ]
-    if _migration_files693:
-        _mig_names693 = ", ".join(f.rsplit("/", 1)[-1] for f in _migration_files693[:2])
+    if _schema_files651:
+        _sch_name651 = _schema_files651[0].rsplit("/", 1)[-1]
         lines.append(
-            f"migration in diff: {_mig_names693} ({len(_migration_files693)} migration file(s))"
-            f" — schema change; verify backward compatibility and deployment order"
+            f"schema in diff: {_sch_name651} ({len(_schema_files651)} schema/model file(s) changed)"
+            f" — database or ORM changes require migration review; verify schema/code parity"
         )
 
-    # S699: Non-code diff — all changed files have non-source extensions (config/data/binary).
-    # A diff that touches only non-code files (YAML, JSON, TOML, images, etc.) signals
-    # a configuration or infrastructure change with no logic modifications.
+    # S699: Non-code diff — all changed files have non-source extensions.
     _code_exts699 = {
         "py", "js", "ts", "jsx", "tsx", "go", "rs", "java", "kt",
         "cs", "cpp", "c", "h", "rb", "php", "swift", "scala", "ex", "exs",
@@ -316,92 +363,7 @@ def _signals_diff_pre_a(
                 f" — config/infra change only; no logic modifications in this diff"
             )
 
-    # S705: Single-file diff — diff spans exactly 1 file.
-    # A one-file diff is the tightest possible change; it's easy to review and low risk,
-    # but if that file is widely imported, the impact can still be large.
-    if len(changed_files) == 1:
-        lines.append(
-            f"single-file diff: only {changed_files[0].rsplit('/', 1)[-1]} changed"
-            f" — focused change; verify blast radius of this file before merging"
-        )
-
-    # S711: Test without source in diff — a test file is in diff but its source file is not.
-    # When tests are modified without touching the source, the change may:
-    # (a) add tests for existing code, (b) fix broken tests, or (c) leave stale tests.
-    _test_files711 = [f for f in changed_files if _is_test_file(f)]
-    _src_files711 = [f for f in changed_files if not _is_test_file(f)]
-    if _test_files711 and not _src_files711:
-        _test_name711 = _test_files711[0].rsplit("/", 1)[-1]
-        lines.append(
-            f"test without source: {_test_name711} changed with no source file"
-            f" — verify tests reflect correct expected behavior; no production code changed"
-        )
-
-    # S717: Same-directory diff — all changed files are in the same directory.
-    # A diff confined to a single directory is likely cohesive (one module or feature);
-    # cross-cutting concerns are unlikely, but shared utility files outside the dir may be missed.
-    if len(changed_files) >= 2:
-        _dirs717 = [f.replace("\\", "/").rsplit("/", 1)[0] for f in changed_files]
-        if len(set(_dirs717)) == 1:
-            lines.append(
-                f"same-directory diff: all {len(changed_files)} changed files are in {_dirs717[0]}/"
-                f" — cohesive change; cross-module dependencies unlikely but verify shared utils"
-            )
-
-    # S723: Config-only diff — all changed files are configuration/constants/exceptions files.
-    # A diff that only touches config/constants may have no logic changes, but every consumer
-    # of the changed values could be affected; validate all dependents are still compatible.
-    _cfg_names723 = {"config.py", "settings.py", "constants.py", "exceptions.py", "errors.py", "env.py"}
-    if changed_files and all(f.replace("\\", "/").rsplit("/", 1)[-1] in _cfg_names723 for f in changed_files):
-        lines.append(
-            f"config-only diff: all {len(changed_files)} changed file(s) are config/constants files"
-            f" — verify that all consumers are compatible with updated values"
-        )
-
-    # S729: Mixed test and source diff — diff contains both test files and non-test source files.
-    # Healthy pattern: tests are updated alongside the source they cover.
-    # Signal is informational — verify tests cover all code paths changed in source.
-    _diff_tests729 = [f for f in changed_files if _is_test_file(f)]
-    _diff_src729 = [f for f in changed_files if not _is_test_file(f)]
-    if _diff_tests729 and _diff_src729:
-        lines.append(
-            f"mixed diff: {len(_diff_src729)} source and {len(_diff_tests729)} test file(s) changed"
-            f" — verify test coverage matches all changed source paths"
-        )
-
-    # S735: Schema or migration file in diff — diff includes a database migration or schema file.
-    # Schema changes need coordinated deployment: DB migrations must run in a specific order
-    # relative to code changes; verify the deployment sequence is correct.
-    _schema_kws735 = ("migration", "migrate", "schema", "alembic")
-    _schema_files735 = [
-        f for f in changed_files
-        if any(kw in f.replace("\\", "/").lower() for kw in _schema_kws735)
-    ]
-    if _schema_files735:
-        _schema_name735 = _schema_files735[0].replace("\\", "/").rsplit("/", 1)[-1]
-        lines.append(
-            f"schema diff: {_schema_name735} is a migration/schema file"
-            f" — verify deployment order: DB migration must run in coordination with code changes"
-        )
-
-    # S741: Config data file in diff — diff includes non-Python data/config files.
-    # Config file changes affect runtime behavior without any code change; they can alter
-    # feature flags, database connections, or application settings silently.
-    _data_exts741 = {".json", ".yaml", ".yml", ".toml", ".env", ".ini", ".cfg", ".csv"}
-    _data_files741 = [
-        f for f in changed_files
-        if any(f.endswith(ext) for ext in _data_exts741)
-    ]
-    if _data_files741:
-        _df_name741 = _data_files741[0].replace("\\", "/").rsplit("/", 1)[-1]
-        lines.append(
-            f"config data file: {_df_name741} is a data/config file in the diff"
-            f" — runtime behavior change without code change; verify all environments updated"
-        )
-
     # S747: Multi-language diff — diff contains files in 2+ different source languages.
-    # Cross-language changes require testing in multiple environments and may have
-    # separate deployment pipelines; coordinate carefully across language boundaries.
     _lang_ext_map747 = {
         ".py": "Python", ".js": "JS", ".ts": "TS", ".tsx": "TS", ".jsx": "JS",
         ".go": "Go", ".rs": "Rust", ".java": "Java", ".rb": "Ruby",
@@ -419,9 +381,11 @@ def _signals_diff_pre_a(
             f" — cross-language change; coordinate testing across all affected language environments"
         )
 
-    # S753: Private-only diff — all changed files touch only private/internal symbols (_prefixed).
-    # When a diff only touches private symbols, the public API is unaffected and callers
-    # need not be updated; flag as internal-only to skip external coordination.
+
+def _pre_a_graph_signals(
+    graph: "Tempo", changed_files: list[str], normalized: set[str], lines: list[str]
+) -> None:
+    # S753: Private-only diff — all changed files touch only private/internal symbols.
     if changed_files and normalized:
         _private_only753 = True
         for _fp753 in normalized:
@@ -441,8 +405,6 @@ def _signals_diff_pre_a(
             )
 
     # S759: Constants-only diff — all changed source files contain only constant/variable symbols.
-    # When a diff touches only constants, no function logic changes; consumers may be
-    # affected by value changes but call-site behavior is unchanged.
     if normalized:
         _const_only759 = True
         for _fp759 in normalized:
@@ -463,6 +425,21 @@ def _signals_diff_pre_a(
                 f"constants-only diff: all {len(_src_changed759)} changed source file(s) contain only constants/variables"
                 f" — no logic changes; verify config values are correct for all environments"
             )
+
+
+def _signals_diff_pre_a(
+    graph: "Tempo", changed_files: list[str], normalized: set[str], lines: list[str]
+) -> None:
+    _pre_a_config_name(changed_files, lines)
+    _pre_a_config_ext(changed_files, lines)
+    _pre_a_diff_scale(changed_files, lines)
+    _pre_a_diff_layout(changed_files, lines)
+    _pre_a_migration(changed_files, lines)
+    _pre_a_security(changed_files, lines)
+    _pre_a_test_signals(changed_files, lines)
+    _pre_a_file_meta(changed_files, lines)
+    _pre_a_lang_spread(changed_files, lines)
+    _pre_a_graph_signals(graph, changed_files, normalized, lines)
 
 def _signals_diff_pre_b(
     graph: "Tempo", changed_files: list[str], normalized: set[str], lines: list[str]
@@ -1994,18 +1971,7 @@ def _signals_diff_graph_b(
     _graph_b_db_misc(graph, changed_files, lines)
 
 
-def _signals_diff_graph_c(
-    graph: "Tempo", changed_files: list[str], normalized: set[str], lines: list[str]
-) -> None:
-    # S497: Large diff surface — diff spans 10+ files.
-    # Very wide diffs are hard to review atomically; reviewers miss interactions between distant
-    # changes and the probability of a hidden regression grows with diff breadth.
-    if len(changed_files) >= 10:
-        lines.append(
-            f"large diff: {len(changed_files)} files changed"
-            f" — wide diffs increase review blind-spots; consider splitting into smaller PRs"
-        )
-
+def _graph_c_file_types(changed_files: list[str], lines: list[str]) -> None:
     # S502: Public API change — diff contains a file that defines exported symbols used externally.
     # Changes to publicly exported APIs break all downstream consumers silently;
     # any rename, signature change, or removal requires a compatibility audit.
@@ -2038,45 +2004,6 @@ def _signals_diff_graph_c(
             f" — check for required migrations and audit all queries against changed fields"
         )
 
-    # S534: Hot path diff — diff includes a file containing a top-5 most-called symbol.
-    # Changing a file with hotspot symbols risks breaking the most-used code paths;
-    # even a refactor-only change to a hot file needs extra testing at the call sites.
-    # _top5_hotspot_files is pre-computed once in build_indexes() — O(1) dict lookup vs O(N) scan.
-    if graph.symbols and changed_files and graph._top5_hotspot_files:
-        _normalized534 = {f.replace("\\", "/") for f in changed_files}
-        _hot_changed534 = set(graph._top5_hotspot_files) & _normalized534
-        if _hot_changed534:
-            _hot_fp534 = next(iter(_hot_changed534))
-            _top534, _n_top534 = graph._top5_hotspot_files[_hot_fp534]
-            lines.append(
-                f"hot path diff: diff touches {_hot_fp534.rsplit('/', 1)[-1]}"
-                f" which contains {_top534} ({_n_top534} callers) — hot path; test all call sites"
-            )
-
-    # S528: Complexity spike — diff touches the highest-complexity function in the repo.
-    # Modifying the most complex symbol in the codebase is the highest-risk single change possible;
-    # it has the most execution paths to test and is often already the most brittle part of the system.
-    # _top_complexity_sym_id is pre-computed once in build_indexes() — O(1) dict lookup vs O(N) scan.
-    if graph.symbols:
-        _s528_top = graph.symbols.get(graph._top_complexity_sym_id)
-        if _s528_top and (_s528_top.complexity or 0) >= 10:
-            _normalized528 = [f.replace("\\", "/") for f in changed_files]
-            if _s528_top.file_path.replace("\\", "/") in _normalized528:
-                lines.append(
-                    f"complexity spike: diff touches {_s528_top.name} (complexity {_s528_top.complexity})"
-                    f" — highest-complexity symbol in repo; most execution paths to test; proceed carefully"
-                )
-
-    # S522: Init file in diff — diff includes __init__.py package init files.
-    # __init__.py changes alter a package's public re-export surface; removing or renaming
-    # an exported name here breaks all direct consumers without any symbol-level change.
-    _s522_init_files = [f for f in changed_files if f.rsplit("/", 1)[-1] == "__init__.py"]
-    if _s522_init_files:
-        lines.append(
-            f"init file in diff: {len(_s522_init_files)} __init__.py file(s) changed"
-            f" — package re-export surface may have changed; audit all import-from consumers"
-        )
-
     # S516: Generated file in diff — diff includes auto-generated source files.
     # Generated files should not be manually edited; changes are overwritten on next codegen run.
     # If a generated file appears in a diff, the generator input (proto, schema, spec) should change too.
@@ -2092,60 +2019,16 @@ def _signals_diff_graph_c(
             f" — do not manually edit generated files; update the generator input and re-run codegen"
         )
 
-    # S540: Test-only diff — diff contains exclusively test files with no source changes.
-    # A test-only diff may still signal risk: test removals can silently drop coverage;
-    # fixture changes affect all tests that share them; infra changes alter how ALL tests run.
-    if changed_files:
-        _s540_test_count = sum(1 for f in changed_files if _is_test_file(f))
-        if _s540_test_count == len(changed_files):
-            lines.append(
-                f"test-only diff: {_s540_test_count} test file(s) changed, no source files touched"
-                f" — verify tests still cover intended source behavior; shared fixture changes affect many tests"
-            )
 
-    # S543: Unindexed files in diff — 2+ changed files are not present in the graph.
-    # Files absent from the graph were deleted, renamed, or never indexed; they can't be analyzed
-    # statically — confirm removals are intentional and no consumers were missed.
-    _graph_fps = {fp.replace("\\", "/") for fp in graph.files}
-    _unindexed540 = [
-        f for f in changed_files
-        if f.replace("\\", "/") not in _graph_fps and not _is_test_file(f)
-    ]
-    if len(_unindexed540) >= 2:
-        _ui_names540 = ", ".join(f.rsplit("/", 1)[-1] for f in _unindexed540[:3])
-        if len(_unindexed540) > 3:
-            _ui_names540 += f" +{len(_unindexed540) - 3} more"
+def _graph_c_init_schema(changed_files: list[str], lines: list[str]) -> None:
+    # S522: Init file in diff — diff includes __init__.py package init files.
+    # __init__.py changes alter a package's public re-export surface; removing or renaming
+    # an exported name here breaks all direct consumers without any symbol-level change.
+    _s522_init_files = [f for f in changed_files if f.rsplit("/", 1)[-1] == "__init__.py"]
+    if _s522_init_files:
         lines.append(
-            f"unindexed files: {len(_unindexed540)} changed file(s) not in graph ({_ui_names540})"
-            f" — deleted or renamed; confirm removals are intentional and consumers were updated"
-        )
-
-    # S549: Large diff — 8+ files changed in a single diff.
-    # Broad diffs reduce reviewer attention per file and increase the probability of
-    # missed errors; each additional file adds compounding review fatigue.
-    if len(changed_files) >= 8:
-        lines.append(
-            f"large diff: {len(changed_files)} files changed"
-            f" — broad diffs reduce per-file reviewer attention; consider splitting into smaller PRs"
-        )
-
-    # S555: Lock file in diff — diff includes a dependency lock file.
-    # Lock file changes indicate dependency upgrades; upgrades can silently introduce
-    # breaking changes, security fixes, or behavioral regressions in transitive deps.
-    _lock_names555 = frozenset((
-        "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
-        "pipfile.lock", "poetry.lock", "pdm.lock",
-        "gemfile.lock", "cargo.lock", "composer.lock",
-    ))
-    _lock_files555 = [
-        f for f in changed_files
-        if f.replace("\\", "/").rsplit("/", 1)[-1].lower() in _lock_names555
-    ]
-    if _lock_files555:
-        _lf_name555 = _lock_files555[0].rsplit("/", 1)[-1]
-        lines.append(
-            f"lock file changed: {_lf_name555} modified"
-            f" — dependency upgrade; audit changelogs and test transitive behavior before merging"
+            f"init file in diff: {len(_s522_init_files)} __init__.py file(s) changed"
+            f" — package re-export surface may have changed; audit all import-from consumers"
         )
 
     # S567: Schema/migration file in diff — diff includes database schema or migration files.
@@ -2175,6 +2058,201 @@ def _signals_diff_graph_c(
         lines.append(
             f"init file changed: {_init_name573} modified"
             f" — __init__.py changes alter the package's public API; re-export additions/removals break downstream importers"
+        )
+
+    # S921: Schema or migration file in diff — changed files include database schema or migration files.
+    # Schema changes affect the database structure for all deployed instances;
+    # backward-incompatible migrations can cause runtime errors during rolling deployments.
+    _schema_kws921 = ("migration", "migrate", "schema", "alembic", "flyway", "liquibase")
+    _schema_exts921 = (".sql", ".ddl")
+    _schema_files921 = [
+        f for f in changed_files
+        if (
+            any(kw in f.replace("\\", "/").lower() for kw in _schema_kws921)
+            or any(f.lower().endswith(e) for e in _schema_exts921)
+        )
+    ]
+    if _schema_files921:
+        _sf_name921 = _schema_files921[0].replace("\\", "/").rsplit("/", 1)[-1]
+        lines.append(
+            f"schema in diff: {len(_schema_files921)} schema/migration file(s) changed (e.g. {_sf_name921})"
+            f" — database schema changes; ensure backward-compatible migration for rolling deployments"
+        )
+
+
+def _graph_c_diff_size(changed_files: list[str], lines: list[str]) -> None:
+    # S497: Large diff surface — diff spans 10+ files.
+    # Very wide diffs are hard to review atomically; reviewers miss interactions between distant
+    # changes and the probability of a hidden regression grows with diff breadth.
+    if len(changed_files) >= 10:
+        lines.append(
+            f"large diff: {len(changed_files)} files changed"
+            f" — wide diffs increase review blind-spots; consider splitting into smaller PRs"
+        )
+
+    # S549: Large diff — 8+ files changed in a single diff.
+    # Broad diffs reduce reviewer attention per file and increase the probability of
+    # missed errors; each additional file adds compounding review fatigue.
+    if len(changed_files) >= 8:
+        lines.append(
+            f"large diff: {len(changed_files)} files changed"
+            f" — broad diffs reduce per-file reviewer attention; consider splitting into smaller PRs"
+        )
+
+    # S879: Broad diff — 5 or more files changed in this diff.
+    # Wide-impact changes spanning many files are harder to review, more likely to have
+    # unintended interactions, and riskier to roll back if a problem is discovered.
+    if len(changed_files) >= 5:
+        lines.append(
+            f"broad diff: {len(changed_files)} files changed"
+            f" — broad change surface; review each file independently for unintended side-effects"
+        )
+
+
+def _graph_c_diff_scope(changed_files: list[str], lines: list[str]) -> None:
+    # S590: Cross-module diff — changed files span 3+ distinct top-level packages/directories.
+    # Diffs that touch many separate modules simultaneously are harder to review atomically
+    # and increase the risk of subtle interaction bugs between the changed areas.
+    if changed_files:
+        _top_dirs590 = {
+            f.replace("\\", "/").split("/")[0]
+            for f in changed_files
+            if "/" in f.replace("\\", "/")
+        }
+        if len(_top_dirs590) >= 3:
+            _dir_list590 = ", ".join(sorted(_top_dirs590)[:4])
+            lines.append(
+                f"cross-module diff: {len(changed_files)} files across {len(_top_dirs590)} top-level packages ({_dir_list590})"
+                f" — wide-scope diff; review each module's invariants independently"
+            )
+
+    # S909: Cross-module diff — changed files span 3+ different directories.
+    # A diff touching many directories suggests a cross-cutting concern; this often
+    # indicates a missing abstraction or scattered responsibility that should be encapsulated.
+    if len(changed_files) >= 3:
+        _diff_dirs909 = {
+            f.replace("\\", "/").rsplit("/", 1)[0] if "/" in f.replace("\\", "/") else "."
+            for f in changed_files
+        }
+        if len(_diff_dirs909) >= 3:
+            lines.append(
+                f"cross-module diff: {len(_diff_dirs909)} different directories changed"
+                f" — wide-scope change; check for missing abstraction or scattered responsibility"
+            )
+
+    # S957: Multi-directory diff — changed files span 3+ distinct parent directories.
+    # Cross-subsystem changes require coordination across multiple owners and increase
+    # the chance that a merge lands in one subsystem without the paired change in another.
+    if changed_files and len(changed_files) >= 3:
+        _dirs957: set[str] = set()
+        for _f957 in changed_files:
+            _normalized957 = _f957.replace("\\", "/")
+            _parent957 = _normalized957.rsplit("/", 1)[0] if "/" in _normalized957 else "."
+            _dirs957.add(_parent957)
+        if len(_dirs957) >= 3:
+            lines.append(
+                f"multi-dir diff: changed files span {len(_dirs957)} directories"
+                f" — cross-subsystem change; verify all owners have reviewed their portion"
+            )
+
+
+def _graph_c_test_coverage(
+    changed_files: list[str], normalized: set[str], lines: list[str]
+) -> None:
+    # S540: Test-only diff — diff contains exclusively test files with no source changes.
+    # A test-only diff may still signal risk: test removals can silently drop coverage;
+    # fixture changes affect all tests that share them; infra changes alter how ALL tests run.
+    if changed_files:
+        _s540_test_count = sum(1 for f in changed_files if _is_test_file(f))
+        if _s540_test_count == len(changed_files):
+            lines.append(
+                f"test-only diff: {_s540_test_count} test file(s) changed, no source files touched"
+                f" — verify tests still cover intended source behavior; shared fixture changes affect many tests"
+            )
+
+    # S873: Test-only diff — all changed files are test files.
+    # A diff that only modifies tests without touching source code may indicate
+    # tests were updated to match a bug rather than the bug being fixed.
+    if changed_files:
+        _non_test_changed873 = [f for f in changed_files if not _is_test_file(f)]
+        _test_changed873 = [f for f in changed_files if _is_test_file(f)]
+        if _test_changed873 and not _non_test_changed873:
+            lines.append(
+                f"test-only diff: all {len(_test_changed873)} changed file(s) are test files"
+                f" — tests modified without source changes; verify tests weren't updated to hide bugs"
+            )
+
+    # S927: Test-only change — all graph-indexed changed files are test files.
+    # A test-only diff may indicate coverage was added after the fact, or tests were
+    # updated to match undocumented behavior changes rather than the intended spec.
+    if normalized and len(normalized) >= 2:
+        _all_test927 = all(_is_test_file(fp) for fp in normalized)
+        if _all_test927:
+            lines.append(
+                f"test-only diff: all {len(normalized)} changed file(s) are test files"
+                f" — no production code changed; verify tests reflect intentional behavior, not bugs"
+            )
+
+
+def _graph_c_test_orphans(
+    changed_files: list[str], normalized: set[str], lines: list[str]
+) -> None:
+    # S933: Orphaned test change — test files changed but their source counterparts are not in the diff.
+    # Tests updated without a corresponding source change may be catching up to undocumented
+    # behavior, or hardcoding expected values rather than testing actual specifications.
+    if normalized:
+        _test_fps933 = [fp for fp in normalized if _is_test_file(fp)]
+        if _test_fps933:
+            _orphaned933 = []
+            for _tfp933 in _test_fps933:
+                _base933 = _tfp933.replace("test_", "", 1).replace("_test.py", ".py")
+                if _base933 not in normalized and _base933 != _tfp933:
+                    _orphaned933.append(_tfp933)
+            if _orphaned933:
+                _names933 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _orphaned933[:2])
+                lines.append(
+                    f"orphaned test change: {len(_orphaned933)} test file(s) changed without matching source ({_names933})"
+                    f" — tests updated without source change; verify tests reflect the intended spec"
+                )
+
+    # S963: Test infrastructure changed — diff includes conftest.py or shared test utilities.
+    # Changes to test infrastructure affect every test that relies on those fixtures or helpers;
+    # a subtle fixture change can cause mass test failures or false passes.
+    if changed_files:
+        _infra_kws963 = ("conftest", "fixtures", "test_helpers", "test_utils", "testing_utils")
+        _infra_files963 = [
+            f for f in changed_files
+            if any(
+                f.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower() == kw
+                for kw in _infra_kws963
+            )
+        ]
+        if _infra_files963:
+            _iname963 = _infra_files963[0].replace("\\", "/").rsplit("/", 1)[-1]
+            lines.append(
+                f"test infra changed: {len(_infra_files963)} test infrastructure file(s) modified (e.g. {_iname963})"
+                f" — fixture changes silently affect all dependent tests; run the full test suite"
+            )
+
+
+def _graph_c_binary_version(changed_files: list[str], lines: list[str]) -> None:
+    # S555: Lock file in diff — diff includes a dependency lock file.
+    # Lock file changes indicate dependency upgrades; upgrades can silently introduce
+    # breaking changes, security fixes, or behavioral regressions in transitive deps.
+    _lock_names555 = frozenset((
+        "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+        "pipfile.lock", "poetry.lock", "pdm.lock",
+        "gemfile.lock", "cargo.lock", "composer.lock",
+    ))
+    _lock_files555 = [
+        f for f in changed_files
+        if f.replace("\\", "/").rsplit("/", 1)[-1].lower() in _lock_names555
+    ]
+    if _lock_files555:
+        _lf_name555 = _lock_files555[0].rsplit("/", 1)[-1]
+        lines.append(
+            f"lock file changed: {_lf_name555} modified"
+            f" — dependency upgrade; audit changelogs and test transitive behavior before merging"
         )
 
     # S579: Binary or media file in diff — diff includes image, font, or compiled binary files.
@@ -2216,22 +2294,8 @@ def _signals_diff_graph_c(
             f" — confirm version bump is intentional and changelog is updated"
         )
 
-    # S590: Cross-module diff — changed files span 3+ distinct top-level packages/directories.
-    # Diffs that touch many separate modules simultaneously are harder to review atomically
-    # and increase the risk of subtle interaction bugs between the changed areas.
-    if changed_files:
-        _top_dirs590 = {
-            f.replace("\\", "/").split("/")[0]
-            for f in changed_files
-            if "/" in f.replace("\\", "/")
-        }
-        if len(_top_dirs590) >= 3:
-            _dir_list590 = ", ".join(sorted(_top_dirs590)[:4])
-            lines.append(
-                f"cross-module diff: {len(changed_files)} files across {len(_top_dirs590)} top-level packages ({_dir_list590})"
-                f" — wide-scope diff; review each module's invariants independently"
-            )
 
+def _graph_c_docs_mixed(changed_files: list[str], lines: list[str]) -> None:
     # S596: Changelog or readme in diff — diff includes documentation files.
     # Documentation changes alongside code are good; documentation-only changes
     # (without source) may indicate stale docs being retroactively updated.
@@ -2249,44 +2313,21 @@ def _signals_diff_graph_c(
             f" — verify documentation accurately reflects the current code state"
         )
 
-    # S873: Test-only diff — all changed files are test files.
-    # A diff that only modifies tests without touching source code may indicate
-    # tests were updated to match a bug rather than the bug being fixed.
+    # S903: Mixed doc/code diff — diff includes both documentation and source code files.
+    # Mixed diffs indicate a doc update was bundled with a code change; agents should
+    # verify that the documentation accurately reflects the accompanying code changes.
+    _doc_exts903 = (".md", ".rst", ".txt", ".adoc")
     if changed_files:
-        _non_test_changed873 = [f for f in changed_files if not _is_test_file(f)]
-        _test_changed873 = [f for f in changed_files if _is_test_file(f)]
-        if _test_changed873 and not _non_test_changed873:
+        _doc903 = [f for f in changed_files if any(f.lower().endswith(e) for e in _doc_exts903)]
+        _code903 = [f for f in changed_files if not any(f.lower().endswith(e) for e in _doc_exts903)]
+        if _doc903 and _code903:
             lines.append(
-                f"test-only diff: all {len(_test_changed873)} changed file(s) are test files"
-                f" — tests modified without source changes; verify tests weren't updated to hide bugs"
+                f"mixed diff: {len(_doc903)} doc file(s) and {len(_code903)} source file(s) changed together"
+                f" — mixed doc+code diff; verify docs accurately reflect the code changes"
             )
 
-    # S879: Broad diff — 5 or more files changed in this diff.
-    # Wide-impact changes spanning many files are harder to review, more likely to have
-    # unintended interactions, and riskier to roll back if a problem is discovered.
-    if len(changed_files) >= 5:
-        lines.append(
-            f"broad diff: {len(changed_files)} files changed"
-            f" — broad change surface; review each file independently for unintended side-effects"
-        )
 
-    # S891: New files in diff — changed files not found in graph (newly created).
-    # New files lack historical usage context; verify they are properly integrated
-    # into the module structure and not accidentally orphaned.
-    if changed_files:
-        _new_files891 = [
-            f for f in changed_files
-            if f not in graph.files and not any(gf.endswith(f) or f.endswith(gf) for gf in graph.files)
-        ]
-        if _new_files891:
-            _new_names891 = ", ".join(_new_files891[:2])
-            if len(_new_files891) > 2:
-                _new_names891 += f" +{len(_new_files891) - 2} more"
-            lines.append(
-                f"new files: {len(_new_files891)} changed file(s) not in graph ({_new_names891})"
-                f" — newly created files have no usage history; verify integration and imports"
-            )
-
+def _graph_c_module_struct(changed_files: list[str], lines: list[str]) -> None:
     # S897: Co-located diff — 2+ changed files are in the same directory.
     # Multiple changes within one directory suggest a localized refactor; verify that
     # the directory's public interface contracts remain intact after the changes.
@@ -2306,33 +2347,6 @@ def _signals_diff_graph_c(
                 f" — directory-scoped change; verify public interface contracts remain intact"
             )
 
-    # S903: Mixed doc/code diff — diff includes both documentation and source code files.
-    # Mixed diffs indicate a doc update was bundled with a code change; agents should
-    # verify that the documentation accurately reflects the accompanying code changes.
-    _doc_exts903 = (".md", ".rst", ".txt", ".adoc")
-    if changed_files:
-        _doc903 = [f for f in changed_files if any(f.lower().endswith(e) for e in _doc_exts903)]
-        _code903 = [f for f in changed_files if not any(f.lower().endswith(e) for e in _doc_exts903)]
-        if _doc903 and _code903:
-            lines.append(
-                f"mixed diff: {len(_doc903)} doc file(s) and {len(_code903)} source file(s) changed together"
-                f" — mixed doc+code diff; verify docs accurately reflect the code changes"
-            )
-
-    # S909: Cross-module diff — changed files span 3+ different directories.
-    # A diff touching many directories suggests a cross-cutting concern; this often
-    # indicates a missing abstraction or scattered responsibility that should be encapsulated.
-    if len(changed_files) >= 3:
-        _diff_dirs909 = {
-            f.replace("\\", "/").rsplit("/", 1)[0] if "/" in f.replace("\\", "/") else "."
-            for f in changed_files
-        }
-        if len(_diff_dirs909) >= 3:
-            lines.append(
-                f"cross-module diff: {len(_diff_dirs909)} different directories changed"
-                f" — wide-scope change; check for missing abstraction or scattered responsibility"
-            )
-
     # S915: Multiple init files in diff — 2+ module entry files (__init__.py, index.js, etc.) changed.
     # Module entry files control what a package exports; changing multiple simultaneously
     # suggests a package restructure that may break public API contracts.
@@ -2348,55 +2362,6 @@ def _signals_diff_graph_c(
                 f"multiple init files: {len(_init_files915)} module entry files changed ({_init_short915})"
                 f" — multiple module boundaries changed; verify public API exports are consistent"
             )
-
-    # S921: Schema or migration file in diff — changed files include database schema or migration files.
-    # Schema changes affect the database structure for all deployed instances;
-    # backward-incompatible migrations can cause runtime errors during rolling deployments.
-    if changed_files:
-        _schema_kws921 = ("migration", "migrate", "schema", "alembic", "flyway", "liquibase")
-        _schema_exts921 = (".sql", ".ddl")
-        _schema_files921 = [
-            f for f in changed_files
-            if (
-                any(kw in f.replace("\\", "/").lower() for kw in _schema_kws921)
-                or any(f.lower().endswith(e) for e in _schema_exts921)
-            )
-        ]
-        if _schema_files921:
-            _sf_name921 = _schema_files921[0].replace("\\", "/").rsplit("/", 1)[-1]
-            lines.append(
-                f"schema in diff: {len(_schema_files921)} schema/migration file(s) changed (e.g. {_sf_name921})"
-                f" — database schema changes; ensure backward-compatible migration for rolling deployments"
-            )
-
-    # S927: Test-only change — all graph-indexed changed files are test files.
-    # A test-only diff may indicate coverage was added after the fact, or tests were
-    # updated to match undocumented behavior changes rather than the intended spec.
-    if normalized and len(normalized) >= 2:
-        _all_test927 = all(_is_test_file(fp) for fp in normalized)
-        if _all_test927:
-            lines.append(
-                f"test-only diff: all {len(normalized)} changed file(s) are test files"
-                f" — no production code changed; verify tests reflect intentional behavior, not bugs"
-            )
-
-    # S933: Orphaned test change — test files changed but their source counterparts are not in the diff.
-    # Tests updated without a corresponding source change may be catching up to undocumented
-    # behavior, or hardcoding expected values rather than testing actual specifications.
-    if normalized:
-        _test_fps933 = [fp for fp in normalized if _is_test_file(fp)]
-        if _test_fps933:
-            _orphaned933 = []
-            for _tfp933 in _test_fps933:
-                _base933 = _tfp933.replace("test_", "", 1).replace("_test.py", ".py")
-                if _base933 not in normalized and _base933 != _tfp933:
-                    _orphaned933.append(_tfp933)
-            if _orphaned933:
-                _names933 = ", ".join(fp.rsplit("/", 1)[-1] for fp in _orphaned933[:2])
-                lines.append(
-                    f"orphaned test change: {len(_orphaned933)} test file(s) changed without matching source ({_names933})"
-                    f" — tests updated without source change; verify tests reflect the intended spec"
-                )
 
     # S939: Interface file in diff — changed files include abstract or protocol definition files.
     # Interface files define contracts; changes ripple to all implementors and callers
@@ -2414,24 +2379,6 @@ def _signals_diff_graph_c(
                 f"interface in diff: {len(_iface_files939)} interface/abstract file(s) changed (e.g. {_iname939})"
                 f" — interface changes ripple to all implementors; verify all implementors are updated"
             )
-
-    # S945: Widely-imported file in diff — a changed file is imported by 5+ other source files.
-    # When a hub file changes, every consumer is a potential regression site;
-    # the blast radius of this diff is likely larger than the file count suggests.
-    if normalized:
-        for _chf945 in normalized:
-            if _is_test_file(_chf945):
-                continue
-            _importers945 = {
-                i for i in graph.importers_of(_chf945)
-                if not _is_test_file(i) and i != _chf945
-            }
-            if len(_importers945) >= 5:
-                lines.append(
-                    f"widely-imported change: {_chf945.rsplit('/', 1)[-1]} is imported by {len(_importers945)} source module(s)"
-                    f" — high fan-in file changed; blast radius wider than file count suggests"
-                )
-                break  # only report once
 
     # S951: Cross-language diff — changed files span multiple programming languages.
     # Mixed-language diffs require reviewers with expertise in each language;
@@ -2454,38 +2401,86 @@ def _signals_diff_graph_c(
                 f" — multi-language change requires reviewers proficient in each; verify interface/serialization alignment"
             )
 
-    # S957: Multi-directory diff — changed files span 3+ distinct parent directories.
-    # Cross-subsystem changes require coordination across multiple owners and increase
-    # the chance that a merge lands in one subsystem without the paired change in another.
-    if changed_files and len(changed_files) >= 3:
-        _dirs957: set[str] = set()
-        for _f957 in changed_files:
-            _normalized957 = _f957.replace("\\", "/")
-            _parent957 = _normalized957.rsplit("/", 1)[0] if "/" in _normalized957 else "."
-            _dirs957.add(_parent957)
-        if len(_dirs957) >= 3:
+
+def _graph_c_hot_path(
+    graph: "Tempo", changed_files: list[str], lines: list[str]
+) -> None:
+    # S534: Hot path diff — diff includes a file containing a top-5 most-called symbol.
+    # Changing a file with hotspot symbols risks breaking the most-used code paths;
+    # even a refactor-only change to a hot file needs extra testing at the call sites.
+    if graph.symbols and changed_files:
+        _normalized534 = {f.replace("\\", "/") for f in changed_files}
+        _caller_counts534: list[tuple[int, str, str]] = []
+        for _sid534, _cs534 in graph._callers.items():
+            if len(_cs534) >= 3:
+                _sym534 = graph.symbols.get(_sid534)
+                if _sym534 and not _is_test_file(_sym534.file_path) and _sym534.kind.value in ("function", "method"):
+                    _caller_counts534.append((len(_cs534), _sym534.name, _sym534.file_path))
+        _caller_counts534.sort(reverse=True)
+        _top5_files534 = {fp for _, _, fp in _caller_counts534[:5]}
+        _hot_changed534 = _top5_files534 & _normalized534
+        if _hot_changed534:
+            _top534 = next(
+                (name for _, name, fp in _caller_counts534 if fp in _hot_changed534), "?"
+            )
+            _n_top534 = next(
+                (n for n, _, fp in _caller_counts534 if fp in _hot_changed534), 0
+            )
             lines.append(
-                f"multi-dir diff: changed files span {len(_dirs957)} directories"
-                f" — cross-subsystem change; verify all owners have reviewed their portion"
+                f"hot path diff: diff touches {next(iter(_hot_changed534)).rsplit('/', 1)[-1]}"
+                f" which contains {_top534} ({_n_top534} callers) — hot path; test all call sites"
             )
 
-    # S963: Test infrastructure changed — diff includes conftest.py or shared test utilities.
-    # Changes to test infrastructure affect every test that relies on those fixtures or helpers;
-    # a subtle fixture change can cause mass test failures or false passes.
+    # S528: Complexity spike — diff touches the highest-complexity function in the repo.
+    # Modifying the most complex symbol in the codebase is the highest-risk single change possible;
+    # it has the most execution paths to test and is often already the most brittle part of the system.
+    # _top_complexity_sym_id is pre-computed once in build_indexes() — O(1) dict lookup vs O(N) scan.
+    if graph.symbols:
+        _s528_top = graph.symbols.get(graph._top_complexity_sym_id)
+        if _s528_top and (_s528_top.complexity or 0) >= 10:
+            _normalized528 = [f.replace("\\", "/") for f in changed_files]
+            if _s528_top.file_path.replace("\\", "/") in _normalized528:
+                lines.append(
+                    f"complexity spike: diff touches {_s528_top.name} (complexity {_s528_top.complexity})"
+                    f" — highest-complexity symbol in repo; most execution paths to test; proceed carefully"
+                )
+
+
+def _graph_c_file_graph(
+    graph: "Tempo", changed_files: list[str], lines: list[str]
+) -> None:
+    # S543: Unindexed files in diff — 2+ changed files are not present in the graph.
+    # Files absent from the graph were deleted, renamed, or never indexed; they can't be analyzed
+    # statically — confirm removals are intentional and no consumers were missed.
+    _graph_fps = {fp.replace("\\", "/") for fp in graph.files}
+    _unindexed540 = [
+        f for f in changed_files
+        if f.replace("\\", "/") not in _graph_fps and not _is_test_file(f)
+    ]
+    if len(_unindexed540) >= 2:
+        _ui_names540 = ", ".join(f.rsplit("/", 1)[-1] for f in _unindexed540[:3])
+        if len(_unindexed540) > 3:
+            _ui_names540 += f" +{len(_unindexed540) - 3} more"
+        lines.append(
+            f"unindexed files: {len(_unindexed540)} changed file(s) not in graph ({_ui_names540})"
+            f" — deleted or renamed; confirm removals are intentional and consumers were updated"
+        )
+
+    # S891: New files in diff — changed files not found in graph (newly created).
+    # New files lack historical usage context; verify they are properly integrated
+    # into the module structure and not accidentally orphaned.
     if changed_files:
-        _infra_kws963 = ("conftest", "fixtures", "test_helpers", "test_utils", "testing_utils")
-        _infra_files963 = [
+        _new_files891 = [
             f for f in changed_files
-            if any(
-                f.replace("\\", "/").rsplit("/", 1)[-1].rsplit(".", 1)[0].lower() == kw
-                for kw in _infra_kws963
-            )
+            if f not in graph.files and not any(gf.endswith(f) or f.endswith(gf) for gf in graph.files)
         ]
-        if _infra_files963:
-            _iname963 = _infra_files963[0].replace("\\", "/").rsplit("/", 1)[-1]
+        if _new_files891:
+            _new_names891 = ", ".join(_new_files891[:2])
+            if len(_new_files891) > 2:
+                _new_names891 += f" +{len(_new_files891) - 2} more"
             lines.append(
-                f"test infra changed: {len(_infra_files963)} test infrastructure file(s) modified (e.g. {_iname963})"
-                f" — fixture changes silently affect all dependent tests; run the full test suite"
+                f"new files: {len(_new_files891)} changed file(s) not in graph ({_new_names891})"
+                f" — newly created files have no usage history; verify integration and imports"
             )
 
     # S975: Build config in diff — changed files include build/CI tooling configuration.
@@ -2508,6 +2503,28 @@ def _signals_diff_graph_c(
                 f"build config in diff: {_bname975} — CI/CD or build changes;"
                 f" verify behavior across all target environments, not just local"
             )
+
+
+def _graph_c_blast_signals(
+    graph: "Tempo", changed_files: list[str], normalized: set[str], lines: list[str]
+) -> None:
+    # S945: Widely-imported file in diff — a changed file is imported by 5+ other source files.
+    # When a hub file changes, every consumer is a potential regression site;
+    # the blast radius of this diff is likely larger than the file count suggests.
+    if normalized:
+        for _chf945 in normalized:
+            if _is_test_file(_chf945):
+                continue
+            _importers945 = {
+                i for i in graph.importers_of(_chf945)
+                if not _is_test_file(i) and i != _chf945
+            }
+            if len(_importers945) >= 5:
+                lines.append(
+                    f"widely-imported change: {_chf945.rsplit('/', 1)[-1]} is imported by {len(_importers945)} source module(s)"
+                    f" — high fan-in file changed; blast radius wider than file count suggests"
+                )
+                break  # only report once
 
     # S1028: Symbol-level blast preview — when a changed (non-test) file contains a
     # function/method with ≥10 cross-file callers OUTSIDE the diff, surface the specific
@@ -2548,6 +2565,23 @@ def _signals_diff_graph_c(
                 f"blast preview: {_bsym1028.name} has {_cnt1028} cross-file callers"
                 f" — top consumers: {_consumers1028}; high-impact symbol change"
             )
+
+
+def _signals_diff_graph_c(
+    graph: "Tempo", changed_files: list[str], normalized: set[str], lines: list[str]
+) -> None:
+    _graph_c_file_types(changed_files, lines)
+    _graph_c_init_schema(changed_files, lines)
+    _graph_c_diff_size(changed_files, lines)
+    _graph_c_diff_scope(changed_files, lines)
+    _graph_c_test_coverage(changed_files, normalized, lines)
+    _graph_c_test_orphans(changed_files, normalized, lines)
+    _graph_c_binary_version(changed_files, lines)
+    _graph_c_docs_mixed(changed_files, lines)
+    _graph_c_module_struct(changed_files, lines)
+    _graph_c_hot_path(graph, changed_files, lines)
+    _graph_c_file_graph(graph, changed_files, lines)
+    _graph_c_blast_signals(graph, changed_files, normalized, lines)
 
 
 def _load_diff_velocity(graph: Tempo) -> tuple[dict[str, float], dict[str, int]]:
