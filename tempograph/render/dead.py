@@ -32,6 +32,26 @@ def _file_effort_badge(syms: list[tuple[Symbol, int]], graph: Tempo) -> str:
 
 def _signals_dead_core(graph: Tempo, scored: list[tuple[Symbol, int]], dead: list[Symbol], lines: list[str]) -> None:
     """Dead code signals S76-S153: structural/type signals — private dead, module breakdown, constants, error handlers, callbacks, initializers, overrides, exports, zombie methods, test helpers, whole-file dead."""
+    # S1030: Framework fixture transparency — conftest.py functions appear dead to the call graph
+    # because pytest injects them by name, not by import. They're NOT dead — they're live via
+    # framework convention. Instead of silently excluding them, show that we saw them and why
+    # they were suppressed. This makes the confidence model legible to agents.
+    # Only fires when conftest.py functions appear in the dead list (confidence zeroed by _is_test_file).
+    _conftest_suppressed = [
+        sym for sym in dead
+        if sym.file_path.endswith("/conftest.py") or sym.file_path == "conftest.py"
+        and sym.kind.value in ("function", "method")
+    ]
+    if _conftest_suppressed:
+        _cs_names = ", ".join(s.name for s in _conftest_suppressed[:4])
+        if len(_conftest_suppressed) > 4:
+            _cs_names += f" +{len(_conftest_suppressed) - 4} more"
+        lines.append(
+            f"framework fixtures: {len(_conftest_suppressed)} suppressed"
+            f" (conftest.py: {_cs_names})"
+            f" — pytest-injected, invisible to call graph; excluded from dead count"
+        )
+
     # S76: Private dead hint — non-exported functions/methods with 0 callers.
     # find_dead_code() only reports exported symbols; private dead code is invisible without this.
     # Shows count only (not full list) to keep output concise.

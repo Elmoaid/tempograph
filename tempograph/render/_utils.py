@@ -22,10 +22,11 @@ _TEST_FILE_SUFFIXES = (".test.ts", ".test.tsx", ".test.js", ".spec.ts", ".spec.t
 
 
 def _is_test_file(file_path: str) -> bool:
-    """Return True if file_path looks like a test/spec file."""
+    """Return True if file_path looks like a test/spec file or pytest fixture file."""
     name = Path(file_path).name
     return (
-        (name.startswith("test_") and name.endswith(".py"))
+        name == "conftest.py"                           # pytest fixture file — all contents are fixtures/hooks
+        or (name.startswith("test_") and name.endswith(".py"))
         or name.endswith("_test.py")
         or any(name.endswith(sfx) for sfx in _TEST_FILE_SUFFIXES)
     )
