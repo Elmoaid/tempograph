@@ -2,11 +2,28 @@ import { useState, useRef, useEffect, useCallback } from "react";
 import { FolderOpen, Upload, Clock, Trash2 } from "lucide-react";
 import { openFolderDialog } from "./tempo";
 
+export interface RecentRepo {
+  path: string;
+  addedAt?: number;
+}
+
 interface LandingPageProps {
   onSelectRepo: (path: string) => void;
   onShowSnapshots: () => void;
-  recentRepos: string[];
+  recentRepos: RecentRepo[];
   onClearRecent?: () => void;
+}
+
+export function formatRecentTime(addedAt?: number): string {
+  if (!addedAt) return "";
+  const diff = Date.now() - addedAt;
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
 }
 
 export function LandingPage({ onSelectRepo, onShowSnapshots, recentRepos, onClearRecent }: LandingPageProps) {
@@ -92,10 +109,15 @@ export function LandingPage({ onSelectRepo, onShowSnapshots, recentRepos, onClea
           Drop a folder to explore your codebase
         </div>
 
-        <div className="landing-drop-zone" onClick={handleBrowse} role="button" tabIndex={0}
-          onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") handleBrowse(); }}>
-          <Upload size={32} strokeWidth={1.5} />
-          <span>Drop folder here or click to browse</span>
+        <div className="landing-drop-zone" onClick={!dragging ? handleBrowse : undefined}
+          role="button" tabIndex={0}
+          onKeyDown={(e) => { if (!dragging && (e.key === "Enter" || e.key === " ")) handleBrowse(); }}>
+          <Upload size={32} strokeWidth={1.5} className={dragging ? "landing-drop-icon-active" : ""} />
+          {dragging ? (
+            <span className="landing-drop-text-active">Release to open folder</span>
+          ) : (
+            <span>Drop folder here or click to browse</span>
+          )}
         </div>
 
         <div className="landing-divider">
@@ -133,17 +155,22 @@ export function LandingPage({ onSelectRepo, onShowSnapshots, recentRepos, onClea
               )}
             </div>
             <div className="landing-recent-list">
-              {recentRepos.map((repo) => (
-                <button
-                  key={repo}
-                  className="landing-recent-item"
-                  onClick={() => onSelectRepo(repo)}
-                  title={repo}
-                >
-                  <FolderOpen size={12} />
-                  <span>{repo.split("/").slice(-2).join("/")}</span>
-                </button>
-              ))}
+              {recentRepos.map((repo) => {
+                const displayPath = repo.path.split("/").slice(-2).join("/");
+                const timeLabel = formatRecentTime(repo.addedAt);
+                return (
+                  <button
+                    key={repo.path}
+                    className="landing-recent-item"
+                    onClick={() => onSelectRepo(repo.path)}
+                    title={repo.path}
+                  >
+                    <FolderOpen size={12} />
+                    <span className="landing-recent-item-name">{displayPath}</span>
+                    {timeLabel && <span className="landing-recent-item-time">{timeLabel}</span>}
+                  </button>
+                );
+              })}
             </div>
           </div>
         )}
