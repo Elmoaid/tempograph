@@ -2041,26 +2041,15 @@ def _signals_diff_graph_c(
     # S534: Hot path diff — diff includes a file containing a top-5 most-called symbol.
     # Changing a file with hotspot symbols risks breaking the most-used code paths;
     # even a refactor-only change to a hot file needs extra testing at the call sites.
-    if graph.symbols and changed_files:
+    # _top5_hotspot_files is pre-computed once in build_indexes() — O(1) dict lookup vs O(N) scan.
+    if graph.symbols and changed_files and graph._top5_hotspot_files:
         _normalized534 = {f.replace("\\", "/") for f in changed_files}
-        _caller_counts534: list[tuple[int, str, str]] = []
-        for _sid534, _cs534 in graph._callers.items():
-            if len(_cs534) >= 3:
-                _sym534 = graph.symbols.get(_sid534)
-                if _sym534 and not _is_test_file(_sym534.file_path) and _sym534.kind.value in ("function", "method"):
-                    _caller_counts534.append((len(_cs534), _sym534.name, _sym534.file_path))
-        _caller_counts534.sort(reverse=True)
-        _top5_files534 = {fp for _, _, fp in _caller_counts534[:5]}
-        _hot_changed534 = _top5_files534 & _normalized534
+        _hot_changed534 = set(graph._top5_hotspot_files) & _normalized534
         if _hot_changed534:
-            _top534 = next(
-                (name for _, name, fp in _caller_counts534 if fp in _hot_changed534), "?"
-            )
-            _n_top534 = next(
-                (n for n, _, fp in _caller_counts534 if fp in _hot_changed534), 0
-            )
+            _hot_fp534 = next(iter(_hot_changed534))
+            _top534, _n_top534 = graph._top5_hotspot_files[_hot_fp534]
             lines.append(
-                f"hot path diff: diff touches {next(iter(_hot_changed534)).rsplit('/', 1)[-1]}"
+                f"hot path diff: diff touches {_hot_fp534.rsplit('/', 1)[-1]}"
                 f" which contains {_top534} ({_n_top534} callers) — hot path; test all call sites"
             )
 
