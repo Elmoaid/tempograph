@@ -1,12 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { runTempo, saveOutput, reportFeedback, readFile } from "./tempo";
+import { runTempo, saveOutput, reportFeedback } from "./tempo";
 import { MODES, loadHistory, saveRecentCommand } from "./modes";
 import { BUILTIN_KITS, type KitInfo } from "./kits";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { useRunMode } from "../hooks/useRunMode";
 import { useOutputFilter } from "../hooks/useOutputFilter";
 import { useOutputSearch } from "../hooks/useOutputSearch";
+import { useCustomKits } from "../hooks/useCustomKits";
 
 export interface RunHistoryEntry {
   mode: string;
@@ -131,7 +132,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   const [activeMode, setActiveMode] = useState(() => localStorage.getItem(lastModeKey(repoPath)) || "overview");
   const [activeKit, setActiveKit] = useState<string | null>(null);
   const [sidebarTab, setSidebarTab] = useState<"kits" | "modes">("kits");
-  const [customKits, setCustomKits] = useState<KitInfo[]>([]);
+  const { customKits, loadCustomKits } = useCustomKits(repoPath);
   const [kitBuilderOpen, setKitBuilderOpen] = useState(false);
   const [modeArgs, setModeArgs] = useState(() => {
     const initMode = localStorage.getItem(lastModeKey(repoPath)) || "overview";
@@ -188,30 +189,6 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     close: onSearchClose,
     navigateMatch: onSearchNavigate,
   } = useOutputSearch(filteredOutput);
-
-  const loadCustomKits = useCallback(() => {
-    if (!repoPath) return;
-    readFile(`${repoPath}/.tempo/kits.json`).then(r => {
-      if (!r.success || !r.output) return;
-      try {
-        const raw = JSON.parse(r.output) as Record<string, { steps?: string[]; description?: string; needsQuery?: boolean }>;
-        const loaded: KitInfo[] = Object.entries(raw)
-          .filter(([, spec]) => spec.steps && spec.steps.length > 0)
-          .map(([id, spec]) => ({
-            id,
-            label: id.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
-            icon: BUILTIN_KITS[0].icon,
-            description: spec.description || `Custom kit: ${spec.steps?.join(" + ")}`,
-            needsQuery: spec.needsQuery,
-          }));
-        setCustomKits(loaded);
-      } catch {
-        // malformed kits.json — silently ignore
-      }
-    });
-  }, [repoPath]);
-
-  useEffect(() => { loadCustomKits(); }, [loadCustomKits]);
 
   // Stable refs so keyboard/auto-run closures always call the latest functions
   const runModeRef = useRef<(() => void) | null>(null);
