@@ -2868,12 +2868,7 @@ def _signals_hotspots_core_d_callers(
         if _top802 is not None and not _is_test_file(_top802.file_path):
             _callers802 = graph.callers_of(_top802.id)
             if len(_callers802) >= 4:
-                # Find callees: symbols where _top802 appears in their callers list
-                _callees802 = [
-                    s for s in graph.symbols.values()
-                    if any(c.id == _top802.id for c in graph.callers_of(s.id))
-                    and s.id != _top802.id
-                ]
+                _callees802 = [s for s in graph.callees_of(_top802.id) if s.id != _top802.id]
                 if len(_callees802) == 1:
                     out.append(
                         f"\nthin wrapper hotspot: {_top802.name} is called by {len(_callers802)} consumers"
