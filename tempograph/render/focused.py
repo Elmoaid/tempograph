@@ -5700,6 +5700,87 @@ def _compute_bfs_naming_clusters(
     )
 
 
+def _compute_variant_group(seeds: "list[Symbol]", graph: "Tempo") -> str:
+    """S1033: Variant group — fires when a seed is part of an A/B/C alphabetical or numeric series.
+
+    Functions like `_signals_hotspots_core_a/b/c/d` or `render_diff_1/2` are parallelism variants:
+    same-base names with a trailing single letter or digit suffix. BFS won't show them unless they
+    have direct call edges, but an agent fixing a bug in `_foo_b` almost always needs to check `_foo_a`.
+
+    Detection: seed name matches `^(.+)_([a-z]|[0-9]+)$` where the suffix is a SINGLE letter (a-z)
+    or a sequence of digits, and the base has ≥ 5 chars. Same-file symbols matching the same pattern
+    with the same base are "variant group members."
+
+    Example outputs:
+      ↳ variant group: _signals_hotspots_core_a, _c, _d — A/B series, check all 4 on edits
+      ↳ variant group: render_diff_1 (+1 more) — numeric series, check all 3 on edits
+
+    Distinct from S1032 (naming clusters): that fires when DEPTH-1 BFS neighbors share a stem.
+    This fires when the SEED ITSELF belongs to a named series — a totally different (and orthogonal)
+    signal. You can have both: seed is in a variant series AND its neighbors form a cluster.
+
+    Conditions:
+    - Seed name ends in `_[a-z]` (single letter) or `_[0-9]+` (digits)
+    - Base component has ≥ 5 chars (avoids trivial short names)
+    - ≥ 1 other same-file symbol shares the same base + variant suffix pattern
+    - Test-file seeds excluded (too noisy, `test_foo_a` is just pytest parameterization)
+    """
+    import re as _re
+    _VARIANT_RE = _re.compile(r"^(.+)_([a-z]|[0-9]+)$")
+
+    for seed in seeds:
+        if _is_test_file(seed.file_path):
+            continue
+        m = _VARIANT_RE.match(seed.name)
+        if not m:
+            continue
+        base, suffix = m.group(1), m.group(2)
+        # Base must be substantial — avoids matching short generic names like `_foo_a` where base=`_foo`
+        if len(base.lstrip("_")) < 5:
+            continue
+
+        # Find same-file symbols matching same base + any variant suffix
+        fi = graph.files.get(seed.file_path)
+        if not fi:
+            continue
+
+        variants: list[str] = []
+        for sid in fi.symbols:
+            if sid == seed.id or sid not in graph.symbols:
+                continue
+            other = graph.symbols[sid]
+            if other.kind.value not in ("function", "method"):
+                continue
+            om = _VARIANT_RE.match(other.name)
+            if not om:
+                continue
+            other_base, other_suffix = om.group(1), om.group(2)
+            if other_base != base:
+                continue
+            # Both suffixes must be the same TYPE (both alpha or both numeric)
+            if suffix.isdigit() != other_suffix.isdigit():
+                continue
+            variants.append(other.name)
+
+        if not variants:
+            continue
+
+        # Determine variant type label
+        variant_type = "numeric series" if suffix.isdigit() else "A/B series"
+        total = len(variants) + 1  # seed + variants
+
+        # Show up to 3 variant names (excluding seed)
+        shown = variants[:3]
+        overflow = f" (+{len(variants) - 3} more)" if len(variants) > 3 else ""
+        shown_str = ", ".join(shown)
+        return (
+            f"↳ variant group: {shown_str}{overflow}"
+            f" — {variant_type}, check all {total} on edits"
+        )
+
+    return ""
+
+
 def _compute_dead_seed_note(graph: "Tempo", seeds: "list[Symbol]") -> str:
     """S67: Dead seed annotation — fires when the focus seed itself is a dead candidate.
 
@@ -5833,6 +5914,10 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000, _stalene
     _naming_cluster = _compute_bfs_naming_clusters(seeds, ordered)
     if _naming_cluster:
         lines.append(_naming_cluster)
+        lines.append("")
+    _variant_group = _compute_variant_group(seeds, graph)
+    if _variant_group:
+        lines.append(_variant_group)
         lines.append("")
     seen_files: set[str] = set()
     # Count header sections already written to lines (change_exposure, scope_note,
