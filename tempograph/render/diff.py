@@ -857,9 +857,8 @@ def _signals_diff_pre_b(
                 f" — may require coordinated tag, changelog update, and package dependency bump"
             )
 
-def _signals_diff_graph_a(
-    graph: "Tempo", changed_files: list[str], normalized: set[str],
-    _all_changed_syms: list["Symbol"], lines: list[str]
+def _graph_a_test_coverage(
+    graph: "Tempo", normalized: set[str], lines: list[str]
 ) -> None:
     # S78: Tests in diff — when test files ARE included in the diff, confirm them.
     # The "good news" companion to S65: agents get a clear ✓ when tests are present.
@@ -886,6 +885,72 @@ def _signals_diff_graph_a(
             if 0 < _src_with_tests < _src_total:
                 lines.append(f"test coverage: {_src_with_tests}/{_src_total} changed files have tests ({_src_pct}%)")
 
+    # S133: Touched test count — test files that exist in the graph for changed source files.
+    # Tells agents how many tests they should run after this diff; zero = untested change.
+    # Only shown when 1+ source file in the diff and test files exist in the project.
+    _s133_src_changed = [fp for fp in normalized if not _is_test_file(fp)]
+    if _s133_src_changed:
+        _all_test_fps_133 = {fp for fp in graph.files if _is_test_file(fp)}
+        if _all_test_fps_133:
+            _touched_tests: set[str] = set()
+            for _fp133 in _s133_src_changed:
+                _stem133 = _fp133.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+                for _tfp in _all_test_fps_133:
+                    if _stem133 in _tfp:
+                        _touched_tests.add(_tfp)
+            if _touched_tests:
+                lines.append(f"touched test count: {len(_touched_tests)} test files cover the diff")
+            else:
+                lines.append("touched test count: 0 — no test files found for changed files")
+
+
+def _graph_a_test_scope(
+    normalized: set[str], lines: list[str]
+) -> None:
+    # S149: Mixed concern — diff touches both source and test files.
+    # Mixing src+test changes in one commit complicates cherry-picks, bisects, and reverts.
+    # Flag when the diff has 1+ source files AND 1+ test files.
+    _s149_has_src = any(not _is_test_file(fp) for fp in normalized)
+    _s149_has_test = any(_is_test_file(fp) for fp in normalized)
+    if _s149_has_src and _s149_has_test:
+        _s149_test_count = sum(1 for fp in normalized if _is_test_file(fp))
+        _s149_src_count = sum(1 for fp in normalized if not _is_test_file(fp))
+        lines.append(
+            f"mixed concern: {_s149_src_count} source + {_s149_test_count} test files"
+            f" — consider splitting into separate commits"
+        )
+
+    # S181: Test-heavy diff — the majority of changed files are test files.
+    # A diff that's mostly tests without paired source changes may indicate speculative tests.
+    # Only shown when >= 4 total files and >= 50% are test files.
+    if len(normalized) >= 4:
+        _s181_test_count = sum(1 for fp in normalized if _is_test_file(fp))
+        _s181_pct = _s181_test_count / len(normalized) * 100
+        if _s181_pct >= 50:
+            lines.append(
+                f"test-heavy diff: {_s181_test_count}/{len(normalized)} files are tests"
+                f" ({_s181_pct:.0f}%) — verify paired source changes exist"
+            )
+
+    # S205: Tests-only diff — all diff files are test files, 0 source files.
+    # A commit that only touches tests may be missing the paired implementation change.
+    # Only shown when >= 2 test files are in the diff and no source files.
+    _s205_src_files = [fp for fp in normalized if not _is_test_file(fp)]
+    _s205_test_files = [fp for fp in normalized if _is_test_file(fp)]
+    if not _s205_src_files and len(_s205_test_files) >= 2:
+        _t205_names = [fp.rsplit("/", 1)[-1] for fp in _s205_test_files[:3]]
+        _t205_str = ", ".join(_t205_names)
+        if len(_s205_test_files) > 3:
+            _t205_str += f" +{len(_s205_test_files) - 3} more"
+        lines.append(
+            f"tests-only diff: {len(_s205_test_files)} test files ({_t205_str}),"
+            f" 0 source files — may be missing implementation changes"
+        )
+
+
+def _graph_a_symbol_complexity(
+    graph: "Tempo", normalized: set[str], _all_changed_syms: list["Symbol"], lines: list[str]
+) -> None:
     # S102: Private callers — count of non-exported callers of changed exported symbols.
     # Agents often focus on external API consumers, but internal private callers also
     # need updating after a signature change. This surfaces the hidden internal blast.
@@ -916,39 +981,10 @@ def _signals_diff_graph_a(
             f" in {_cx_max_sym.file_path.rsplit('/', 1)[-1]})"
         )
 
-    # S118: Entry points changed — highlight when the diff touches known entry point files.
-    # Entry points (main.py, server.py, __main__.py, app.py, cli.py, index.ts) are highest
-    # blast-radius files — changes here ripple to all consumers. Flag them explicitly.
-    _ENTRY_BASENAMES = frozenset({
-        "main.py", "main.ts", "main.tsx", "main.rs", "main.go",
-        "index.ts", "index.tsx", "index.js",
-        "app.py", "app.ts", "app.tsx",
-        "__main__.py", "server.py", "cli.py", "lib.rs",
-    })
-    _ep_changed = [fp for fp in normalized if fp.rsplit("/", 1)[-1] in _ENTRY_BASENAMES]
-    if _ep_changed:
-        _ep_names = [fp.rsplit("/", 1)[-1] for fp in _ep_changed]
-        _ep_str = ", ".join(_ep_names)
-        lines.append(f"entry points changed: {_ep_str} — top-level API/runner modified")
 
-    # S133: Touched test count — test files that exist in the graph for changed source files.
-    # Tells agents how many tests they should run after this diff; zero = untested change.
-    # Only shown when 1+ source file in the diff and test files exist in the project.
-    _s133_src_changed = [fp for fp in normalized if not _is_test_file(fp)]
-    if _s133_src_changed:
-        _all_test_fps_133 = {fp for fp in graph.files if _is_test_file(fp)}
-        if _all_test_fps_133:
-            _touched_tests: set[str] = set()
-            for _fp133 in _s133_src_changed:
-                _stem133 = _fp133.rsplit("/", 1)[-1].rsplit(".", 1)[0]
-                for _tfp in _all_test_fps_133:
-                    if _stem133 in _tfp:
-                        _touched_tests.add(_tfp)
-            if _touched_tests:
-                lines.append(f"touched test count: {len(_touched_tests)} test files cover the diff")
-            else:
-                lines.append("touched test count: 0 — no test files found for changed files")
-
+def _graph_a_symbol_api(
+    graph: "Tempo", normalized: set[str], lines: list[str]
+) -> None:
     # S160: New symbols — count brand-new fn/class symbols introduced in the diff.
     # Many new symbols = significant API growth, not just modification.
     # Only shown when 3+ new symbols are introduced.
@@ -973,35 +1009,6 @@ def _signals_diff_graph_a(
         if len(_s160_new_syms) > 3:
             _s160_str += f" +{len(_s160_new_syms) - 3} more"
         lines.append(f"new symbols: {len(_s160_new_syms)} exported fns/classes with 0 callers ({_s160_str})")
-
-    # S199: Focused change — the diff touches only 1 source file (clean, low-risk commit).
-    # Single-file diffs have minimal blast radius; they're easy to review, revert, and bisect.
-    # Only shown when exactly 1 non-test source file is in the diff.
-    _s199_src_files = [fp for fp in normalized if not _is_test_file(fp)]
-    if len(_s199_src_files) == 1:
-        lines.append(
-            f"focused change: only {_s199_src_files[0].rsplit('/', 1)[-1]} modified"
-            f" — minimal blast radius, easy to review and revert"
-        )
-
-    # S193: Migration file — diff includes a database migration or schema file.
-    # Schema changes affect data integrity; they require extra care and often need backfill work.
-    # Only shown when 1+ migration-style file is in the diff.
-    _s193_migration_patterns = {"migration", "migrate", "schema", "alembic", "flyway"}
-    _s193_migration_files = [
-        fp for fp in normalized
-        if not _is_test_file(fp)
-        and (
-            any(p in fp.lower() for p in _s193_migration_patterns)
-            or fp.endswith(".sql")
-        )
-    ]
-    if _s193_migration_files:
-        _s193_str = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s193_migration_files[:3])
-        lines.append(
-            f"migration change: {_s193_str}"
-            f" — database/schema file modified, coordinate with data team"
-        )
 
     # S187: Contract risk — the diff changes an exported symbol with 5+ external callers.
     # Changing a widely-called exported symbol is a potential breaking change for all callers.
@@ -1029,56 +1036,10 @@ def _signals_diff_graph_a(
             f" — changing this exported symbol may break callers"
         )
 
-    # S181: Test-heavy diff — the majority of changed files are test files.
-    # A diff that's mostly tests without paired source changes may indicate speculative tests.
-    # Only shown when >= 4 total files and >= 50% are test files.
-    if len(normalized) >= 4:
-        _s181_test_count = sum(1 for fp in normalized if _is_test_file(fp))
-        _s181_pct = _s181_test_count / len(normalized) * 100
-        if _s181_pct >= 50:
-            lines.append(
-                f"test-heavy diff: {_s181_test_count}/{len(normalized)} files are tests"
-                f" ({_s181_pct:.0f}%) — verify paired source changes exist"
-            )
 
-    # S175: Config file change — the diff includes a configuration or settings file.
-    # Config changes affect runtime behavior globally; they warrant extra scrutiny.
-    # Only shown when 1+ config file is in the diff.
-    _s175_config_stems = {
-        "settings", "config", "configuration", "constants", "env",
-        "defaults", "options", "params", "parameters",
-    }
-    _s175_config_files = [
-        fp for fp in normalized
-        if fp.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower() in _s175_config_stems
-        and not _is_test_file(fp)
-    ]
-    if _s175_config_files:
-        _s175_str = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s175_config_files[:3])
-        lines.append(
-            f"config change: {_s175_str}"
-            f" — settings file modified, check for unintended global effects"
-        )
-
-    # S169: Entry point change — the diff includes an application entry point file.
-    # Entry points are user-facing; changes here are immediately visible to end users.
-    # Only shown when 1+ entry point filename is among the changed files.
-    _s169_entry_stems = {
-        "main", "app", "index", "manage", "cli", "server", "run",
-        "wsgi", "asgi", "__main__", "start", "entrypoint",
-    }
-    _s169_entry_files = [
-        fp for fp in normalized
-        if fp.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower() in _s169_entry_stems
-        and not _is_test_file(fp)
-    ]
-    if _s169_entry_files:
-        _s169_str = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s169_entry_files[:3])
-        lines.append(
-            f"entry point change: {_s169_str}"
-            f" — user-facing file(s) modified, immediate user impact"
-        )
-
+def _graph_a_caller_scope(
+    graph: "Tempo", normalized: set[str], lines: list[str]
+) -> None:
     # S163: Caller update needed — symbols in the diff have callers in files NOT in the diff.
     # These external call sites may need updating after the diff's logic change.
     # Only shown when 3+ distinct external caller files exist.
@@ -1101,93 +1062,6 @@ def _signals_diff_graph_a(
             f" aren't in this diff ({_s163_str})"
         )
 
-    # S149: Mixed concern — diff touches both source and test files.
-    # Mixing src+test changes in one commit complicates cherry-picks, bisects, and reverts.
-    # Flag when the diff has 1+ source files AND 1+ test files.
-    _s149_has_src = any(not _is_test_file(fp) for fp in normalized)
-    _s149_has_test = any(_is_test_file(fp) for fp in normalized)
-    if _s149_has_src and _s149_has_test:
-        _s149_test_count = sum(1 for fp in normalized if _is_test_file(fp))
-        _s149_src_count = sum(1 for fp in normalized if not _is_test_file(fp))
-        lines.append(
-            f"mixed concern: {_s149_src_count} source + {_s149_test_count} test files"
-            f" — consider splitting into separate commits"
-        )
-
-    # S143: Cross-module impact — how many distinct top-level directories the diff touches.
-    # A diff touching 3+ modules has broader coordination risk than a single-module change.
-    # Only shown when the diff touches source files in 3+ distinct top-level directories.
-    _s143_modules: set[str] = set()
-    for _fp143 in normalized:
-        if _is_test_file(_fp143):
-            continue
-        _parts143 = _fp143.split("/")
-        _s143_modules.add(_parts143[0] if len(_parts143) > 1 else ".")
-    if len(_s143_modules) >= 3:
-        _s143_mods_str = ", ".join(sorted(_s143_modules)[:4])
-        if len(_s143_modules) > 4:
-            _s143_mods_str += f" +{len(_s143_modules) - 4} more"
-        lines.append(f"cross-module impact: {len(_s143_modules)} modules touched ({_s143_mods_str})")
-
-    # S135: Changed file size — total line count of all source files in the diff.
-    # Changing large files means more surface area for unintended side effects.
-    # Only shown when total changed source lines >= 500 (non-trivial file sizes).
-    _s135_total_lines = sum(
-        graph.files[fp].line_count for fp in normalized
-        if not _is_test_file(fp) and fp in graph.files
-    )
-    if _s135_total_lines >= 500:
-        _s135_names = [fp.rsplit("/", 1)[-1] for fp in sorted(normalized) if not _is_test_file(fp)]
-        _s135_str = ", ".join(_s135_names[:3])
-        if len(_s135_names) > 3:
-            _s135_str += f" +{len(_s135_names) - 3} more"
-        lines.append(f"changed file size: {_s135_total_lines} lines ({_s135_str})")
-
-    # S211: Missing co-editors — files that historically change WITH the diff files
-    # but are absent from the current diff. A common source of incomplete PRs.
-    # Only shown when 2+ absent co-editors exist with >= 3 co-changes each.
-    if graph.root:
-        try:
-            from ..git import cochange_pairs as _cp211, is_git_repo as _igr211
-            if _igr211(graph.root):
-                _diff_src211 = [fp for fp in normalized if not _is_test_file(fp)]
-                _diff_set211 = set(normalized)
-                _missing211: dict[str, int] = {}
-                for _fp211 in _diff_src211[:3]:  # check top-3 source files to stay fast
-                    for _p211 in _cp211(graph.root, _fp211, n=8):
-                        if (_p211["path"] not in _diff_set211
-                                and not _is_test_file(_p211["path"])
-                                and _p211["count"] >= 3):
-                            _missing211[_p211["path"]] = max(
-                                _missing211.get(_p211["path"], 0), _p211["count"]
-                            )
-                if len(_missing211) >= 2:
-                    _top211 = sorted(_missing211.items(), key=lambda x: -x[1])[:3]
-                    _m211_str = ", ".join(fp.rsplit("/", 1)[-1] for fp, _ in _top211)
-                    if len(_missing211) > 3:
-                        _m211_str += f" +{len(_missing211) - 3} more"
-                    lines.append(
-                        f"missing co-editors: {_m211_str}"
-                        f" — usually change alongside diff files but absent here"
-                    )
-        except Exception:
-            pass
-
-    # S205: Tests-only diff — all diff files are test files, 0 source files.
-    # A commit that only touches tests may be missing the paired implementation change.
-    # Only shown when >= 2 test files are in the diff and no source files.
-    _s205_src_files = [fp for fp in normalized if not _is_test_file(fp)]
-    _s205_test_files = [fp for fp in normalized if _is_test_file(fp)]
-    if not _s205_src_files and len(_s205_test_files) >= 2:
-        _t205_names = [fp.rsplit("/", 1)[-1] for fp in _s205_test_files[:3]]
-        _t205_str = ", ".join(_t205_names)
-        if len(_s205_test_files) > 3:
-            _t205_str += f" +{len(_s205_test_files) - 3} more"
-        lines.append(
-            f"tests-only diff: {len(_s205_test_files)} test files ({_t205_str}),"
-            f" 0 source files — may be missing implementation changes"
-        )
-
     # S215: Wide diff — the diff spans >= 5 distinct source files.
     # More source files = higher cognitive load to review; increases chance of missed side effects.
     # Only shown when 5+ distinct non-test files are in the diff.
@@ -1200,6 +1074,108 @@ def _signals_diff_graph_a(
         lines.append(
             f"wide diff: {len(_s215_src_files)} source files changed ({_s215_str})"
             f" — high review surface, consider splitting"
+        )
+
+    # S276: Hotspot in diff — a changed file is also a top hotspot (high-churn) file.
+    # Editing an already-hot file increases instability and conflict risk further.
+    # Show when any changed file ranks in top-5 by cross-file caller count.
+    if normalized:
+        _s276_scores: list[tuple[int, str]] = []
+        for _fp276 in normalized:
+            if _is_test_file(_fp276):
+                continue
+            _callers276 = len([
+                s for s in graph.symbols_in_file(_fp276)
+                if len([c for c in graph.callers_of(s.id) if c.file_path != _fp276]) >= 2
+            ])
+            if _callers276 > 0:
+                _s276_scores.append((_callers276, _fp276))
+        _s276_scores.sort(reverse=True)
+        if _s276_scores and _s276_scores[0][0] >= 3:
+            _s276_n, _s276_fp = _s276_scores[0]
+            lines.append(
+                f"hotspot in diff: {_s276_fp.rsplit('/', 1)[-1]} is a high-churn file"
+                f" ({_s276_n} widely-called symbols) — extra care needed; this file changes often"
+            )
+
+
+def _graph_a_entry_config(
+    normalized: set[str], lines: list[str]
+) -> None:
+    # S118: Entry points changed — highlight when the diff touches known entry point files.
+    # Entry points (main.py, server.py, __main__.py, app.py, cli.py, index.ts) are highest
+    # blast-radius files — changes here ripple to all consumers. Flag them explicitly.
+    _ENTRY_BASENAMES = frozenset({
+        "main.py", "main.ts", "main.tsx", "main.rs", "main.go",
+        "index.ts", "index.tsx", "index.js",
+        "app.py", "app.ts", "app.tsx",
+        "__main__.py", "server.py", "cli.py", "lib.rs",
+    })
+    _ep_changed = [fp for fp in normalized if fp.rsplit("/", 1)[-1] in _ENTRY_BASENAMES]
+    if _ep_changed:
+        _ep_names = [fp.rsplit("/", 1)[-1] for fp in _ep_changed]
+        _ep_str = ", ".join(_ep_names)
+        lines.append(f"entry points changed: {_ep_str} — top-level API/runner modified")
+
+    # S169: Entry point change — the diff includes an application entry point file.
+    # Entry points are user-facing; changes here are immediately visible to end users.
+    # Only shown when 1+ entry point filename is among the changed files.
+    _s169_entry_stems = {
+        "main", "app", "index", "manage", "cli", "server", "run",
+        "wsgi", "asgi", "__main__", "start", "entrypoint",
+    }
+    _s169_entry_files = [
+        fp for fp in normalized
+        if fp.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower() in _s169_entry_stems
+        and not _is_test_file(fp)
+    ]
+    if _s169_entry_files:
+        _s169_str = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s169_entry_files[:3])
+        lines.append(
+            f"entry point change: {_s169_str}"
+            f" — user-facing file(s) modified, immediate user impact"
+        )
+
+    # S175: Config file change — the diff includes a configuration or settings file.
+    # Config changes affect runtime behavior globally; they warrant extra scrutiny.
+    # Only shown when 1+ config file is in the diff.
+    _s175_config_stems = {
+        "settings", "config", "configuration", "constants", "env",
+        "defaults", "options", "params", "parameters",
+    }
+    _s175_config_files = [
+        fp for fp in normalized
+        if fp.rsplit("/", 1)[-1].rsplit(".", 1)[0].lower() in _s175_config_stems
+        and not _is_test_file(fp)
+    ]
+    if _s175_config_files:
+        _s175_str = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s175_config_files[:3])
+        lines.append(
+            f"config change: {_s175_str}"
+            f" — settings file modified, check for unintended global effects"
+        )
+
+
+def _graph_a_file_type_risk(
+    normalized: set[str], changed_files: list[str], lines: list[str]
+) -> None:
+    # S193: Migration file — diff includes a database migration or schema file.
+    # Schema changes affect data integrity; they require extra care and often need backfill work.
+    # Only shown when 1+ migration-style file is in the diff.
+    _s193_migration_patterns = {"migration", "migrate", "schema", "alembic", "flyway"}
+    _s193_migration_files = [
+        fp for fp in normalized
+        if not _is_test_file(fp)
+        and (
+            any(p in fp.lower() for p in _s193_migration_patterns)
+            or fp.endswith(".sql")
+        )
+    ]
+    if _s193_migration_files:
+        _s193_str = ", ".join(fp.rsplit("/", 1)[-1] for fp in _s193_migration_files[:3])
+        lines.append(
+            f"migration change: {_s193_str}"
+            f" — database/schema file modified, coordinate with data team"
         )
 
     # S222: Dependency file change — diff includes a package manifest or lockfile.
@@ -1260,6 +1236,10 @@ def _signals_diff_graph_a(
             f" — API contract change, all consumers must be updated"
         )
 
+
+def _graph_a_release_infra(
+    normalized: set[str], changed_files: list[str], lines: list[str]
+) -> None:
     # S240: Changelog/release file in diff — diff includes CHANGELOG, HISTORY, or RELEASE notes.
     # These files mark public releases; changes in the same diff should be backward-compatible
     # and well-tested — treat like a release commit.
@@ -1312,7 +1292,6 @@ def _signals_diff_graph_a(
             f" — environment/deployment files require ops coordination"
         )
 
-
     # S254: Migration file in diff — diff includes database migration files.
     # DB migrations are irreversible in production; they require DBA review and
     # deployment coordination separate from regular code review.
@@ -1333,6 +1312,34 @@ def _signals_diff_graph_a(
         )
 
 
+def _graph_a_diff_breadth(
+    normalized: set[str], changed_files: list[str], lines: list[str]
+) -> None:
+    # S143: Cross-module impact — how many distinct top-level directories the diff touches.
+    # A diff touching 3+ modules has broader coordination risk than a single-module change.
+    # Only shown when the diff touches source files in 3+ distinct top-level directories.
+    _s143_modules: set[str] = set()
+    for _fp143 in normalized:
+        if _is_test_file(_fp143):
+            continue
+        _parts143 = _fp143.split("/")
+        _s143_modules.add(_parts143[0] if len(_parts143) > 1 else ".")
+    if len(_s143_modules) >= 3:
+        _s143_mods_str = ", ".join(sorted(_s143_modules)[:4])
+        if len(_s143_modules) > 4:
+            _s143_mods_str += f" +{len(_s143_modules) - 4} more"
+        lines.append(f"cross-module impact: {len(_s143_modules)} modules touched ({_s143_mods_str})")
+
+    # S199: Focused change — the diff touches only 1 source file (clean, low-risk commit).
+    # Single-file diffs have minimal blast radius; they're easy to review, revert, and bisect.
+    # Only shown when exactly 1 non-test source file is in the diff.
+    _s199_src_files = [fp for fp in normalized if not _is_test_file(fp)]
+    if len(_s199_src_files) == 1:
+        lines.append(
+            f"focused change: only {_s199_src_files[0].rsplit('/', 1)[-1]} modified"
+            f" — minimal blast radius, easy to review and revert"
+        )
+
     # S267: Broad diff — changed files span 3+ top-level directories.
     # Cross-module changes increase coordination risk; changes in one module may
     # invalidate assumptions in another. Each boundary crossing needs explicit validation.
@@ -1351,6 +1358,53 @@ def _signals_diff_graph_a(
             f" — cross-module change; verify interface contracts at each boundary"
         )
 
+
+def _graph_a_size_cochange(
+    graph: "Tempo", normalized: set[str], changed_files: list[str], lines: list[str]
+) -> None:
+    # S135: Changed file size — total line count of all source files in the diff.
+    # Changing large files means more surface area for unintended side effects.
+    # Only shown when total changed source lines >= 500 (non-trivial file sizes).
+    _s135_total_lines = sum(
+        graph.files[fp].line_count for fp in normalized
+        if not _is_test_file(fp) and fp in graph.files
+    )
+    if _s135_total_lines >= 500:
+        _s135_names = [fp.rsplit("/", 1)[-1] for fp in sorted(normalized) if not _is_test_file(fp)]
+        _s135_str = ", ".join(_s135_names[:3])
+        if len(_s135_names) > 3:
+            _s135_str += f" +{len(_s135_names) - 3} more"
+        lines.append(f"changed file size: {_s135_total_lines} lines ({_s135_str})")
+
+    # S211: Missing co-editors — files that historically change WITH the diff files
+    # but are absent from the current diff. A common source of incomplete PRs.
+    # Only shown when 2+ absent co-editors exist with >= 3 co-changes each.
+    if graph.root:
+        try:
+            from ..git import cochange_pairs as _cp211, is_git_repo as _igr211
+            if _igr211(graph.root):
+                _diff_src211 = [fp for fp in normalized if not _is_test_file(fp)]
+                _diff_set211 = set(normalized)
+                _missing211: dict[str, int] = {}
+                for _fp211 in _diff_src211[:3]:  # check top-3 source files to stay fast
+                    for _p211 in _cp211(graph.root, _fp211, n=8):
+                        if (_p211["path"] not in _diff_set211
+                                and not _is_test_file(_p211["path"])
+                                and _p211["count"] >= 3):
+                            _missing211[_p211["path"]] = max(
+                                _missing211.get(_p211["path"], 0), _p211["count"]
+                            )
+                if len(_missing211) >= 2:
+                    _top211 = sorted(_missing211.items(), key=lambda x: -x[1])[:3]
+                    _m211_str = ", ".join(fp.rsplit("/", 1)[-1] for fp, _ in _top211)
+                    if len(_missing211) > 3:
+                        _m211_str += f" +{len(_missing211) - 3} more"
+                    lines.append(
+                        f"missing co-editors: {_m211_str}"
+                        f" — usually change alongside diff files but absent here"
+                    )
+        except Exception:
+            pass
 
     # S273: Documentation file in diff — diff includes README, docs/, or changelog files.
     # Documentation changes may indicate API or behavior changes that need broader
@@ -1378,27 +1432,20 @@ def _signals_diff_graph_a(
         )
 
 
-    # S276: Hotspot in diff — a changed file is also a top hotspot (high-churn) file.
-    # Editing an already-hot file increases instability and conflict risk further.
-    # Show when any changed file ranks in top-5 by cross-file caller count.
-    if normalized:
-        _s276_scores: list[tuple[int, str]] = []
-        for _fp276 in normalized:
-            if _is_test_file(_fp276):
-                continue
-            _callers276 = len([
-                s for s in graph.symbols_in_file(_fp276)
-                if len([c for c in graph.callers_of(s.id) if c.file_path != _fp276]) >= 2
-            ])
-            if _callers276 > 0:
-                _s276_scores.append((_callers276, _fp276))
-        _s276_scores.sort(reverse=True)
-        if _s276_scores and _s276_scores[0][0] >= 3:
-            _s276_n, _s276_fp = _s276_scores[0]
-            lines.append(
-                f"hotspot in diff: {_s276_fp.rsplit('/', 1)[-1]} is a high-churn file"
-                f" ({_s276_n} widely-called symbols) — extra care needed; this file changes often"
-            )
+def _signals_diff_graph_a(
+    graph: "Tempo", changed_files: list[str], normalized: set[str],
+    _all_changed_syms: list["Symbol"], lines: list[str]
+) -> None:
+    _graph_a_test_coverage(graph, normalized, lines)
+    _graph_a_test_scope(normalized, lines)
+    _graph_a_symbol_complexity(graph, normalized, _all_changed_syms, lines)
+    _graph_a_symbol_api(graph, normalized, lines)
+    _graph_a_caller_scope(graph, normalized, lines)
+    _graph_a_entry_config(normalized, lines)
+    _graph_a_file_type_risk(normalized, changed_files, lines)
+    _graph_a_release_infra(normalized, changed_files, lines)
+    _graph_a_diff_breadth(normalized, changed_files, lines)
+    _graph_a_size_cochange(graph, normalized, changed_files, lines)
 
 
 def _graph_b_test_quality(
