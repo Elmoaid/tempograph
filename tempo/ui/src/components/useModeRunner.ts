@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { runTempo, reportFeedback } from "./tempo";
+import { runTempo } from "./tempo";
 import { MODES, loadHistory, saveRecentCommand } from "./modes";
 import { BUILTIN_KITS, type KitInfo } from "./kits";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
@@ -9,6 +9,7 @@ import { useOutputSearch } from "../hooks/useOutputSearch";
 import { useCustomKits } from "../hooks/useCustomKits";
 import { useOutputActions } from "../hooks/useOutputActions";
 import { useSuggestions } from "../hooks/useSuggestions";
+import { useFeedback } from "../hooks/useFeedback";
 
 export interface RunHistoryEntry {
   mode: string;
@@ -130,8 +131,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   const [showWhichKey, setWhichKeyVisible] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState<string[]>(() => loadHistory(localStorage.getItem(lastModeKey(repoPath)) || "overview"));
-  const feedbackGiven = useRef<Map<string, boolean>>(new Map<string, boolean>());
-  const [feedbackMode, setFeedbackMode] = useState<string | null>(null);
+  const { feedbackMode, feedbackGiven, submitFeedback } = useFeedback(repoPath, activeMode, activeKit);
   const argsInputRef = useRef<HTMLInputElement>(null);
   const outputCache = useRef<Map<string, string>>(new Map());
   const outputTsCache = useRef<Map<string, number>>(new Map());
@@ -293,15 +293,6 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   }, [_runMode, modeOutput, activeMode, modeArgs]);
   runModeRef.current = runMode;
   cancelModeRef.current = cancelMode;
-
-  const submitFeedback = async (helpful: boolean) => {
-    const feedbackKey = activeKit ? `kit:${activeKit}` : activeMode;
-    if (feedbackGiven.current.has(feedbackKey)) return;
-    feedbackGiven.current.set(feedbackKey, helpful);
-    setFeedbackMode(feedbackKey);
-    const mode = activeKit ? "kit" : activeMode;
-    await reportFeedback(repoPath, mode, helpful);
-  };
 
   const onHistorySelect = (q: string) => {
     setModeArgs(q);
