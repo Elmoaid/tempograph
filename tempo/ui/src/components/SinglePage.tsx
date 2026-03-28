@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { getHomeDir } from "./tempo";
-import { LandingPage } from "./LandingPage";
+import { LandingPage, type RecentRepo } from "./LandingPage";
 import { GraphCanvas } from "./GraphCanvas";
 import { useGraphData } from "../hooks/useGraphData";
 import { ClaudePanel } from "./ClaudePanel";
@@ -63,7 +63,14 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
 
   if (workspaces.length === 0 && !loading) {
     const stored = localStorage.getItem("tempo-recent-repos");
-    const recentRepos: string[] = stored ? (() => { try { return JSON.parse(stored); } catch { return []; } })() : [];
+    const recentRepos: RecentRepo[] = stored
+      ? (() => {
+          try {
+            const parsed: unknown[] = JSON.parse(stored);
+            return parsed.map(r => typeof r === "string" ? { path: r } : r as RecentRepo);
+          } catch { return []; }
+        })()
+      : [];
 
     return (
       <>
@@ -71,7 +78,7 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
           onSelectRepo={(path) => addWorkspace(path)}
           onShowSnapshots={() => setShowSnapshots(true)}
           recentRepos={recentRepos}
-          onClearRecent={() => localStorage.removeItem("tempo-recent-repos")}
+          onClearRecent={() => { localStorage.removeItem("tempo-recent-repos"); }}
         />
         {showSnapshots && homeDir && (
           <div style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 10 }}>

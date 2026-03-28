@@ -339,10 +339,12 @@ def _bfs_expand(
                 seen_ids.add(sym.id)
 
         # Sort within this batch: lower depth first (preserves BFS layering),
-        # then cross-file nodes first, then by descending importance.
+        # then cross-file nodes first, then hot-file nodes first (S1029),
+        # then by descending importance.
         deduped.sort(key=lambda pair: (
             pair[1],                                                  # depth ascending
             pair[0].file_path in seed_files if seed_files else True,  # cross-file first
+            pair[0].file_path not in graph.hot_files,                 # S1029: hot files first
             -_cached_importance(pair[0]),                              # importance descending
         ))
 
@@ -5480,6 +5482,40 @@ def _compute_bfs_scope_note(ordered: "list[tuple[Symbol, int]]") -> str:
     )
 
 
+def _compute_hot_cluster_note(graph: "Tempo", ordered: "list[tuple[Symbol, int]]") -> str:
+    """S1029: Hot cluster at BFS depth 1 — fires when ≥2 depth-1 BFS neighbors are in
+    actively-modified (hot) files.
+
+    The BFS sort key (S1029) already promotes hot-file symbols within each depth tier.
+    This synthesis note tells agents WHY the top depth-1 symbols appeared first — it
+    makes the implicit ordering explicit and identifies the hot cluster by file.
+
+    Condition: ≥2 distinct depth-1 symbols whose file_path is in graph.hot_files.
+    Excludes depth-0 (seed) and depth-2+ (noise at those levels).
+    Silent when hot_files is empty (non-git repo or no recent activity).
+    """
+    if not graph.hot_files:
+        return ""
+    depth1_hot = [sym for sym, d in ordered if d == 1 and sym.file_path in graph.hot_files]
+    if len(depth1_hot) < 2:
+        return ""
+    # Collect unique hot files in display order (parent/file.py format to avoid basename collisions)
+    seen_fps: dict[str, str] = {}
+    for sym in depth1_hot:
+        if sym.file_path not in seen_fps:
+            parts = sym.file_path.rsplit("/", 2)
+            seen_fps[sym.file_path] = "/".join(parts[-2:]) if len(parts) >= 2 else parts[-1]
+    display_names = list(seen_fps.values())
+    shown = display_names[:3]
+    suffix = f" +{len(display_names) - 3} more" if len(display_names) > 3 else ""
+    files_str = ", ".join(shown) + suffix
+    n = len(depth1_hot)
+    return (
+        f"↳ hot cluster at depth 1: {n} neighbor{'s' if n != 1 else ''}"
+        f" in actively-modified files ({files_str}) — prioritized in BFS below"
+    )
+
+
 def _compute_dead_seed_note(graph: "Tempo", seeds: "list[Symbol]") -> str:
     """S67: Dead seed annotation — fires when the focus seed itself is a dead candidate.
 
@@ -5601,6 +5637,10 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000, _stalene
     _stability_mismatch = _compute_stability_mismatch(graph, seeds)
     if _stability_mismatch:
         lines.append(_stability_mismatch)
+        lines.append("")
+    _hot_cluster = _compute_hot_cluster_note(graph, ordered)
+    if _hot_cluster:
+        lines.append(_hot_cluster)
         lines.append("")
     seen_files: set[str] = set()
     # Count header sections already written to lines (change_exposure, scope_note,
