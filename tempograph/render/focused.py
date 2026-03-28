@@ -5610,6 +5610,96 @@ def _compute_depth_wall_lookahead(
     )
 
 
+def _get_naming_stem(name: str) -> str:
+    """Extract a meaningful naming stem from a symbol name for clustering.
+
+    Rules:
+    - Dunder methods (e.g. __init__) → empty (too generic)
+    - Strip leading _ to find first word, then reattach prefix
+    - Minimum first-word length: 4 chars
+    - Returns e.g. "_compute" for "_compute_bfs_scope_note"
+                       "render" for "render_focused"
+                       "_signals" for "_signals_diff_pre_a"
+    """
+    if name.startswith("__") and name.endswith("__"):
+        return ""
+    prefix = "_" if name.startswith("_") else ""
+    clean = name.lstrip("_")
+    parts = [p for p in clean.split("_") if p]
+    if not parts or len(parts[0]) < 4:
+        return ""
+    return prefix + parts[0]
+
+
+def _compute_bfs_naming_clusters(
+    seeds: "list[Symbol]",
+    ordered: "list[tuple[Symbol, int]]",
+) -> str:
+    """S1032: BFS naming cluster — fires when ≥3 depth-1 BFS neighbors share a naming stem.
+
+    Groups depth-1 BFS symbols by their first meaningful underscore-word component.
+    When 3+ neighbors share a stem (e.g., "_compute_*", "_signals_*", "render_*"),
+    reveals the structural family the seed is embedded in.
+
+    Example outputs:
+      ↳ naming cluster at depth 1: 7 helpers share "_compute_" stem — likely sub-computation family
+      ↳ naming cluster at depth 1: 5 callees share "_signals_" stem — likely signal-family dispatch
+
+    Different from:
+    - S70 (BFS module diversity): groups by top-level MODULE path, not symbol name
+    - S1029 (hot cluster): groups by hot_files (temporal), not naming pattern
+    - S57 (primary caller concentration): caller FILE concentration, not name clustering
+
+    Conditions:
+    - ≥3 distinct depth-1 symbols (by name) share a stem of ≥4 chars
+    - Seed itself excluded from the count (depth 0)
+    - Test-file symbols excluded (test_ stems are trivially clustered and add no signal)
+    """
+    seed_names = {s.name for s in seeds}
+    # Collect depth-1 symbols, unique by name, excluding seeds and test files
+    seen_names: set[str] = set()
+    depth1_syms: list["Symbol"] = []
+    for sym, d in ordered:
+        if d != 1:
+            continue
+        if sym.name in seed_names:
+            continue
+        if _is_test_file(sym.file_path):
+            continue
+        if sym.name not in seen_names:
+            seen_names.add(sym.name)
+            depth1_syms.append(sym)
+
+    if len(depth1_syms) < 3:
+        return ""
+
+    from collections import Counter as _Counter
+    stem_counter: _Counter[str] = _Counter()
+    stem_to_examples: dict[str, list[str]] = {}
+    for sym in depth1_syms:
+        stem = _get_naming_stem(sym.name)
+        if not stem:
+            continue
+        stem_counter[stem] += 1
+        stem_to_examples.setdefault(stem, []).append(sym.name)
+
+    if not stem_counter:
+        return ""
+
+    # Find most dominant cluster (largest count)
+    top_stem, top_count = stem_counter.most_common(1)[0]
+    if top_count < 3:
+        return ""
+
+    examples = stem_to_examples[top_stem][:3]
+    examples_str = ", ".join(examples)
+    overflow = f" +{len(stem_to_examples[top_stem]) - 3} more" if len(stem_to_examples[top_stem]) > 3 else ""
+    return (
+        f"↳ naming cluster at depth 1: {top_count} neighbors share \"{top_stem}_\" stem"
+        f" — likely {top_stem.lstrip('_')}-family helpers ({examples_str}{overflow})"
+    )
+
+
 def _compute_dead_seed_note(graph: "Tempo", seeds: "list[Symbol]") -> str:
     """S67: Dead seed annotation — fires when the focus seed itself is a dead candidate.
 
@@ -5739,6 +5829,10 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000, _stalene
     _wall_note = _compute_depth_wall_lookahead(graph, ordered, seen_ids, seeds)
     if _wall_note:
         lines.append(_wall_note)
+        lines.append("")
+    _naming_cluster = _compute_bfs_naming_clusters(seeds, ordered)
+    if _naming_cluster:
+        lines.append(_naming_cluster)
         lines.append("")
     seen_files: set[str] = set()
     # Count header sections already written to lines (change_exposure, scope_note,
