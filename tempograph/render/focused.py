@@ -1700,6 +1700,255 @@ def _build_callers_block(
     return lines
 
 
+def _callees_format_list(
+    ordered_callees: list,
+    sym: "Symbol",
+    depth: int,
+    graph: "Tempo",
+    seed_is_tested: bool,
+) -> tuple[list[str], list]:
+    """Format display strings for each callee and collect sole-use callees (S49/S51/S54/S55)."""
+    callee_strs = []
+    sole_use_callees: list = []
+    for c in ordered_callees:
+        _hot_ann = " [hot]" if c.file_path in graph.hot_files else ""
+        _cx_ann = ""
+        _cb_ann = ""
+        _sole_ann = ""
+        _recursive_ann = ""
+        _untested_ann = ""
+        if depth == 0:
+            if c.complexity > 15 and c.kind.value in ("function", "method"):
+                _cx_ann = f" (cx={c.complexity})"
+            _cb_files = len({cr.file_path for cr in graph.callers_of(c.id) if cr.file_path != c.file_path})
+            if _cb_files >= 3:
+                _cb_ann = f" [blast: {_cb_files}]"
+            if c.kind.value in ("function", "method"):
+                _prod_callers = [cr for cr in graph.callers_of(c.id) if not _is_test_file(cr.file_path)]
+                if len(_prod_callers) == 1 and _prod_callers[0].id == sym.id:
+                    _sole_ann = " [sole-use]"
+                    sole_use_callees.append(c)
+            if c.id == sym.id:
+                _recursive_ann = " [recursive]"
+            if (
+                seed_is_tested
+                and c.kind.value in ("function", "method")
+                and not _is_test_file(c.file_path)
+                and not any(_is_test_file(cr.file_path) for cr in graph.callers_of(c.id))
+            ):
+                _untested_ann = " [untested]"
+        callee_strs.append(f"{c.qualified_name}{_cx_ann}{_hot_ann}{_cb_ann}{_sole_ann}{_recursive_ann}{_untested_ann}")
+    return callee_strs, sole_use_callees
+
+
+def _callees_overflow_enrich(
+    lines: list[str],
+    callees: list,
+    shown: int,
+    depth: int,
+    sym: "Symbol",
+    seed_is_tested: bool,
+    graph: "Tempo",
+    hot_callees: list,
+    cold_callees: list,
+    indent: str,
+) -> None:
+    """Enrich the overflow count with hidden-callee attribute summary (S68)."""
+    if len(callees) <= shown:
+        return
+    if depth == 0:
+        _hidden_cs = (hot_callees + cold_callees)[shown:]
+        _h_hot = [c for c in _hidden_cs if c.file_path in graph.hot_files and not _is_test_file(c.file_path)]
+        _h_sole: list = []
+        _h_unt: list = []
+        for _hc68 in _hidden_cs:
+            if _hc68.kind.value in ("function", "method"):
+                _hc68_prod = [cr for cr in graph.callers_of(_hc68.id) if not _is_test_file(cr.file_path)]
+                if len(_hc68_prod) == 1 and _hc68_prod[0].id == sym.id:
+                    _h_sole.append(_hc68)
+                if (
+                    seed_is_tested
+                    and not _is_test_file(_hc68.file_path)
+                    and not any(_is_test_file(cr.file_path) for cr in graph.callers_of(_hc68.id))
+                ):
+                    _h_unt.append(_hc68)
+        _h_parts: list[str] = []
+        if _h_hot:
+            _h_parts.append(f"{len(_h_hot)} hot")
+        if _h_sole:
+            _h_parts.append(f"{len(_h_sole)} sole-use")
+        if _h_unt:
+            _h_parts.append(f"{len(_h_unt)} untested")
+        _overflow68 = f" (+{len(_hidden_cs)} more"
+        if _h_parts:
+            _overflow68 += f": {', '.join(_h_parts)}"
+        _overflow68 += ")"
+        lines[-1] += _overflow68
+    else:
+        lines[-1] += f" (+{len(callees) - shown} more)"
+
+
+def _callees_instability_lines(
+    sym: "Symbol",
+    depth: int,
+    callees: list,
+    graph: "Tempo",
+    indent: str,
+) -> list[str]:
+    """S52: hot callee instability warning."""
+    if not (depth == 0 and graph.hot_files):
+        return []
+    _hot_non_test = [c for c in callees if c.file_path in graph.hot_files and not _is_test_file(c.file_path)]
+    if len(_hot_non_test) < 2:
+        return []
+    _names = [c.name for c in _hot_non_test[:3]]
+    _suffix = "..." if len(_hot_non_test) > 3 else ""
+    return [f"{indent}  \u21b3 instability: {len(_hot_non_test)} hot callees ({', '.join(_names)}{_suffix})"]
+
+
+def _callees_drift_lines(
+    sym: "Symbol",
+    depth: int,
+    callees: list,
+    graph: "Tempo",
+    indent: str,
+) -> list[str]:
+    """S62: contract drift — seed is stable but its callees have been updated."""
+    if not (depth == 0 and graph.hot_files and sym.file_path not in graph.hot_files):
+        return []
+    _drift_callees = [
+        c for c in callees
+        if c.file_path in graph.hot_files
+        and c.file_path != sym.file_path
+        and not _is_test_file(c.file_path)
+        and c.kind.value in ("function", "method")
+    ]
+    if len(_drift_callees) < 3:
+        return []
+    _drift_names = [c.name for c in _drift_callees[:3]]
+    _drift_suffix = "..." if len(_drift_callees) > 3 else ""
+    return [
+        f"{indent}  \u21b3 drift risk: {len(_drift_callees)} callees updated while seed is stable"
+        f" ({', '.join(_drift_names)}{_drift_suffix}) \u2014 verify contracts still match"
+    ]
+
+
+def _callees_coverage_lines(
+    sym: "Symbol",
+    depth: int,
+    callees: list,
+    seed_is_tested: bool,
+    graph: "Tempo",
+    indent: str,
+) -> list[str]:
+    """S56: coverage gap summary — seed tested but callees are not."""
+    if not (depth == 0 and seed_is_tested):
+        return []
+    _eligible = [c for c in callees if c.kind.value in ("function", "method") and not _is_test_file(c.file_path)]
+    _untested_cov = [
+        c for c in _eligible
+        if not any(_is_test_file(cr.file_path) for cr in graph.callers_of(c.id))
+    ]
+    if len(_untested_cov) < 2:
+        return []
+    _cov_names = [c.name for c in _untested_cov[:3]]
+    _cov_suffix = "..." if len(_untested_cov) > 3 else ""
+    return [
+        f"{indent}  \u21b3 coverage gap: {len(_untested_cov)}/{len(_eligible)} callees untested"
+        f" ({', '.join(_cov_names)}{_cov_suffix})"
+    ]
+
+
+def _callees_orphan_lines(
+    sym: "Symbol",
+    depth: int,
+    callees: list,
+    sole_use_callees: list,
+    ordered_callees: list,
+    graph: "Tempo",
+    indent: str,
+) -> list[str]:
+    """S58: orphan cascade — sole-use callees that own sole-use sub-callees."""
+    if not (depth == 0 and sole_use_callees):
+        return []
+    # Extend with non-displayed callees that are also sole-use
+    _shown_ids = {c.id for c in ordered_callees}
+    for _c in callees:
+        if _c.id in _shown_ids or _c.kind.value not in ("function", "method"):
+            continue
+        _pc = [cr for cr in graph.callers_of(_c.id) if not _is_test_file(cr.file_path)]
+        if len(_pc) == 1 and _pc[0].id == sym.id:
+            sole_use_callees.append(_c)
+    if not sole_use_callees:
+        return []
+    _transitive_sole: list = []
+    for _sc in sole_use_callees:
+        for _sub in graph.callees_of(_sc.id):
+            if _sub.kind.value in ("function", "method") and not _is_test_file(_sub.file_path):
+                _sub_pc = [cr for cr in graph.callers_of(_sub.id) if not _is_test_file(cr.file_path)]
+                if len(_sub_pc) == 1 and _sub_pc[0].id == _sc.id:
+                    _transitive_sole.append((_sc.name, _sub.name))
+    if len(_transitive_sole) < 2:
+        return []
+    _total_chain = len(sole_use_callees) + len(_transitive_sole)
+    _hub_names = list(dict.fromkeys(n for n, _ in _transitive_sole))[:3]
+    _hub_suffix = "..." if len(_hub_names) < len(dict.fromkeys(n for n, _ in _transitive_sole)) else ""
+    return [
+        f"{indent}  \u21b3 orphan cascade: {_total_chain} private helpers in chain"
+        f" (via {', '.join(_hub_names)}{_hub_suffix}) \u2014 refactor ripples deeper than visible callees"
+    ]
+
+
+def _callees_cochange_lines(
+    sym: "Symbol",
+    depth: int,
+    callees: list,
+    graph: "Tempo",
+    indent: str,
+) -> list[str]:
+    """S60: callee co-change coupling from git history."""
+    if not (depth == 0 and graph.root):
+        return []
+    try:
+        from ..git import cochange_matrix as _ccm
+        _matrix = _ccm(graph.root)
+        if not _matrix:
+            return []
+        _callee_files = list(dict.fromkeys(
+            c.file_path for c in callees
+            if c.file_path != sym.file_path and not _is_test_file(c.file_path)
+        ))
+        _coupled: list[tuple[str, str, float]] = []
+        for _i, _fa in enumerate(_callee_files):
+            _partners = {fp: freq for fp, freq in _matrix.get(_fa, [])}
+            for _fb in _callee_files[_i + 1:]:
+                if _fb in _partners and _partners[_fb] >= 0.2:
+                    _coupled.append((_fa, _fb, _partners[_fb]))
+        if not _coupled:
+            return []
+        _coupled.sort(key=lambda x: -x[2])
+        if len(_coupled) == 1:
+            _fa0, _fb0, _ = _coupled[0]
+            return [
+                f"{indent}  \u21b3 callee coupling: {Path(_fa0).name} \u2194 {Path(_fb0).name}"
+                f" \u2014 often change together, check both"
+            ]
+        if len(_coupled) == 2:
+            _fa0, _fb0, _ = _coupled[0]
+            _fa1, _fb1, _ = _coupled[1]
+            return [
+                f"{indent}  \u21b3 callee coupling: {Path(_fa0).name} \u2194 {Path(_fb0).name}"
+                f", {Path(_fa1).name} \u2194 {Path(_fb1).name}"
+            ]
+        _fa0, _fb0, _ = _coupled[0]
+        return [
+            f"{indent}  \u21b3 callee coupling: {len(_coupled)} coupled pairs"
+            f" ({Path(_fa0).name} \u2194 {Path(_fb0).name} strongest)"
+        ]
+    except Exception:
+        return []
+
+
 def _build_callees_block(
     sym: "Symbol",
     depth: int,
@@ -1715,222 +1964,21 @@ def _build_callees_block(
     hot_callees = [c for c in callees if c.file_path in graph.hot_files]
     cold_callees = [c for c in callees if c.file_path not in graph.hot_files]
     ordered_callees = (hot_callees + cold_callees)[:shown]
-    # S55: pre-compute whether seed has test callers — [untested] only meaningful when seed is tested.
-    _seed_test_callers = (
-        [cr for cr in graph.callers_of(sym.id) if _is_test_file(cr.file_path)]
-        if depth == 0 else []
+    _seed_is_tested = depth == 0 and any(
+        _is_test_file(cr.file_path) for cr in graph.callers_of(sym.id)
     )
-    _seed_is_tested = len(_seed_test_callers) > 0
-    callee_strs = []
-    _sole_use_callees: list = []  # S58: track for orphan cascade check
-    for c in ordered_callees:
-        _hot_ann = " [hot]" if c.file_path in graph.hot_files else ""
-        _cx_ann = ""
-        _cb_ann = ""
-        _sole_ann = ""
-        _recursive_ann = ""
-        _untested_ann = ""
-        if depth == 0:
-            # S49: annotate callees with high complexity so agents see the iceberg
-            if c.complexity > 15 and c.kind.value in ("function", "method"):
-                _cx_ann = f" (cx={c.complexity})"
-            _cb_files = len({cr.file_path for cr in graph.callers_of(c.id) if cr.file_path != c.file_path})
-            if _cb_files >= 3:
-                _cb_ann = f" [blast: {_cb_files}]"
-            # S51: flag sole-use callees — only called from this seed (excluding tests).
-            # If you refactor the seed, these become instantly orphaned.
-            if c.kind.value in ("function", "method"):
-                _prod_callers = [
-                    cr for cr in graph.callers_of(c.id)
-                    if not _is_test_file(cr.file_path)
-                ]
-                if len(_prod_callers) == 1 and _prod_callers[0].id == sym.id:
-                    _sole_ann = " [sole-use]"
-                    _sole_use_callees.append(c)  # S58
-            # S54: flag self-call — recursive functions need base-case awareness when modified.
-            if c.id == sym.id:
-                _recursive_ann = " [recursive]"
-            # S55: flag callees with zero test callers — test blind spots for the agent.
-            # Only fires when the seed itself is tested; otherwise every callee would show [untested]
-            # and the signal collapses to noise.
-            if (
-                _seed_is_tested
-                and c.kind.value in ("function", "method")
-                and not _is_test_file(c.file_path)
-                and not any(_is_test_file(cr.file_path) for cr in graph.callers_of(c.id))
-            ):
-                _untested_ann = " [untested]"
-        callee_strs.append(f"{c.qualified_name}{_cx_ann}{_hot_ann}{_cb_ann}{_sole_ann}{_recursive_ann}{_untested_ann}")
+    callee_strs, sole_use_callees = _callees_format_list(
+        ordered_callees, sym, depth, graph, _seed_is_tested
+    )
     lines.append(f"{indent}  calls: {', '.join(callee_strs)}")
-    if len(callees) > shown:
-        # S68: enrich overflow label with hidden-callee attribute summary (depth=0 only).
-        # "(+25 more)" tells agents nothing. "(+25 more: 14 sole-use, 11 untested)" tells them
-        # whether the hidden tail is full of private helpers / test blind spots worth digging into.
-        if depth == 0:
-            _hidden_cs = (hot_callees + cold_callees)[shown:]
-            _h_hot = [
-                c for c in _hidden_cs
-                if c.file_path in graph.hot_files and not _is_test_file(c.file_path)
-            ]
-            _h_sole: list = []
-            _h_unt: list = []
-            for _hc68 in _hidden_cs:
-                if _hc68.kind.value in ("function", "method"):
-                    _hc68_prod = [
-                        cr for cr in graph.callers_of(_hc68.id)
-                        if not _is_test_file(cr.file_path)
-                    ]
-                    if len(_hc68_prod) == 1 and _hc68_prod[0].id == sym.id:
-                        _h_sole.append(_hc68)
-                    if (
-                        _seed_is_tested
-                        and not _is_test_file(_hc68.file_path)
-                        and not any(_is_test_file(cr.file_path) for cr in graph.callers_of(_hc68.id))
-                    ):
-                        _h_unt.append(_hc68)
-            _h_parts: list[str] = []
-            if _h_hot:
-                _h_parts.append(f"{len(_h_hot)} hot")
-            if _h_sole:
-                _h_parts.append(f"{len(_h_sole)} sole-use")
-            if _h_unt:
-                _h_parts.append(f"{len(_h_unt)} untested")
-            _overflow68 = f" (+{len(_hidden_cs)} more"
-            if _h_parts:
-                _overflow68 += f": {', '.join(_h_parts)}"
-            _overflow68 += ")"
-            lines[-1] += _overflow68
-        else:
-            lines[-1] += f" (+{len(callees) - shown} more)"
-    # S54: recursive summary — fire once when seed calls itself, at depth=0 only.
+    _callees_overflow_enrich(lines, callees, shown, depth, sym, _seed_is_tested, graph, hot_callees, cold_callees, indent)
     if depth == 0 and any(c.id == sym.id for c in callees):
         lines.append(f"{indent}  \u21b3 recursive \u2014 self-referential; verify base case before modifying")
-    # S52: hot callee instability — ≥2 non-test callees in hot_files = volatile territory.
-    # Agent editing a seed that calls 2+ recently-changed functions is walking on thin ice.
-    if depth == 0 and graph.hot_files:
-        _hot_non_test = [
-            c for c in callees
-            if c.file_path in graph.hot_files and not _is_test_file(c.file_path)
-        ]
-        if len(_hot_non_test) >= 2:
-            _names = [c.name for c in _hot_non_test[:3]]
-            _suffix = "..." if len(_hot_non_test) > 3 else ""
-            lines.append(
-                f"{indent}  \u21b3 instability: {len(_hot_non_test)} hot callees ({', '.join(_names)}{_suffix})"
-            )
-    # S62: contract drift — seed file is STABLE (not in hot_files) but ≥2 of its callees' files ARE hot.
-    # S52 fires for general hot-callee instability ("volatile territory — be careful while editing").
-    # S62 fires for the DRIFT case specifically: you haven't touched this code in a while, but the
-    # things it calls HAVE been updated — their interface may have changed without you knowing.
-    # The recommended action is different: read callee changelogs BEFORE editing, not just while editing.
-    # Guard: depth=0, seed file NOT in hot_files, ≥2 non-test callees from different hot files.
-    if depth == 0 and graph.hot_files and sym.file_path not in graph.hot_files:
-        _drift_callees = [
-            c for c in callees
-            if c.file_path in graph.hot_files
-            and c.file_path != sym.file_path
-            and not _is_test_file(c.file_path)
-            and c.kind.value in ("function", "method")
-        ]
-        if len(_drift_callees) >= 3:
-            _drift_names = [c.name for c in _drift_callees[:3]]
-            _drift_suffix = "..." if len(_drift_callees) > 3 else ""
-            lines.append(
-                f"{indent}  \u21b3 drift risk: {len(_drift_callees)} callees updated while seed is stable"
-                f" ({', '.join(_drift_names)}{_drift_suffix}) \u2014 verify contracts still match"
-            )
-    # S56: coverage gap summary — when seed is tested but ≥2 eligible callees have zero test callers.
-    # Per-callee [untested] annotation already fires, but agents still need to count. This summary
-    # makes the coverage gap immediately scannable: "6/8 callees untested" is alarming at a glance.
-    if depth == 0 and _seed_is_tested:
-        _eligible = [
-            c for c in callees
-            if c.kind.value in ("function", "method") and not _is_test_file(c.file_path)
-        ]
-        _untested_cov = [
-            c for c in _eligible
-            if not any(_is_test_file(cr.file_path) for cr in graph.callers_of(c.id))
-        ]
-        if len(_untested_cov) >= 2:
-            _cov_names = [c.name for c in _untested_cov[:3]]
-            _cov_suffix = "..." if len(_untested_cov) > 3 else ""
-            lines.append(
-                f"{indent}  \u21b3 coverage gap: {len(_untested_cov)}/{len(_eligible)} callees untested"
-                f" ({', '.join(_cov_names)}{_cov_suffix})"
-            )
-    # S58: orphan cascade — detect sole-use callees that themselves own sole-use sub-callees.
-    # A single [sole-use] marker per callee understates the refactor cascade when those callees
-    # also have private helpers of their own. Show the TOTAL private chain depth.
-    # Scan ALL callees (not just the 8 displayed) so the count reflects the true cascade.
-    # Guard: depth=0 only, ≥2 transitive sole-use sub-callees (avoids trivial 1-level cases).
-    if depth == 0 and _sole_use_callees:
-        # Extend with any non-displayed callees that are also sole-use
-        _shown_ids = {c.id for c in ordered_callees}
-        for _c in callees:
-            if _c.id in _shown_ids or _c.kind.value not in ("function", "method"):
-                continue
-            _pc = [cr for cr in graph.callers_of(_c.id) if not _is_test_file(cr.file_path)]
-            if len(_pc) == 1 and _pc[0].id == sym.id:
-                _sole_use_callees.append(_c)
-    if depth == 0 and _sole_use_callees:
-        _transitive_sole: list = []
-        for _sc in _sole_use_callees:
-            for _sub in graph.callees_of(_sc.id):
-                if _sub.kind.value in ("function", "method") and not _is_test_file(_sub.file_path):
-                    _sub_pc = [cr for cr in graph.callers_of(_sub.id) if not _is_test_file(cr.file_path)]
-                    if len(_sub_pc) == 1 and _sub_pc[0].id == _sc.id:
-                        _transitive_sole.append((_sc.name, _sub.name))
-        if len(_transitive_sole) >= 2:
-            _total_chain = len(_sole_use_callees) + len(_transitive_sole)
-            # Show hub callee names — the sole-use callees that themselves own sub-callees
-            _hub_names = list(dict.fromkeys(n for n, _ in _transitive_sole))[:3]
-            _hub_suffix = "..." if len(_hub_names) < len(dict.fromkeys(n for n, _ in _transitive_sole)) else ""
-            lines.append(
-                f"{indent}  \u21b3 orphan cascade: {_total_chain} private helpers in chain"
-                f" (via {', '.join(_hub_names)}{_hub_suffix}) \u2014 refactor ripples deeper than visible callees"
-            )
-    # S60: callee co-change coupling — when two callees live in files that frequently
-    # co-change together in git history, touching one typically means touching both.
-    # Agents assume callees are independent; this reveals hidden coupling between dependencies.
-    # Guard: depth=0, ≥2 distinct non-test callee files (excluding seed's own file).
-    if depth == 0 and graph.root:
-        try:
-            from ..git import cochange_matrix as _ccm
-            _matrix = _ccm(graph.root)
-            if _matrix:
-                _callee_files = list(dict.fromkeys(
-                    c.file_path for c in callees
-                    if c.file_path != sym.file_path and not _is_test_file(c.file_path)
-                ))
-                _coupled: list[tuple[str, str, float]] = []
-                for _i, _fa in enumerate(_callee_files):
-                    _partners = {fp: freq for fp, freq in _matrix.get(_fa, [])}
-                    for _fb in _callee_files[_i + 1:]:
-                        if _fb in _partners and _partners[_fb] >= 0.2:
-                            _coupled.append((_fa, _fb, _partners[_fb]))
-                if _coupled:
-                    _coupled.sort(key=lambda x: -x[2])
-                    if len(_coupled) == 1:
-                        _fa0, _fb0, _ = _coupled[0]
-                        lines.append(
-                            f"{indent}  \u21b3 callee coupling: {Path(_fa0).name} \u2194 {Path(_fb0).name}"
-                            f" \u2014 often change together, check both"
-                        )
-                    elif len(_coupled) == 2:
-                        _fa0, _fb0, _ = _coupled[0]
-                        _fa1, _fb1, _ = _coupled[1]
-                        lines.append(
-                            f"{indent}  \u21b3 callee coupling: {Path(_fa0).name} \u2194 {Path(_fb0).name}"
-                            f", {Path(_fa1).name} \u2194 {Path(_fb1).name}"
-                        )
-                    else:
-                        _fa0, _fb0, _ = _coupled[0]
-                        lines.append(
-                            f"{indent}  \u21b3 callee coupling: {len(_coupled)} coupled pairs"
-                            f" ({Path(_fa0).name} \u2194 {Path(_fb0).name} strongest)"
-                        )
-        except Exception:
-            pass
+    lines.extend(_callees_instability_lines(sym, depth, callees, graph, indent))
+    lines.extend(_callees_drift_lines(sym, depth, callees, graph, indent))
+    lines.extend(_callees_coverage_lines(sym, depth, callees, _seed_is_tested, graph, indent))
+    lines.extend(_callees_orphan_lines(sym, depth, callees, sole_use_callees, ordered_callees, graph, indent))
+    lines.extend(_callees_cochange_lines(sym, depth, callees, graph, indent))
     return lines
 
 
