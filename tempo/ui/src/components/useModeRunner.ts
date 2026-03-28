@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { runTempo, saveOutput, reportFeedback } from "./tempo";
+import { runTempo, reportFeedback } from "./tempo";
 import { MODES, loadHistory, saveRecentCommand } from "./modes";
 import { BUILTIN_KITS, type KitInfo } from "./kits";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
@@ -8,6 +7,7 @@ import { useRunMode } from "../hooks/useRunMode";
 import { useOutputFilter } from "../hooks/useOutputFilter";
 import { useOutputSearch } from "../hooks/useOutputSearch";
 import { useCustomKits } from "../hooks/useCustomKits";
+import { useOutputActions } from "../hooks/useOutputActions";
 
 export interface RunHistoryEntry {
   mode: string;
@@ -141,8 +141,6 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   const [modeOutput, setModeOutput] = useState("");
   const [prevOutput, setPrevOutput] = useState<string | null>(null);
   const [modeRunning, setModeRunning] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const [saved, setSaved] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [showHelp, setHelpOpen] = useState(false);
   const [showWhichKey, setWhichKeyVisible] = useState(false);
@@ -190,10 +188,11 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     navigateMatch: onSearchNavigate,
   } = useOutputSearch(filteredOutput);
 
+  const { copied, saved, copyOutput, handleSaveOutput, saveOutputRef } = useOutputActions(modeOutput, activeMode, activeKit);
+
   // Stable refs so keyboard/auto-run closures always call the latest functions
   const runModeRef = useRef<(() => void) | null>(null);
   const cancelModeRef = useRef<(() => void) | null>(null);
-  const saveOutputRef = useRef<(() => Promise<void>) | null>(null);
 
   const switchMode = (mode: string) => {
     // Persist args for the mode we're leaving
@@ -322,28 +321,6 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   }, [_runMode, modeOutput, activeMode, modeArgs]);
   runModeRef.current = runMode;
   cancelModeRef.current = cancelMode;
-
-  const copyOutput = () => {
-    navigator.clipboard.writeText(modeOutput);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
-
-  const handleSaveOutput = async () => {
-    if (!modeOutput) return;
-    const label = activeKit ? `kit-${activeKit}` : activeMode;
-    const date = new Date().toISOString().slice(0, 10);
-    const defaultName = `tempograph-${label}-${date}.txt`;
-    const chosenPath = await saveDialog({
-      defaultPath: defaultName,
-      filters: [{ name: "Text", extensions: ["txt"] }],
-    });
-    if (!chosenPath) return;
-    await saveOutput(chosenPath, modeOutput);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 1500);
-  };
-  saveOutputRef.current = handleSaveOutput;
 
   const submitFeedback = async (helpful: boolean) => {
     const feedbackKey = activeKit ? `kit:${activeKit}` : activeMode;
