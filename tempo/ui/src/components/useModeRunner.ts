@@ -10,6 +10,7 @@ import { useCustomKits } from "../hooks/useCustomKits";
 import { useOutputActions } from "../hooks/useOutputActions";
 import { useSuggestions } from "../hooks/useSuggestions";
 import { useFeedback } from "../hooks/useFeedback";
+import { useElapsedTimer } from "../hooks/useElapsedTimer";
 
 export interface RunHistoryEntry {
   mode: string;
@@ -140,7 +141,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   const runStart = useRef<number | null>(null);
   const runDurationCache = useRef<Map<string, number>>(new Map());
   const [runDuration, setRunDuration] = useState<number | null>(null);
-  const [elapsed, setElapsed] = useState<number>(0);
+  const { elapsed, resetElapsed: setElapsed } = useElapsedTimer(modeRunning, runStart);
   const [runHistory, setRunHistory] = useState<RunHistoryEntry[]>([]);
 
   const activeModeInfo = buildActiveModeInfo(activeKit, activeMode, customKits);
@@ -251,15 +252,6 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     setHelpOpen,
     setWhichKeyVisible,
   });
-
-  // Live elapsed counter
-  useEffect(() => {
-    if (!modeRunning) return;
-    const id = setInterval(() => {
-      setElapsed(runStart.current ? Math.floor((Date.now() - runStart.current) / 1000) : 0);
-    }, 250);
-    return () => clearInterval(id);
-  }, [modeRunning]);
 
   // Auto-run overview on mount
   useEffect(() => { runModeRef.current?.(); }, []);
