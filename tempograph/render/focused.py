@@ -5770,6 +5770,63 @@ def _compute_cross_file_siblings(
     )
 
 
+def _compute_orchestrator_advisory(seeds: "list[Symbol]", graph: "Tempo") -> str:
+    """S1035: Orchestrator advisory — fires when seed has many cross-file callees but few callers.
+
+    An orchestrator is a coordination function: it calls many things, but is called by few.
+    When you focus on one, the depth-3 BFS expands mostly DOWNSTREAM — callee after callee
+    after callee — and the agent sees lots of context that's 2-3 hops removed from their actual
+    change. The advisory reframes what the BFS output means for this topology.
+
+    Example outputs:
+      ↳ orchestrator: 16 cross-file callees, 3 callers — BFS expands mostly downstream; focus on direct callees when making changes
+      ↳ orchestrator: 10 cross-file callees, 2 callers — BFS expands mostly downstream; focus on direct callees when making changes
+
+    Distinct from:
+    - S65 (change_exposure): quantifies RISK (caller files, hot callees) — not topology role
+    - S198 (leaf function): opposite topology (many callers, 0 callees) — already shows "stable leaf"
+    - apex signal (S45): fires for entry points (0 callers) — already handled inline per-symbol
+    - S180 (complex hub): fires when cx≥8 AND callers≥5 — hub, not orchestrator
+
+    Conditions:
+    - Seed is a function/method, not in test files
+    - Cross-file callees >= 6 (enough downstream complexity)
+    - Non-test callers 1–4 (few enough to be orchestrator, not utility/hub; 0 = entry point, apex handles)
+    """
+    if not seeds:
+        return ""
+    seed = seeds[0]
+    if seed.kind.value not in ("function", "method"):
+        return ""
+    if _is_test_file(seed.file_path):
+        return ""
+
+    seed_file = seed.file_path
+
+    # Count cross-file callees (non-test)
+    cross_callees = [
+        c for c in graph.callees_of(seed.id)
+        if c.file_path != seed_file and not _is_test_file(c.file_path)
+    ]
+    if len(cross_callees) < 6:
+        return ""
+
+    # Count non-test callers
+    nt_callers = [
+        c for c in graph.callers_of(seed.id)
+        if not _is_test_file(c.file_path)
+    ]
+    if len(nt_callers) < 1 or len(nt_callers) > 4:
+        return ""
+
+    callee_count = len(cross_callees)
+    caller_count = len(nt_callers)
+    return (
+        f"↳ orchestrator: {callee_count} cross-file callees, {caller_count} caller{'s' if caller_count != 1 else ''}"
+        f" — BFS expands mostly downstream; focus on direct callees when making changes"
+    )
+
+
 def _compute_dead_seed_note(graph: "Tempo", seeds: "list[Symbol]") -> str:
     """S67: Dead seed annotation — fires when the focus seed itself is a dead candidate.
 
@@ -5873,6 +5930,10 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     _sibling_family = _compute_cross_file_siblings(seeds, graph, seen_ids)
     if _sibling_family:
         lines.append(_sibling_family)
+        lines.append("")
+    _orchestrator = _compute_orchestrator_advisory(seeds, graph)
+    if _orchestrator:
+        lines.append(_orchestrator)
         lines.append("")
     seen_files: set[str] = set()
     token_count = 0
