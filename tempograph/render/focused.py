@@ -5425,6 +5425,100 @@ def _compute_hot_cluster_note(graph: "Tempo", ordered: "list[tuple[Symbol, int]]
     )
 
 
+_WALL_ENTRY_NAMES: frozenset[str] = frozenset({
+    "main", "run_server", "run", "app", "start", "serve", "cli",
+    "create_app", "entrypoint", "entry_point",
+})
+
+
+def _compute_depth_wall_lookahead(
+    graph: "Tempo",
+    ordered: "list[tuple[Symbol, int]]",
+    seen_ids: "set[str]",
+    seeds: "list[Symbol]",
+) -> str:
+    """S1031: Depth wall lookahead — fires when entry-point or hot-file callers of the seed
+    were cut by BFS caller_limit and are invisible to the agent.
+
+    BFS adds at most 8 callers of the seed (depth-0 caller_limit). If the seed has >8 callers,
+    the remaining ones are silently dropped. Agents don't know what's in the invisible portion.
+    If any dropped callers are entry points (main, run_server, etc.) or exported symbols in
+    hot files (actively worked files NOT already in BFS), this signal fires to say:
+    "N callers of the seed were not shown; some are entry points."
+
+    This is NOT the same as S66 (hub truncation on 50-node cap) or S65 (change exposure):
+    - S66: fires when the 50-node cap cuts depth=3 entirely
+    - S65: quantifies change exposure via callers + import fan-in
+    - S1031: fires specifically when ENTRY POINTS or HOT callers were cut at the seed level
+
+    Conditions:
+    - Seed has >8 callers total (the BFS caller_limit at depth=0) — otherwise all callers were shown.
+    - Among the unseen callers: ≥1 is an entry point (name in _WALL_ENTRY_NAMES or __main__.py)
+      OR ≥1 is an exported top-level symbol in a hot file not already represented in the BFS.
+    - Test callers are excluded (high noise, expected to not be shown).
+    - Seed itself must not be an entry point (trivially true if it's already main/run).
+    """
+    if not seeds:
+        return ""
+    seed_sym = seeds[0]
+    # Skip if seed is itself an entry point — the "missing callers" are expected to be sparse
+    if seed_sym.name in _WALL_ENTRY_NAMES:
+        return ""
+
+    all_callers = graph.callers_of(seed_sym.id)
+    # If all callers fit within the BFS limit, nothing was cut
+    if len(all_callers) <= 8:
+        return ""
+
+    seen_files = {sym.file_path for sym, _ in ordered}
+    critical: list[tuple[str, str]] = []  # (name, reason)
+    seen_names: set[str] = set()
+
+    for caller in all_callers:
+        if caller.id in seen_ids:
+            continue  # Already in BFS — agent can see it
+        if _is_test_file(caller.file_path):
+            continue
+        if caller.parent_id:
+            continue  # Skip nested methods — we want top-level callers
+        if caller.name in seen_names:
+            continue
+        reason = ""
+        if caller.name in _WALL_ENTRY_NAMES:
+            reason = "entry point"
+        elif caller.file_path.rsplit("/", 1)[-1] == "__main__.py":
+            reason = "entry point"
+        elif (graph.hot_files and caller.file_path in graph.hot_files
+              and caller.exported and caller.file_path not in seen_files):
+            reason = "hot file"
+        if reason:
+            critical.append((caller.name, reason))
+            seen_names.add(caller.name)
+
+    if not critical:
+        return ""
+
+    # Sort: entry points first, then hot-file
+    entry_pts = [(n, r) for n, r in critical if r == "entry point"]
+    hot_pts = [(n, r) for n, r in critical if r == "hot file"]
+    ordered_crit = entry_pts[:2] + hot_pts[:1]
+    ordered_crit = ordered_crit[:3]
+
+    # Count non-test callers that weren't shown (the interesting hidden count)
+    non_test_hidden = sum(
+        1 for c in all_callers
+        if c.id not in seen_ids and not _is_test_file(c.file_path) and not c.parent_id
+    )
+
+    parts = [f"{n} ({r})" for n, r in ordered_crit]
+    suffix = f" +{len(critical) - len(ordered_crit)} more" if len(critical) > len(ordered_crit) else ""
+    syms_str = ", ".join(parts) + suffix
+    hidden_str = f" — {non_test_hidden} non-test callers hidden" if non_test_hidden > len(critical) else ""
+    return (
+        f"↳ depth wall: {syms_str} cut by BFS caller limit{hidden_str}; use blast_radius for full scope"
+    )
+
+
 def _compute_dead_seed_note(graph: "Tempo", seeds: "list[Symbol]") -> str:
     """S67: Dead seed annotation — fires when the focus seed itself is a dead candidate.
 
@@ -5512,6 +5606,10 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     _hot_cluster = _compute_hot_cluster_note(graph, ordered)
     if _hot_cluster:
         lines.append(_hot_cluster)
+        lines.append("")
+    _wall_note = _compute_depth_wall_lookahead(graph, ordered, seen_ids, seeds)
+    if _wall_note:
+        lines.append(_wall_note)
         lines.append("")
     seen_files: set[str] = set()
     token_count = 0
