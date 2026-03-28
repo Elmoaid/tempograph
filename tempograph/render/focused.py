@@ -805,18 +805,15 @@ def _compute_blast_age_anns(
     else:
         blast_ann = ""
     age_ann = ""
-    try:
-        from ..git import symbol_last_modified_days as _sld  # noqa: PLC0415
-        _days = _sld(graph.root, sym.file_path, sym.line_start)
-        if _days is not None and _days >= 8:
-            if _days >= 365:
-                age_ann = " [age: 1y+]"
-            elif _days >= 30:
-                age_ann = f" [age: {_days // 30}m]"
-            else:
-                age_ann = f" [age: {_days}d]"
-    except Exception:
-        pass
+    # C15: use pre-fetched file-level age from staleness_cache (avoids git log -L subprocess)
+    _days = staleness_cache.get(sym.file_path) if staleness_cache else None
+    if _days is not None and _days >= 8:
+        if _days >= 365:
+            age_ann = " [age: 1y+]"
+        elif _days >= 30:
+            age_ann = f" [age: {_days // 30}m]"
+        else:
+            age_ann = f" [age: {_days}d]"
     return blast_ann, age_ann
 
 
@@ -1181,9 +1178,9 @@ def _build_seed_git_ctx_lines(
         pass
     # Callee drift: seed is old but calls recently changed deps
     try:
-        from ..git import symbol_last_modified_days as _sld_cd  # noqa: PLC0415
         from ..git import file_last_modified_days as _fld_cd    # noqa: PLC0415
-        _seed_days = _sld_cd(graph.root, sym.file_path, sym.line_start)
+        # C15: use pre-fetched file-level age from staleness_cache (avoids git log -L subprocess)
+        _seed_days = staleness_cache.get(sym.file_path) if staleness_cache else None
         if _seed_days is not None and _seed_days >= 30:
             _drifted: list[tuple[int, str]] = []
             for _c in graph.callees_of(sym.id)[:15]:
