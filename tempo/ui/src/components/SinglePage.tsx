@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { getHomeDir } from "./tempo";
 import { LandingPage, type RecentRepo } from "./LandingPage";
 import { GraphCanvas } from "./GraphCanvas";
@@ -40,6 +40,11 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
   const [activeView, setActiveView] = useState<AppView>(
     () => (localStorage.getItem("tempo-active-view") as AppView) || "modes"
   );
+
+  const handleViewChange = useCallback((v: AppView) => {
+    setActiveView(v);
+    localStorage.setItem("tempo-active-view", v);
+  }, []);
   const [rightHidden, setRightHidden] = useState(() =>
     localStorage.getItem("tempo-right-hidden") === "true"
   );
@@ -58,6 +63,19 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
   useEffect(() => {
     getHomeDir().then(setHomeDir);
   }, []);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!e.metaKey && !e.ctrlKey) return;
+      const el = document.activeElement as HTMLElement | null;
+      if (el?.tagName === "INPUT" || el?.tagName === "TEXTAREA" || el?.isContentEditable) return;
+      if (e.key === "g") { e.preventDefault(); handleViewChange("graph"); }
+      if (e.key === "d") { e.preventDefault(); handleViewChange("dashboard"); }
+      if (e.key === "m") { e.preventDefault(); handleViewChange("modes"); }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [handleViewChange]);
 
   const stats = ws.overview ? parseStats(ws.overview.output) : null;
 
@@ -126,10 +144,7 @@ export function SinglePage({ repoPath, workspaces, activeIdx, setActiveIdx, addW
 
       <ViewNav
         activeView={activeView}
-        onViewChange={(v) => {
-          setActiveView(v);
-          localStorage.setItem("tempo-active-view", v);
-        }}
+        onViewChange={handleViewChange}
       />
 
       {showSnapshots && homeDir && (
