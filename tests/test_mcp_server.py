@@ -4628,7 +4628,7 @@ class TestFocusSymbolAge:
         g = self._build(tmp_path, {
             "utils.py": "def helper():\n    return 1\n",
         })
-        with patch("tempograph.git.symbol_last_modified_days", return_value=60):
+        with patch("tempograph.git.batch_file_modification_map", return_value={"utils.py": 60}):
             out = render_focused(g, "helper")
 
         assert "[age: 2m]" in out, f"Must show [age: 2m] for 60-day-old symbol; got:\n{out}"
@@ -4641,7 +4641,7 @@ class TestFocusSymbolAge:
         g = self._build(tmp_path, {
             "utils.py": "def helper():\n    return 1\n",
         })
-        with patch("tempograph.git.symbol_last_modified_days", return_value=3):
+        with patch("tempograph.git.batch_file_modification_map", return_value={"utils.py": 3}):
             out = render_focused(g, "helper")
 
         assert "[age:" not in out, f"Must not show [age:] for fresh symbol (3d); got:\n{out}"
@@ -6446,7 +6446,7 @@ class TestOverviewGodFiles:
         g.root = str(tmp_path)
 
         with (
-            patch("tempograph.git.symbol_last_modified_days", return_value=60),
+            patch("tempograph.git.batch_file_modification_map", return_value={"wrapper.py": 60}),
             patch("tempograph.git.file_last_modified_days", return_value=7),
         ):
             out = render_focused(g, "wrap")
@@ -6470,7 +6470,7 @@ class TestOverviewGodFiles:
         g.root = str(tmp_path)
 
         with (
-            patch("tempograph.git.symbol_last_modified_days", return_value=5),
+            patch("tempograph.git.batch_file_modification_map", return_value={"wrapper.py": 5}),
             patch("tempograph.git.file_last_modified_days", return_value=3),
         ):
             out = render_focused(g, "wrap")
@@ -6491,7 +6491,7 @@ class TestOverviewGodFiles:
         g.root = str(tmp_path)
 
         with (
-            patch("tempograph.git.symbol_last_modified_days", return_value=60),
+            patch("tempograph.git.batch_file_modification_map", return_value={"wrapper.py": 60}),
             patch("tempograph.git.file_last_modified_days", return_value=20),
         ):
             out = render_focused(g, "wrap")
