@@ -5690,6 +5690,86 @@ def _compute_variant_group(seeds: "list[Symbol]", graph: "Tempo") -> str:
     return ""
 
 
+def _compute_cross_file_siblings(
+    seeds: "list[Symbol]",
+    graph: "Tempo",
+    seen_ids: "set[str]",
+) -> str:
+    """S1034: Cross-file sibling family — fires when the seed belongs to a naming family
+    that spans multiple files in the same directory.
+
+    BFS shows callers and callees. It does NOT show parallel siblings — functions with the
+    same role-prefix that live in sibling files. When you edit render_focused to add a new
+    feature, you might also need to update render_dead_code and render_diff_context.
+    Nothing in the BFS output tells you that.
+
+    Example outputs:
+      ↳ sibling family: 6 parallel render_* functions in tempograph/render/ — consider parallel changes in render_diff_context, render_dead_code, render_blast_radius (+3 more)
+      ↳ sibling family: 3 parallel build_* functions in tempograph/ — consider parallel changes in build_indexes, build_file_map
+
+    Distinct from:
+    - S1032 (naming cluster): depth-1 BFS NEIGHBORS share a stem — what you SEE in BFS output
+    - S1033 (variant group): same-FILE A/B/C/D suffix variants of the seed
+
+    Conditions:
+    - Seed not in a test file
+    - Stem ≥ 5 bare chars (to filter out noisy short names like "get", "set", "run")
+    - 3+ sibling symbols in same parent directory, different file, not in seen_ids
+    - Siblings not in test files
+    """
+    import os as _os
+
+    if not seeds:
+        return ""
+    seed = seeds[0]
+    if _is_test_file(seed.file_path):
+        return ""
+
+    stem = _get_naming_stem(seed.name)
+    if not stem or len(stem.lstrip("_")) < 5:
+        return ""
+
+    seed_dir = _os.path.dirname(_os.path.abspath(seed.file_path))
+    seed_file = _os.path.abspath(seed.file_path)
+    stem_prefix = f"{stem}_"
+
+    sibling_names: list[str] = []
+    seen_names: set[str] = set()
+    for sym in graph.symbols.values():
+        if sym.id in seen_ids:
+            continue
+        if not sym.name.startswith(stem_prefix):
+            continue
+        abs_path = _os.path.abspath(sym.file_path)
+        if abs_path == seed_file:
+            continue
+        if _is_test_file(sym.file_path):
+            continue
+        if _os.path.dirname(abs_path) != seed_dir:
+            continue
+        if sym.name not in seen_names:
+            seen_names.add(sym.name)
+            sibling_names.append(sym.name)
+
+    if len(sibling_names) < 3:
+        return ""
+
+    # Sort: public before private, then alphabetical
+    sibling_names.sort(key=lambda n: (n.startswith("_"), n))
+    examples = sibling_names[:3]
+    overflow = f" (+{len(sibling_names) - 3} more)" if len(sibling_names) > 3 else ""
+    examples_str = ", ".join(examples)
+
+    # Display relative path: last 2 path components of seed_dir
+    _parts = seed_dir.replace("\\", "/").split("/")
+    _display_dir = "/".join(_parts[-2:]) if len(_parts) >= 2 else seed_dir
+
+    return (
+        f"↳ sibling family: {len(sibling_names)} parallel {stem}_* functions in {_display_dir}/ "
+        f"(not in BFS) — parallel changes may be needed in {examples_str}{overflow}"
+    )
+
+
 def _compute_dead_seed_note(graph: "Tempo", seeds: "list[Symbol]") -> str:
     """S67: Dead seed annotation — fires when the focus seed itself is a dead candidate.
 
@@ -5789,6 +5869,10 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     _variant_group = _compute_variant_group(seeds, graph)
     if _variant_group:
         lines.append(_variant_group)
+        lines.append("")
+    _sibling_family = _compute_cross_file_siblings(seeds, graph, seen_ids)
+    if _sibling_family:
+        lines.append(_sibling_family)
         lines.append("")
     seen_files: set[str] = set()
     token_count = 0
