@@ -1454,8 +1454,8 @@ def _build_siblings_block(
     if depth != 0:
         return lines
     _siblings = [
-        s for s in graph.symbols.values()
-        if s.file_path == sym.file_path and s.id != sym.id
+        s for s in graph.symbols_in_file(sym.file_path)
+        if s.id != sym.id
         and s.kind.value in ("class", "function", "method", "interface", "module")
         and s.parent_id is None
     ]
