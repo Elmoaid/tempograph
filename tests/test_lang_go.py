@@ -195,3 +195,98 @@ class TestCallEdges:
         _, edges, _ = _parse(code)
         calls = [e for e in edges if e.kind == EdgeKind.CALLS]
         assert len(calls) >= 1
+
+
+# ── Constants ──────────────────────────────────────────────────────────────────
+
+class TestConst:
+    def test_single_const_extracted(self):
+        syms, _, _ = _parse("package main\n\nconst MaxSize = 100\n")
+        assert any(s.name == "MaxSize" for s in syms)
+
+    def test_const_kind(self):
+        syms, _, _ = _parse("package main\n\nconst MaxSize = 100\n")
+        c = next(s for s in syms if s.name == "MaxSize")
+        assert c.kind == SymbolKind.CONSTANT
+
+    def test_const_exported_uppercase(self):
+        syms, _, _ = _parse("package main\n\nconst MaxRetries = 3\n")
+        c = next(s for s in syms if s.name == "MaxRetries")
+        assert c.exported is True
+
+    def test_const_unexported_lowercase(self):
+        syms, _, _ = _parse("package main\n\nconst defaultTimeout = 30\n")
+        c = next(s for s in syms if s.name == "defaultTimeout")
+        assert c.exported is False
+
+    def test_const_block_all_extracted(self):
+        code = (
+            "package main\n\n"
+            "const (\n"
+            "\tStatusOK = 0\n"
+            "\tStatusFail = 1\n"
+            "\tStatusError = 2\n"
+            ")\n"
+        )
+        syms, _, _ = _parse(code)
+        names = {s.name for s in syms if s.kind == SymbolKind.CONSTANT}
+        assert {"StatusOK", "StatusFail", "StatusError"} == names
+
+    def test_const_iota_block_extracted(self):
+        code = (
+            "package main\n\n"
+            "const (\n"
+            "\tTypeA = iota\n"
+            "\tTypeB\n"
+            "\tTypeC\n"
+            ")\n"
+        )
+        syms, _, _ = _parse(code)
+        names = {s.name for s in syms if s.kind == SymbolKind.CONSTANT}
+        assert {"TypeA", "TypeB", "TypeC"} == names
+
+    def test_const_multi_name_extracted(self):
+        syms, _, _ = _parse("package main\n\nconst a, b = 1, 2\n")
+        names = {s.name for s in syms if s.kind == SymbolKind.CONSTANT}
+        assert {"a", "b"} == names
+
+
+# ── Variables ──────────────────────────────────────────────────────────────────
+
+class TestVar:
+    def test_single_var_extracted(self):
+        syms, _, _ = _parse("package main\n\nvar globalCount int = 0\n")
+        assert any(s.name == "globalCount" for s in syms)
+
+    def test_var_kind(self):
+        syms, _, _ = _parse("package main\n\nvar globalCount int = 0\n")
+        v = next(s for s in syms if s.name == "globalCount")
+        assert v.kind == SymbolKind.VARIABLE
+
+    def test_var_exported_uppercase(self):
+        syms, _, _ = _parse("package main\n\nvar DefaultLogger = nil\n")
+        v = next(s for s in syms if s.name == "DefaultLogger")
+        assert v.exported is True
+
+    def test_var_unexported_lowercase(self):
+        syms, _, _ = _parse("package main\n\nvar cache map[string]int\n")
+        v = next(s for s in syms if s.name == "cache")
+        assert v.exported is False
+
+    def test_var_block_all_extracted(self):
+        code = (
+            "package main\n\n"
+            "var (\n"
+            "\tdebug bool\n"
+            "\tprefix string\n"
+            "\tcounter int\n"
+            ")\n"
+        )
+        syms, _, _ = _parse(code)
+        names = {s.name for s in syms if s.kind == SymbolKind.VARIABLE}
+        assert {"debug", "prefix", "counter"} == names
+
+    def test_var_multi_name_extracted(self):
+        syms, _, _ = _parse("package main\n\nvar x, y int\n")
+        names = {s.name for s in syms if s.kind == SymbolKind.VARIABLE}
+        assert {"x", "y"} == names

@@ -23,6 +23,10 @@ class GoHandlerMixin:
                 self._handle_go_function(child, is_method=True)
             elif t == "type_declaration":
                 self._handle_go_type(child)
+            elif t == "const_declaration":
+                self._handle_go_const(child)
+            elif t == "var_declaration":
+                self._handle_go_var(child)
 
     def _handle_go_function(self, node: Node, *, is_method: bool = False) -> None:
         name_node = node.child_by_field_name("name")
@@ -134,3 +138,51 @@ class GoHandlerMixin:
                                             EdgeKind.INHERITS, sym_id, embedded,
                                             member.start_point[0] + 1,
                                         ))
+
+    def _handle_go_const(self, node: Node) -> None:
+        # const_declaration contains one or more const_spec children.
+        # Each const_spec may have multiple identifier children (e.g. const a, b = 1, 2).
+        for child in node.children:
+            if child.type != "const_spec":
+                continue
+            for c in child.children:
+                if c.type == "identifier":
+                    name = _node_text(c, self.source)
+                    sym_id = self._make_id(name)
+                    sym = Symbol(
+                        id=sym_id, name=name, qualified_name=name,
+                        kind=SymbolKind.CONSTANT, language=self.language,
+                        file_path=self.file_path,
+                        line_start=child.start_point[0] + 1,
+                        line_end=child.end_point[0] + 1,
+                        exported=name[0:1].isupper(),
+                        byte_size=child.end_byte - child.start_byte,
+                    )
+                    self.symbols.append(sym)
+
+    def _handle_go_var(self, node: Node) -> None:
+        # var_declaration contains var_spec children (single) or a var_spec_list wrapper.
+        for child in node.children:
+            if child.type == "var_spec":
+                self._emit_go_var_spec(child)
+            elif child.type == "var_spec_list":
+                for sub in child.children:
+                    if sub.type == "var_spec":
+                        self._emit_go_var_spec(sub)
+
+    def _emit_go_var_spec(self, node: Node) -> None:
+        # var_spec may have multiple identifier children (e.g. var x, y int).
+        for c in node.children:
+            if c.type == "identifier":
+                name = _node_text(c, self.source)
+                sym_id = self._make_id(name)
+                sym = Symbol(
+                    id=sym_id, name=name, qualified_name=name,
+                    kind=SymbolKind.VARIABLE, language=self.language,
+                    file_path=self.file_path,
+                    line_start=node.start_point[0] + 1,
+                    line_end=node.end_point[0] + 1,
+                    exported=name[0:1].isupper(),
+                    byte_size=node.end_byte - node.start_byte,
+                )
+                self.symbols.append(sym)
