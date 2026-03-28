@@ -1548,22 +1548,36 @@ def _build_callers_block(
         from ..git import file_last_modified_days as _fld  # noqa: PLC0415
     except Exception:
         _fld = None
+    callers_for_display, shown_callers, shown_count, total_for_overflow = _callers_sort_filter(
+        callers, query_tokens, graph, depth
+    )
+    ghost_ids = _callers_detect_ghosts(callers_for_display, graph, depth)
+    caller_strs = _callers_format_list(
+        shown_callers, sym, callsite_lines, ghost_ids, _fld, staleness_cache, graph
+    )
+    if caller_strs:
+        lines.append(f"{indent}  called by: {', '.join(caller_strs)}")
+        if total_for_overflow > shown_count:
+            lines[-1] += f" (+{total_for_overflow - shown_count} more)"
+        _callers_ghost_summary(lines, shown_callers, ghost_ids, indent)
+        _callers_domain_diversity(lines, callers_for_display, depth, indent)
+        _callers_primary_concentration(lines, callers_for_display, sym, depth, indent)
+        _callers_volatility_signal(lines, callers_for_display, graph, depth, indent)
+        _callers_upstream_reach(lines, sym, callers_for_display, graph, depth, indent)
+    return lines
 
-    def _stale_annotation(file_path: str) -> str:
-        if _fld is None:
-            return ""
-        if file_path not in staleness_cache:
-            staleness_cache[file_path] = _fld(graph.root, file_path)
-        days = staleness_cache[file_path]
-        if days is None or days <= 30:
-            return ""
-        return " [stale: 6m+]" if days > 180 else f" [stale: {days}d]"
 
+def _callers_sort_filter(
+    callers: list,
+    query_tokens: list[str],
+    graph: "Tempo",
+    depth: int,
+) -> "tuple[list, list, int, int]":
+    """Sort/filter callers; returns (callers_for_display, shown_callers, shown_count, total)."""
     def _is_kw(c: "Symbol") -> bool:
         return bool(query_tokens and any(tok in c.file_path.lower() for tok in query_tokens))
-
-    _callers_for_display = [c for c in callers if not _is_test_file(c.file_path)]
-    callers_sorted = sorted(_callers_for_display, key=lambda c: 0 if _is_kw(c) else 1)
+    callers_for_display = [c for c in callers if not _is_test_file(c.file_path)]
+    callers_sorted = sorted(callers_for_display, key=lambda c: 0 if _is_kw(c) else 1)
     kw_callers = [c for c in callers_sorted if _is_kw(c)]
     other_callers = [c for c in callers_sorted if not _is_kw(c)]
     hot_other = [c for c in other_callers if c.file_path in graph.hot_files]
@@ -1575,129 +1589,192 @@ def _build_callers_block(
     kw_callers = kw_callers[:8]
     shown_callers = kw_callers + (hot_other + cold_other)[:max_other]
     shown_count = len(kw_callers) + max_other
-    _total_for_overflow = len(_callers_for_display)
+    return callers_for_display, shown_callers, shown_count, len(callers_for_display)
 
-    # Ghost caller detection (depth=0 only): callers that have no callers themselves
-    # and are not exported = they contribute zero production reach.
-    # Cap lookup at 30 to avoid O(n) graph walks on hub symbols.
-    _ghost_ids: set[str] = set()
+
+def _callers_detect_ghosts(
+    callers_for_display: list,
+    graph: "Tempo",
+    depth: int,
+) -> set:
+    """Detect callers that are themselves unreachable (not exported, no callers); depth=0 only."""
+    ghost_ids: set = set()
     if depth == 0:
-        _capped = _callers_for_display[:30]
-        for _gc in _capped:
-            if not _gc.exported and not graph.callers_of(_gc.id):
-                _ghost_ids.add(_gc.id)
+        for gc in callers_for_display[:30]:  # cap at 30 to avoid O(n) graph walks on hub symbols
+            if not gc.exported and not graph.callers_of(gc.id):
+                ghost_ids.add(gc.id)
+    return ghost_ids
 
+
+def _callers_stale_ann(
+    file_path: str,
+    fld: object,
+    staleness_cache: dict,
+    graph_root: str,
+) -> str:
+    """Return staleness annotation string for a caller's file."""
+    if fld is None:
+        return ""
+    if file_path not in staleness_cache:
+        staleness_cache[file_path] = fld(graph_root, file_path)  # type: ignore[operator]
+    days = staleness_cache[file_path]
+    if days is None or days <= 30:
+        return ""
+    return " [stale: 6m+]" if days > 180 else f" [stale: {days}d]"
+
+
+def _callers_format_list(
+    shown_callers: list,
+    sym: "Symbol",
+    callsite_lines: "dict[tuple[str,str], list[int]] | None",
+    ghost_ids: set,
+    fld: object,
+    staleness_cache: dict,
+    graph: "Tempo",
+) -> list[str]:
+    """Format display strings for each shown caller with line/hot/stale/dead annotations."""
     caller_strs = []
     for c in shown_callers:
-        _cl = (callsite_lines or {}).get((c.id, sym.id), [])
-        if len(_cl) == 1:
-            _line_ann = f" [line {_cl[0]}]"
-        elif len(_cl) >= 2:
-            _line_ann = f" [lines {_cl[0]}, {_cl[1]}]"
+        cl = (callsite_lines or {}).get((c.id, sym.id), [])
+        if len(cl) == 1:
+            line_ann = f" [line {cl[0]}]"
+        elif len(cl) >= 2:
+            line_ann = f" [lines {cl[0]}, {cl[1]}]"
         else:
-            _line_ann = ""
+            line_ann = ""
         if c.file_path in graph.hot_files:
-            caller_strs.append(f"{c.qualified_name}{_line_ann} [hot]")
+            caller_strs.append(f"{c.qualified_name}{line_ann} [hot]")
         else:
-            _dead_ann = " [dead?]" if c.id in _ghost_ids else ""
-            caller_strs.append(c.qualified_name + _line_ann + _stale_annotation(c.file_path) + _dead_ann)
-    if caller_strs:
-        lines.append(f"{indent}  called by: {', '.join(caller_strs)}")
-        if _total_for_overflow > shown_count:
-            lines[-1] += f" (+{_total_for_overflow - shown_count} more)"
-        # Summarize ghost callers if any were shown
-        _shown_ghost_count = sum(1 for c in shown_callers if c.id in _ghost_ids)
-        if _shown_ghost_count:
-            _live_shown = len(shown_callers) - _shown_ghost_count
-            lines.append(
-                f"{indent}    ↳ {_shown_ghost_count} caller(s) are themselves unreachable"
-                f" — effective reach: {_live_shown} of {len(shown_callers)} shown"
+            dead_ann = " [dead?]" if c.id in ghost_ids else ""
+            caller_strs.append(
+                c.qualified_name + line_ann
+                + _callers_stale_ann(c.file_path, fld, staleness_cache, graph.root)
+                + dead_ann
             )
-        # S50: caller domain diversity — cross-cutting signal at depth=0.
-        # When non-test callers come from 3+ distinct subsystems, flag it.
-        # Uses ALL callers (not just shown) to get the true domain picture.
-        if depth == 0:
-            _domains: set[str] = set()
-            for _dc in _callers_for_display:
-                _d = _caller_domain(_dc.file_path)
-                if _d:
-                    _domains.add(_d)
-            if len(_domains) >= 3:
-                _sorted_domains = sorted(_domains)[:4]
-                _domain_str = ", ".join(_sorted_domains)
-                _n = len(_domains)
-                lines.append(
-                    f"{indent}    ↳ cross-cutting: {_n} subsystem{'s' if _n != 1 else ''}"
-                    f" ({_domain_str}{'...' if _n > 4 else ''})"
-                )
-        # S57: primary caller concentration — inverse of S50 cross-cutting.
-        # When one file accounts for ≥60% of non-test callers (and total ≥4),
-        # the function is effectively owned by that file. Suggests co-location.
-        # Complements S50: S50 catches spread, S57 catches concentration.
-        if depth == 0 and len(_callers_for_display) >= 4:
-            _file_counts: dict[str, int] = {}
-            for _pc in _callers_for_display:
-                _file_counts[_pc.file_path] = _file_counts.get(_pc.file_path, 0) + 1
-            _total_callers = len(_callers_for_display)
-            _dom_file, _dom_count = max(_file_counts.items(), key=lambda x: x[1])
-            if _dom_count / _total_callers >= 0.6 and _dom_file != sym.file_path:
-                _dom_basename = _dom_file.rsplit("/", 1)[-1]
-                lines.append(
-                    f"{indent}    ↳ primary caller: {_dom_basename}"
-                    f" ({_dom_count}/{_total_callers})"
-                )
-        # S59: caller volatility — ≥2 non-test callers in hot_files = interface under pressure.
-        # Mirror of S52 (hot callee instability): S52 flags when callees are changing under you;
-        # S59 flags when callers are changing around you. Together they paint a full volatility picture.
-        # An agent editing a function whose callers are in active churn risks interface breakage
-        # from parallel edits: callers may be adding/removing call sites or changing how they use output.
-        if depth == 0 and graph.hot_files:
-            _hot_callers = [
-                c for c in _callers_for_display
-                if c.file_path in graph.hot_files
-            ]
-            if len(_hot_callers) >= 2:
-                _cv_names = [c.name for c in _hot_callers[:3]]
-                _cv_suffix = "..." if len(_hot_callers) > 3 else ""
-                lines.append(
-                    f"{indent}    \u21b3 caller volatility: {len(_hot_callers)} active callers"
-                    f" ({', '.join(_cv_names)}{_cv_suffix})"
-                )
-        # S61: upstream transitive reach — how many non-test nodes transitively call this seed.
-        # Direct callers (shown above) are the visible surface. But those callers have their own
-        # callers, and so on. When direct callers <= 8 but amplify to 4x+ upstream nodes, the
-        # agent's blast-radius intuition is wrong: "only 2 callers" can mean 60+ transitively.
-        # BFS upward max depth=4, max 200 nodes. Only fires when amplification ratio >= 4x AND
-        # upstream >= 20 (strong signal only — avoid noise on well-isolated functions).
-        if depth == 0 and len(_callers_for_display) <= 8:
-            _direct_count = len(_callers_for_display)
-            _upstream_visited: set[str] = {sym.id}
-            _upstream_frontier = [sym.id]
-            _upstream_capped = False
-            for _ in range(4):  # max depth 4 hops
-                _next: list[str] = []
-                for _uid in _upstream_frontier:
-                    for _uc in graph.callers_of(_uid):
-                        if _uc.id not in _upstream_visited and not _is_test_file(_uc.file_path):
-                            _upstream_visited.add(_uc.id)
-                            _next.append(_uc.id)
-                            if len(_upstream_visited) >= 201:
-                                _upstream_capped = True
-                                break
-                    if _upstream_capped:
+    return caller_strs
+
+
+def _callers_ghost_summary(
+    lines: list[str],
+    shown_callers: list,
+    ghost_ids: set,
+    indent: str,
+) -> None:
+    """Append ghost caller summary line if unreachable callers were shown."""
+    shown_ghost_count = sum(1 for c in shown_callers if c.id in ghost_ids)
+    if shown_ghost_count:
+        live_shown = len(shown_callers) - shown_ghost_count
+        lines.append(
+            f"{indent}    ↳ {shown_ghost_count} caller(s) are themselves unreachable"
+            f" — effective reach: {live_shown} of {len(shown_callers)} shown"
+        )
+
+
+def _callers_domain_diversity(
+    lines: list[str],
+    callers_for_display: list,
+    depth: int,
+    indent: str,
+) -> None:
+    """S50: Cross-cutting signal — flags 3+ distinct caller subsystems at depth=0."""
+    if depth != 0:
+        return
+    domains: set = set()
+    for dc in callers_for_display:
+        d = _caller_domain(dc.file_path)
+        if d:
+            domains.add(d)
+    if len(domains) >= 3:
+        sorted_domains = sorted(domains)[:4]
+        domain_str = ", ".join(sorted_domains)
+        n = len(domains)
+        lines.append(
+            f"{indent}    ↳ cross-cutting: {n} subsystem{'s' if n != 1 else ''}"
+            f" ({domain_str}{'...' if n > 4 else ''})"
+        )
+
+
+def _callers_primary_concentration(
+    lines: list[str],
+    callers_for_display: list,
+    sym: "Symbol",
+    depth: int,
+    indent: str,
+) -> None:
+    """S57: Primary caller concentration — one file ≥60% of callers at depth=0 (min 4)."""
+    if depth != 0 or len(callers_for_display) < 4:
+        return
+    file_counts: dict = {}
+    for pc in callers_for_display:
+        file_counts[pc.file_path] = file_counts.get(pc.file_path, 0) + 1
+    total_callers = len(callers_for_display)
+    dom_file, dom_count = max(file_counts.items(), key=lambda x: x[1])
+    if dom_count / total_callers >= 0.6 and dom_file != sym.file_path:
+        dom_basename = dom_file.rsplit("/", 1)[-1]
+        lines.append(
+            f"{indent}    ↳ primary caller: {dom_basename}"
+            f" ({dom_count}/{total_callers})"
+        )
+
+
+def _callers_volatility_signal(
+    lines: list[str],
+    callers_for_display: list,
+    graph: "Tempo",
+    depth: int,
+    indent: str,
+) -> None:
+    """S59: Caller volatility — ≥2 non-test callers in hot_files at depth=0."""
+    if depth != 0 or not graph.hot_files:
+        return
+    hot_callers = [c for c in callers_for_display if c.file_path in graph.hot_files]
+    if len(hot_callers) >= 2:
+        cv_names = [c.name for c in hot_callers[:3]]
+        cv_suffix = "..." if len(hot_callers) > 3 else ""
+        lines.append(
+            f"{indent}    \u21b3 caller volatility: {len(hot_callers)} active callers"
+            f" ({', '.join(cv_names)}{cv_suffix})"
+        )
+
+
+def _callers_upstream_reach(
+    lines: list[str],
+    sym: "Symbol",
+    callers_for_display: list,
+    graph: "Tempo",
+    depth: int,
+    indent: str,
+) -> None:
+    """S61: Upstream transitive reach — BFS depth=4, fires when amplification ≥4x and upstream ≥20."""
+    if depth != 0 or len(callers_for_display) > 8:
+        return
+    direct_count = len(callers_for_display)
+    upstream_visited: set = {sym.id}
+    upstream_frontier = [sym.id]
+    upstream_capped = False
+    for _ in range(4):  # max depth 4 hops
+        next_frontier: list = []
+        for uid in upstream_frontier:
+            for uc in graph.callers_of(uid):
+                if uc.id not in upstream_visited and not _is_test_file(uc.file_path):
+                    upstream_visited.add(uc.id)
+                    next_frontier.append(uc.id)
+                    if len(upstream_visited) >= 201:
+                        upstream_capped = True
                         break
-                _upstream_frontier = _next
-                if not _upstream_frontier or _upstream_capped:
-                    break
-            _upstream_count = len(_upstream_visited) - 1  # exclude seed itself
-            if _upstream_count >= 20 and _upstream_count >= _direct_count * 4:
-                _cap_str = "+" if _upstream_capped else ""
-                lines.append(
-                    f"{indent}    \u21b3 upstream reach: {_upstream_count}{_cap_str} nodes"
-                    f" — {_direct_count} direct caller{'s' if _direct_count != 1 else ''}"
-                    f" amplif{'y' if _direct_count != 1 else 'ies'} to wider blast"
-                )
-    return lines
+            if upstream_capped:
+                break
+        upstream_frontier = next_frontier
+        if not upstream_frontier or upstream_capped:
+            break
+    upstream_count = len(upstream_visited) - 1  # exclude seed itself
+    if upstream_count >= 20 and upstream_count >= direct_count * 4:
+        cap_str = "+" if upstream_capped else ""
+        lines.append(
+            f"{indent}    \u21b3 upstream reach: {upstream_count}{cap_str} nodes"
+            f" — {direct_count} direct caller{'s' if direct_count != 1 else ''}"
+            f" amplif{'y' if direct_count != 1 else 'ies'} to wider blast"
+        )
 
 
 def _callees_format_list(
