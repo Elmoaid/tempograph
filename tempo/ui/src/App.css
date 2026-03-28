@@ -873,8 +873,22 @@ textarea.input {
 }
 .landing-dragging .landing-drop-zone {
   border-color: var(--accent);
+  border-style: solid;
   background: color-mix(in srgb, var(--accent) 10%, transparent);
   color: var(--accent);
+  transform: scale(1.01);
+}
+.landing-drop-icon-active {
+  animation: landing-bounce 0.6s ease-in-out infinite alternate;
+}
+@keyframes landing-bounce {
+  from { transform: translateY(0); }
+  to   { transform: translateY(-6px); }
+}
+.landing-drop-text-active {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.2px;
 }
 .landing-divider {
   width: 100%;
@@ -984,6 +998,18 @@ textarea.input {
 .landing-recent-item:hover {
   border-color: var(--border);
   color: var(--text-primary);
+}
+.landing-recent-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.landing-recent-item-time {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 /* ── Graph Canvas ── */
