@@ -222,6 +222,7 @@ class FileParser(PythonHandlerMixin, JSHandlerMixin, GoHandlerMixin, JavaHandler
                     )
                     self.symbols.append(sym)
                     self._scan_calls(node, sym_id)
+                    self._scan_type_annotations(node, sym_id)
         elif node.type in self._GENERIC_CLASS_TYPES:
             name_node = self._generic_find_name(node)
             if name_node:
@@ -288,6 +289,7 @@ class FileParser(PythonHandlerMixin, JSHandlerMixin, GoHandlerMixin, JavaHandler
                                     self.symbols.append(method_sym)
                                     self.edges.append(Edge(EdgeKind.CONTAINS, sym_id, method_id))
                                     self._scan_calls(child, method_id)
+                                    self._scan_type_annotations(child, method_id)
 
         # Recurse into children — but skip body of classes (already handled methods above)
         if node.type in self._GENERIC_CLASS_TYPES:
@@ -546,3 +548,51 @@ class FileParser(PythonHandlerMixin, JSHandlerMixin, GoHandlerMixin, JavaHandler
             return
         for child in node.children:
             self._scan_calls(child, from_id, depth=depth + 1)
+
+    # Type names that are containers/builtins — never create USES_TYPE edges for these.
+    _TYPE_IGNORE = frozenset({
+        "Optional", "List", "Dict", "Tuple", "Set", "FrozenSet", "Union",
+        "Sequence", "Iterable", "Iterator", "Generator", "Coroutine",
+        "Awaitable", "AsyncIterator", "AsyncGenerator", "Mapping",
+        "MutableMapping", "MutableSequence", "MutableSet", "Callable",
+        "Type", "ClassVar", "Final", "Literal", "Annotated",
+        "Any", "NoReturn", "Never",
+    })
+
+    def _scan_type_annotations(self, node: Node, from_id: str) -> None:
+        """Scan function parameters and return type for type references.
+
+        Creates USES_TYPE edges from the function to referenced user-defined types.
+        Skips lowercase builtins (int, str, etc.) and container types (Optional, List, etc.).
+        """
+        # Parameter type annotations
+        params = node.child_by_field_name("parameters")
+        if params:
+            for child in params.children:
+                type_node = child.child_by_field_name("type")
+                if type_node:
+                    self._extract_type_refs(type_node, from_id)
+
+        # Return type annotation
+        return_type = node.child_by_field_name("return_type")
+        if return_type:
+            self._extract_type_refs(return_type, from_id)
+
+    def _extract_type_refs(self, type_node: Node, from_id: str) -> None:
+        """Extract user-defined type names from a type annotation node."""
+        text = _node_text(type_node, self.source).strip().lstrip("->").strip()
+        if not text:
+            return
+        # Split on common type combinators: [], |, ,
+        # e.g. "Optional[User]" -> ["Optional", "User"]
+        # e.g. "User | None" -> ["User", "None"]
+        parts = re.split(r'[\[\]|,\s]+', text)
+        for part in parts:
+            part = part.strip()
+            if (
+                part
+                and len(part) >= 2
+                and part[0].isupper()
+                and part not in self._TYPE_IGNORE
+            ):
+                self.edges.append(Edge(EdgeKind.USES_TYPE, from_id, part))

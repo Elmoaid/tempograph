@@ -565,7 +565,7 @@ def _walk_files(
             yield os.path.join(dirpath, filename), rel, ext
 
 
-_RESOLVE_KINDS = frozenset([EdgeKind.CALLS, EdgeKind.RENDERS, EdgeKind.INHERITS, EdgeKind.IMPLEMENTS])
+_RESOLVE_KINDS = frozenset([EdgeKind.CALLS, EdgeKind.RENDERS, EdgeKind.INHERITS, EdgeKind.IMPLEMENTS, EdgeKind.USES_TYPE])
 
 
 def _resolve_edges(graph: Tempo) -> None:
