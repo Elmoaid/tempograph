@@ -346,10 +346,9 @@ class TestRelayPointIntegration:
         graph = build_graph(".")
         return render_focused(graph, query)
 
-    def test_get_or_build_graph_fires(self):
-        """_get_or_build_graph → build_graph is a classic relay (100% downstream)."""
+    def test_get_or_build_graph_hub(self):
+        """_get_or_build_graph is a hub (9 depth-1 neighbors) — no single relay."""
         result = self._focus("_get_or_build_graph")
-        assert "relay point" in result
         assert "build_graph" in result
 
     def test_prepare_context_fires(self):

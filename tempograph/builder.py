@@ -659,9 +659,18 @@ def _resolve_edges(graph: Tempo) -> None:
         if edge.kind in _RESOLVE_KINDS and "::" not in edge.target_id:
             candidates = name_to_ids.get(edge.target_id, [])
             # If qualified name (Type.method) didn't match, try bare name
+            # BUT only if the qualifier is a known class/type/module in the graph.
+            # Prevents dict.get() -> Config.get, list.items() -> Section.items, etc.
             if not candidates and "." in edge.target_id:
-                bare = edge.target_id.rsplit(".", 1)[-1]
-                candidates = name_to_ids.get(bare, [])
+                qualifier, bare = edge.target_id.rsplit(".", 1)
+                qualifier_known = False
+                for cid in name_to_ids.get(qualifier, []):
+                    sym = graph.symbols.get(cid)
+                    if sym is not None and sym.kind.value in ("class", "interface", "struct", "enum", "module", "trait"):
+                        qualifier_known = True
+                        break
+                if qualifier_known:
+                    candidates = name_to_ids.get(bare, [])
             if candidates:
                 target = _pick_best(edge.source_id, candidates)
                 resolved.append(Edge(edge.kind, edge.source_id, target, edge.line))
