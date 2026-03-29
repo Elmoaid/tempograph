@@ -5981,6 +5981,198 @@ def _compute_cross_file_siblings(
     )
 
 
+def _compute_orchestrator_advisory(seeds: "list[Symbol]", graph: "Tempo") -> str:
+    """S1035: Orchestrator advisory — fires when seed has many cross-file callees but few callers.
+
+    An orchestrator is a coordination function: it calls many things, but is called by few.
+    When you focus on one, the depth-3 BFS expands mostly DOWNSTREAM — callee after callee
+    after callee — and the agent sees lots of context that's 2-3 hops removed from their actual
+    change. The advisory reframes what the BFS output means for this topology.
+
+    Example outputs:
+      ↳ orchestrator: 16 cross-file callees, 3 callers — BFS expands mostly downstream; focus on direct callees when making changes
+      ↳ orchestrator: 10 cross-file callees, 2 callers — BFS expands mostly downstream; focus on direct callees when making changes
+
+    Distinct from:
+    - S65 (change_exposure): quantifies RISK (caller files, hot callees) — not topology role
+    - S198 (leaf function): opposite topology (many callers, 0 callees) — already shows "stable leaf"
+    - apex signal (S45): fires for entry points (0 callers) — already handled inline per-symbol
+    - S180 (complex hub): fires when cx≥8 AND callers≥5 — hub, not orchestrator
+
+    Conditions:
+    - Seed is a function/method, not in test files
+    - Cross-file callees >= 6 (enough downstream complexity)
+    - Non-test callers 1–4 (few enough to be orchestrator, not utility/hub; 0 = entry point, apex handles)
+    """
+    if not seeds:
+        return ""
+    seed = seeds[0]
+    if seed.kind.value not in ("function", "method"):
+        return ""
+    if _is_test_file(seed.file_path):
+        return ""
+
+    seed_file = seed.file_path
+
+    # Count cross-file callees (non-test)
+    cross_callees = [
+        c for c in graph.callees_of(seed.id)
+        if c.file_path != seed_file and not _is_test_file(c.file_path)
+    ]
+    if len(cross_callees) < 6:
+        return ""
+
+    # Count non-test callers
+    nt_callers = [
+        c for c in graph.callers_of(seed.id)
+        if not _is_test_file(c.file_path)
+    ]
+    if len(nt_callers) < 1 or len(nt_callers) > 4:
+        return ""
+
+    callee_count = len(cross_callees)
+    caller_count = len(nt_callers)
+    return (
+        f"↳ orchestrator: {callee_count} cross-file callees, {caller_count} caller{'s' if caller_count != 1 else ''}"
+        f" — BFS expands mostly downstream; focus on direct callees when making changes"
+    )
+
+
+def _compute_relay_point(
+    seeds: "list[Symbol]",
+    graph: "Tempo",
+    ordered: "list[tuple[Symbol, int]]",
+) -> str:
+    """S1036: Relay point — a depth-1 callee that dominates downstream reach.
+
+    The seed calls several depth-1 functions. Each of those calls more functions downstream.
+    If ONE depth-1 callee is responsible for ≥65% of the combined cross-file downstream reach
+    of all depth-1 callees, that intermediate is a hidden chokepoint: changing it cascades
+    through the majority of the seed's transitive call surface — even though BFS presents it
+    as 'just one of several depth-1 callees.'
+
+    Uses graph structure (not BFS output) for the reach calculation, so the 50-node BFS cap
+    doesn't interfere. Only cross-file callees count (intra-file calls are implementation detail).
+
+    This is NOT the same as S1035 (orchestrator advisory):
+    - S1035: seed ITSELF has many callees, few callers — "you're an orchestrator"
+    - S1036: one INTERMEDIATE depth-1 callee dominates downstream reach — "this one is load-bearing"
+
+    Example outputs:
+      ↳ relay point: render_diff_context accounts for 37/40 downstream reach (92%) — treat as load-bearing
+      ↳ relay point: search_symbols_scored accounts for 19/20 downstream reach (95%) — treat as load-bearing
+
+    Conditions:
+    - Seed is a function/method, not in test files
+    - Seed has ≥ 2 cross-file callees visible in BFS (otherwise no comparison possible)
+    - Total combined cross-file reach (callees of depth-1 callees) ≥ 8 (meaningful scale)
+    - Best relay's share ≥ 65% of total reach AND ≥ 5 callees in absolute count
+    """
+    if not seeds:
+        return ""
+    seed = seeds[0]
+    if seed.kind.value not in ("function", "method"):
+        return ""
+    if "test" in seed.file_path:
+        return ""
+
+    # Use graph structure directly (not BFS output) to identify cross-file callees.
+    # BFS can promote co-matched symbols to depth=0 seeds, so depth-based filtering
+    # on ordered is unreliable. Instead, read callee relationships from the index.
+    seed_callees_ids: set[str] = set(graph._callees.get(seed.id, []))
+    seen_seed_ids: set[str] = {s.id for s in seeds}
+
+    d1_callees: list["Symbol"] = [
+        graph.symbols[c_id]
+        for c_id in seed_callees_ids
+        if c_id in graph.symbols
+        and graph.symbols[c_id].file_path != seed.file_path
+        and c_id not in seen_seed_ids   # exclude co-seeds (already at depth=0)
+    ]
+
+    if len(d1_callees) < 2:
+        return ""
+
+    # For each cross-file callee, compute its cross-file downstream reach (graph data, not BFS).
+    reach_by_id: dict[str, int] = {}
+    total_reach = 0
+    for d1 in d1_callees:
+        cross_callees = sum(
+            1 for c_id in graph._callees.get(d1.id, [])
+            if graph.symbols.get(c_id, d1).file_path != d1.file_path
+        )
+        reach_by_id[d1.id] = cross_callees
+        total_reach += cross_callees
+
+    if total_reach < 8:
+        return ""
+
+    best_relay = max(d1_callees, key=lambda s: reach_by_id[s.id])
+    best_reach = reach_by_id[best_relay.id]
+
+    if best_reach < 5:
+        return ""
+
+    ratio = best_reach / total_reach
+    if ratio < 0.65:
+        return ""
+
+    pct = int(ratio * 100)
+    return (
+        f"↳ relay point: {best_relay.name} accounts for {best_reach}/{total_reach}"
+        f" downstream reach ({pct}%) — treat as load-bearing; changes cascade"
+    )
+
+
+def _compute_subclass_exposure(seeds: "list[Symbol]", graph: "Tempo") -> str:
+    """S1037: Subclass exposure — fires when seed is a base class with cross-file subclasses.
+
+    BFS follows CALLS and CONTAINS edges only — INHERITS/IMPLEMENTS edges are invisible.
+    When you focus on a base class or mixin, its subclasses never appear in the BFS output.
+    Agents editing the base class don't know they're editing a shared interface.
+
+    Example outputs:
+      ↳ subclass: FileParser (parser.py) — interface changes propagate
+      ↳ 3 subclasses: ConfigLoader (config.py), LocalConfig (+2 more) — interface changes propagate to all
+
+    Distinct from:
+    - S65 (change_exposure): fires on caller-file blast risk — not inheritance visibility
+    - S1034 (cross-file siblings): naming-family siblings in same dir — not inheritance
+    - S1035 (orchestrator): callee/caller topology role — not inheritance
+
+    Conditions:
+    - Seed is a class (not function/method)
+    - Not a test file
+    - Has ≥ 1 cross-file subclass (different file from seed) via INHERITS or IMPLEMENTS edges
+    """
+    if not seeds:
+        return ""
+    seed = seeds[0]
+    if seed.kind.value not in ("class", "interface"):
+        return ""
+    if _is_test_file(seed.file_path):
+        return ""
+
+    all_subs = graph.subtypes_of(seed.name)
+    cross_file_subs = [s for s in all_subs if s.file_path != seed.file_path and not _is_test_file(s.file_path)]
+
+    if not cross_file_subs:
+        return ""
+
+    n = len(cross_file_subs)
+    # Format: "ClassName (filename.py)" for first 2, then overflow count
+    def _short(s: "Symbol") -> str:
+        return f"{s.name} ({s.file_path.rsplit('/', 1)[-1]})"
+
+    if n == 1:
+        return f"↳ subclass: {_short(cross_file_subs[0])} — interface changes propagate"
+
+    shown = cross_file_subs[:2]
+    parts = ", ".join(_short(s) for s in shown)
+    overflow = f" +{n - 2} more" if n > 2 else ""
+    return f"↳ {n} subclasses: {parts}{overflow} — interface changes propagate to all"
+
+
 def _compute_dead_seed_note(graph: "Tempo", seeds: "list[Symbol]") -> str:
     """S67: Dead seed annotation — fires when the focus seed itself is a dead candidate.
 
@@ -6122,6 +6314,18 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000, _stalene
     _sibling_family = _compute_cross_file_siblings(seeds, graph, seen_ids)
     if _sibling_family:
         lines.append(_sibling_family)
+        lines.append("")
+    _orchestrator = _compute_orchestrator_advisory(seeds, graph)
+    if _orchestrator:
+        lines.append(_orchestrator)
+        lines.append("")
+    _relay = _compute_relay_point(seeds, graph, ordered)
+    if _relay:
+        lines.append(_relay)
+        lines.append("")
+    _subclass_exp = _compute_subclass_exposure(seeds, graph)
+    if _subclass_exp:
+        lines.append(_subclass_exp)
         lines.append("")
     seen_files: set[str] = set()
     # Count header sections already written to lines (change_exposure, scope_note,
