@@ -1,21 +1,31 @@
 import { useState, useMemo, useRef, useCallback } from "react";
 
+/**
+ * Pure function — applies a filter query to output lines.
+ * Returns null when query is blank or output is empty (caller uses original).
+ * Otherwise returns the matching lines (joined) and count.
+ */
+export function applyOutputFilter(
+  output: string,
+  query: string
+): { filtered: string; matchCount: number } | null {
+  if (!query.trim() || !output) return null;
+  const q = query.toLowerCase();
+  const matching = output.split("\n").filter(line => line.toLowerCase().includes(q));
+  return { filtered: matching.join("\n"), matchCount: matching.length };
+}
+
 export function useOutputFilter(modeOutput: string) {
   const [outputFilter, setOutputFilter] = useState("");
   const [filterVisible, setFilterVisible] = useState(false);
   const filterInputRef = useRef<HTMLInputElement>(null);
 
-  const filteredOutput = useMemo(() => {
-    if (!outputFilter.trim() || !modeOutput) return modeOutput;
-    const q = outputFilter.toLowerCase();
-    return modeOutput.split("\n").filter(line => line.toLowerCase().includes(q)).join("\n");
-  }, [modeOutput, outputFilter]);
-
-  const filterMatchCount = useMemo(() => {
-    if (!outputFilter.trim() || !modeOutput) return null;
-    const q = outputFilter.toLowerCase();
-    return modeOutput.split("\n").filter(l => l.toLowerCase().includes(q)).length;
-  }, [modeOutput, outputFilter]);
+  const filterResult = useMemo(
+    () => applyOutputFilter(modeOutput, outputFilter),
+    [modeOutput, outputFilter]
+  );
+  const filteredOutput = filterResult ? filterResult.filtered : modeOutput;
+  const filterMatchCount = filterResult ? filterResult.matchCount : null;
 
   const onFilterToggle = useCallback(() => {
     setFilterVisible(v => !v);
