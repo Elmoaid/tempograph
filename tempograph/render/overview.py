@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import defaultdict, deque
 from pathlib import Path
 
 from ..types import Tempo, EdgeKind, FileInfo, Symbol, SymbolKind
@@ -414,10 +414,10 @@ def _signals_coupling_depth(graph: Tempo) -> list[str]:
         _deepest_fp = ""
         for _dfp in _src_fps_depth:
             _visited: set[str] = set()
-            _queue = [(_dfp, 0)]
+            _queue = deque([(_dfp, 0)])
             _local_max = 0
             while _queue:
-                _cur, _d = _queue.pop(0)
+                _cur, _d = _queue.popleft()
                 if _cur in _visited:
                     continue
                 _visited.add(_cur)

@@ -356,15 +356,10 @@ class GraphDB:
         cur = self._conn.cursor()
         # Remove old data for this file
         cur.execute("DELETE FROM symbols WHERE file_path = ?", (rel_path,))
+        # Delete edges sourced from this file (file-level) or its symbols (prefix match)
         cur.execute(
-            "DELETE FROM edges WHERE source_id IN "
-            "(SELECT id FROM symbols WHERE file_path = ?) OR source_id = ?",
-            (rel_path, rel_path),
-        )
-        # The above won't catch edges from deleted symbols, so also clean by file prefix
-        cur.execute(
-            "DELETE FROM edges WHERE source_id LIKE ?",
-            (rel_path + "::%",),
+            "DELETE FROM edges WHERE source_id = ? OR source_id LIKE ?",
+            (rel_path, rel_path + "::%"),
         )
 
         # Insert file record (with mtime_ns for next-build mtime-based early-skip)

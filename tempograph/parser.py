@@ -342,7 +342,7 @@ class FileParser(PythonHandlerMixin, JSHandlerMixin, GoHandlerMixin, JavaHandler
         "if_statement", "elif_clause", "else_clause",
         "for_statement", "for_in_statement", "while_statement",
         "switch_case", "catch_clause", "ternary_expression",
-        "conditional_expression", "binary_expression",
+        "conditional_expression",
         "match_arm", "if_expression", "if_let_expression",
         "logical_and", "logical_or", "&&", "||",
         "try_statement", "except_clause",
