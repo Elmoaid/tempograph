@@ -379,6 +379,7 @@ def symbol_last_modified_days(repo: str, file_path: str, line_start: int) -> int
     return file_last_modified_days(repo, file_path)
 
 
+@functools.lru_cache(maxsize=64)
 def recent_file_commits(repo: str, file_path: str, n: int = 3) -> list[dict]:
     """Return the last n commits that touched file_path.
 
