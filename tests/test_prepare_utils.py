@@ -183,3 +183,124 @@ class TestClPathFallback:
         result = _cl_path_fallback(graph, "auth")
         # No snake/camel fallbacks for "auth" (no _ or camel), so returns []
         assert result == []
+
+
+# ── Keyword cap and breadth decay (render_prepare integration) ───────────────
+
+def _make_git_graph(tmp_path, files: dict[str, str]):
+    """Create a real git repo with given {filename: content} and return built graph."""
+    import subprocess
+    from tempograph.builder import build_graph
+    for name, content in files.items():
+        p = tmp_path / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content)
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True,
+                   capture_output=True)
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True,
+                   capture_output=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init",
+                    "--author=test <t@t.com>"], cwd=tmp_path, check=True,
+                   capture_output=True)
+    return build_graph(str(tmp_path))
+
+
+class TestFiveKeywordsProcessed:
+    """After raising the keyword cap from 3 to 5, at least 4 of 5 subsystems should appear."""
+
+    def test_five_keywords_processed(self, tmp_path):
+        from tempograph.prepare import render_prepare
+
+        # 5 distinct modules, each with a uniquely-named function
+        files = {
+            "alpha.py": "def alpha_handler(): pass\ndef call_alpha(): alpha_handler()\n",
+            "bravo.py": "def bravo_handler(): pass\ndef call_bravo(): bravo_handler()\n",
+            "charlie.py": "def charlie_handler(): pass\ndef call_charlie(): charlie_handler()\n",
+            "delta.py": "def delta_handler(): pass\ndef call_delta(): delta_handler()\n",
+            "echo.py": "def echo_handler(): pass\ndef call_echo(): echo_handler()\n",
+        }
+        graph = _make_git_graph(tmp_path, files)
+        # Task mentions all 5 keywords (each >=4 chars)
+        result = render_prepare(
+            graph,
+            "fix: alpha_handler bravo_handler charlie_handler delta_handler echo_handler",
+            task_type="changelocal",
+        )
+        # At least 4 of 5 module names should appear in output
+        found = sum(1 for name in ["alpha", "bravo", "charlie", "delta", "echo"]
+                    if name in result.lower())
+        assert found >= 4, f"Expected >=4 subsystems, found {found}. Output:\n{result[:500]}"
+
+
+class TestBreadthGradualDecay:
+    """Gradual breadth decay: 9-15 files keeps a proportional subset instead of discarding."""
+
+    def test_breadth_11_files_gradual_decay(self, tmp_path):
+        """11 files matching a keyword: old behavior discarded entirely, new keeps top 4."""
+        from tempograph.prepare import render_prepare
+
+        # Create 11 files each containing a function named 'widget_process'
+        # so that render_focused returns all 11
+        files = {}
+        for i in range(11):
+            files[f"mod_{i}.py"] = (
+                f"def widget_process(): return {i}\n"
+                f"def helper_{i}(): widget_process()\n"
+            )
+        graph = _make_git_graph(tmp_path, files)
+
+        result = render_prepare(
+            graph,
+            "fix: widget_process error handling",
+            task_type="changelocal",
+        )
+        # Under old behavior (hard cutoff at 10), 11 files → discarded → no KEY FILES.
+        # Under new gradual decay: keep max(1, 15-11)=4 files → output NOT empty.
+        # The result should contain file references (either KEY FILES or path match).
+        assert "mod_" in result, (
+            f"Expected file references in output (gradual decay should keep 4 files). "
+            f"Output:\n{result[:500]}"
+        )
+
+    def test_breadth_16_files_discarded(self, tmp_path):
+        """16+ files: hard cutoff still applies — keyword is discarded."""
+        from tempograph.prepare import render_prepare
+
+        files = {}
+        for i in range(16):
+            files[f"pkg_{i}.py"] = (
+                f"def gadget_invoke(): return {i}\n"
+                f"def use_{i}(): gadget_invoke()\n"
+            )
+        graph = _make_git_graph(tmp_path, files)
+
+        result = render_prepare(
+            graph,
+            "fix: gadget_invoke regression",
+            task_type="changelocal",
+        )
+        # 16 files → too_broad=True → discarded. Output should NOT contain
+        # "KEY FILES REFERENCED ABOVE" section from focus (may contain path fallback
+        # or definition-first fallback, but the focus section itself is skipped).
+        assert "KEY FILES REFERENCED ABOVE" not in result
+
+    def test_breadth_8_files_kept_fully(self, tmp_path):
+        """8 files: below decay threshold, all kept (no change from old behavior)."""
+        from tempograph.prepare import render_prepare
+
+        files = {}
+        for i in range(8):
+            files[f"svc_{i}.py"] = (
+                f"def spark_execute(): return {i}\n"
+                f"def run_{i}(): spark_execute()\n"
+            )
+        graph = _make_git_graph(tmp_path, files)
+
+        result = render_prepare(
+            graph,
+            "fix: spark_execute timeout",
+            task_type="changelocal",
+        )
+        # 8 files → below threshold → should pass through to focus_parts
+        # and appear in KEY FILES
+        assert "KEY FILES" in result or "svc_" in result

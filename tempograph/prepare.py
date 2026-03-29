@@ -240,14 +240,14 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
         focus_budget = max_tokens // 2
         focus_parts: list[str] = []
         path_fallback_files: list[str] = []  # collected when symbol focus is too broad
-        # Skip keywords shorter than 4 chars before taking the top-3 cap.
+        # Skip keywords shorter than 4 chars before taking the top-5 cap.
         # Short tokens can't trigger path fallback (which requires len>=4) and rarely match
         # specific symbols. This prevents "req" (len=3) from blocking "resp" (len=4).
-        effective_keywords = [kw for kw in keywords if len(kw) >= 4][:3]
+        effective_keywords = [kw for kw in keywords if len(kw) >= 4][:5]
         _query_tokens = effective_keywords
         # C7: pre-compute git staleness map once for all per-keyword render_focused calls.
         # Without this, each render_focused call spawns its own `git log` subprocess (~66ms).
-        # For 3 keywords: saves ~132ms (2× 66ms avoided) at the cost of one upfront call.
+        # For 5 keywords: saves ~264ms (4× 66ms avoided) at the cost of one upfront call.
         _cl_staleness_map: "dict[str, int | None] | None" = None
         if effective_keywords:
             try:
@@ -260,8 +260,18 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
             no_match = not focused or "No symbols matching" in focused or "No exact match" in focused
             if not no_match:
                 kw_files = _extract_focus_files(focused)
-            too_broad = not no_match and len(kw_files) > 10
-            if no_match or too_broad:
+            # Gradual breadth decay: instead of hard 10-file cutoff, use:
+            #   1-8 files: keep all (no change)
+            #   9-15 files: keep top max(1, 15 - n_files) files (gradual reduction)
+            #   16+ files: discard entirely (hard cutoff raised from 10 to 15)
+            n_kw_files = len(kw_files) if not no_match else 0
+            too_broad = not no_match and n_kw_files > 15
+            _gradual_decay = not no_match and not too_broad and 9 <= n_kw_files <= 15
+            _decay_files: list[str] = []
+            if _gradual_decay:
+                keep_n = max(1, 15 - n_kw_files)
+                _decay_files = kw_files[:keep_n]
+            if no_match or too_broad or _gradual_decay:
                 # No symbol match OR too broad — try path-based fallback.
                 # Handles: (a) directory/module keywords (e.g. "demo" → demos/),
                 # (b) keyword is a module name but not a symbol (e.g. "config" → sanic/config.py).
@@ -271,7 +281,7 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                 # return just the DEFINING file(s) of the top-ranked symbol.
                 # Handles: "redirect" → flask/helpers.py (where redirect() lives) rather than all callers.
                 # Enabled by default (Phase 5.31 bench: +16.0% F1, p=0.012*, n=93).
-                if definition_first and too_broad and not path_fallback_files:
+                if definition_first and (too_broad or _gradual_decay) and not path_fallback_files:
                     scored = graph.search_symbols_scored(kw)
                     if scored:
                         top_score = scored[0][0]
@@ -288,6 +298,10 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                             ))
                             if 1 <= len(def_hits) <= 2:
                                 path_fallback_files = def_hits
+                # Gradual decay fallback: if path_fallback and definition_first both found nothing,
+                # inject the trimmed focus files (top N by BFS rank) as path_fallback_files.
+                if _gradual_decay and not path_fallback_files:
+                    path_fallback_files = _decay_files
                 continue
             focus_parts.append(focused)
 
