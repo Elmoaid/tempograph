@@ -9,7 +9,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { MODE_HINTS } from "../components/modeHints";
 import { MODES, formatAge, loadRecentCommands, saveRecentCommand, type RecentCommand } from "../components/modes";
-import { updateRunHistory, type RunHistoryEntry } from "../components/useModeRunner";
+import { updateRunHistory, type RunHistoryEntry } from "../hooks/useRunHistory";
 import { SUGGEST_NEXT_MAP, computeSuggestions } from "../hooks/useSuggestions";
 
 // ── modeHints coverage ────────────────────────────────────────────────────────
