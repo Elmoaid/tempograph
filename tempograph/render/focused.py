@@ -293,6 +293,20 @@ def _collect_seeds(
     return seeds, seed_files, query_tokens
 
 
+def _is_utility_callee(sym: Symbol, graph: "Tempo") -> bool:
+    """Symbol is a utility/hub if it has 10+ unique cross-file caller files."""
+    callers = graph._callers.get(sym.id, [])
+    if len(callers) < 10:
+        return False
+    cross_file_fps: set[str] = set()
+    for cid in callers:
+        if cid in graph.symbols and graph.symbols[cid].file_path != sym.file_path:
+            cross_file_fps.add(graph.symbols[cid].file_path)
+            if len(cross_file_fps) >= 10:
+                return True
+    return False
+
+
 def _sym_importance(graph: "Tempo", sym: Symbol) -> int:
     """Structural importance score for BFS prioritisation.
 
@@ -364,11 +378,12 @@ def _bfs_expand(
 
         # Sort within this batch: lower depth first (preserves BFS layering),
         # then cross-file nodes first, then hot-file nodes first (S1029),
-        # then by descending importance.
+        # then domain callees before utility/hub callees, then by descending importance.
         deduped.sort(key=lambda pair: (
             pair[1],                                                  # depth ascending
             pair[0].file_path in seed_files if seed_files else True,  # cross-file first
             pair[0].file_path not in graph.hot_files,                 # S1029: hot files first
+            _is_utility_callee(pair[0], graph),                       # domain (False=0) before utility (True=1)
             -_cached_importance(pair[0]),                              # importance descending
         ))
 
@@ -411,7 +426,10 @@ def _bfs_expand(
                     for caller in sorted(graph.callers_of(sym.id), key=_imp_key)[:caller_limit]:
                         if caller.id not in seen_ids:
                             next_level.append((caller, depth + 1))
-                for callee in sorted(graph.callees_of(sym.id), key=_imp_key)[:callee_limit]:
+                for callee in sorted(
+                    graph.callees_of(sym.id),
+                    key=lambda s: (_is_utility_callee(s, graph), -_cached_importance(s)),
+                )[:callee_limit]:
                     if callee.id not in seen_ids:
                         next_level.append((callee, depth + 1))
                 if depth < 2:
