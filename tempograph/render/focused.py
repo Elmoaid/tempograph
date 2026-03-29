@@ -5962,6 +5962,94 @@ def _compute_subclass_exposure(seeds: "list[Symbol]", graph: "Tempo") -> str:
     return f"↳ {n} subclasses: {parts}{overflow} — interface changes propagate to all"
 
 
+def _compute_hub_callee_warning(seeds: "list[Symbol]", graph: "Tempo") -> str:
+    """S1039: Hub callee warning — fires when a direct callee of the seed is itself a hub.
+
+    When editing a function, you may decide to also modify one of its callees to support
+    the change. But BFS doesn't show HOW WIDELY those callees are used across the codebase.
+    A callee with 10+ files depending on it is shared infrastructure — changing its signature
+    or behavior is a much larger blast radius than editing the seed alone.
+
+    Example outputs:
+      ↳ hub callee: build_graph (31 caller files) — shared infrastructure; changes here ripple broadly
+      ↳ hub callees: count_tokens (24 files), Config.get (52 files) — shared contracts; changes ripple broadly
+
+    Distinct from:
+    - S65 (change_exposure): SEED's own blast radius (its callers)
+    - S66 (hub BFS scope): SEED is a hub and BFS is truncated
+    - S1035 (orchestrator advisory): SEED has many callees, few callers
+    - S1036 (relay point): ONE callee dominates DOWNSTREAM reach
+
+    S1039 answers a different question: "if I decide to modify a callee during this edit,
+    how widely would that change propagate?"
+
+    Conditions:
+    - Seed is a function/method, not in test files
+    - At least one cross-file callee has >= 10 unique non-test caller files
+    """
+    if not seeds:
+        return ""
+    seed = seeds[0]
+    if seed.kind.value not in ("function", "method"):
+        return ""
+    if _is_test_file(seed.file_path):
+        return ""
+
+    seen_seed_ids: set[str] = {s.id for s in seeds}
+
+    # Cross-file callees of the seed (excluding co-seeds)
+    d1_callees: list["Symbol"] = [
+        graph.symbols[c_id]
+        for c_id in graph._callees.get(seed.id, [])
+        if c_id in graph.symbols
+        and graph.symbols[c_id].file_path != seed.file_path
+        and c_id not in seen_seed_ids
+    ]
+
+    if not d1_callees:
+        return ""
+
+    _HUB_THRESHOLD = 10
+
+    # For each cross-file callee, count unique non-test caller files (excluding callee's own file)
+    hub_callees: list[tuple["Symbol", int]] = []
+    for callee in d1_callees:
+        caller_files: set[str] = set()
+        for caller_id in graph._callers.get(callee.id, []):
+            caller_sym = graph.symbols.get(caller_id)
+            if caller_sym is None:
+                continue
+            if _is_test_file(caller_sym.file_path):
+                continue
+            if caller_sym.file_path == callee.file_path:
+                continue
+            caller_files.add(caller_sym.file_path)
+        if len(caller_files) >= _HUB_THRESHOLD:
+            hub_callees.append((callee, len(caller_files)))
+
+    if not hub_callees:
+        return ""
+
+    # Sort by caller count descending, show top 2
+    hub_callees.sort(key=lambda x: x[1], reverse=True)
+    shown = hub_callees[:2]
+    overflow_count = len(hub_callees) - 2
+
+    if len(shown) == 1:
+        callee, count = shown[0]
+        return (
+            f"↳ hub callee: {callee.qualified_name} ({count} caller files)"
+            f" — shared infrastructure; if you modify this callee, changes ripple broadly"
+        )
+    else:
+        parts = ", ".join(f"{c.qualified_name} ({n} files)" for c, n in shown)
+        overflow = f" (+{overflow_count} more)" if overflow_count > 0 else ""
+        return (
+            f"↳ hub callees: {parts}{overflow}"
+            f" — shared infrastructure; changes to these ripple broadly"
+        )
+
+
 def _compute_component_render_tree(seeds: "list[Symbol]", graph: "Tempo") -> str:
     """S1038: Component render tree — makes JSX/React RENDERS edges visible in focus output.
 
@@ -6163,6 +6251,10 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     _render_tree = _compute_component_render_tree(seeds, graph)
     if _render_tree:
         lines.append(_render_tree)
+        lines.append("")
+    _hub_callee = _compute_hub_callee_warning(seeds, graph)
+    if _hub_callee:
+        lines.append(_hub_callee)
         lines.append("")
     seen_files: set[str] = set()
     token_count = 0
