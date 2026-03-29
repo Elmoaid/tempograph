@@ -47,12 +47,13 @@ def _blast_core_a_exposure(
     # Files with large symbol counts have wide blast radii even without explicit importers;
     # any rename, signature change, or removal can break many unknown consumers.
     # O(N) fix: use symbols param (already filtered to file_path) instead of graph.symbols.values().
+    # Only fires when S183 did NOT already fire (avoids duplicate "large export" messages).
     _s301_exported = [
         s for s in symbols
         if s.exported
         and s.kind.value in ("function", "method", "class", "variable", "constant")
     ]
-    if len(_s301_exported) >= 15:
+    if len(_s301_exported) >= 15 and len(_s183_exported) < 10:
         lines.append(
             f"large API surface: {len(_s301_exported)} exported symbols"
             f" — wide blast radius; renaming or removing any symbol breaks unknown callers"
