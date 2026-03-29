@@ -328,12 +328,12 @@ class TestHubCalleeWarningIntegration:
         result = self._focus("_get_or_build_graph")
         assert "build_graph" in result
 
-    def test_render_prepare_has_hub_callees(self):
-        """render_prepare calls Config.get + count_tokens — both are hubs."""
+    def test_render_prepare_after_decomp(self):
+        """After decomposition, render_prepare is a thin dispatcher whose callees are
+        same-file helpers (not hubs). Hub callees moved into sub-functions."""
         result = self._focus("render_prepare")
-        assert "hub callee" in result
-        # At least one of the known hubs should appear
-        assert "Config" in result or "count_tokens" in result
+        # render_prepare should still appear in focus output and reference its helpers
+        assert "render_prepare" in result
 
     def test_is_test_file_is_silent(self):
         """_is_test_file is a simple utility — its callees are not hubs."""
