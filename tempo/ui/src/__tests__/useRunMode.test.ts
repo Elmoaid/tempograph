@@ -126,6 +126,189 @@ describe("useRunMode", () => {
   });
 });
 
+// ── cancel serial mechanism ──────────────────────────────────────────────────
+
+describe("useRunMode — cancel serial mechanism", () => {
+  afterEach(() => { vi.clearAllMocks(); });
+
+  it("cancelMode sets output to '[Cancelled]' and stops running", () => {
+    const setModeRunning = vi.fn();
+    const setModeOutput = vi.fn();
+    const config = makeConfig({ setModeRunning, setModeOutput });
+    const { result } = renderHook(() => useRunMode(config));
+    act(() => { result.current.cancelMode(); });
+    expect(setModeOutput).toHaveBeenCalledWith("[Cancelled]");
+    expect(setModeRunning).toHaveBeenCalledWith(false);
+  });
+
+  it("multiple cancels increment serial without error", () => {
+    const config = makeConfig();
+    const { result } = renderHook(() => useRunMode(config));
+    act(() => { result.current.cancelMode(); });
+    act(() => { result.current.cancelMode(); });
+    act(() => { result.current.cancelMode(); });
+    // Should not throw — each cancel increments serial
+    expect(config.setModeRunning).toHaveBeenCalledTimes(3);
+  });
+
+  it("cancel during run discards stale result", async () => {
+    // Make runTempo hang so we can cancel before it resolves
+    const { runTempo } = await import("../components/tempo");
+    let resolveRun!: (v: { output: string }) => void;
+    (runTempo as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () => new Promise(resolve => { resolveRun = resolve; })
+    );
+
+    const setModeOutput = vi.fn();
+    const config = makeConfig({ setModeOutput });
+    const { result } = renderHook(() => useRunMode(config));
+
+    // Start run
+    let runPromise: Promise<boolean>;
+    await act(async () => { runPromise = result.current.runMode(); });
+
+    // Cancel before resolve
+    act(() => { result.current.cancelMode(); });
+    expect(setModeOutput).toHaveBeenCalledWith("[Cancelled]");
+
+    // Now resolve the stale run — the result should be discarded
+    await act(async () => {
+      resolveRun({ output: "stale result" });
+      await runPromise!;
+    });
+
+    // The last call to setModeOutput should still be "[Cancelled]", not "stale result"
+    const calls = setModeOutput.mock.calls.map((c: [string]) => c[0]);
+    expect(calls[calls.length - 1]).toBe("[Cancelled]");
+  });
+});
+
+// ── error handling ──────────────────────────────────────────────────────────
+
+describe("useRunMode — error handling", () => {
+  afterEach(() => { vi.clearAllMocks(); });
+
+  it("sets error message when runTempo throws", async () => {
+    const { runTempo } = await import("../components/tempo");
+    (runTempo as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("network failure"));
+
+    const setModeOutput = vi.fn();
+    const config = makeConfig({ setModeOutput });
+    const { result } = renderHook(() => useRunMode(config));
+
+    await act(async () => { await result.current.runMode(); });
+
+    expect(setModeOutput).toHaveBeenCalledWith(
+      "Failed to run mode. Check that tempo is installed."
+    );
+  });
+
+  it("returns false when runTempo throws", async () => {
+    const { runTempo } = await import("../components/tempo");
+    (runTempo as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("fail"));
+
+    const config = makeConfig();
+    const { result } = renderHook(() => useRunMode(config));
+
+    let returnValue: boolean | undefined;
+    await act(async () => { returnValue = await result.current.runMode(); });
+    expect(returnValue).toBe(false);
+  });
+
+  it("sets modeRunning to false after error", async () => {
+    const { runTempo } = await import("../components/tempo");
+    (runTempo as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("fail"));
+
+    const setModeRunning = vi.fn();
+    const config = makeConfig({ setModeRunning });
+    const { result } = renderHook(() => useRunMode(config));
+
+    await act(async () => { await result.current.runMode(); });
+
+    // Last call should be false (stopped running)
+    const lastCall = setModeRunning.mock.calls[setModeRunning.mock.calls.length - 1];
+    expect(lastCall[0]).toBe(false);
+  });
+
+  it("clears statusText after error", async () => {
+    const { runTempo } = await import("../components/tempo");
+    (runTempo as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("fail"));
+
+    const config = makeConfig();
+    const { result } = renderHook(() => useRunMode(config));
+
+    await act(async () => { await result.current.runMode(); });
+    expect(result.current.statusText).toBe("");
+  });
+});
+
+// ── runMode behavior ────────────────────────────────────────────────────────
+
+describe("useRunMode — runMode behavior", () => {
+  afterEach(() => { vi.clearAllMocks(); });
+
+  it("sets modeRunning to true at start of run", async () => {
+    const { runTempo } = await import("../components/tempo");
+    (runTempo as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ output: "ok" });
+
+    const setModeRunning = vi.fn();
+    const config = makeConfig({ setModeRunning });
+    const { result } = renderHook(() => useRunMode(config));
+
+    await act(async () => { await result.current.runMode(); });
+
+    // First call should be true (started running)
+    expect(setModeRunning.mock.calls[0][0]).toBe(true);
+  });
+
+  it("clears modeOutput at start of run", async () => {
+    const { runTempo } = await import("../components/tempo");
+    (runTempo as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ output: "ok" });
+
+    const setModeOutput = vi.fn();
+    const config = makeConfig({ setModeOutput });
+    const { result } = renderHook(() => useRunMode(config));
+
+    await act(async () => { await result.current.runMode(); });
+
+    // First call should clear output
+    expect(setModeOutput.mock.calls[0][0]).toBe("");
+  });
+
+  it("resets elapsed to 0 at start of run", async () => {
+    const { runTempo } = await import("../components/tempo");
+    (runTempo as ReturnType<typeof vi.fn>).mockResolvedValueOnce({ output: "ok" });
+
+    const setElapsed = vi.fn();
+    const config = makeConfig({ setElapsed });
+    const { result } = renderHook(() => useRunMode(config));
+
+    await act(async () => { await result.current.runMode(); });
+    expect(setElapsed).toHaveBeenCalledWith(0);
+  });
+
+  it("sets initial status to 'Indexing...'", async () => {
+    const { runTempo } = await import("../components/tempo");
+    let resolveRun!: (v: { output: string }) => void;
+    (runTempo as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () => new Promise(resolve => { resolveRun = resolve; })
+    );
+
+    const config = makeConfig();
+    const { result } = renderHook(() => useRunMode(config));
+
+    let runPromise: Promise<boolean>;
+    await act(async () => { runPromise = result.current.runMode(); });
+    expect(result.current.statusText).toBe("Indexing...");
+
+    // Clean up
+    await act(async () => {
+      resolveRun({ output: "done" });
+      await runPromise!;
+    });
+  });
+});
+
 // ── module exports ───────────────────────────────────────────────────────────
 
 describe("useRunMode — module exports", () => {
