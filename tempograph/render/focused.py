@@ -6288,6 +6288,81 @@ def _compute_hub_callee_warning(seeds: "list[Symbol]", graph: "Tempo") -> str:
         )
 
 
+def _compute_cross_language_callees(
+    seeds: "list[Symbol]",
+    ordered: "list[tuple[Symbol, int]]",
+    graph: "Tempo",
+) -> str:
+    """S1040: Cross-language callee warning — fires when a depth-1 BFS callee is in a
+    different language than the seed.
+
+    Graph-level symbol matching can produce false edges: Python code like
+    ``cfg_path.exists()`` matches a TypeScript ``AmbientStatus.exists`` property
+    because both use the method name "exists".  These phantom cross-language edges
+    appear in the BFS output and may mislead agents into treating them as real
+    dependencies.
+
+    Fires when:
+    - The seed is a non-test Python/Rust/Go function or method
+    - At least one depth-1 callee is in a different language (TypeScript, JavaScript, etc.)
+    - The seed directly calls that callee (confirmed via _callees index)
+
+    Output example:
+      ↳ cross-language callees: AmbientStatus.exists (TypeScript) — may be symbol-name
+        collision (Python .exists() → TS property); verify or suppress with exclude_dirs
+
+    Does NOT fire when the seed itself is TypeScript/JavaScript (cross-language rendering
+    edges like JSX are expected in that context).
+    """
+    if not seeds or not ordered:
+        return ""
+    seed = seeds[0]
+    if seed.kind.value not in ("function", "method"):
+        return ""
+    if _is_test_file(seed.file_path):
+        return ""
+
+    _SCRIPT_LANGS = {"typescript", "javascript", "tsx", "jsx"}
+    _BACKEND_LANGS = {"python", "rust", "go", "java", "c", "cpp", "ruby", "csharp"}
+    seed_lang = seed.language.value.lower()
+
+    # Only fire when seed is a backend language — frontend cross-language edges are expected
+    if seed_lang not in _BACKEND_LANGS:
+        return ""
+
+    seed_ids = {s.id for s in seeds}
+    cross_lang: list[tuple["Symbol", str]] = []
+
+    for sym, depth in ordered:
+        if depth != 1:
+            continue
+        if _is_test_file(sym.file_path):
+            continue
+        callee_lang = sym.language.value.lower()
+        if callee_lang not in _SCRIPT_LANGS:
+            continue
+        # Confirm the seed actually calls this symbol (not just an orbit injection)
+        if not any(sym.id in graph._callees.get(sid, []) for sid in seed_ids):
+            continue
+        cross_lang.append((sym, callee_lang))
+
+    if not cross_lang:
+        return ""
+
+    _lang_display = {"typescript": "TypeScript", "javascript": "JavaScript",
+                     "tsx": "TypeScript", "jsx": "JavaScript"}
+    parts = ", ".join(
+        f"{sym.qualified_name} ({_lang_display.get(lang, lang.capitalize())})"
+        for sym, lang in cross_lang[:3]
+    )
+    overflow = f" +{len(cross_lang) - 3} more" if len(cross_lang) > 3 else ""
+    return (
+        f"↳ cross-language callees: {parts}{overflow}"
+        f" — may be symbol-name collision (e.g. Python .exists() → TS property);"
+        f" verify or suppress with exclude_dirs"
+    )
+
+
 def _compute_component_render_tree(seeds: "list[Symbol]", graph: "Tempo") -> str:
     """S1038: Component render tree — makes JSX/React RENDERS edges visible in focus output.
 
@@ -6528,6 +6603,10 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000, _stalene
     _hub_callee = _compute_hub_callee_warning(seeds, graph)
     if _hub_callee:
         lines.append(_hub_callee)
+        lines.append("")
+    _cross_lang = _compute_cross_language_callees(seeds, ordered, graph)
+    if _cross_lang:
+        lines.append(_cross_lang)
         lines.append("")
     seen_files: set[str] = set()
     # Count header sections already written to lines (change_exposure, scope_note,
