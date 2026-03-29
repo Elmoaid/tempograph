@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { runTempo } from "./tempo";
 import { MODES, loadHistory, saveRecentCommand } from "./modes";
 import { BUILTIN_KITS, type KitInfo } from "./kits";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
@@ -17,7 +16,7 @@ import { useRunHistory, type RunHistoryEntry } from "../hooks/useRunHistory";
 export type { RunHistoryEntry };
 
 
-export interface ModeRunnerState {
+interface ModeRunnerState {
   activeMode: string;
   activeKit: string | null;
   sidebarTab: "kits" | "modes";
@@ -58,7 +57,7 @@ export interface ModeRunnerState {
   statusText: string;
 }
 
-export interface ModeRunnerActions {
+interface ModeRunnerActions {
   setActiveMode: (mode: string) => void;
   setSidebarTab: (tab: "kits" | "modes") => void;
   setKitBuilderOpen: (open: boolean) => void;
@@ -134,10 +133,10 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   const outputTsCache = useRef<Map<string, number>>(new Map());
   const [cachedModes, setCachedModes] = useState<Set<string>>(new Set());
   const [outputTs, setOutputTs] = useState<number | null>(null);
-  const runStart = useRef<number | null>(null);
+  const runStartRef = useRef<number | null>(null);
   const runDurationCache = useRef<Map<string, number>>(new Map());
   const [runDuration, setRunDuration] = useState<number | null>(null);
-  const { elapsed, resetElapsed: setElapsed } = useElapsedTimer(modeRunning, runStart);
+  const { elapsed, resetElapsed: setElapsed } = useElapsedTimer(modeRunning, runStartRef);
   const { runHistory, addRunHistory } = useRunHistory();
 
   const activeModeInfo = buildActiveModeInfo(activeKit, activeMode, customKits);
@@ -262,7 +261,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     outputCache,
     outputTsCache,
     runDurationCache,
-    runStart,
+    runStartRef,
     setElapsed,
     setModeRunning,
     setModeOutput,
@@ -277,8 +276,8 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     saveRecentCommand(activeMode, modeArgs);
     return _runMode();
   }, [_runMode, modeOutput, activeMode, modeArgs]);
-  runModeRef.current = runMode;
-  cancelModeRef.current = cancelMode;
+  useEffect(() => { runModeRef.current = runMode; }, [runMode]);
+  useEffect(() => { cancelModeRef.current = cancelMode; }, [cancelMode]);
 
   const onHistorySelect = (q: string) => {
     setModeArgs(q);
@@ -299,7 +298,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     setModeOutput("");
     setOutputTs(null);
     setTimeout(() => runModeRef.current?.(), 0);
-  }, [repoPath, activeMode, activeKit, modeArgs, resetFilter]);
+  }, [repoPath, activeMode, activeKit, modeArgs, resetFilter, setHistoryOpen]);
 
   const runSuggestion = (mode: string) => {
     switchMode(mode);

@@ -32,6 +32,7 @@ export function useAmbientStatus(repoPath: string) {
   }, [repoPath]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- checkStatus is async; setState is called after await
     checkStatus();
   }, [checkStatus]);
 

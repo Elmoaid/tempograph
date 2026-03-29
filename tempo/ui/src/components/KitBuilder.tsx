@@ -40,7 +40,7 @@ export function KitBuilder({ repoPath, onSave, onClose }: Props) {
   const toggleMode = (mode: string) => {
     setSelectedModes(prev => {
       const next = new Set(prev);
-      next.has(mode) ? next.delete(mode) : next.add(mode);
+      if (next.has(mode)) next.delete(mode); else next.add(mode);
       return next;
     });
   };

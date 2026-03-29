@@ -102,7 +102,7 @@ export async function detectRepo(): Promise<TempoResult> {
   const fn = await getInvoke();
   try {
     return await fn("detect_repo");
-  } catch (e) {
+  } catch {
     return { success: false, output: "", mode: "detect" };
   }
 }
