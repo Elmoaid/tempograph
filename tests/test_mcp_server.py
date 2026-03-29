@@ -17309,8 +17309,24 @@ class TestOverviewMultiPackage:
 # ---------------------------------------------------------------------------
 
 class TestBlastLargeApiSurface:
-    def test_large_api_surface_shown(self, tmp_path):
-        """S301: 'large API surface' shown when target exports 15+ symbols."""
+    def test_large_api_surface_shown_via_variables(self, tmp_path):
+        """S301: 'large API surface' fires when 15+ exports include variables (S183 not triggered)."""
+        from tempograph.builder import build_graph
+        from tempograph.render.blast import render_blast_radius
+        # 8 functions (below S183 threshold of 10) + 8 variables = 16 total (above S301 threshold of 15)
+        fns = "\n".join(f"def api_{i}(): pass\n" for i in range(8))
+        vars_ = "\n".join(f"VAR_{i} = {i}\n" for i in range(8))
+        (tmp_path / "api.py").write_text(fns + vars_)
+        (tmp_path / "client.py").write_text(
+            "from api import " + ", ".join(f"api_{i}" for i in range(8)) + "\n"
+        )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_blast_radius(g, "api.py")
+        assert "large API surface" in out, f"Expected 'large API surface'; got:\n{out}"
+        assert "exported symbols" in out
+
+    def test_large_api_surface_deduped_with_s183(self, tmp_path):
+        """S301 suppressed when S183 already fired (16 functions >= both thresholds)."""
         from tempograph.builder import build_graph
         from tempograph.render.blast import render_blast_radius
         fns = "\n".join(f"def api_{i}(): pass\n" for i in range(16))
@@ -17320,8 +17336,8 @@ class TestBlastLargeApiSurface:
         )
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_blast_radius(g, "api.py")
-        assert "large API surface" in out, f"Expected 'large API surface'; got:\n{out}"
-        assert "exported symbols" in out
+        assert "large export count" in out, f"Expected S183 'large export count'; got:\n{out}"
+        assert "large API surface" not in out, f"S301 should be suppressed when S183 fires; got:\n{out}"
 
     def test_large_api_surface_absent_for_small_file(self, tmp_path):
         """S301: 'large API surface' absent when file has few exports."""

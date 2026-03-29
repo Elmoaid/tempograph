@@ -1018,7 +1018,7 @@ def search_semantic(repo_path: str, query: str, limit: int = 10,
     p, err = _validate_repo(repo_path)
     if err:
         return err
-    graph = _get_or_build_graph(p, _resolve_excludes(exclude_dirs))
+    graph = _get_or_build_graph(p, _resolve_excludes(p, exclude_dirs))
     if isinstance(graph, str):
         return graph
 

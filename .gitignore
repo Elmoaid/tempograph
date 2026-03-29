@@ -10,16 +10,15 @@ build/
 .venv/
 bench/results/
 archive/
+
+# Internal — agent orchestration, strategy, notes
 .claude.local.md
 .claude/
 .tempo/
-# Agent operational logs (high-churn, no git value)
-notes/agent-log/*.jsonl
-# Exception: escalation log IS tracked
-!notes/agent-log/escalation.jsonl
-# Transient lock state
-notes/agent-locks.json
-# Old-style notes (keep agent state files tracked)
+notes/
+plans/
+scripts/
 Master Plan/
-# Agent worktrees
 .worktrees/
+HANDOFF.md
+docs/superpowers/

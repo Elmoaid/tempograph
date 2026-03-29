@@ -31,8 +31,6 @@ def _get_test_index(graph: Tempo) -> list[tuple[str, Symbol]]:
     graph.__dict__[_TEST_INDEX_ATTR] = pairs
     return pairs
 
-_MONOLITH_THRESHOLD = 1000
-
 
 def _extract_focus_files(focus_output: str, task_keywords: list[str] | None = None) -> list[str]:
     """Extract unique file paths from a render_focused output string.
@@ -446,7 +444,7 @@ def _handle_overflow(
     symbol names so agents know which hub symbols were truncated."""
     block_tokens = count_tokens(block)
     if token_count + block_tokens + 1 > max_tokens:  # +1 for separator "\n" in final join
-        remaining = len(ordered) - len([l for l in lines if l and not l.startswith("...")])
+        remaining = len(ordered) - current_idx
         if remaining > 0:
             hi_names: list[tuple[int, str]] = []
             if graph is not None:
@@ -1327,14 +1325,18 @@ def _build_seed_callee_chain_line(
     lines: list[str] = []
     if sym.kind.value not in ("function", "method"):
         return lines
+    _sym_callees = graph.callees_of(sym.id)
+    if not _sym_callees:
+        _sym_callees = graph.callees_of(sym.file_path)
     _file_callees = [
-        c for c in graph.callees_of(sym.file_path)
+        c for c in _sym_callees
         if c.file_path != sym.file_path
     ]
     if 1 <= len(_file_callees) <= 4:
         _chain_parts = [sym.name, _file_callees[0].name]
         _c1 = _file_callees[0]
-        _c1_callees = [c for c in graph.callees_of(_c1.file_path) if c.file_path != _c1.file_path]
+        _c1_callees = graph.callees_of(_c1.id) or graph.callees_of(_c1.file_path)
+        _c1_callees = [c for c in _c1_callees if c.file_path != _c1.file_path]
         if _c1_callees:
             _chain_parts.append(_c1_callees[0].name)
         lines.append(f"{indent}  callee chain: {' → '.join(_chain_parts)}")
@@ -5368,9 +5370,6 @@ def _compute_change_exposure(graph: "Tempo", seeds: "list[Symbol]") -> str:
     if not seeds or not graph:
         return ""
 
-    def _itf(fp: str) -> bool:
-        return "/test" in fp or fp.startswith("test") or "tests/" in fp or fp.endswith("_test.py")
-
     caller_files: set[str] = set()
     hot_callees_n = 0
     hot_callers_n = 0
@@ -5382,7 +5381,7 @@ def _compute_change_exposure(graph: "Tempo", seeds: "list[Symbol]") -> str:
         sym_file = sym.file_path
 
         # Callers (non-test only)
-        callers = [c for c in graph.callers_of(sym.id) if not _itf(c.file_path)]
+        callers = [c for c in graph.callers_of(sym.id) if not _is_test_file(c.file_path)]
         for c in callers:
             if c.file_path != sym_file:
                 caller_files.add(c.file_path)
@@ -5391,12 +5390,12 @@ def _compute_change_exposure(graph: "Tempo", seeds: "list[Symbol]") -> str:
 
         # Callees (cross-file, non-test)
         callees = [c for c in graph.callees_of(sym.id)
-                   if c.file_path != sym_file and not _itf(c.file_path)]
+                   if c.file_path != sym_file and not _is_test_file(c.file_path)]
         cross_callees_total += len(callees)
         if hot:
             hot_callees_n += sum(1 for c in callees if c.file_path in hot)
         for callee in callees:
-            if not any(_itf(t.file_path) for t in graph.callers_of(callee.id)):
+            if not any(_is_test_file(t.file_path) for t in graph.callers_of(callee.id)):
                 untested_cross_callees += 1
 
     seed_in_hot = bool(hot and any(s.file_path in hot for s in seeds))
@@ -6430,13 +6429,10 @@ def _compute_stability_mismatch(graph: "Tempo", seeds: "list[Symbol]") -> str:
     if any(s.file_path in hot for s in seeds):
         return ""
 
-    def _is_test(fp: str) -> bool:
-        return "/test" in fp or fp.startswith("test") or "tests/" in fp or fp.endswith("_test.py")
-
     hot_caller_files: set[str] = set()
     for sym in seeds:
         for c in graph.callers_of(sym.id):
-            if c.file_path in hot and not _is_test(c.file_path) and c.file_path != sym.file_path:
+            if c.file_path in hot and not _is_test_file(c.file_path) and c.file_path != sym.file_path:
                 hot_caller_files.add(c.file_path)
     if len(hot_caller_files) < 2:
         return ""

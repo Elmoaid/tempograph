@@ -47,12 +47,13 @@ def _blast_core_a_exposure(
     # Files with large symbol counts have wide blast radii even without explicit importers;
     # any rename, signature change, or removal can break many unknown consumers.
     # O(N) fix: use symbols param (already filtered to file_path) instead of graph.symbols.values().
+    # Only fires when S183 did NOT already fire (avoids duplicate "large export" messages).
     _s301_exported = [
         s for s in symbols
         if s.exported
         and s.kind.value in ("function", "method", "class", "variable", "constant")
     ]
-    if len(_s301_exported) >= 15:
+    if len(_s301_exported) >= 15 and len(_s183_exported) < 10:
         lines.append(
             f"large API surface: {len(_s301_exported)} exported symbols"
             f" — wide blast radius; renaming or removing any symbol breaks unknown callers"
@@ -2124,23 +2125,15 @@ def _resolve_blast_file_path(graph: Tempo, file_path: str) -> str:
     return file_path
 
 
-def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
-    """Show what might break if a file or symbol is modified.
-
-    If query is given, shows blast radius for matching symbols instead of
-    the whole file — much more useful for monolith files."""
-    if query:
-        return _render_symbol_blast(graph, query)
-
+def _blast_lookup(graph: Tempo, file_path: str):
+    """Resolve file_path to a FileInfo, returning (fi, path) on success or an error string."""
     fi = graph.files.get(file_path)
     if not fi:
-        # Try path normalization before giving up (absolute paths, partial paths)
         _resolved = _resolve_blast_file_path(graph, file_path)
         if _resolved != file_path:
             fi = graph.files.get(_resolved)
             if fi:
                 file_path = _resolved
-
     if not fi:
         if file_path and Path(file_path).exists():
             parent_dir = Path(file_path).parent.name
@@ -2152,7 +2145,6 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                 "   Re-run without --exclude to index it, or run "
                 "`tempograph . --mode overview` to see what is currently indexed."
             )
-        # Early-exit for type stub files not indexed by graph (see S419 in main signals).
         if file_path.lower().endswith(".pyi"):
             return (
                 f"type stub blast: {file_path.rsplit('/', 1)[-1]} is a type stub"
@@ -2160,8 +2152,6 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                 f" update callers together\n"
                 f"(stub files are not graph-indexed; run mypy/pyright to check downstream impact)"
             )
-        # Fallback: check if the path is an ambiguous suffix (multiple files match).
-        # This converts a silent empty result into actionable candidates.
         _needle = file_path.lstrip("/").lstrip("./").replace("\\", "/")
         if _needle:
             _candidates = sorted(
@@ -2176,78 +2166,84 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
                     f"{_hint}"
                 ).rstrip()
         return f"File '{file_path}' not found."
+    return fi, file_path
 
-    lines = [f"Blast radius for {file_path}:", ""]
 
-    # S108: File age in blast header — how recently was this file last committed?
-    # Freshly touched = actively being developed = changes need extra care.
-    # Old = potentially ossified — touching it after long stability carries surprise risk.
-    if graph.root:
+def _blast_file_age(graph: Tempo, file_path: str, lines: list[str]) -> None:
+    """Append file age signal (S108) to lines if available."""
+    if not graph.root:
+        return
+    try:
+        from ..git import file_last_modified_days as _fld_blast  # noqa: PLC0415
+        _blast_age = _fld_blast(graph.root, file_path)
+        if _blast_age is not None:
+            if _blast_age <= 3:
+                _age_label = f"last touched: {_blast_age}d ago (active)"
+            elif _blast_age >= 90:
+                _age_label = f"last touched: {_blast_age}d ago (stable)"
+            else:
+                _age_label = f"last touched: {_blast_age}d ago"
+            lines.append(_age_label)
+    except Exception:
+        pass
+
+
+def _blast_importers_section(
+    graph: Tempo, file_path: str, symbols: list, importers: list[str], lines: list[str]
+) -> None:
+    """Append direct importers section with usage, safety, and recency info."""
+    if not importers:
+        return
+    lines.append(f"Directly imported by ({len(importers)}):")
+    # Build index: importer_file → [caller symbol names that call INTO blast target]
+    _target_sym_ids = {sym.id for sym in symbols}
+    _importer_users: dict[str, list[str]] = {}
+    _importer_file_set = set(importers)
+    for _sym_id_imp in _target_sym_ids:
+        for _caller_imp in graph.callers_of(_sym_id_imp):
+            if _caller_imp.file_path in _importer_file_set:
+                _importer_users.setdefault(_caller_imp.file_path, []).append(_caller_imp.name)
+    _all_test_fps = {fp for fp in graph.files if _is_test_file(fp)}
+    _src_importers = [imp for imp in importers if not _is_test_file(imp)]
+    # Sort by call count descending: most-dependent callers appear first.
+    # Ties broken by file path for stable output.
+    _sorted_importers = sorted(
+        importers, key=lambda imp: (-len(_importer_users.get(imp, [])), imp)
+    )
+    for imp in _sorted_importers:
+        users = _importer_users.get(imp, [])
+        unique_users = list(dict.fromkeys(users))[:3]  # deduplicate, cap at 3
+        if unique_users:
+            lines.append(f"  {imp} — used by: {', '.join(unique_users)}")
+        else:
+            lines.append(f"  {imp}")
+    # Refactor safety: how many source importers have test coverage?
+    if _src_importers and _all_test_fps:
+        _tested = sum(
+            1 for imp in _src_importers
+            if any(imp.rsplit("/", 1)[-1].rsplit(".", 1)[0] in t for t in _all_test_fps)
+        )
+        _pct = int(_tested / len(_src_importers) * 100)
+        lines.append(f"  refactor safety: {_tested}/{len(_src_importers)} caller files tested ({_pct}%)")
+    # S51: recent callers — importers modified in last 14 days signal blast radius growing
+    if _src_importers and graph.root:
         try:
-            from ..git import file_last_modified_days as _fld_blast  # noqa: PLC0415
-            _blast_age = _fld_blast(graph.root, file_path)
-            if _blast_age is not None:
-                if _blast_age <= 3:
-                    _age_label = f"last touched: {_blast_age}d ago (active)"
-                elif _blast_age >= 90:
-                    _age_label = f"last touched: {_blast_age}d ago (stable)"
-                else:
-                    _age_label = f"last touched: {_blast_age}d ago"
-                lines.append(_age_label)
+            from ..git import file_last_modified_days as _fld  # noqa: PLC0415
+            _recent = [(imp, _fld(graph.root, imp)) for imp in _src_importers]
+            _recent = [(imp, d) for imp, d in _recent if d is not None and d <= 14]
+            if len(_recent) >= 2:
+                _recent.sort(key=lambda x: x[1])
+                _rec_parts = [f"{imp.rsplit('/', 1)[-1]} ({d}d ago)" for imp, d in _recent[:3]]
+                lines.append(f"  Recent callers (14d): {', '.join(_rec_parts)}  ← blast radius growing")
         except Exception:
             pass
+    lines.append("")
 
-    # Direct importers
-    importers = graph.importers_of(file_path)
-    if importers:
-        lines.append(f"Directly imported by ({len(importers)}):")
-        # Build index: importer_file → [caller symbol names that call INTO blast target]
-        _target_sym_ids = set(fi.symbols)
-        _importer_users: dict[str, list[str]] = {}
-        _importer_file_set = set(importers)
-        for _sym_id_imp in _target_sym_ids:
-            for _caller_imp in graph.callers_of(_sym_id_imp):
-                if _caller_imp.file_path in _importer_file_set:
-                    _importer_users.setdefault(_caller_imp.file_path, []).append(_caller_imp.name)
-        _all_test_fps = {fp for fp in graph.files if _is_test_file(fp)}
-        _src_importers = [imp for imp in importers if not _is_test_file(imp)]
-        # Sort by call count descending: most-dependent callers appear first.
-        # Ties broken by file path for stable output.
-        _sorted_importers = sorted(
-            importers, key=lambda imp: (-len(_importer_users.get(imp, [])), imp)
-        )
-        for imp in _sorted_importers:
-            users = _importer_users.get(imp, [])
-            unique_users = list(dict.fromkeys(users))[:3]  # deduplicate, cap at 3
-            if unique_users:
-                lines.append(f"  {imp} — used by: {', '.join(unique_users)}")
-            else:
-                lines.append(f"  {imp}")
-        # Refactor safety: how many source importers have test coverage?
-        if _src_importers and _all_test_fps:
-            _tested = sum(
-                1 for imp in _src_importers
-                if any(imp.rsplit("/", 1)[-1].rsplit(".", 1)[0] in t for t in _all_test_fps)
-            )
-            _pct = int(_tested / len(_src_importers) * 100)
-            lines.append(f"  refactor safety: {_tested}/{len(_src_importers)} caller files tested ({_pct}%)")
-        # S51: recent callers — importers modified in last 14 days signal blast radius growing
-        if _src_importers and graph.root:
-            try:
-                from ..git import file_last_modified_days as _fld  # noqa: PLC0415
-                _recent = [(imp, _fld(graph.root, imp)) for imp in _src_importers]
-                _recent = [(imp, d) for imp, d in _recent if d is not None and d <= 14]
-                if len(_recent) >= 2:
-                    _recent.sort(key=lambda x: x[1])
-                    _rec_parts = [f"{imp.rsplit('/', 1)[-1]} ({d}d ago)" for imp, d in _recent[:3]]
-                    lines.append(f"  Recent callers (14d): {', '.join(_rec_parts)}  ← blast radius growing")
-            except Exception:
-                pass
-        lines.append("")
 
-    # Symbols in this file that are called externally
-    symbols = [graph.symbols[sid] for sid in fi.symbols if sid in graph.symbols]
-
+def _blast_symbols_section(
+    graph: Tempo, file_path: str, symbols: list, lines: list[str]
+) -> tuple[dict, set]:
+    """Append export surface, external callers, untested exports, render targets; return (external_callers, render_targets)."""
     # S111: Export surface — fraction of symbols in blast file that are exported.
     # High export ratio = public API file = callers everywhere = max review caution.
     # Only shown when 3+ total symbols and ratio >= 50%.
@@ -2257,14 +2253,12 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
         _exp_pct = int(len(_exported_file_syms) / len(_all_file_syms) * 100)
         if _exp_pct >= 50:
             lines.append(f"export surface: {len(_exported_file_syms)}/{len(_all_file_syms)} symbols exported ({_exp_pct}%)")
-
     external_callers: dict[str, list[str]] = {}
     for sym in symbols:
         callers = graph.callers_of(sym.id)
         ext = [c for c in callers if c.file_path != file_path]
         if ext:
             external_callers[sym.qualified_name] = [f"{c.file_path}:{c.line_start}" for c in ext]
-
     if external_callers:
         lines.append("Externally called symbols:")
         for name, locations in sorted(external_callers.items()):
@@ -2272,7 +2266,6 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             for loc in locations[:5]:
                 lines.append(f"    {loc}")
         lines.append("")
-
     # S91: Untested exports — exported functions/methods with no test callers.
     # Agents need to know which symbols lack a safety net before making changes.
     # Only shown when 2+ qualify (single untested export is too common to be signal).
@@ -2288,42 +2281,48 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             _ue_str += f" +{len(_untested_exports) - 5} more"
         lines.append(f"Untested exports ({len(_untested_exports)}): {_ue_str} — no test coverage")
         lines.append("")
-
-    # Render edges (components that render components from this file)
-    render_targets = set()
+    render_targets: set = set()
     for sym in symbols:
         for renderer in graph.renderers_of(sym.id):
             if renderer.file_path != file_path:
                 render_targets.add(f"{renderer.file_path}:{renderer.line_start} renders {sym.name}")
-
     if render_targets:
         lines.append("Component render relationships:")
         for rt in sorted(render_targets):
             lines.append(f"  {rt}")
+    return external_callers, render_targets
 
-    # Transitive import cascade — BFS over import graph (cap: 5 levels, 200 files)
-    if importers:
-        _visited: set[str] = {file_path}
-        _by_depth: dict[int, int] = {}
-        _queue: list[tuple[str, int]] = [(fp, 1) for fp in importers]
-        while _queue:
-            fp, depth = _queue.pop(0)
-            if fp in _visited or depth > 5:
-                continue
-            if sum(_by_depth.values()) >= 200:
-                break
-            _visited.add(fp)
-            _by_depth[depth] = _by_depth.get(depth, 0) + 1
-            _queue.extend((nfp, depth + 1) for nfp in graph.importers_of(fp) if nfp not in _visited)
-        if len(_by_depth) > 1:  # only show when cascade goes beyond direct importers
-            _total = sum(_by_depth.values())
-            _max_d = max(_by_depth.keys())
-            _depth_str = ", ".join(f"d{d}:{_by_depth[d]}" for d in sorted(_by_depth.keys()))
-            lines.append(f"Transitive cascade: {_total} file(s) up to depth {_max_d} ({_depth_str})")
-            lines.append("")
 
-    # Test files: collect test files that directly call symbols in this file
-    # or directly import this file. Shows agents exactly which tests to run.
+def _blast_cascade_section(
+    graph: Tempo, file_path: str, importers: list[str], lines: list[str]
+) -> None:
+    """Append transitive import cascade BFS (cap: 5 levels, 200 files)."""
+    if not importers:
+        return
+    _visited: set[str] = {file_path}
+    _by_depth: dict[int, int] = {}
+    _queue: list[tuple[str, int]] = [(fp, 1) for fp in importers]
+    while _queue:
+        fp, depth = _queue.pop(0)
+        if fp in _visited or depth > 5:
+            continue
+        if sum(_by_depth.values()) >= 200:
+            break
+        _visited.add(fp)
+        _by_depth[depth] = _by_depth.get(depth, 0) + 1
+        _queue.extend((nfp, depth + 1) for nfp in graph.importers_of(fp) if nfp not in _visited)
+    if len(_by_depth) > 1:  # only show when cascade goes beyond direct importers
+        _total = sum(_by_depth.values())
+        _max_d = max(_by_depth.keys())
+        _depth_str = ", ".join(f"d{d}:{_by_depth[d]}" for d in sorted(_by_depth.keys()))
+        lines.append(f"Transitive cascade: {_total} file(s) up to depth {_max_d} ({_depth_str})")
+        lines.append("")
+
+
+def _blast_tests_section(
+    graph: Tempo, file_path: str, symbols: list, importers: list[str], lines: list[str]
+) -> None:
+    """Append test files that cover symbols in or directly import this file."""
     _blast_tests: dict[str, int] = {}  # test_file_path → symbol call count
     for sym in symbols:
         for caller in graph.callers_of(sym.id):
@@ -2333,20 +2332,22 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
     for imp in importers:
         if _is_test_file(imp):
             _blast_tests.setdefault(imp, 0)
-    if _blast_tests:
-        _sorted_tests = sorted(_blast_tests.items(), key=lambda x: -x[1])
-        _shown = _sorted_tests[:5]
-        lines.append(f"Tests to run ({len(_blast_tests)}):")
-        for _tfp, _cnt in _shown:
-            _lbl = f" ({_cnt} call{'s' if _cnt != 1 else ''})" if _cnt else ""
-            lines.append(f"  {_tfp}{_lbl}")
-        if len(_blast_tests) > 5:
-            lines.append(f"  ... and {len(_blast_tests) - 5} more")
-        lines.append("")
+    if not _blast_tests:
+        return
+    _sorted_tests = sorted(_blast_tests.items(), key=lambda x: -x[1])
+    lines.append(f"Tests to run ({len(_blast_tests)}):")
+    for _tfp, _cnt in _sorted_tests[:5]:
+        _lbl = f" ({_cnt} call{'s' if _cnt != 1 else ''})" if _cnt else ""
+        lines.append(f"  {_tfp}{_lbl}")
+    if len(_blast_tests) > 5:
+        lines.append(f"  ... and {len(_blast_tests) - 5} more")
+    lines.append("")
 
-    # Co-change partners: files that historically changed together with this file.
-    # Based on git history — not code structure. Helps agents know what else needs
-    # updating when this file changes, even if there's no import/call relationship.
+
+def _blast_cochange_section(
+    graph: Tempo, file_path: str, importers: list[str], lines: list[str]
+) -> None:
+    """Append co-change partners and recent callers (14d) sections."""
     _cc_orbit = _cochange_orbit(graph.root, [file_path], {file_path})
     if _cc_orbit:
         _cc_parts = []
@@ -2355,30 +2356,28 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             _cc_parts.append(f"{_cc_fp.rsplit('/', 1)[-1]} ({_cc_score:.0%} {_cc_age})")
         lines.append(f"Co-change partners: {', '.join(_cc_parts)}")
         lines.append("")
+    if not (importers and graph.root):
+        return
+    try:
+        from ..git import file_last_modified_days as _fld  # noqa: PLC0415
+        _recent_callers = [
+            imp for imp in importers
+            if not _is_test_file(imp)
+            and (_fld(graph.root, imp) or 9999) <= 14
+        ]
+        if len(_recent_callers) >= 2:
+            _rc_names = [fp.rsplit("/", 1)[-1] for fp in _recent_callers[:4]]
+            _rc_str = ", ".join(_rc_names)
+            if len(_recent_callers) > 4:
+                _rc_str += f" +{len(_recent_callers) - 4} more"
+            lines.append(f"Recent callers (14d): {_rc_str} — blast radius growing")
+            lines.append("")
+    except Exception:
+        pass
 
-    # Recent callers: importer files modified within the last 14 days.
-    # Proxy for "blast radius may be growing" — recently touched importers signal
-    # active coupling growth. Needs git repo; silently skipped otherwise.
-    if importers and graph.root:
-        try:
-            from ..git import file_last_modified_days as _fld  # noqa: PLC0415
-            _recent_callers = [
-                imp for imp in importers
-                if not _is_test_file(imp)
-                and (_fld(graph.root, imp) or 9999) <= 14
-            ]
-            if len(_recent_callers) >= 2:
-                _rc_names = [fp.rsplit("/", 1)[-1] for fp in _recent_callers[:4]]
-                _rc_str = ", ".join(_rc_names)
-                if len(_recent_callers) > 4:
-                    _rc_str += f" +{len(_recent_callers) - 4} more"
-                lines.append(f"Recent callers (14d): {_rc_str} — blast radius growing")
-                lines.append("")
-        except Exception:
-            pass
 
-    # S74: "Imports from" — direct source dependencies of the blast target file.
-    # Rounds out the picture: shows what THIS file depends on, not just who depends on it.
+def _blast_deps_section(graph: Tempo, file_path: str, lines: list[str]) -> None:
+    """Append outgoing dependencies section (S74)."""
     _deps_of_target = sorted(
         t for t in graph.outgoing_imports_of(file_path)
         if t in graph.files
@@ -2392,6 +2391,34 @@ def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
             _dep_str += f" +{len(_deps_of_target) - 5} more"
         lines.append(f"Imports from ({len(_deps_of_target)}): {_dep_str}")
         lines.append("")
+
+
+def render_blast_radius(graph: Tempo, file_path: str, query: str = "") -> str:
+    """Show what might break if a file or symbol is modified.
+
+    If query is given, shows blast radius for matching symbols instead of
+    the whole file — much more useful for monolith files."""
+    if query:
+        return _render_symbol_blast(graph, query)
+
+    result = _blast_lookup(graph, file_path)
+    if isinstance(result, str):
+        return result
+    fi, file_path = result
+
+    lines = [f"Blast radius for {file_path}:", ""]
+    _blast_file_age(graph, file_path, lines)
+
+    importers = graph.importers_of(file_path)
+    symbols = [graph.symbols[sid] for sid in fi.symbols if sid in graph.symbols]
+
+    _blast_importers_section(graph, file_path, symbols, importers, lines)
+    external_callers, render_targets = _blast_symbols_section(graph, file_path, symbols, lines)
+    _blast_cascade_section(graph, file_path, importers, lines)
+    _blast_tests_section(graph, file_path, symbols, importers, lines)
+    _blast_cochange_section(graph, file_path, importers, lines)
+    _blast_deps_section(graph, file_path, lines)
+
     _signals_blast_core_a(graph, file_path, fi, symbols, importers, external_callers, lines)
     _signals_blast_core_b(graph, file_path, fi, symbols, importers, external_callers, render_targets, lines)
     _signals_blast_core_c(graph, file_path, fi, symbols, importers, lines)

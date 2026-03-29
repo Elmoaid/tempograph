@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
-import { X, Play, FileCode, Layers, AlertTriangle, Skull, Zap } from "lucide-react";
+import { X, FileCode, Layers, AlertTriangle, Skull, Zap } from "lucide-react";
 import { runTempo } from "./tempo";
-import type { GraphData, FileNode, DirNode } from "../hooks/useGraphData";
+import type { GraphData } from "../hooks/useGraphData";
 
 interface Props {
   nodeId: string;
@@ -31,14 +31,14 @@ export function GraphDetailPanel({ nodeId, data, viewLevel, onClose, repoPath }:
     setActiveMode(mode);
     setModeOutput(null);
 
-    let args: Record<string, string> = {};
+    const extraArgs: string[] = [];
     if (mode === "focus" && file) {
-      args = { query: file.id.split("/").pop()?.replace(/\.\w+$/, "") || "" };
+      extraArgs.push("--query", file.id.split("/").pop()?.replace(/\.\w+$/, "") || "");
     } else if (mode === "blast" && file) {
-      args = { file: file.id };
+      extraArgs.push("--file", file.id);
     }
 
-    const result = await runTempo(repoPath, mode, args.query, args.file);
+    const result = await runTempo(repoPath, mode, extraArgs);
     setModeOutput(result.output);
     setRunning(false);
   }, [repoPath, file]);
