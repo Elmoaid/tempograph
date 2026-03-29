@@ -12,16 +12,9 @@ import { useSuggestions } from "../hooks/useSuggestions";
 import { useFeedback } from "../hooks/useFeedback";
 import { useElapsedTimer } from "../hooks/useElapsedTimer";
 import { usePanelState } from "../hooks/usePanelState";
+import { useRunHistory, type RunHistoryEntry } from "../hooks/useRunHistory";
 
-export interface RunHistoryEntry {
-  mode: string;
-  args: string;
-}
-
-export function updateRunHistory(prev: RunHistoryEntry[], entry: RunHistoryEntry, max = 5): RunHistoryEntry[] {
-  const deduped = prev.filter(e => !(e.mode === entry.mode && e.args === entry.args));
-  return [entry, ...deduped].slice(0, max);
-}
+export type { RunHistoryEntry };
 
 
 export interface ModeRunnerState {
@@ -145,7 +138,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   const runDurationCache = useRef<Map<string, number>>(new Map());
   const [runDuration, setRunDuration] = useState<number | null>(null);
   const { elapsed, resetElapsed: setElapsed } = useElapsedTimer(modeRunning, runStart);
-  const [runHistory, setRunHistory] = useState<RunHistoryEntry[]>([]);
+  const { runHistory, addRunHistory } = useRunHistory();
 
   const activeModeInfo = buildActiveModeInfo(activeKit, activeMode, customKits);
   const allKits = [...BUILTIN_KITS, ...customKits];
@@ -277,9 +270,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     setRunDuration,
     setCachedModes,
     setHistory,
-    onRunSuccess: (mode, args) => {
-      setRunHistory(prev => updateRunHistory(prev, { mode, args }));
-    },
+    onRunSuccess: (mode, args) => { addRunHistory(mode, args); },
   });
   const runMode = useCallback(async () => {
     if (modeOutput) setPrevOutput(modeOutput);
