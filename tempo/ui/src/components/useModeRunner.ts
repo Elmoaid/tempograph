@@ -11,6 +11,7 @@ import { useOutputActions } from "../hooks/useOutputActions";
 import { useSuggestions } from "../hooks/useSuggestions";
 import { useFeedback } from "../hooks/useFeedback";
 import { useElapsedTimer } from "../hooks/useElapsedTimer";
+import { usePanelState } from "../hooks/usePanelState";
 
 export interface RunHistoryEntry {
   mode: string;
@@ -117,9 +118,15 @@ const modeArgsKey = (path: string, modeOrKit: string) => `tempo-mode-args-${path
 export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRunnerState & ModeRunnerActions {
   const [activeMode, setActiveMode] = useState(() => localStorage.getItem(lastModeKey(repoPath)) || "overview");
   const [activeKit, setActiveKit] = useState<string | null>(null);
-  const [sidebarTab, setSidebarTab] = useState<"kits" | "modes">("kits");
+  const {
+    sidebarTab, setSidebarTab,
+    kitBuilderOpen, setKitBuilderOpen,
+    paletteOpen, setPaletteOpen,
+    showHelp, setHelpOpen,
+    showWhichKey, setWhichKeyVisible,
+    historyOpen, setHistoryOpen,
+  } = usePanelState();
   const { customKits, loadCustomKits } = useCustomKits(repoPath);
-  const [kitBuilderOpen, setKitBuilderOpen] = useState(false);
   const [modeArgs, setModeArgs] = useState(() => {
     const initMode = localStorage.getItem(lastModeKey(repoPath)) || "overview";
     return localStorage.getItem(modeArgsKey(repoPath, initMode)) || "";
@@ -127,10 +134,6 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   const [modeOutput, setModeOutput] = useState("");
   const [prevOutput, setPrevOutput] = useState<string | null>(null);
   const [modeRunning, setModeRunning] = useState(false);
-  const [paletteOpen, setPaletteOpen] = useState(false);
-  const [showHelp, setHelpOpen] = useState(false);
-  const [showWhichKey, setWhichKeyVisible] = useState(false);
-  const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState<string[]>(() => loadHistory(localStorage.getItem(lastModeKey(repoPath)) || "overview"));
   const { feedbackMode, feedbackGiven, submitFeedback } = useFeedback(repoPath, activeMode, activeKit);
   const argsInputRef = useRef<HTMLInputElement>(null);
