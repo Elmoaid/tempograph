@@ -232,6 +232,31 @@ class TestFiveKeywordsProcessed:
         assert found >= 4, f"Expected >=4 subsystems, found {found}. Output:\n{result[:500]}"
 
 
+class TestPerKeywordBudget:
+    def test_later_keywords_get_representation(self, tmp_path):
+        """Keywords 3-5 should get BFS nodes, not just keywords 1-2."""
+        from tempograph.builder import build_graph
+        from tempograph.prepare import render_prepare
+        # Create 5 distinct subsystems with callers
+        for name in ["alpha", "bravo", "charlie", "delta", "echo"]:
+            (tmp_path / f"{name}.py").write_text(
+                f"def {name}_handler(): pass\n"
+            )
+            (tmp_path / f"{name}_caller.py").write_text(
+                f"from {name} import {name}_handler\n"
+                f"def use_{name}(): {name}_handler()\n"
+            )
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_prepare(g, "feat: fix alpha bravo charlie delta echo handlers",
+                           task_type="changelocal")
+        # At least 3 of 5 should have representation
+        found = sum(1 for name in ["alpha", "bravo", "charlie", "delta", "echo"]
+                   if name in out.lower())
+        assert found >= 3, (
+            f"At least 3 of 5 keyword subsystems should appear; found {found}"
+        )
+
+
 class TestBreadthGradualDecay:
     """Gradual breadth decay: 9-15 files keeps a proportional subset instead of discarding."""
 

@@ -237,13 +237,15 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
         #   - Selective overview: only inject when keywords=[] (vague task, no code signal)
         #   - "Keywords found but focus failed" → inject nothing (model uses training knowledge)
         keywords = _extract_cl_keywords(task)
-        focus_budget = max_tokens // 2
         focus_parts: list[str] = []
         path_fallback_files: list[str] = []  # collected when symbol focus is too broad
         # Skip keywords shorter than 4 chars before taking the top-5 cap.
         # Short tokens can't trigger path fallback (which requires len>=4) and rarely match
         # specific symbols. This prevents "req" (len=3) from blocking "resp" (len=4).
         effective_keywords = [kw for kw in keywords if len(kw) >= 4][:5]
+        # Per-keyword BFS budget: divide evenly so later keywords aren't starved.
+        n_kw = len(effective_keywords) or 1
+        per_kw_budget = max((max_tokens // 2) // n_kw, 800)
         _query_tokens = effective_keywords
         # C7: pre-compute git staleness map once for all per-keyword render_focused calls.
         # Without this, each render_focused call spawns its own `git log` subprocess (~66ms).
@@ -256,7 +258,7 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
             except Exception:
                 pass
         for kw in effective_keywords:
-            focused = render_focused(graph, kw, max_tokens=focus_budget, _staleness_map=_cl_staleness_map)
+            focused = render_focused(graph, kw, max_tokens=per_kw_budget, _staleness_map=_cl_staleness_map)
             no_match = not focused or "No symbols matching" in focused or "No exact match" in focused
             if not no_match:
                 kw_files = _extract_focus_files(focused)
