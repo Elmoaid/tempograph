@@ -467,3 +467,50 @@ def cochange_pairs(
     ][:n]
 
 
+def file_cochange_pairs(root: str, file_path: str, min_commits: int = 3,
+                        max_commits: int = 200) -> list[tuple[str, float]]:
+    """Return files that frequently change together with file_path.
+
+    Returns list of (other_file, cochange_ratio) sorted by ratio descending.
+    cochange_ratio = commits_together / total_commits_of_file_path.
+    Only returns pairs with ratio >= 0.5 and at least min_commits together.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "log", "--pretty=format:%H", f"-{max_commits}", "--", file_path],
+            capture_output=True, text=True, cwd=root, timeout=10,
+        )
+        if result.returncode != 0 or not result.stdout.strip():
+            return []
+    except Exception:
+        return []
+
+    commits = [c.strip() for c in result.stdout.strip().split("\n") if c.strip()]
+    if len(commits) < min_commits:
+        return []
+
+    # For each commit, get the list of files changed
+    cochange_counts: dict[str, int] = {}
+    for sha in commits:
+        try:
+            diff_result = subprocess.run(
+                ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", sha],
+                capture_output=True, text=True, cwd=root, timeout=5,
+            )
+            if diff_result.returncode == 0:
+                files_in_commit = {f.strip() for f in diff_result.stdout.strip().split("\n")
+                                  if f.strip() and f.strip() != file_path}
+                for f in files_in_commit:
+                    cochange_counts[f] = cochange_counts.get(f, 0) + 1
+        except Exception:
+            continue
+
+    total = len(commits)
+    pairs = []
+    for other, count in cochange_counts.items():
+        if count >= min_commits:
+            ratio = count / total
+            if ratio >= 0.5:
+                pairs.append((other, ratio))
+    pairs.sort(key=lambda x: -x[1])
+    return pairs[:10]

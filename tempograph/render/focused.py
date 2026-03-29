@@ -6584,6 +6584,42 @@ def _compute_stability_mismatch(graph: "Tempo", seeds: "list[Symbol]") -> str:
     )
 
 
+def _compute_hidden_coupling(seeds, graph):
+    """Detect files with high git co-change but zero graph edges (hidden coupling)."""
+    if not graph.root or not seeds:
+        return ""
+    from ..git import file_cochange_pairs
+
+    seed_fps = list({s.file_path for s in seeds})[:3]  # Cap at 3 files
+    hidden = []
+    for fp in seed_fps:
+        pairs = file_cochange_pairs(graph.root, fp)
+        for other, ratio in pairs:
+            if other not in graph.files:
+                continue
+            # Check for graph edges between these files
+            has_import = (other in graph.importers_of(fp) or
+                         fp in graph.importers_of(other))
+            has_out_import = (other in graph.outgoing_imports_of(fp) or
+                            fp in graph.outgoing_imports_of(other))
+            if not has_import and not has_out_import:
+                hidden.append((fp, other, ratio))
+
+    if not hidden:
+        return ""
+
+    lines = []
+    for fp, other, ratio in hidden[:3]:
+        fp_short = fp.rsplit("/", 1)[-1]
+        other_short = other.rsplit("/", 1)[-1]
+        pct = int(ratio * 100)
+        lines.append(
+            f"hidden coupling: {fp_short} and {other_short} co-change {pct}% of commits"
+            f" but have no import/call edges — likely coupled via config, events, or convention"
+        )
+    return "\n".join(lines)
+
+
 def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000, _staleness_map: "dict[str, int | None] | None" = None) -> str:
     """Task-focused rendering with BFS graph traversal.
     Starts from search results, then follows call/render/import edges
@@ -6630,6 +6666,10 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000, _stalene
     _stability_mismatch = _compute_stability_mismatch(graph, seeds)
     if _stability_mismatch:
         lines.append(_stability_mismatch)
+        lines.append("")
+    _hidden = _compute_hidden_coupling(seeds, graph)
+    if _hidden:
+        lines.append(_hidden)
         lines.append("")
     _hot_cluster = _compute_hot_cluster_note(graph, ordered)
     if _hot_cluster:
