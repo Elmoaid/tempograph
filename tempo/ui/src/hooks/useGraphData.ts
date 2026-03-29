@@ -40,15 +40,18 @@ export function useGraphData(repoPath: string) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef(false);
+  const [prevRepo, setPrevRepo] = useState(repoPath);
+
+  if (prevRepo !== repoPath) {
+    setPrevRepo(repoPath);
+    setData(null);
+    setError(null);
+    if (repoPath) setLoading(true);
+  }
 
   useEffect(() => {
-    if (!repoPath) {
-      setData(null);
-      return;
-    }
+    if (!repoPath) return;
     abortRef.current = false;
-    setLoading(true);
-    setError(null);
 
     runTempo(repoPath, "graph_data")
       .then((result) => {

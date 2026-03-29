@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-export interface PanelState {
+interface PanelState {
   sidebarTab: "kits" | "modes";
   setSidebarTab: (tab: "kits" | "modes") => void;
   kitBuilderOpen: boolean;

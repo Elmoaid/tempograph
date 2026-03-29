@@ -57,7 +57,7 @@ function makeConfig(overrides: Record<string, unknown> = {}) {
     outputCache: { current: new Map<string, string>() },
     outputTsCache: { current: new Map<string, number>() },
     runDurationCache: { current: new Map<string, number>() },
-    runStart: { current: null as number | null },
+    runStartRef: { current: null as number | null },
     setElapsed: vi.fn(),
     setModeRunning: vi.fn(),
     setModeOutput: vi.fn(),

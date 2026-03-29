@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 
 const EXPANDED_KEY = (activeMode: string) => `tempo-kit-expanded-${activeMode}`;
@@ -25,11 +25,15 @@ interface KitSectionAccordionProps {
 }
 
 export function KitSectionAccordion({ kitSections, activeMode, wrapEnabled, fontSize }: KitSectionAccordionProps) {
-  const [expandedModes, setExpandedModes] = useState<Set<string>>(new Set());
+  const [expandedModes, setExpandedModes] = useState<Set<string>>(
+    () => loadExpanded(activeMode, kitSections.map(s => s.mode))
+  );
+  const [prevActiveMode, setPrevActiveMode] = useState(activeMode);
 
-  useEffect(() => {
+  if (prevActiveMode !== activeMode) {
+    setPrevActiveMode(activeMode);
     setExpandedModes(loadExpanded(activeMode, kitSections.map(s => s.mode)));
-  }, [activeMode]);
+  }
 
   const toggleSection = (mode: string) => {
     setExpandedModes(prev => {

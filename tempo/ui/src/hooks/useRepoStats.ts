@@ -26,11 +26,17 @@ export function formatAge(date: Date): string {
 export function useRepoStats(repoPath: string): RepoStats | null {
   const [stats, setStats] = useState<RepoStats | null>(null);
   const abortRef = useRef(false);
+  const [prevRepo, setPrevRepo] = useState(repoPath);
+
+  // Reset stats synchronously during render when repoPath changes
+  if (prevRepo !== repoPath) {
+    setPrevRepo(repoPath);
+    setStats(null);
+  }
 
   useEffect(() => {
-    if (!repoPath) { setStats(null); return; }
+    if (!repoPath) return;
     abortRef.current = false;
-    setStats(null);
 
     runTempo(repoPath, "stats").then((result) => {
       if (abortRef.current) return;
