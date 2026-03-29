@@ -81,6 +81,7 @@ class FileParser(PythonHandlerMixin, JSHandlerMixin, GoHandlerMixin, JavaHandler
         self._symbol_stack: list[str] = []  # parent tracking
         self._dunder_all: list[str] | None = None  # Python __all__ names
         self._cjs_exports: set[str] = set()  # names exported via module.exports = X
+        self._ignore_set = self._get_ignore_set(language)
 
     def parse(self) -> tuple[list[Symbol], list[Edge], list[str]]:
         ts_lang = _get_ts_language(self.language)
@@ -296,47 +297,132 @@ class FileParser(PythonHandlerMixin, JSHandlerMixin, GoHandlerMixin, JavaHandler
 
     # ── Shared helpers ──────────────────────────────────────
 
-    # Built-in names that should never resolve to user-defined symbols
-    _BUILTIN_IGNORE = frozenset({
-        # JS/TS built-ins
+    # ── Language-aware built-in ignore sets ──────────────────
+    # Names that should never resolve to user-defined symbols.
+    # Split per-language so Rust `collect()` doesn't suppress a Python
+    # function named collect(), and Python `open()` doesn't suppress a
+    # JS function named open().
+
+    _BUILTIN_IGNORE_UNIVERSAL = frozenset({
+        # Console / logging — every language's stdlib has these as noise
         "log", "warn", "error", "info", "debug", "trace", "dir", "table",
-        "stringify", "parse", "keys", "values", "entries", "assign", "freeze",
-        "from", "of", "isArray", "map", "filter", "reduce", "forEach", "find",
-        "findIndex", "some", "every", "includes", "indexOf", "join", "slice",
-        "splice", "push", "pop", "shift", "unshift", "sort", "reverse", "flat",
-        "flatMap", "fill", "concat", "toString", "valueOf",
-        "min", "max", "floor", "ceil", "round", "abs", "sqrt", "pow", "random",
-        "now", "resolve", "reject", "all", "allSettled", "race", "any",
-        "then", "catch", "finally",
-        "createElement", "createRef", "createContext", "forwardRef", "memo",
-        "get", "set", "has", "delete", "clear", "add", "size",
-        "match", "replace", "replaceAll", "split", "trim", "trimStart", "trimEnd",
+        # JSON-like serialisation
+        "stringify",
+        # Object introspection (cross-language noise)
+        "keys", "values", "entries", "assign", "freeze",
+        "from", "of", "isArray",
+        # String primitives (too generic to be user functions)
+        "split", "trim", "trimStart", "trimEnd",
         "startsWith", "endsWith", "padStart", "padEnd", "repeat", "charAt",
         "toLowerCase", "toUpperCase", "toFixed", "parseInt", "parseFloat",
+        # Timer / scheduling
         "setTimeout", "setInterval", "clearTimeout", "clearInterval",
         "requestAnimationFrame", "cancelAnimationFrame",
+        # DOM event plumbing (no non-browser codebase defines these)
         "addEventListener", "removeEventListener", "preventDefault", "stopPropagation",
         "querySelector", "querySelectorAll", "getElementById", "getAttribute",
         "setAttribute", "removeAttribute", "appendChild", "removeChild",
-        "insertBefore", "cloneNode", "contains",
-        "focus", "blur", "click", "scroll", "scrollTo", "scrollIntoView",
-        "open", "close", "write", "read", "abort",
-        "fetch", "json", "text", "blob", "arrayBuffer", "formData",
+        "insertBefore", "cloneNode",
+        # React internals
+        "createElement", "createRef", "createContext", "forwardRef", "memo",
+        # Encoding
         "encode", "decode", "atob", "btoa",
-        # Python built-ins
+        # Generic collection noise (has/clear/size are too ambiguous as bare calls)
+        "has", "clear", "size",
+        # valueOf / toString — universal noise
+        "toString", "valueOf",
+    })
+
+    _BUILTIN_IGNORE_JS = _BUILTIN_IGNORE_UNIVERSAL | frozenset({
+        # JSON.parse, Date.now
+        "parse", "now",
+        # Array methods
+        "map", "filter", "reduce", "forEach", "find", "findIndex",
+        "some", "every", "includes", "indexOf", "join", "slice", "splice",
+        "push", "pop", "shift", "unshift", "sort", "reverse",
+        "flat", "flatMap", "fill", "concat",
+        # Math
+        "min", "max", "floor", "ceil", "round", "abs", "sqrt", "pow", "random",
+        # Promise
+        "resolve", "reject", "all", "allSettled", "race", "any",
+        "then", "catch", "finally",
+        # Map / Set
+        "get", "set", "delete", "add",
+        # String
+        "match", "replace", "replaceAll",
+        # DOM interaction
+        "focus", "blur", "click", "scroll", "scrollTo", "scrollIntoView",
+        "submit",
+        # Fetch API
+        "fetch", "json", "text", "blob", "arrayBuffer", "formData",
+        # I/O keywords that are DOM / Node built-ins
+        "open", "close", "write", "read", "abort",
+        # Collection helpers
+        "contains",
+    })
+
+    _BUILTIN_IGNORE_PYTHON = _BUILTIN_IGNORE_UNIVERSAL | frozenset({
+        # Builtins
         "print", "len", "range", "enumerate", "zip", "isinstance", "type",
         "str", "int", "float", "bool", "list", "dict", "tuple", "set",
         "sorted", "reversed", "any", "all", "sum", "min", "max",
-        "getattr", "setattr", "hasattr", "delattr", "super", "property",
-        "staticmethod", "classmethod", "abstractmethod",
+        "open",
+        # Attribute introspection
+        "getattr", "setattr", "hasattr", "delattr",
+        # OOP decorators / helpers
+        "super", "property", "staticmethod", "classmethod", "abstractmethod",
+        # Collection methods
         "append", "extend", "update", "copy", "deepcopy", "items",
-        # Rust std
-        "unwrap", "expect", "ok", "err", "map", "and_then", "or_else",
-        "collect", "iter", "into_iter", "chain", "enumerate", "zip",
-        "clone", "to_string", "to_owned", "as_ref", "as_mut",
-        "push", "pop", "insert", "remove", "contains", "len", "is_empty",
-        "format", "println", "eprintln", "dbg", "vec",
     })
+
+    _BUILTIN_IGNORE_RUST = _BUILTIN_IGNORE_UNIVERSAL | frozenset({
+        # Result / Option
+        "unwrap", "expect", "ok", "err", "and_then", "or_else",
+        # Iterator
+        "collect", "iter", "into_iter", "chain", "enumerate", "zip",
+        "map", "filter", "find",
+        # Conversion / clone
+        "clone", "copy", "to_string", "to_owned", "as_ref", "as_mut",
+        # Collections
+        "push", "pop", "insert", "remove", "contains", "len", "is_empty",
+        # I/O
+        "read", "write", "flush", "close", "open",
+        # Macros / formatting
+        "format", "display", "println", "eprintln", "dbg", "vec",
+        "todo", "unimplemented",
+    })
+
+    _BUILTIN_IGNORE_GO = _BUILTIN_IGNORE_UNIVERSAL | frozenset({
+        # Builtins
+        "len", "cap", "make", "new", "append", "copy", "delete",
+        "close", "panic", "recover", "print", "println",
+    })
+
+    _BUILTIN_IGNORE_JAVA = _BUILTIN_IGNORE_UNIVERSAL | frozenset({
+        # Collection interface
+        "get", "set", "put", "add", "remove", "contains", "size",
+        # Object methods
+        "toString", "equals", "hashCode", "compareTo",
+        # I/O
+        "println", "printf", "format", "print",
+    })
+
+    _LANGUAGE_IGNORE_MAP: dict[Language, frozenset[str]] = {
+        Language.JAVASCRIPT: _BUILTIN_IGNORE_JS,
+        Language.JSX:        _BUILTIN_IGNORE_JS,
+        Language.TYPESCRIPT:  _BUILTIN_IGNORE_JS,
+        Language.TSX:         _BUILTIN_IGNORE_JS,
+        Language.PYTHON:      _BUILTIN_IGNORE_PYTHON,
+        Language.RUST:        _BUILTIN_IGNORE_RUST,
+        Language.GO:          _BUILTIN_IGNORE_GO,
+        Language.JAVA:        _BUILTIN_IGNORE_JAVA,
+        Language.CSHARP:      _BUILTIN_IGNORE_JAVA,  # close enough
+    }
+
+    @classmethod
+    def _get_ignore_set(cls, language: Language) -> frozenset[str]:
+        """Return the built-in ignore set appropriate for *language*."""
+        return cls._LANGUAGE_IGNORE_MAP.get(language, cls._BUILTIN_IGNORE_UNIVERSAL)
 
     _BRANCH_TYPES = frozenset({
         "if_statement", "elif_clause", "else_clause",
@@ -440,7 +526,7 @@ class FileParser(PythonHandlerMixin, JSHandlerMixin, GoHandlerMixin, JavaHandler
                 # obj.parse() is a real call even though bare "parse" is in ignore list.
                 is_qualified = qualified is not None
                 if bare and not bare.startswith("("):
-                    if is_qualified or bare not in self._BUILTIN_IGNORE:
+                    if is_qualified or bare not in self._ignore_set:
                         target = qualified if is_qualified else bare
                         self.edges.append(Edge(
                             EdgeKind.CALLS, from_id, target,

@@ -99,6 +99,101 @@ class TestFalseBareNameResolution:
             f"Service() call should resolve. All edges from start: {call_edges}"
         )
 
+class TestLanguageAwareIgnore:
+    """Per-language ignore sets: names only suppressed in the language they belong to."""
+
+    def test_python_parse_not_ignored(self, tmp_path):
+        """In Python, bare `parse()` should create a CALLS edge (parse is JS-only ignore)."""
+        g = _build(tmp_path, {
+            "parser.py": (
+                "def parse(data):\n"
+                "    return data.split(',')\n"
+            ),
+            "main.py": (
+                "def run():\n"
+                "    parse(input())\n"
+            ),
+        })
+        call_edges = [
+            e for e in g.edges
+            if e.kind == EdgeKind.CALLS
+            and "run" in e.source_id
+            and e.target_id.endswith("parse")
+        ]
+        assert len(call_edges) > 0, (
+            "Python bare parse() should NOT be ignored — parse is JS-specific"
+        )
+
+    def test_js_parse_is_ignored(self, tmp_path):
+        """In JS/TS, bare `parse()` should NOT create a CALLS edge (JSON.parse noise)."""
+        g = _build(tmp_path, {
+            "utils.js": (
+                "function parse(data) {\n"
+                "  return data.split(',');\n"
+                "}\n"
+            ),
+            "main.js": (
+                "function run() {\n"
+                "  parse(getInput());\n"
+                "}\n"
+            ),
+        })
+        call_edges = [
+            e for e in g.edges
+            if e.kind == EdgeKind.CALLS
+            and "run" in e.source_id
+            and e.target_id.endswith("parse")
+        ]
+        assert len(call_edges) == 0, (
+            "JS bare parse() SHOULD be ignored — it's in the JS ignore set"
+        )
+
+    def test_rust_collect_not_in_python_ignore(self, tmp_path):
+        """A Python function named collect() should create edges when called."""
+        g = _build(tmp_path, {
+            "collector.py": (
+                "def collect(items):\n"
+                "    return list(items)\n"
+            ),
+            "main.py": (
+                "def run():\n"
+                "    collect([1, 2, 3])\n"
+            ),
+        })
+        call_edges = [
+            e for e in g.edges
+            if e.kind == EdgeKind.CALLS
+            and "run" in e.source_id
+            and e.target_id.endswith("collect")
+        ]
+        assert len(call_edges) > 0, (
+            "Python bare collect() should NOT be ignored — collect is Rust-specific"
+        )
+
+    def test_generic_language_uses_universal_only(self, tmp_path):
+        """For an unmapped language (e.g. PHP), only the universal set applies."""
+        g = _build(tmp_path, {
+            "utils.php": (
+                "<?php\n"
+                "function parse($data) {\n"
+                "  return explode(',', $data);\n"
+                "}\n"
+                "function run() {\n"
+                "  parse(readline());\n"
+                "}\n"
+            ),
+        })
+        call_edges = [
+            e for e in g.edges
+            if e.kind == EdgeKind.CALLS
+            and "run" in e.source_id
+            and e.target_id.endswith("parse")
+        ]
+        assert len(call_edges) > 0, (
+            "PHP bare parse() should NOT be ignored — PHP uses universal-only set"
+        )
+
+
     def test_false_callers_reduced_on_self_repo(self):
         """Build graph on tempograph itself; Config.get should have <50 callers."""
         import os

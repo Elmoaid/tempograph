@@ -41911,11 +41911,8 @@ class TestClassFocusS882:
 
         (tmp_path / "service.py").write_text(
             "class UserService:\n"
-            "    def get(self, uid): return uid\n"
-            "    def create(self, data): return data\n"
-        )
-        (tmp_path / "app.py").write_text(
-            "from service import UserService\ndef run(): UserService().get(1)\n"
+            "    def fetch_user(self, uid): return uid\n"
+            "    def create_user(self, data): return data\n"
         )
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_focused(g, "UserService")
