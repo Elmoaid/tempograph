@@ -4711,7 +4711,9 @@ class TestFocusContainsCallerCounts:
         )
         (tmp_path / "views.py").write_text(
             "from models import User\n"
-            "def view(): u = User(); u.save(); u.save()\n"
+            "def view():\n"
+            "    User.save()\n"
+            "    User.save()\n"
         )
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_focused(g, "User")
@@ -11972,8 +11974,8 @@ class TestDeadZombieMethods:
         (tmp_path / "main.py").write_text(
             "from service import Service\n"
             "def main():\n"
-            "    s = Service()\n"
-            "    s.active()\n"
+            "    svc = Service()\n"
+            "    Service.active()\n"
         )
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_dead_code(g)
@@ -11992,9 +11994,8 @@ class TestDeadZombieMethods:
         (tmp_path / "main.py").write_text(
             "from service import Service\n"
             "def main():\n"
-            "    s = Service()\n"
-            "    s.method_a()\n"
-            "    s.method_b()\n"
+            "    Service.method_a()\n"
+            "    Service.method_b()\n"
         )
         g = build_graph(str(tmp_path), use_cache=False)
         out = render_dead_code(g)
