@@ -6621,6 +6621,47 @@ def _compute_hidden_coupling(seeds, graph):
     return "\n".join(lines)
 
 
+def _compute_stale_callers(seeds, graph, *, _file_ages=None):
+    """Detect callers not updated after callee change — potential API drift."""
+    if not graph.root or not seeds:
+        return ""
+
+    from ..git import file_last_modified_days as _fld_sc  # noqa: PLC0415
+
+    def _age(fp):
+        if _file_ages is not None:
+            return _file_ages.get(fp)
+        try:
+            return _fld_sc(graph.root, fp)
+        except Exception:
+            return None
+
+    stale = []
+    for s in seeds[:3]:
+        seed_age = _age(s.file_path)
+        if seed_age is None or seed_age >= 30:
+            continue  # Seed not recently modified
+
+        callers = graph.callers_of(s.id)
+        cross_file = [c for c in callers if c.file_path != s.file_path]
+        for c in cross_file[:15]:
+            caller_age = _age(c.file_path)
+            if caller_age is not None and caller_age >= 90:
+                stale.append((c, int(caller_age)))
+
+    if not stale:
+        return ""
+
+    stale.sort(key=lambda x: -x[1])
+    top = stale[:3]
+    names = ", ".join(f"{c.name} ({age}d)" for c, age in top)
+    extra = f" +{len(stale) - 3} more" if len(stale) > 3 else ""
+    return (
+        f"stale callers: {names}{extra} — not modified in 90+ days"
+        f" but seed changed recently; verify API compatibility"
+    )
+
+
 def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000, _staleness_map: "dict[str, int | None] | None" = None) -> str:
     """Task-focused rendering with BFS graph traversal.
     Starts from search results, then follows call/render/import edges
@@ -6671,6 +6712,10 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000, _stalene
     _hidden = _compute_hidden_coupling(seeds, graph)
     if _hidden:
         lines.append(_hidden)
+        lines.append("")
+    _stale = _compute_stale_callers(seeds, graph)
+    if _stale:
+        lines.append(_stale)
         lines.append("")
     _hot_cluster = _compute_hot_cluster_note(graph, ordered)
     if _hot_cluster:
