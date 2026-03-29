@@ -1,9 +1,35 @@
 from __future__ import annotations
 
+import bisect
 from pathlib import Path
 
 from ..types import Tempo, EdgeKind, Symbol, SymbolKind
 from ._utils import count_tokens, _is_test_file, _caller_domain, _MONOLITH_THRESHOLD, _dead_code_confidence
+
+_TEST_INDEX_ATTR = "_focused_test_index"
+
+
+def _get_test_index(graph: Tempo) -> list[tuple[str, Symbol]]:
+    """Return (or build) sorted test-symbol index for *graph*.
+
+    Stored directly on the Tempo instance so the index is invalidated whenever
+    the graph object is replaced — no id-collision risk, no memory leak.
+
+    Index entries are ``(lower_name, symbol)`` for symbols in test files whose
+    kind is function / method / test, sorted by lower_name for bisect.
+    """
+    idx = graph.__dict__.get(_TEST_INDEX_ATTR)
+    if idx is not None:
+        return idx
+    TEST_KINDS = frozenset(("function", "method", "test"))
+    pairs: list[tuple[str, Symbol]] = [
+        (s.name.lower(), s)
+        for s in graph.symbols.values()
+        if _is_test_file(s.file_path) and s.kind.value in TEST_KINDS
+    ]
+    pairs.sort(key=lambda p: p[0])
+    graph.__dict__[_TEST_INDEX_ATTR] = pairs
+    return pairs
 
 _MONOLITH_THRESHOLD = 1000
 
@@ -1063,17 +1089,19 @@ def _build_seed_name_test_lines(
     seed_name = sym.name.lower()
     prefix = f"test_{seed_name}"
 
-    # Path 1: name-matching — find test_<seed_name>[_*] functions in test files
+    # Path 1: name-matching — find test_<seed_name>[_*] functions in test files.
+    # Uses a lazily-built sorted index + bisect for O(log N) lookup instead of
+    # an O(N) full-symbol scan (7k+ symbols).
     name_matches: dict[str, list[str]] = {}  # basename -> [func_names]
-    for s in graph.symbols.values():
-        if not _is_test_file(s.file_path):
-            continue
-        if s.kind.value not in ("function", "method", "test"):
-            continue
-        sname = s.name.lower()
-        if sname == prefix or sname.startswith(prefix + "_"):
-            basename = s.file_path.rsplit("/", 1)[-1]
-            name_matches.setdefault(basename, []).append(s.name)
+    _idx = _get_test_index(graph)
+    _i = bisect.bisect_left(_idx, (prefix,))
+    while _i < len(_idx):
+        _lower, _s = _idx[_i]
+        if _lower == prefix or _lower.startswith(prefix + "_"):
+            name_matches.setdefault(_s.file_path.rsplit("/", 1)[-1], []).append(_s.name)
+            _i += 1
+        else:
+            break
 
     # Path 2: import-based — test files that import the seed's source file
     import_basenames: set[str] = {
