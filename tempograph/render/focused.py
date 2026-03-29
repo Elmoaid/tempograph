@@ -437,6 +437,29 @@ def _bfs_expand(
                         if child.id not in seen_ids:
                             next_level.append((child, depth + 1))
 
+                # INHERITS: subclasses of the current symbol (if it's a class/interface)
+                if sym.kind.value in ("class", "interface", "struct", "trait"):
+                    _subtypes = graph.subtypes_of(sym.name)
+                    _cross_file_subtypes = [
+                        s for s in _subtypes
+                        if s.file_path != sym.file_path and s.id not in seen_ids
+                    ]
+                    subtype_limit = 5 if depth == 0 else (3 if depth == 1 else 0)
+                    for st in _cross_file_subtypes[:subtype_limit]:
+                        if len(ordered) + len(next_level) < 50:
+                            next_level.append((st, depth + 1))
+
+                # RENDERS: components that render this component
+                _renderers = graph.renderers_of(sym.id)
+                _cross_file_renderers = [
+                    s for s in _renderers
+                    if s.file_path != sym.file_path and s.id not in seen_ids
+                ]
+                renderer_limit = 4 if depth == 0 else (2 if depth == 1 else 0)
+                for r in _cross_file_renderers[:renderer_limit]:
+                    if len(ordered) + len(next_level) < 50:
+                        next_level.append((r, depth + 1))
+
         current_level = next_level
 
     return ordered, seen_ids

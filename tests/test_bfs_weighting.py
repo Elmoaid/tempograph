@@ -130,3 +130,43 @@ class TestDirectionalPriority:
         assert len(callers_at_d1) > len(callees_at_d1), (
             f"Expected more callers ({len(callers_at_d1)}) than callees ({len(callees_at_d1)}) at depth 1"
         )
+
+
+class TestMultiEdgeBFS:
+    def test_subclass_appears_in_bfs(self, tmp_path):
+        """Subclasses of the seed class should appear in BFS output."""
+        (tmp_path / "base.py").write_text(
+            "class Animal:\n    def speak(self): pass\n"
+        )
+        (tmp_path / "dog.py").write_text(
+            "from base import Animal\n"
+            "class Dog(Animal):\n    def speak(self): return 'woof'\n"
+        )
+        (tmp_path / "cat.py").write_text(
+            "from base import Animal\n"
+            "class Cat(Animal):\n    def speak(self): return 'meow'\n"
+        )
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "Animal")
+        # At least one subclass should appear in BFS output
+        assert "Dog" in out or "Cat" in out, (
+            f"Subclasses should appear in BFS; got:\n{out}"
+        )
+
+    def test_renderer_appears_in_bfs(self, tmp_path):
+        """Components that render the seed should appear in BFS output."""
+        (tmp_path / "Button.tsx").write_text(
+            "export function Button(props: any) { return <button>{props.label}</button>; }\n"
+        )
+        (tmp_path / "Form.tsx").write_text(
+            "import { Button } from './Button';\n"
+            "export function Form() { return <div><Button label='submit' /></div>; }\n"
+        )
+        from tempograph.builder import build_graph
+        from tempograph.render import render_focused
+        g = build_graph(str(tmp_path), use_cache=False)
+        out = render_focused(g, "Button")
+        # Form renders Button — should appear
+        assert "Form" in out, f"Renderer (Form) should appear in BFS; got:\n{out}"
