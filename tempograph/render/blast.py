@@ -1748,11 +1748,14 @@ def _blast_core_d_structure_a(
             f" — changes here often affect more callers than are immediately visible; check all importers"
         )
     # S806: High fan-out blast — blast target calls 10+ symbols in other files.
+    # Iterate symbols IN _fp and collect their external callees (O(N_file_syms)) instead of
+    # scanning all graph symbols and checking callers_of each (O(N_all_syms) = 7949 calls).
     _callee_set806: set[str] = set()
-    for _other806 in graph.symbols.values():
-        if _other806.file_path != _fp:
-            if any(c.file_path == _fp for c in graph.callers_of(_other806.id)):
-                _callee_set806.add(_other806.id)
+    for _sym806 in graph.symbols.values():
+        if _sym806.file_path == _fp:
+            for _callee806 in graph.callees_of(_sym806.id):
+                if _callee806.file_path != _fp:
+                    _callee_set806.add(_callee806.id)
     if len(_callee_set806) >= 10:
         lines.append(
             f"high fan-out blast: {_basename} calls {len(_callee_set806)} external symbols"
