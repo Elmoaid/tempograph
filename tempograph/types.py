@@ -210,6 +210,7 @@ class Tempo:
     _callees: dict[str, list[str]] = field(default_factory=dict, repr=False)
     _children: dict[str, list[str]] = field(default_factory=dict, repr=False)
     _importers: dict[str, list[str]] = field(default_factory=dict, repr=False)
+    _out_imports: dict[str, list[str]] = field(default_factory=dict, repr=False)  # source_file → [target_files] for IMPORTS edges
     _subtypes: dict[str, list[str]] = field(default_factory=dict, repr=False)   # parent_name → [child symbol ids]
     _renderers: dict[str, list[str]] = field(default_factory=dict, repr=False)  # target → [sources that render it]
     # Cached ID of the highest-complexity non-test symbol — computed once in build_indexes().
@@ -235,6 +236,7 @@ class Tempo:
                 self._callees = cached['callees']
                 self._children = cached['children']
                 self._importers = cached['importers']
+                self._out_imports = cached.get('out_imports', {})
                 self._renderers = cached['renderers']
                 self._subtypes = cached['subtypes']
                 self._top_complexity_sym_id = self._find_top_complexity_sym_id()
@@ -253,10 +255,11 @@ class Tempo:
         callees = self._callees
         children = self._children
         importers = self._importers
+        out_imports = self._out_imports
         renderers = self._renderers
         subtypes = self._subtypes
         callers.clear(); callees.clear(); children.clear()
-        importers.clear(); renderers.clear(); subtypes.clear()
+        importers.clear(); out_imports.clear(); renderers.clear(); subtypes.clear()
         for edge in self.edges:
             k = edge.kind
             src = edge.source_id
@@ -268,6 +271,7 @@ class Tempo:
                 children.setdefault(src, []).append(tgt)
             elif k is _IMPORTS:
                 importers.setdefault(tgt, []).append(src)
+                out_imports.setdefault(src, []).append(tgt)
             elif k is _RENDERS:
                 renderers.setdefault(tgt, []).append(src)
             elif k is _INHERITS or k is _IMPLEMENTS:
@@ -275,7 +279,7 @@ class Tempo:
         # Deduplicate — callers/callees carry ~98% of all duplicate entries.
         # children and subtypes have near-zero dupes; skip them to save iteration.
         _fromkeys = dict.fromkeys
-        for d in (callers, callees, importers, renderers):
+        for d in (callers, callees, importers, out_imports, renderers):
             for kk, v in d.items():
                 if len(v) > 1:
                     d[kk] = list(_fromkeys(v))
@@ -286,6 +290,7 @@ class Tempo:
                 db.save_indexes({
                     'callers': callers, 'callees': callees,
                     'children': children, 'importers': importers,
+                    'out_imports': out_imports,
                     'renderers': renderers, 'subtypes': subtypes,
                 }, edge_count)
             except Exception:
@@ -336,6 +341,10 @@ class Tempo:
 
     def importers_of(self, file_path: str) -> list[str]:
         return self._importers.get(file_path, [])
+
+    def outgoing_imports_of(self, file_path: str) -> list[str]:
+        """Return file paths that file_path imports (outgoing IMPORTS edges). O(1) index lookup."""
+        return self._out_imports.get(file_path, [])
 
     def renderers_of(self, symbol_id: str) -> list[Symbol]:
         return [self.symbols[s] for s in self._renderers.get(symbol_id, []) if s in self.symbols]
