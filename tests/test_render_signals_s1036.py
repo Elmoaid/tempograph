@@ -351,10 +351,11 @@ class TestRelayPointIntegration:
         result = self._focus("_get_or_build_graph")
         assert "build_graph" in result
 
-    def test_prepare_context_fires(self):
-        """prepare_context → render_prepare is a relay (100% downstream)."""
+    def test_prepare_context_after_decomp(self):
+        """prepare_context → render_prepare: after decomposing render_prepare into
+        sub-functions, the relay signal no longer fires (render_prepare is a thin
+        dispatcher with lower downstream reach). The callee chain still exists."""
         result = self._focus("prepare_context")
-        assert "↳ relay point:" in result
         assert "render_prepare" in result
 
     def test_build_graph_silent(self):
