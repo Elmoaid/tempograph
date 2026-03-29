@@ -5913,6 +5913,55 @@ def _compute_relay_point(
     )
 
 
+def _compute_subclass_exposure(seeds: "list[Symbol]", graph: "Tempo") -> str:
+    """S1037: Subclass exposure — fires when seed is a base class with cross-file subclasses.
+
+    BFS follows CALLS and CONTAINS edges only — INHERITS/IMPLEMENTS edges are invisible.
+    When you focus on a base class or mixin, its subclasses never appear in the BFS output.
+    Agents editing the base class don't know they're editing a shared interface.
+
+    Example outputs:
+      ↳ subclass: FileParser (parser.py) — interface changes propagate
+      ↳ 3 subclasses: ConfigLoader (config.py), LocalConfig (+2 more) — interface changes propagate to all
+
+    Distinct from:
+    - S65 (change_exposure): fires on caller-file blast risk — not inheritance visibility
+    - S1034 (cross-file siblings): naming-family siblings in same dir — not inheritance
+    - S1035 (orchestrator): callee/caller topology role — not inheritance
+
+    Conditions:
+    - Seed is a class (not function/method)
+    - Not a test file
+    - Has ≥ 1 cross-file subclass (different file from seed) via INHERITS or IMPLEMENTS edges
+    """
+    if not seeds:
+        return ""
+    seed = seeds[0]
+    if seed.kind.value not in ("class", "interface"):
+        return ""
+    if _is_test_file(seed.file_path):
+        return ""
+
+    all_subs = graph.subtypes_of(seed.name)
+    cross_file_subs = [s for s in all_subs if s.file_path != seed.file_path and not _is_test_file(s.file_path)]
+
+    if not cross_file_subs:
+        return ""
+
+    n = len(cross_file_subs)
+    # Format: "ClassName (filename.py)" for first 2, then overflow count
+    def _short(s: "Symbol") -> str:
+        return f"{s.name} ({s.file_path.rsplit('/', 1)[-1]})"
+
+    if n == 1:
+        return f"↳ subclass: {_short(cross_file_subs[0])} — interface changes propagate"
+
+    shown = cross_file_subs[:2]
+    parts = ", ".join(_short(s) for s in shown)
+    overflow = f" +{n - 2} more" if n > 2 else ""
+    return f"↳ {n} subclasses: {parts}{overflow} — interface changes propagate to all"
+
+
 def _compute_dead_seed_note(graph: "Tempo", seeds: "list[Symbol]") -> str:
     """S67: Dead seed annotation — fires when the focus seed itself is a dead candidate.
 
@@ -6024,6 +6073,10 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000) -> str:
     _relay = _compute_relay_point(seeds, graph, ordered)
     if _relay:
         lines.append(_relay)
+        lines.append("")
+    _subclass_exp = _compute_subclass_exposure(seeds, graph)
+    if _subclass_exp:
+        lines.append(_subclass_exp)
         lines.append("")
     seen_files: set[str] = set()
     token_count = 0

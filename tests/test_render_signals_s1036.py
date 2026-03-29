@@ -355,15 +355,17 @@ class TestRelayPointIntegration:
     def test_prepare_context_fires(self):
         """prepare_context → render_prepare is a relay (100% downstream)."""
         result = self._focus("prepare_context")
-        assert "relay point" in result
+        assert "↳ relay point:" in result
         assert "render_prepare" in result
 
     def test_build_graph_silent(self):
         """build_graph itself is a complex hub — no single relay in its callees."""
         result = self._focus("build_graph")
-        assert "relay point" not in result
+        assert "↳ relay point:" not in result
 
     def test_render_focused_silent(self):
-        """render_focused has balanced callee reach — no dominant relay."""
+        """render_focused has balanced callee reach — no dominant relay.
+        Note: 'relay point' may appear in git commit messages shown in BFS output
+        (e.g. 'creative: S1036 — relay point...') — assert on the signal prefix instead."""
         result = self._focus("render_focused")
-        assert "relay point" not in result
+        assert "↳ relay point:" not in result
