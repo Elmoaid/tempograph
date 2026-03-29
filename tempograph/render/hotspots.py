@@ -2611,35 +2611,17 @@ def _signals_hotspots_core_d_kind(
                     f" and is the top hotspot — god object pattern; split responsibilities before modifying"
                 )
 
-    # S808: Async hotspot — top hotspot is an async function.
-    # Async functions introduce concurrency; when an async function is also the highest-risk
-    # hotspot, bugs there can manifest as race conditions or non-deterministic failures.
-    if scores:
-        _top808 = scores[0][1]
-        if _top808 is not None and not _is_test_file(_top808.file_path):
-            _src808 = ""
-            try:
-                import linecache as _lc808
-                _src808 = _lc808.getline(_top808.file_path, _top808.line_start).strip()
-            except Exception:
-                pass
-            if _src808.startswith("async def"):
-                out.append(
-                    f"\nasync hotspot: {_top808.name} is an async function ranked as the top hotspot"
-                    f" — concurrency bugs here manifest as race conditions; review await chains carefully"
-                )
-
     # S850: Async hotspot — top hotspot is an async function.
-    # Async hotspots introduce concurrency semantics; sync callers must use event loops
-    # or adapters, and every caller participates in the async execution context.
+    # Uses stored signature (reliable) instead of linecache (fails on relative paths).
+    # S808 was removed as duplicate — S850 subsumes it with better detection.
     if scores:
         _top850 = scores[0][1]
         if _top850 is not None and not _is_test_file(_top850.file_path):
             _sig850 = (_top850.signature or "").lstrip()
             if _sig850.startswith("async ") and _top850.kind.value in ("function", "method"):
                 out.append(
-                    f"\nasync hotspot: {_top850.name} is an async function"
-                    f" — top hotspot with async semantics; sync callers need event loop adapters"
+                    f"\nasync hotspot: {_top850.name} is an async function ranked as the top hotspot"
+                    f" — concurrency bugs here manifest as race conditions; review await chains carefully"
                 )
 
     # S862: Private hotspot — top hotspot function name starts with _ (single underscore).

@@ -20,8 +20,9 @@ def _pre_a_config_name(changed_files: list[str], lines: list[str]) -> None:
         )
 
     # S723: Config-only diff — all changed files are configuration/constants/exceptions files.
+    # Only fires when S447 did NOT already fire (avoids duplicate "config-only diff" messages).
     _cfg_names723 = {"config.py", "settings.py", "constants.py", "exceptions.py", "errors.py", "env.py"}
-    if changed_files and all(f.replace("\\", "/").rsplit("/", 1)[-1] in _cfg_names723 for f in changed_files):
+    if changed_files and _s447_non_config and all(f.replace("\\", "/").rsplit("/", 1)[-1] in _cfg_names723 for f in changed_files):
         lines.append(
             f"config-only diff: all {len(changed_files)} changed file(s) are config/constants files"
             f" — verify that all consumers are compatible with updated values"
