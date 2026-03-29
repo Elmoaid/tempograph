@@ -106,7 +106,7 @@ export function useRunMode({
       setStatusText("");
       const out = r.output || "No output";
       const now = Date.now();
-      const dur = runStart.current ? (now - runStart.current) / 1000 : null;
+      const dur = runStartRef.current ? (now - runStartRef.current) / 1000 : null;
       outputCache.current.set(cacheKey, out);
       outputTsCache.current.set(cacheKey, now);
       if (dur !== null) runDurationCache.current.set(cacheKey, dur);
