@@ -41,7 +41,7 @@ def _core_private_module_breakdown(
     # Only fires when conftest.py functions appear in the dead list (confidence zeroed by _is_test_file).
     _conftest_suppressed = [
         sym for sym in dead
-        if sym.file_path.endswith("/conftest.py") or sym.file_path == "conftest.py"
+        if (sym.file_path.endswith("/conftest.py") or sym.file_path == "conftest.py")
         and sym.kind.value in ("function", "method")
     ]
     if _conftest_suppressed:

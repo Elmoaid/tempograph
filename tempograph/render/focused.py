@@ -446,7 +446,7 @@ def _handle_overflow(
     symbol names so agents know which hub symbols were truncated."""
     block_tokens = count_tokens(block)
     if token_count + block_tokens + 1 > max_tokens:  # +1 for separator "\n" in final join
-        remaining = len(ordered) - len([l for l in lines if l and not l.startswith("...")])
+        remaining = len(ordered) - current_idx
         if remaining > 0:
             hi_names: list[tuple[int, str]] = []
             if graph is not None:
@@ -1328,13 +1328,13 @@ def _build_seed_callee_chain_line(
     if sym.kind.value not in ("function", "method"):
         return lines
     _file_callees = [
-        c for c in graph.callees_of(sym.file_path)
+        c for c in graph.callees_of(sym.id)
         if c.file_path != sym.file_path
     ]
     if 1 <= len(_file_callees) <= 4:
         _chain_parts = [sym.name, _file_callees[0].name]
         _c1 = _file_callees[0]
-        _c1_callees = [c for c in graph.callees_of(_c1.file_path) if c.file_path != _c1.file_path]
+        _c1_callees = [c for c in graph.callees_of(_c1.id) if c.file_path != _c1.file_path]
         if _c1_callees:
             _chain_parts.append(_c1_callees[0].name)
         lines.append(f"{indent}  callee chain: {' → '.join(_chain_parts)}")
