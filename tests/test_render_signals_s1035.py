@@ -243,11 +243,13 @@ class TestOrchestratorAdvisoryIntegration:
         repo = os.path.dirname(os.path.dirname(__file__))
         return build_graph(repo)
 
-    def test_render_prepare_fires(self, graph):
-        """render_prepare (16 callees, 3 callers) should fire the orchestrator signal."""
+    def test_render_prepare_silent_after_decomp(self, graph):
+        """render_prepare (6 callees, 5 same-file after decomp) should NOT fire orchestrator."""
         from tempograph.render.focused import render_focused
         output = render_focused(graph, "render_prepare")
-        assert "↳ orchestrator:" in output
+        # After decomposition, render_prepare has only 1 cross-file callee
+        # (TaskMemory). The 5 same-file helpers don't count for orchestrator.
+        assert "↳ orchestrator:" not in output
 
     def test_render_focused_silent(self, graph):
         """render_focused (hub: many callers AND callees) should not fire."""
