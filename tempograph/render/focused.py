@@ -403,11 +403,11 @@ def _bfs_expand(
                         if cid in graph.symbols
                         and graph.symbols[cid].file_path != sym.file_path
                     )
-                    caller_limit = 8 if _cross_callers < 10 else 3 if _cross_callers < 20 else 1
-                    callee_limit = 8
+                    caller_limit = 12 if _cross_callers < 15 else 3 if _cross_callers < 25 else 1
+                    callee_limit = 6
                 else:
-                    caller_limit = 5 if depth == 1 else 3
-                    callee_limit = 5 if depth == 1 else 3
+                    caller_limit = 6 if depth == 1 else 3
+                    callee_limit = 4 if depth == 1 else 2
                 _imp_key = lambda s: -_cached_importance(s)
                 # Hub suppression: skip expanding callers of widely-used utility symbols.
                 # A symbol used across 15+ unique files is a global hub — expanding its
@@ -5696,7 +5696,7 @@ def _compute_depth_wall_lookahead(
     """S1031: Depth wall lookahead — fires when entry-point or hot-file callers of the seed
     were cut by BFS caller_limit and are invisible to the agent.
 
-    BFS adds at most 8 callers of the seed (depth-0 caller_limit). If the seed has >8 callers,
+    BFS adds at most 12 callers of the seed (depth-0 caller_limit). If the seed has >12 callers,
     the remaining ones are silently dropped. Agents don't know what's in the invisible portion.
     If any dropped callers are entry points (main, run_server, etc.) or exported symbols in
     hot files (actively worked files NOT already in BFS), this signal fires to say:
@@ -5708,7 +5708,7 @@ def _compute_depth_wall_lookahead(
     - S1031: fires specifically when ENTRY POINTS or HOT callers were cut at the seed level
 
     Conditions:
-    - Seed has >8 callers total (the BFS caller_limit at depth=0) — otherwise all callers were shown.
+    - Seed has >12 callers total (the BFS caller_limit at depth=0) — otherwise all callers were shown.
     - Among the unseen callers: ≥1 is an entry point (name in _WALL_ENTRY_NAMES or __main__.py)
       OR ≥1 is an exported top-level symbol in a hot file not already represented in the BFS.
     - Test callers are excluded (high noise, expected to not be shown).
@@ -5723,7 +5723,7 @@ def _compute_depth_wall_lookahead(
 
     all_callers = graph.callers_of(seed_sym.id)
     # If all callers fit within the BFS limit, nothing was cut
-    if len(all_callers) <= 8:
+    if len(all_callers) <= 12:
         return ""
 
     seen_files = {sym.file_path for sym, _ in ordered}
