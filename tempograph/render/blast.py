@@ -1465,10 +1465,7 @@ def _blast_core_c_symbols(
 ) -> None:
     _fp = file_path.replace("\\", "/")
     # S583: Many callers per symbol
-    _s583_syms = [
-        sym for sym in graph.symbols.values()
-        if sym.file_path == file_path or sym.file_path.replace("\\", "/") == _fp
-    ]
+    _s583_syms = graph.symbols_in_file(_fp)
     if _s583_syms:
         _max_callers583 = max(len(graph.callers_of(s.id)) for s in _s583_syms)
         if _max_callers583 >= 10:
@@ -1479,8 +1476,8 @@ def _blast_core_c_symbols(
             )
     # S638: Thin wrapper module
     _syms638 = [
-        s for s in graph.symbols.values()
-        if s.file_path == _fp and not _is_test_file(s.file_path) and s.parent_id is None
+        s for s in graph.symbols_in_file(_fp)
+        if not _is_test_file(s.file_path) and s.parent_id is None
     ]
     _non_test_importers638 = [fp for fp in importers if not _is_test_file(fp)]
     if len(_syms638) == 1 and len(_non_test_importers638) >= 3:
@@ -1490,9 +1487,8 @@ def _blast_core_c_symbols(
         )
     # S644: Pure class module
     _exported_syms644 = [
-        s for s in graph.symbols.values()
-        if s.file_path == _fp and s.exported and s.parent_id is None
-        and not _is_test_file(s.file_path)
+        s for s in graph.symbols_in_file(_fp)
+        if s.exported and s.parent_id is None and not _is_test_file(s.file_path)
     ]
     if len(_exported_syms644) >= 2:
         _all_classes644 = all(s.kind.value == "class" for s in _exported_syms644)
@@ -1504,9 +1500,8 @@ def _blast_core_c_symbols(
             )
     # S656: Constants-only module
     _all_syms656 = [
-        s for s in graph.symbols.values()
-        if s.file_path == _fp and s.exported and s.parent_id is None
-        and not _is_test_file(s.file_path)
+        s for s in graph.symbols_in_file(_fp)
+        if s.exported and s.parent_id is None and not _is_test_file(s.file_path)
     ]
     if len(_all_syms656) >= 2:
         _all_consts656 = all(s.kind.value in ("constant", "variable") for s in _all_syms656)
@@ -1593,7 +1588,7 @@ def _blast_core_d_isolation(
     _importers686 = graph.importers_of(_fp)
     _ext686 = [f for f in _importers686 if f != _fp]
     _fi686 = graph.files.get(_fp)
-    _all_syms686 = [s for s in graph.symbols.values() if s.file_path == _fp] if _fi686 else []
+    _all_syms686 = graph.symbols_in_file(_fp) if _fi686 else []
     _has_ext_callers686 = any(graph.callers_of(s.id) for s in _all_syms686)
     if not _ext686 and not _has_ext_callers686 and not _is_test_file(_fp):
         lines.append(
@@ -1611,9 +1606,8 @@ def _blast_core_d_isolation(
     _fi698 = graph.files.get(_fp)
     if _fi698 and not _is_test_file(_fp):
         _pub_syms698 = [
-            s for s in graph.symbols.values()
-            if s.file_path == _fp and s.parent_id is None
-            and s.kind.value not in ("unknown", "module")
+            s for s in graph.symbols_in_file(_fp)
+            if s.parent_id is None and s.kind.value not in ("unknown", "module")
         ]
         if len(_pub_syms698) == 1:
             lines.append(
@@ -1621,7 +1615,7 @@ def _blast_core_d_isolation(
                 f" — single-symbol file; consider consolidating into a parent module"
             )
     # S704: No external dependencies — blast target makes no cross-file calls.
-    _target_syms704 = [s for s in graph.symbols.values() if s.file_path == _fp]
+    _target_syms704 = graph.symbols_in_file(_fp)
     _has_ext_callees704 = any(
         any(c.file_path != _fp for c in graph.callees_of(s.id))
         for s in _target_syms704
@@ -1719,8 +1713,8 @@ def _blast_core_d_structure_a(
     _fi764 = graph.files.get(_fp)
     if _fi764 and not _is_test_file(_fp):
         _exported764 = [
-            s for s in graph.symbols.values()
-            if s.file_path == _fp and s.parent_id is None and s.exported
+            s for s in graph.symbols_in_file(_fp)
+            if s.parent_id is None and s.exported
         ]
         if len(_exported764) >= 10:
             lines.append(
@@ -1752,11 +1746,10 @@ def _blast_core_d_structure_a(
     # Iterate symbols IN _fp and collect their external callees (O(N_file_syms)) instead of
     # scanning all graph symbols and checking callers_of each (O(N_all_syms) = 7949 calls).
     _callee_set806: set[str] = set()
-    for _sym806 in graph.symbols.values():
-        if _sym806.file_path == _fp:
-            for _callee806 in graph.callees_of(_sym806.id):
-                if _callee806.file_path != _fp:
-                    _callee_set806.add(_callee806.id)
+    for _sym806 in graph.symbols_in_file(_fp):
+        for _callee806 in graph.callees_of(_sym806.id):
+            if _callee806.file_path != _fp:
+                _callee_set806.add(_callee806.id)
     if len(_callee_set806) >= 10:
         lines.append(
             f"high fan-out blast: {_basename} calls {len(_callee_set806)} external symbols"
