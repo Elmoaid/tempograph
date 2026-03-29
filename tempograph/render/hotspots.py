@@ -101,15 +101,15 @@ def _calm_zones_lines(graph: Tempo, velocity: dict[str, float]) -> list[str]:
     return lines
 
 
-def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
-    """Find the most interconnected, complex, high-risk symbols."""
-    # Pre-build renders-from index to avoid O(symbols*edges) scan
+def _hotspots_pre_init(
+    graph: Tempo,
+) -> tuple[dict[str, int], dict[str, float], dict[str, float], dict[str, dict[str, int]], set[str]]:
+    """Pre-compute all shared data structures for render_hotspots."""
     renders_from: dict[str, int] = {}
     for edge in graph.edges:
         if edge.kind == EdgeKind.RENDERS:
             renders_from[edge.source_id] = renders_from.get(edge.source_id, 0) + 1
 
-    # Load change velocity: files in active churn carry coordination risk
     velocity: dict[str, float] = {}
     velocity_14: dict[str, float] = {}
     try:
@@ -127,158 +127,170 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         except Exception:
             pass
 
-    # Blast info cache: file_path → categorized dependent file counts
-    # Computed once per file, not per symbol, to avoid redundant traversal
     blast_cache: dict[str, dict[str, int]] = {}
+    all_test_fps = {fp for fp in graph.files if _is_test_file(fp)}
+    return renders_from, velocity, velocity_14, blast_cache, all_test_fps
 
-    # Pre-check for test files once; avoids O(symbols × files) per-symbol check
-    _any_tests_in_project = any(_is_test_file(fp) for fp in graph.files)
 
-    scores: list[tuple[float, Symbol]] = []
+def _hotspots_score_symbol(
+    sym: Symbol,
+    graph: Tempo,
+    renders_from: dict[str, int],
+    velocity: dict[str, float],
+    blast_cache: dict[str, dict[str, int]],
+) -> tuple[float, Symbol] | None:
+    """Compute risk score for one symbol. Returns (score, sym) or None to skip."""
+    if sym.kind in (SymbolKind.VARIABLE, SymbolKind.CONSTANT,
+                    SymbolKind.ENUM_MEMBER, SymbolKind.FIELD):
+        return None
 
-    for sym in graph.symbols.values():
-        if sym.kind in (SymbolKind.VARIABLE, SymbolKind.CONSTANT,
-                        SymbolKind.ENUM_MEMBER, SymbolKind.FIELD):
-            continue
+    callers = graph.callers_of(sym.id)
+    callees = graph.callees_of(sym.id)
+    children = graph.children_of(sym.id)
+    caller_files = set(c.file_path for c in callers)
 
-        score = 0.0
-        callers = graph.callers_of(sym.id)
-        callees = graph.callees_of(sym.id)
-        children = graph.children_of(sym.id)
+    score = (
+        len(caller_files) * 3.0
+        + len(callees) * 1.5
+        + min(sym.line_count / 10, 50)
+        + len(children) * 2.0
+        + len(caller_files - {sym.file_path}) * 5.0
+        + renders_from.get(sym.id, 0) * 2.0
+    )
+    if sym.complexity > 1:
+        score += math.log2(sym.complexity) * 3.0
 
-        caller_files = set(c.file_path for c in callers)
-        score += len(caller_files) * 3.0
-        score += len(callees) * 1.5
-        score += min(sym.line_count / 10, 50)
-        score += len(children) * 2.0
-        cross_file = len(caller_files - {sym.file_path})
-        score += cross_file * 5.0
-        render_count = renders_from.get(sym.id, 0)
-        score += render_count * 2.0
-        # Cyclomatic complexity: log scale to avoid dominating
-        if sym.complexity > 1:
-            score += math.log2(sym.complexity) * 3.0
+    # Change velocity multiplier: log-scale boost for actively churning files
+    if velocity and sym.file_path:
+        cpw = velocity.get(sym.file_path, 0.0)
+        if cpw > 0:
+            score *= 1.0 + math.log2(1.0 + cpw) * 0.2
 
-        # Change velocity multiplier: log-scale boost for actively churning files
-        # A symbol in a file with 10 commits/week gets ~1.72x score boost
-        if velocity and sym.file_path:
-            rel = sym.file_path
-            cpw = velocity.get(rel, 0.0)
-            if cpw > 0:
-                score *= 1.0 + math.log2(1.0 + cpw) * 0.2
+    # File blast count multiplier: files with many external dependents are riskier.
+    if sym.file_path:
+        if sym.file_path not in blast_cache:
+            blast_cache[sym.file_path] = _file_blast_info(graph, sym.file_path)
+        bc = blast_cache[sym.file_path]["total"]
+        if bc > 0:
+            score *= 1.0 + math.log2(1.0 + bc) * 0.1
 
-        # File blast count multiplier: files with many external dependents are riskier.
-        # A file with 50 dependents gets ~1.56x; 10 dependents → ~1.35x; 5 → ~1.26x
-        # Cached per file since many symbols share the same file_path.
-        if sym.file_path:
-            if sym.file_path not in blast_cache:
-                blast_cache[sym.file_path] = _file_blast_info(graph, sym.file_path)
-            bc = blast_cache[sym.file_path]["total"]
-            if bc > 0:
-                score *= 1.0 + math.log2(1.0 + bc) * 0.1
+    return (score, sym) if score > 0 else None
 
-        if score > 0:
-            scores.append((score, sym))
 
-    scores.sort(key=lambda x: -x[0])
+def _hotspots_test_badge(sym: Symbol, graph: Tempo, any_tests: bool) -> str:
+    """Return test coverage badge string for a symbol."""
+    if not any_tests or sym.kind.value not in ("function", "method", "class", "module"):
+        return ""
+    if any(_is_test_file(c.file_path) for c in graph.callers_of(sym.id)):
+        return " [tested]"
+    if sym.file_path and any(_is_test_file(i) for i in graph.importers_of(sym.file_path)):
+        return " [tested]"
+    return " [no tests]"
 
-    lines = [f"Top {top_n} hotspots (highest coupling + complexity):", ""]
-    for i, (score, sym) in enumerate(scores[:top_n], 1):
-        callers = graph.callers_of(sym.id)
-        callees = graph.callees_of(sym.id)
-        children = graph.children_of(sym.id)
-        caller_files_display = set(c.file_path for c in callers)
-        cross_files = len(caller_files_display - {sym.file_path})
 
-        # Test coverage badge: [tested] = direct test callers or test file imports;
-        # [no tests] = no coverage; omitted when no test files exist in project.
-        _test_badge = ""
-        if _any_tests_in_project and sym.kind.value in ("function", "method", "class", "module"):
-            _tc_callers = [c for c in graph.callers_of(sym.id) if _is_test_file(c.file_path)]
-            if _tc_callers:
-                _test_badge = " [tested]"
-            elif sym.file_path and any(_is_test_file(i) for i in graph.importers_of(sym.file_path)):
-                _test_badge = " [tested]"
+def _hotspots_symbol_warnings(
+    sym: Symbol,
+    cross_files: int,
+    velocity: dict[str, float],
+    velocity_14: dict[str, float],
+    blast_cache: dict[str, dict[str, int]],
+    graph: Tempo,
+    any_tests: bool,
+) -> list[str]:
+    """Build actionable warning strings for a single hotspot entry."""
+    warnings = []
+    if sym.line_count > 500:
+        warnings.append("grep-only (too large to read)")
+    if cross_files > 5:
+        warnings.append("high blast radius — changes here break many files")
+    if sym.complexity > 100:
+        warnings.append("refactor candidate — extreme complexity")
+    elif sym.complexity > 50 and sym.line_count > 200:
+        warnings.append("consider splitting — complex and large")
+    if velocity and sym.file_path:
+        cpw = velocity.get(sym.file_path, 0.0)
+        if cpw >= 5.0:
+            cpw14 = velocity_14.get(sym.file_path, 0.0)
+            if cpw14 > 0 and cpw >= cpw14 * 1.5:
+                trend = " ↑"
+            elif cpw14 > 1.0 and cpw < cpw14 * 0.5:
+                trend = " ↓"
             else:
-                _test_badge = " [no tests]"
+                trend = ""
+            warnings.append(f"active churn: {cpw:.0f} commits/week{trend} — re-read before editing")
+    if sym.file_path and sym.file_path in blast_cache:
+        binfo = blast_cache[sym.file_path]
+        bc = binfo["total"]
+        if bc >= 20:
+            parts = [f"{binfo[cat]} {cat}" for cat in ("source", "test", "config") if binfo.get(cat, 0) > 0]
+            breakdown = f" ({', '.join(parts)})" if parts else ""
+            warnings.append(f"blast: {bc} files depend{breakdown} — changes need broad review")
+    # Test coverage warning: high-blast symbols with no test coverage at all.
+    if cross_files >= 5 and any_tests and sym.file_path:
+        if (not any(_is_test_file(i) for i in graph.importers_of(sym.file_path))
+                and not any(_is_test_file(c.file_path) for c in graph.callers_of(sym.id))):
+            warnings.append("no test coverage — high blast, no safety net")
+    return warnings
 
-        lines.append(
-            f"{i:2d}. {sym.kind.value} {sym.qualified_name} "
-            f"[risk={score:.0f}]{_test_badge} ({sym.file_path}:{sym.line_start})"
-        )
-        details = []
-        if callers:
-            details.append(f"{len(caller_files_display)} caller files ({cross_files} cross-file)")
-        if callees:
-            details.append(f"{len(callees)} callees")
-        if children:
-            details.append(f"{len(children)} children")
-        details.append(f"{sym.line_count} lines")
-        if sym.complexity > 1:
-            details.append(f"cx={sym.complexity}")
-        lines.append(f"    {', '.join(details)}")
 
-        # Actionable guidance
-        warnings = []
-        if sym.line_count > 500:
-            warnings.append("grep-only (too large to read)")
-        if cross_files > 5:
-            warnings.append("high blast radius — changes here break many files")
-        if sym.complexity > 100:
-            warnings.append("refactor candidate — extreme complexity")
-        elif sym.complexity > 50 and sym.line_count > 200:
-            warnings.append("consider splitting — complex and large")
-        # Change velocity warning: active churn = coordination hazard
-        if velocity and sym.file_path:
-            cpw = velocity.get(sym.file_path, 0.0)
-            if cpw >= 5.0:
-                cpw14 = velocity_14.get(sym.file_path, 0.0)
-                if cpw14 > 0 and cpw >= cpw14 * 1.5:
-                    _trend = " ↑"
-                elif cpw14 > 1.0 and cpw < cpw14 * 0.5:
-                    _trend = " ↓"
-                else:
-                    _trend = ""
-                warnings.append(
-                    f"active churn: {cpw:.0f} commits/week{_trend} — re-read before editing"
-                )
-        # File blast count warning: many external dependents = high coordination cost
-        if sym.file_path and sym.file_path in blast_cache:
-            binfo = blast_cache[sym.file_path]
-            bc = binfo["total"]
-            if bc >= 20:
-                parts = [f"{binfo[cat]} {cat}" for cat in ("source", "test", "config") if binfo.get(cat, 0) > 0]
-                breakdown = f" ({', '.join(parts)})" if parts else ""
-                warnings.append(f"blast: {bc} files depend{breakdown} — changes need broad review")
-        # Test coverage warning: high-blast symbols with no test coverage at all.
-        # Only flag when: (a) project has tests, (b) symbol is widely used cross-file,
-        # (c) no test file imports or calls this symbol's file.
-        # Avoids noise: if tests import the file, at least some coverage exists.
-        if cross_files >= 5 and _any_tests_in_project and sym.file_path:
-            _test_importers = [i for i in graph.importers_of(sym.file_path) if _is_test_file(i)]
-            _test_callers_sym = [c for c in graph.callers_of(sym.id) if _is_test_file(c.file_path)]
-            if not _test_importers and not _test_callers_sym:
-                warnings.append("no test coverage — high blast, no safety net")
-        if warnings:
-            lines.append(f"    → {'; '.join(warnings)}")
+def _hotspots_render_entry(
+    i: int,
+    score: float,
+    sym: Symbol,
+    graph: Tempo,
+    velocity: dict[str, float],
+    velocity_14: dict[str, float],
+    blast_cache: dict[str, dict[str, int]],
+    any_tests: bool,
+) -> list[str]:
+    """Render one hotspot entry: symbol line + details + warnings."""
+    callers = graph.callers_of(sym.id)
+    callees = graph.callees_of(sym.id)
+    children = graph.children_of(sym.id)
+    caller_files = set(c.file_path for c in callers)
+    cross_files = len(caller_files - {sym.file_path})
 
-    # High-complexity summary: top symbols by raw cyclomatic complexity.
-    # Separate from overall hotspot rank — a rarely-called function with cx=200
-    # is still a refactor target even if it doesn't score high by coupling.
-    _cx_syms = [
+    test_badge = _hotspots_test_badge(sym, graph, any_tests)
+    lines = [
+        f"{i:2d}. {sym.kind.value} {sym.qualified_name} "
+        f"[risk={score:.0f}]{test_badge} ({sym.file_path}:{sym.line_start})"
+    ]
+
+    details = []
+    if callers:
+        details.append(f"{len(caller_files)} caller files ({cross_files} cross-file)")
+    if callees:
+        details.append(f"{len(callees)} callees")
+    if children:
+        details.append(f"{len(children)} children")
+    details.append(f"{sym.line_count} lines")
+    if sym.complexity > 1:
+        details.append(f"cx={sym.complexity}")
+    lines.append(f"    {', '.join(details)}")
+
+    warnings = _hotspots_symbol_warnings(sym, cross_files, velocity, velocity_14, blast_cache, graph, any_tests)
+    if warnings:
+        lines.append(f"    → {'; '.join(warnings)}")
+    return lines
+
+
+def _hotspots_summary_cx(scores: list[tuple[float, Symbol]]) -> list[str]:
+    """High-complexity summary: top symbols by raw cyclomatic complexity."""
+    cx_syms = [
         (sym.complexity, sym)
         for _, sym in scores
         if sym.complexity >= 20 and not _is_test_file(sym.file_path)
     ]
-    if len(_cx_syms) >= 2:
-        _cx_syms.sort(key=lambda x: -x[0])
-        _cx_parts = [f"{sym.qualified_name} (cx={cx})" for cx, sym in _cx_syms[:3]]
-        lines.append("")
-        lines.append(f"Most complex: {', '.join(_cx_parts)}")
+    if len(cx_syms) < 2:
+        return []
+    cx_syms.sort(key=lambda x: -x[0])
+    cx_parts = [f"{sym.qualified_name} (cx={cx})" for cx, sym in cx_syms[:3]]
+    return ["", f"Most complex: {', '.join(cx_parts)}"]
 
-    # Complexity density: top functions by cx/lines — most logic-packed, hardest to read.
-    # cx=40 in 30 lines (1.33/L) is harder to understand than cx=40 in 300 lines (0.13/L).
-    _density_syms = sorted(
+
+def _hotspots_summary_density(scores: list[tuple[float, Symbol]]) -> list[str]:
+    """Complexity density summary: top functions by cx/lines."""
+    density_syms = sorted(
         [
             (sym.complexity / max(sym.line_count, 1), sym)
             for _, sym in scores
@@ -286,45 +298,64 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
         ],
         key=lambda x: -x[0],
     )
-    if len(_density_syms) >= 2:
-        _den_parts = [
-            f"{sym.name} (cx:{sym.complexity}, {sym.line_count}L, {den:.2f}/L)"
-            for den, sym in _density_syms[:3]
-        ]
-        lines.append(f"Dense: {', '.join(_den_parts)}")
+    if len(density_syms) < 2:
+        return []
+    den_parts = [
+        f"{sym.name} (cx:{sym.complexity}, {sym.line_count}L, {den:.2f}/L)"
+        for den, sym in density_syms[:3]
+    ]
+    return [f"Dense: {', '.join(den_parts)}"]
 
-    # Untested hotspots: high-scoring symbols in files with no test coverage.
-    # The riskiest code to modify: high coupling/complexity AND no safety net.
-    # Only shown when test files exist in the project (otherwise whole project lacks tests).
-    _all_test_fps_hs = {fp for fp in graph.files if _is_test_file(fp)}
-    if _all_test_fps_hs and scores:
-        _untested: list[tuple[float, Symbol]] = []
-        for _sc, _sym in scores[:top_n]:
-            if _is_test_file(_sym.file_path):
-                continue
-            # Only flag symbols with real cross-file exposure (≥2 cross-file callers)
-            _cross = len({
-                c.file_path for c in graph.callers_of(_sym.id)
-                if c.file_path != _sym.file_path
-            })
-            if _cross < 2:
-                continue
-            _base = _sym.file_path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
-            if not any(_base in t for t in _all_test_fps_hs):
-                _untested.append((_sc, _sym))
-        if len(_untested) >= 1:
-            _uh_parts = [
-                f"{sym.qualified_name} ({sym.file_path.rsplit('/', 1)[-1]})"
-                for _, sym in _untested[:3]
-            ]
-            lines.append("")
-            lines.append(f"Untested hotspots: {', '.join(_uh_parts)}")
 
+def _hotspots_summary_untested(
+    scores: list[tuple[float, Symbol]],
+    graph: Tempo,
+    all_test_fps: set[str],
+    top_n: int,
+) -> list[str]:
+    """Untested hotspots: high-scoring symbols with no test coverage."""
+    if not all_test_fps or not scores:
+        return []
+    untested: list[tuple[float, Symbol]] = []
+    for sc, sym in scores[:top_n]:
+        if _is_test_file(sym.file_path):
+            continue
+        cross = len({c.file_path for c in graph.callers_of(sym.id) if c.file_path != sym.file_path})
+        if cross < 2:
+            continue
+        base = sym.file_path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+        if not any(base in t for t in all_test_fps):
+            untested.append((sc, sym))
+    if not untested:
+        return []
+    uh_parts = [
+        f"{sym.qualified_name} ({sym.file_path.rsplit('/', 1)[-1]})"
+        for _, sym in untested[:3]
+    ]
+    return ["", f"Untested hotspots: {', '.join(uh_parts)}"]
+
+
+def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
+    """Find the most interconnected, complex, high-risk symbols."""
+    renders_from, velocity, velocity_14, blast_cache, all_test_fps = _hotspots_pre_init(graph)
+    any_tests = bool(all_test_fps)
+
+    scores: list[tuple[float, Symbol]] = []
+    for sym in graph.symbols.values():
+        result = _hotspots_score_symbol(sym, graph, renders_from, velocity, blast_cache)
+        if result is not None:
+            scores.append(result)
+    scores.sort(key=lambda x: -x[0])
+
+    lines = [f"Top {top_n} hotspots (highest coupling + complexity):", ""]
+    for i, (score, sym) in enumerate(scores[:top_n], 1):
+        lines.extend(_hotspots_render_entry(i, score, sym, graph, velocity, velocity_14, blast_cache, any_tests))
+
+    lines.extend(_hotspots_summary_cx(scores))
+    lines.extend(_hotspots_summary_density(scores))
+    lines.extend(_hotspots_summary_untested(scores, graph, all_test_fps, top_n))
     lines.extend(_calm_zones_lines(graph, velocity))
-
-    lines.extend(_collect_hotspots_signals(
-        graph, scores, velocity, velocity_14, _all_test_fps_hs, top_n
-    ))
+    lines.extend(_collect_hotspots_signals(graph, scores, velocity, velocity_14, all_test_fps, top_n))
     return "\n".join(lines)  # ALWAYS return here — never inside a conditional block
 
 def _churn_a_hot_coverage(
