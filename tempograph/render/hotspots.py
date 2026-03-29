@@ -327,11 +327,8 @@ def render_hotspots(graph: Tempo, *, top_n: int = 20) -> str:
     ))
     return "\n".join(lines)  # ALWAYS return here — never inside a conditional block
 
-def _signals_hotspots_core_a_churn(
-    graph: Tempo,
+def _churn_a_hot_coverage(
     scores: list[tuple[float, Symbol]],
-    velocity: dict[str, float],
-    velocity_14: dict[str, float],
     all_test_fps: set[str],
     top_n: int,
     out: list[str],
@@ -339,91 +336,122 @@ def _signals_hotspots_core_a_churn(
     # S113: Hot coverage ratio — fraction of top hotspot symbols that have test coverage.
     # Aggregates the per-symbol [tested]/[no tests] badges into a single health signal.
     # Only shown when test files exist AND at least 5 non-test hotspot symbols are scored.
-    if all_test_fps and scores:
-        _hs_non_test = [(sc, sym) for sc, sym in scores[:top_n] if not _is_test_file(sym.file_path)]
-        if len(_hs_non_test) >= 5:
-            _hs_tested_count = 0
-            for _sc2, _sym2 in _hs_non_test:
-                _base2 = _sym2.file_path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
-                if any(_base2 in t for t in all_test_fps):
-                    _hs_tested_count += 1
-            _hs_total = len(_hs_non_test)
-            _hs_pct = int(_hs_tested_count / _hs_total * 100)
-            if _hs_pct <= 70:  # only show when coverage gap is notable
-                out.append(f"hot coverage: {_hs_tested_count}/{_hs_total} top symbols have tests ({_hs_pct}%)")
+    if not (all_test_fps and scores):
+        return
+    _hs_non_test = [(sc, sym) for sc, sym in scores[:top_n] if not _is_test_file(sym.file_path)]
+    if len(_hs_non_test) < 5:
+        return
+    _hs_tested_count = 0
+    for _sc2, _sym2 in _hs_non_test:
+        _base2 = _sym2.file_path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+        if any(_base2 in t for t in all_test_fps):
+            _hs_tested_count += 1
+    _hs_total = len(_hs_non_test)
+    _hs_pct = int(_hs_tested_count / _hs_total * 100)
+    if _hs_pct <= 70:  # only show when coverage gap is notable
+        out.append(f"hot coverage: {_hs_tested_count}/{_hs_total} top symbols have tests ({_hs_pct}%)")
 
+
+def _churn_a_symbol_risk(
+    scores: list[tuple[float, Symbol]],
+    velocity: dict[str, float],
+    out: list[str],
+) -> None:
     # Churn risk: symbols that are BOTH complex (cx≥15) AND actively churning (≥3/wk).
     # These are the highest-priority refactor targets — changing frequently AND hard to reason about.
     # Separate from hotspot rank (which weights coupling) — a standalone complex churner still matters.
-    if velocity and scores:
-        _churn_risk: list[tuple[float, Symbol, float]] = []
-        for _, _sym in scores:
-            if _is_test_file(_sym.file_path):
-                continue
-            _cx = _sym.complexity
-            if _cx < 15:
-                continue
-            _cpw = velocity.get(_sym.file_path, 0.0)
-            if _cpw < 3.0:
-                continue
-            _danger = _cx * (_cpw ** 0.5)
-            _churn_risk.append((_danger, _sym, _cpw))
-        if len(_churn_risk) >= 1:
-            _churn_risk.sort(key=lambda x: -x[0])
-            _cr_parts = [
-                f"{sym.qualified_name} (cx={sym.complexity}, {cpw:.0f}/wk)"
-                for _, sym, cpw in _churn_risk[:3]
-            ]
-            out.append("")
-            out.append(f"Churn risk: {', '.join(_cr_parts)}")
+    if not (velocity and scores):
+        return
+    _churn_risk: list[tuple[float, Symbol, float]] = []
+    for _, _sym in scores:
+        if _is_test_file(_sym.file_path):
+            continue
+        _cx = _sym.complexity
+        if _cx < 15:
+            continue
+        _cpw = velocity.get(_sym.file_path, 0.0)
+        if _cpw < 3.0:
+            continue
+        _danger = _cx * (_cpw ** 0.5)
+        _churn_risk.append((_danger, _sym, _cpw))
+    if len(_churn_risk) >= 1:
+        _churn_risk.sort(key=lambda x: -x[0])
+        _cr_parts = [
+            f"{sym.qualified_name} (cx={sym.complexity}, {cpw:.0f}/wk)"
+            for _, sym, cpw in _churn_risk[:3]
+        ]
+        out.append("")
+        out.append(f"Churn risk: {', '.join(_cr_parts)}")
 
+
+def _churn_a_file_concentration(
+    scores: list[tuple[float, Symbol]],
+    top_n: int,
+    out: list[str],
+) -> None:
     # File concentration: which files dominate the hotspot list.
     # If one file has 5+ hotspots, agents should read it first — it's the bottleneck.
-    if len(scores) >= 5:
-        _file_counts: dict[str, int] = {}
-        for _, sym in scores[:top_n]:
-            _file_counts[sym.file_path] = _file_counts.get(sym.file_path, 0) + 1
-        _top_conc = sorted(_file_counts.items(), key=lambda x: -x[1])[:2]
-        _conc_parts = [
-            f"{fp.rsplit('/', 1)[-1]} ({n}/{min(len(scores), top_n)})"
-            for fp, n in _top_conc if n >= 3
-        ]
-        if _conc_parts:
-            out.append("")
-            out.append(f"Hotspot concentration: {', '.join(_conc_parts)}")
+    if len(scores) < 5:
+        return
+    _file_counts: dict[str, int] = {}
+    for _, sym in scores[:top_n]:
+        _file_counts[sym.file_path] = _file_counts.get(sym.file_path, 0) + 1
+    _top_conc = sorted(_file_counts.items(), key=lambda x: -x[1])[:2]
+    _conc_parts = [
+        f"{fp.rsplit('/', 1)[-1]} ({n}/{min(len(scores), top_n)})"
+        for fp, n in _top_conc if n >= 3
+    ]
+    if _conc_parts:
+        out.append("")
+        out.append(f"Hotspot concentration: {', '.join(_conc_parts)}")
 
+
+def _churn_a_coupled_pairs(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    top_n: int,
+    out: list[str],
+) -> None:
     # Coupled pairs: hotspot files that always change together (high co-change count).
     # Hidden coupling not visible in the call graph — agents must update both when touching one.
     # Only shown when git history is available and at least 1 pair qualifies.
-    if graph.root and scores:
-        try:
-            from ..git import cochange_pairs as _hspot_cpairs
-            # Get the top-5 hotspot file paths (source only)
-            _hs_fps = list(dict.fromkeys(
-                sym.file_path for _, sym in scores[:top_n]
-                if not _is_test_file(sym.file_path)
-            ))[:5]
-            _seen_pairs: set[frozenset] = set()
-            _coupled: list[tuple[int, str, str]] = []  # (count, fp_a, fp_b)
-            for _fp in _hs_fps:
-                for _p in _hspot_cpairs(graph.root, _fp, n=3, min_count=5):
-                    _partner = _p["path"]
-                    if _partner in graph.files and not _is_test_file(_partner):
-                        _pair_key = frozenset((_fp, _partner))
-                        if _pair_key not in _seen_pairs:
-                            _seen_pairs.add(_pair_key)
-                            _coupled.append((_p["count"], _fp, _partner))
-            if _coupled:
-                _coupled.sort(key=lambda x: -x[0])
-                _cp_parts = [
-                    f"{a.rsplit('/', 1)[-1]} ↔ {b.rsplit('/', 1)[-1]} ({n}x)"
-                    for n, a, b in _coupled[:2]
-                ]
-                out.append("")
-                out.append(f"Coupled pairs: {', '.join(_cp_parts)}")
-        except Exception:
-            pass
+    if not (graph.root and scores):
+        return
+    try:
+        from ..git import cochange_pairs as _hspot_cpairs
+        _hs_fps = list(dict.fromkeys(
+            sym.file_path for _, sym in scores[:top_n]
+            if not _is_test_file(sym.file_path)
+        ))[:5]
+        _seen_pairs: set[frozenset] = set()
+        _coupled: list[tuple[int, str, str]] = []  # (count, fp_a, fp_b)
+        for _fp in _hs_fps:
+            for _p in _hspot_cpairs(graph.root, _fp, n=3, min_count=5):
+                _partner = _p["path"]
+                if _partner in graph.files and not _is_test_file(_partner):
+                    _pair_key = frozenset((_fp, _partner))
+                    if _pair_key not in _seen_pairs:
+                        _seen_pairs.add(_pair_key)
+                        _coupled.append((_p["count"], _fp, _partner))
+        if _coupled:
+            _coupled.sort(key=lambda x: -x[0])
+            _cp_parts = [
+                f"{a.rsplit('/', 1)[-1]} ↔ {b.rsplit('/', 1)[-1]} ({n}x)"
+                for n, a, b in _coupled[:2]
+            ]
+            out.append("")
+            out.append(f"Coupled pairs: {', '.join(_cp_parts)}")
+    except Exception:
+        pass
 
+
+def _churn_a_file_complexity_risk(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    velocity: dict[str, float],
+    top_n: int,
+    out: list[str],
+) -> None:
     # S73: File complexity rank — top 3 source files by total cyclomatic complexity.
     # Per-symbol scores already shown above; this aggregates per file for refactor targeting.
     _file_cx: dict[str, int] = {}
@@ -438,9 +466,6 @@ def _signals_hotspots_core_a_churn(
         out.append(f"File complexity: {', '.join(_fcx_parts)}")
 
     # S89: Danger zone — files in BOTH the top-churn AND top-complexity quadrant.
-    # Symbol-level churn risk (above) covers individual functions; this flags files where
-    # the combination of total complexity AND change rate creates the highest refactor risk.
-    # Threshold: file total cx >= 15 AND churn >= 2 commits/week.
     if velocity and _file_cx:
         _dz_files: list[tuple[float, str, int, float]] = []
         for _dz_fp, _dz_cx in _file_cx.items():
@@ -461,57 +486,79 @@ def _signals_hotspots_core_a_churn(
             out.append(f"Danger zone: {', '.join(_dz_parts)} — high churn + complexity")
 
     # S131: Hot-and-complex files — source files that are BOTH in the hotspot top half
-    # AND have high average cyclomatic complexity. These are the most dangerous: actively
-    # changing, and the changes are in hard-to-understand code.
-    # Only shown when 2+ such files exist (avoid showing for well-maintained codebases).
-    if scores:
-        _hs_seen_fps_131: set[str] = set()
-        _hs_file_scores_131: dict[str, float] = {}
-        for _sc131, _sym131 in scores[:top_n]:
-            if _sym131.file_path not in _hs_seen_fps_131 and not _is_test_file(_sym131.file_path):
-                _hs_seen_fps_131.add(_sym131.file_path)
-                _hs_file_scores_131[_sym131.file_path] = _sc131
-        _hot_complex_files: list[tuple[float, int, str]] = []
-        for _fp131, _s131 in _hs_file_scores_131.items():
-            _fi131 = graph.files.get(_fp131)
-            if not _fi131:
-                continue
-            _cx_vals131 = [
-                graph.symbols[sid].complexity
-                for sid in _fi131.symbols
-                if sid in graph.symbols and graph.symbols[sid].complexity >= 1
-                and graph.symbols[sid].kind.value in ("function", "method")
-            ]
-            if _cx_vals131:
-                _avg_cx131 = sum(_cx_vals131) / len(_cx_vals131)
-                if _avg_cx131 >= 5.0:
-                    _hot_complex_files.append((_avg_cx131, int(_s131), _fp131))
-        if len(_hot_complex_files) >= 2:
-            _hot_complex_files.sort(key=lambda x: -x[0])
-            _hc_parts = [
-                f"{fp.rsplit('/', 1)[-1]} (avg cx={cx:.1f})"
-                for cx, _, fp in _hot_complex_files[:3]
-            ]
-            out.append("")
-            out.append(f"hot+complex: {', '.join(_hc_parts)} — active and hard to change")
+    # AND have high average cyclomatic complexity.
+    if not scores:
+        return
+    _hs_seen_fps_131: set[str] = set()
+    _hs_file_scores_131: dict[str, float] = {}
+    for _sc131, _sym131 in scores[:top_n]:
+        if _sym131.file_path not in _hs_seen_fps_131 and not _is_test_file(_sym131.file_path):
+            _hs_seen_fps_131.add(_sym131.file_path)
+            _hs_file_scores_131[_sym131.file_path] = _sc131
+    _hot_complex_files: list[tuple[float, int, str]] = []
+    for _fp131, _s131 in _hs_file_scores_131.items():
+        _fi131 = graph.files.get(_fp131)
+        if not _fi131:
+            continue
+        _cx_vals131 = [
+            graph.symbols[sid].complexity
+            for sid in _fi131.symbols
+            if sid in graph.symbols and graph.symbols[sid].complexity >= 1
+            and graph.symbols[sid].kind.value in ("function", "method")
+        ]
+        if _cx_vals131:
+            _avg_cx131 = sum(_cx_vals131) / len(_cx_vals131)
+            if _avg_cx131 >= 5.0:
+                _hot_complex_files.append((_avg_cx131, int(_s131), _fp131))
+    if len(_hot_complex_files) >= 2:
+        _hot_complex_files.sort(key=lambda x: -x[0])
+        _hc_parts = [
+            f"{fp.rsplit('/', 1)[-1]} (avg cx={cx:.1f})"
+            for cx, _, fp in _hot_complex_files[:3]
+        ]
+        out.append("")
+        out.append(f"hot+complex: {', '.join(_hc_parts)} — active and hard to change")
 
+
+def _churn_a_velocity_spike(
+    velocity: dict[str, float],
+    velocity_14: dict[str, float],
+    out: list[str],
+) -> None:
     # S112: Churn spike — files whose last-7d velocity is 2× their 14-day average.
     # Sudden acceleration = something changed: new feature push, bug-fixing crunch, or refactor.
-    # Agents need to know about these to prioritize review and watch for regressions.
     # Only shown when 1+ non-test file has spiked AND recent velocity >= 3 commits/week.
-    if velocity and velocity_14:
-        _spikes: list[tuple[float, str]] = []
-        for _sp_fp, _sp_v7 in velocity.items():
-            if _is_test_file(_sp_fp) or _sp_v7 < 3.0:
-                continue
-            _sp_v14 = velocity_14.get(_sp_fp, 0.0)
-            if _sp_v14 > 0 and _sp_v7 >= 2.0 * _sp_v14:
-                _spikes.append((_sp_v7, _sp_fp))
-        if _spikes:
-            _spikes.sort(key=lambda x: -x[0])
-            _sp_parts = [f"{fp.rsplit('/', 1)[-1]} (+{v:.1f}x/wk)" for v, fp in _spikes[:2]]
-            out.append("")
-            out.append(f"Churn spike: {', '.join(_sp_parts)} — velocity doubled vs 2-week avg")
+    if not (velocity and velocity_14):
+        return
+    _spikes: list[tuple[float, str]] = []
+    for _sp_fp, _sp_v7 in velocity.items():
+        if _is_test_file(_sp_fp) or _sp_v7 < 3.0:
+            continue
+        _sp_v14 = velocity_14.get(_sp_fp, 0.0)
+        if _sp_v14 > 0 and _sp_v7 >= 2.0 * _sp_v14:
+            _spikes.append((_sp_v7, _sp_fp))
+    if _spikes:
+        _spikes.sort(key=lambda x: -x[0])
+        _sp_parts = [f"{fp.rsplit('/', 1)[-1]} (+{v:.1f}x/wk)" for v, fp in _spikes[:2]]
+        out.append("")
+        out.append(f"Churn spike: {', '.join(_sp_parts)} — velocity doubled vs 2-week avg")
+
+
+def _signals_hotspots_core_a_churn(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    velocity: dict[str, float],
+    velocity_14: dict[str, float],
+    all_test_fps: set[str],
+    top_n: int,
+    out: list[str],
+) -> None:
+    _churn_a_hot_coverage(scores, all_test_fps, top_n, out)
+    _churn_a_symbol_risk(scores, velocity, out)
+    _churn_a_file_concentration(scores, top_n, out)
+    _churn_a_coupled_pairs(graph, scores, top_n, out)
+    _churn_a_file_complexity_risk(graph, scores, velocity, top_n, out)
+    _churn_a_velocity_spike(velocity, velocity_14, out)
 
 
 def _signals_hotspots_core_a_quality(
