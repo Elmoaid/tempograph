@@ -6201,6 +6201,88 @@ def _compute_subclass_exposure(seeds: "list[Symbol]", graph: "Tempo") -> str:
     return f"↳ {n} subclasses: {parts}{overflow} — interface changes propagate to all"
 
 
+def _compute_component_render_tree(seeds: "list[Symbol]", graph: "Tempo") -> str:
+    """S1038: Component render tree — makes JSX/React RENDERS edges visible in focus output.
+
+    BFS traverses CALLS edges only — JSX component composition via <FooBar /> uses RENDERS
+    edges that are completely invisible to BFS. When focusing on a React component, the parent
+    components that render it and the child components it renders never appear in the BFS output.
+
+    Example outputs:
+      ↳ JSX renders: Avatar, Button, LoadingSpinner — children hidden from BFS
+      ↳ JSX rendered by: Dashboard, UserPage (+1 more) — your props interface is their contract
+
+    Distinct from:
+    - S1037 (subclass exposure): INHERITS edges for class hierarchy — not JSX composition
+    - S65 (change_exposure): caller-file blast risk from CALLS edges — not RENDERS edges
+    - S1034 (cross-file siblings): naming-family siblings — not component tree
+
+    Conditions:
+    - Seed has outgoing RENDERS edges (renders cross-file child components)
+      OR graph.renderers_of(seed.id) returns cross-file parents
+    - Seed is not in a test file
+    """
+    if not seeds:
+        return ""
+    seed = seeds[0]
+    if _is_test_file(seed.file_path):
+        return ""
+
+    from ..types import EdgeKind as _EK
+
+    # Children: outgoing RENDERS edges from this seed to other components
+    child_names: list[str] = []
+    seen_children: set[str] = set()
+    for edge in graph.edges:
+        if edge.kind is not _EK.RENDERS:
+            continue
+        if edge.source_id != seed.id:
+            continue
+        tgt = edge.target_id
+        if tgt in graph.symbols:
+            child_sym = graph.symbols[tgt]
+            if child_sym.file_path != seed.file_path and not _is_test_file(child_sym.file_path):
+                if child_sym.name not in seen_children:
+                    seen_children.add(child_sym.name)
+                    child_names.append(child_sym.name)
+        elif tgt and tgt[0:1].isupper():
+            # Unresolved PascalCase name — still a component reference worth showing
+            if tgt not in seen_children:
+                seen_children.add(tgt)
+                child_names.append(tgt)
+
+    # Parents: what renders this seed (renderers_of gives RENDERS edge sources)
+    parents = [
+        s for s in graph.renderers_of(seed.id)
+        if s.file_path != seed.file_path and not _is_test_file(s.file_path)
+    ]
+
+    if not child_names and not parents:
+        return ""
+
+    output_lines: list[str] = []
+
+    if child_names:
+        n = len(child_names)
+        shown = child_names[:4]
+        parts = ", ".join(shown)
+        overflow = f" +{n - 4} more" if n > 4 else ""
+        output_lines.append(
+            f"↳ JSX renders: {parts}{overflow} — children hidden from BFS"
+        )
+
+    if parents:
+        n = len(parents)
+        shown_syms = parents[:3]
+        parts = ", ".join(s.name for s in shown_syms)
+        overflow = f" +{n - 3} more" if n > 3 else ""
+        output_lines.append(
+            f"↳ JSX rendered by: {parts}{overflow} — your props interface is their contract"
+        )
+
+    return "\n".join(output_lines)
+
+
 def _compute_dead_seed_note(graph: "Tempo", seeds: "list[Symbol]") -> str:
     """S67: Dead seed annotation — fires when the focus seed itself is a dead candidate.
 
@@ -6354,6 +6436,10 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000, _stalene
     _subclass_exp = _compute_subclass_exposure(seeds, graph)
     if _subclass_exp:
         lines.append(_subclass_exp)
+        lines.append("")
+    _render_tree = _compute_component_render_tree(seeds, graph)
+    if _render_tree:
+        lines.append(_render_tree)
         lines.append("")
     seen_files: set[str] = set()
     # Count header sections already written to lines (change_exposure, scope_note,
