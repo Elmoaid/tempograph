@@ -416,8 +416,8 @@ def _blast_core_a_inheritance(
     symbols: list,
     lines: list[str],
 ) -> None:
-    # Precompute inherits edges once for S145 and S246.
-    _a_inherits = [e for e in graph.edges if e.kind.value == "inherits"]
+    # S145 and S246 use graph._subtypes dict (parent_id → [subclass_ids]) — O(1) per class
+    # instead of O(N) scan of all graph.edges. _subtypes is built in build_indexes().
 
     # S145: Subclass count — when the blast target defines a class with INHERITS subclasses.
     # Changing a parent class ripples to all subclasses: method overrides, super() calls,
@@ -427,10 +427,7 @@ def _blast_core_a_inheritance(
         _total_subclasses145: int = 0
         _s145_class_names: list[str] = []
         for _cls145 in _s145_classes:
-            _sub_count = sum(
-                1 for e in _a_inherits
-                if e.target_id == _cls145.id
-            )
+            _sub_count = len(graph._subtypes.get(_cls145.id, []))
             if _sub_count >= 1:
                 _total_subclasses145 += _sub_count
                 _s145_class_names.append(f"{_cls145.name} ({_sub_count})")
@@ -448,26 +445,24 @@ def _blast_core_a_inheritance(
         if any(ind in s.name.lower() for ind in _s246_mixin_indicators)
     ]
     if not _s246_mixin_classes:
-        # Also detect via INHERITS edges: if any other class inherits from classes in this file
+        # Also detect via _subtypes: if any other class inherits from classes in this file
         _s246_this_class_ids = {s.id for s in _s246_class_syms}
         _s246_subclasses: list[str] = []
-        for _e246 in _a_inherits:
-            if (
-                _e246.target_id in _s246_this_class_ids
-                and _e246.source_id.split("::")[0] != file_path
-            ):
-                _s246_subclasses.append(_e246.source_id.split("::")[-1])
+        for _cid in _s246_this_class_ids:
+            for _src_id in graph._subtypes.get(_cid, []):
+                if _src_id.split("::")[0] != file_path:
+                    _s246_subclasses.append(_src_id.split("::")[-1])
         if len(_s246_subclasses) >= 2:
             _s246_mixin_classes = _s246_class_syms  # trigger signal
     if _s246_mixin_classes:
         _s246_names = [s.name for s in _s246_mixin_classes[:2]]
         _s246_str = ", ".join(_s246_names)
-        # Count subclasses across the graph
+        # Count subclasses across the graph using _subtypes index
         _s246_all_ids = {s.id for s in _s246_mixin_classes}
         _s246_n_subs = sum(
-            1 for _e in _a_inherits
-            if _e.target_id in _s246_all_ids
-            and _e.source_id.split("::")[0] != file_path
+            1 for _cid in _s246_all_ids
+            for _src in graph._subtypes.get(_cid, [])
+            if _src.split("::")[0] != file_path
         )
         if _s246_n_subs >= 1:
             lines.append(
@@ -483,8 +478,9 @@ def _blast_core_a_imports(
     importers: list[str],
     lines: list[str],
 ) -> None:
-    # Precompute outgoing import edges once for S138, S256, and S263.
-    _a_out_imports = [e for e in graph.edges if e.kind.value == "imports" and e.source_id == file_path]
+    # Precompute outgoing import targets once for S138, S256, and S263.
+    # Uses pre-built _out_imports index — O(1) lookup instead of O(N) edge scan.
+    _a_out_imports = graph.outgoing_imports_of(file_path)
 
     # S195: Blast fan-out — blast target's symbols call into 5+ distinct external files.
     # High outgoing call fan-out = the file reaches widely; changes ripple in multiple directions.
@@ -508,12 +504,12 @@ def _blast_core_a_imports(
     # Files that pull from 5+ distinct source modules are barrel/aggregator files:
     # changes to any upstream propagate here, AND any change here propagates to all importers.
     # Highest blast-amplification pattern. Only shown when 5+ distinct imports found.
-    _s138_imports_from = sorted({
-        e.target_id for e in _a_out_imports
-        if e.target_id in graph.files
-        and not _is_test_file(e.target_id)
-        and e.target_id != file_path
-    })
+    _s138_imports_from = sorted(
+        t for t in _a_out_imports
+        if t in graph.files
+        and not _is_test_file(t)
+        and t != file_path
+    )
     if len(_s138_imports_from) >= 5:
         lines.append(
             f"aggregator file: imports from {len(_s138_imports_from)} modules"
@@ -553,7 +549,7 @@ def _blast_core_a_imports(
     # S256: High fan-out blast — blast target imports from many other modules.
     # A file with wide dependencies is harder to refactor in isolation; changes
     # often require updates across all its upstream dependencies.
-    _s256_import_count = len({e.target_id for e in _a_out_imports})
+    _s256_import_count = len(set(_a_out_imports))
     if _s256_import_count >= 6:
         lines.append(
             f"high fan-out: imports from {_s256_import_count} modules"
@@ -1045,10 +1041,7 @@ def _blast_core_b_symbols(
             f" — subscribers are invisible in dependency trace; grep for event names to find all consumers"
         )
     # S437: Circular import risk — blast target has a mutual import relationship.
-    _s437_outbound_files = {
-        e.target_id for e in b_out_imports
-        if e.target_id != file_path
-    }
+    _s437_outbound_files = {t for t in b_out_imports if t != file_path}
     _s437_circular = [fp for fp in _s437_outbound_files if file_path in graph.importers_of(fp)]
     if _s437_circular:
         _circ_name437 = _s437_circular[0].rsplit("/", 1)[-1]
@@ -1149,8 +1142,8 @@ def _blast_core_b_edges(
             )
     # S479: Bridge file blast — blast target imports from one component and is imported by another.
     _s479_outbound_dirs: set[str] = set()
-    for _e479 in b_out_imports:
-        _dir479 = _e479.target_id.rsplit("/", 1)[0] if "/" in _e479.target_id else ""
+    for _t479 in b_out_imports:
+        _dir479 = _t479.rsplit("/", 1)[0] if "/" in _t479 else ""
         if _dir479 and _dir479 != (file_path.rsplit("/", 1)[0] if "/" in file_path else ""):
             _s479_outbound_dirs.add(_dir479)
     _s479_inbound_dirs: set[str] = set()
@@ -1210,10 +1203,7 @@ def _blast_core_b_meta(
             f" — changes to __init__.py re-exports propagate to all consumers; review every import"
         )
     # S504: Leaf file blast — blast target imports from others but nothing imports it.
-    _s504_outbound = {
-        e.target_id for e in b_out_imports
-        if e.target_id != file_path
-    }
+    _s504_outbound = {t for t in b_out_imports if t != file_path}
     if _s504_outbound and not importers:
         lines.append(
             f"leaf file blast: {file_path.rsplit('/', 1)[-1]} imports {len(_s504_outbound)} file(s) but has no importers"
@@ -1231,8 +1221,8 @@ def _signals_blast_core_b(
     render_targets: set,
     lines: list[str]
 ) -> None:
-    # Precompute outgoing imports once — avoids repeated full scans of graph.edges (30700 edges).
-    _b_out_imports = [e for e in graph.edges if e.kind.value == "imports" and e.source_id == file_path]
+    # Outgoing import targets — O(1) index lookup, no edge scan.
+    _b_out_imports = graph.outgoing_imports_of(file_path)
     _blast_core_b_naming(file_path, importers, symbols, lines)
     _blast_core_b_schema(file_path, importers, symbols, lines)
     _blast_core_b_utility(graph, file_path, importers, symbols, lines)
@@ -1440,8 +1430,8 @@ def _blast_core_c_cycles(
     # S539: Circular import blast
     _s539_fp_norm = _fp
     _s539_outbound = {
-        e.target_id.replace("\\", "/") for e in b_out_imports
-        if e.target_id.replace("\\", "/") != _s539_fp_norm
+        t.replace("\\", "/") for t in b_out_imports
+        if t.replace("\\", "/") != _s539_fp_norm
     }
     _s539_reverse_importers = {fp.replace("\\", "/") for fp in graph.importers_of(file_path)}
     _s539_cycle_partners = [dep for dep in _s539_outbound if dep in _s539_reverse_importers]
@@ -1452,7 +1442,7 @@ def _blast_core_c_cycles(
             f" — changes affect init order; test module-level attribute access after any modification"
         )
     # S650: Mutual import
-    _import_targets650 = {e.target_id for e in b_out_imports}
+    _import_targets650 = set(b_out_imports)
     _importers650 = graph.importers_of(file_path)
     _mutual650 = [
         fp for fp in _importers650
@@ -1559,7 +1549,7 @@ def _blast_core_c_patterns(
         )
     # S632: Import hub
     _fanin632 = len([fp for fp in importers if not _is_test_file(fp)])
-    _fanout632 = len({e.target_id for e in b_out_imports})
+    _fanout632 = len(set(b_out_imports))
     if _fanin632 >= 5 and _fanin632 >= _fanout632 * 3:
         lines.append(
             f"import hub: {_fp.rsplit('/', 1)[-1]} has {_fanin632} importers but only {_fanout632} dependencies"
@@ -1575,8 +1565,8 @@ def _signals_blast_core_c(
     importers: list[str],
     lines: list[str]
 ) -> None:
-    # Precompute outgoing imports once — avoids 2 repeated full scans of graph.edges.
-    _b_out_imports = [e for e in graph.edges if e.kind.value == "imports" and e.source_id == file_path]
+    # Outgoing import targets — O(1) index lookup, no edge scan.
+    _b_out_imports = graph.outgoing_imports_of(file_path)
     _blast_core_c_importers(graph, file_path, importers, lines)
     _blast_core_c_module_role(file_path, importers, lines)
     _blast_core_c_structure(graph, file_path, fi, lines)
@@ -2385,13 +2375,12 @@ def _blast_cochange_section(
 
 def _blast_deps_section(graph: Tempo, file_path: str, lines: list[str]) -> None:
     """Append outgoing dependencies section (S74)."""
-    _d_out_imports = [e for e in graph.edges if e.kind.value == "imports" and e.source_id == file_path]
-    _deps_of_target = sorted({
-        e.target_id for e in _d_out_imports
-        if e.target_id in graph.files
-        and not _is_test_file(e.target_id)
-        and e.target_id != file_path
-    })
+    _deps_of_target = sorted(
+        t for t in graph.outgoing_imports_of(file_path)
+        if t in graph.files
+        and not _is_test_file(t)
+        and t != file_path
+    )
     if len(_deps_of_target) >= 3:
         _dep_names = [fp.rsplit("/", 1)[-1] for fp in _deps_of_target[:5]]
         _dep_str = ", ".join(_dep_names)
