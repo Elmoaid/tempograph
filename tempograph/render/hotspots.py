@@ -1359,26 +1359,11 @@ def _signals_hotspots_core_b_type(
     _b_type_module_exposure(graph, scores, out)
 
 
-def _signals_hotspots_core_b_concentration(
+def _b_concentration_bottleneck(
     graph: Tempo,
     scores: list[tuple[float, Symbol]],
-    velocity: dict[str, float],
-    velocity_14: dict[str, float],
-    all_test_fps: set[str],
-    top_n: int,
     out: list[str],
 ) -> None:
-    # S299: Mono-file hotspot — PRUNED: duplicate of S376 same-file cluster concept
-    if False:  # PRUNED: duplicate hotspot taxonomy
-        if len(scores) >= 3:
-            _top_files299 = [sym.file_path for _, sym in scores[:5]]
-            if len(set(_top_files299)) == 1 and not _is_test_file(_top_files299[0]):
-                _mf_name299 = _top_files299[0].rsplit("/", 1)[-1]
-                out.append(
-                    f"\nmono-file hotspot: all top {len(_top_files299)} hotspots in {_mf_name299}"
-                    f" — file monopolises churn; strong split candidate"
-                )
-
     # S305: Hotspot bottleneck — top hotspot file is imported by 5+ other source files.
     # A file that is simultaneously high-churn AND imported widely is a systemic risk:
     # any change to it forces re-evaluation across all its dependents.
@@ -1396,6 +1381,11 @@ def _signals_hotspots_core_b_concentration(
                     f" imported by {len(_importer_files305)} files; churn ripples widely"
                 )
 
+
+def _b_concentration_score_dominance(
+    scores: list[tuple[float, Symbol]],
+    out: list[str],
+) -> None:
     # S312: Score-dominant hotspot — top hotspot file accounts for 40%+ of total hotspot score.
     # One file dominating the score means all change energy is concentrated there;
     # it's the single biggest risk point in the codebase right now.
@@ -1411,57 +1401,11 @@ def _signals_hotspots_core_b_concentration(
                     f" — {_pct312}% of total hotspot risk; highest-priority stabilization target"
                 )
 
-    # S318: Non-primary-language hotspot — PRUNED: duplicate of S394 cross-language concept
-    if False:  # PRUNED: duplicate hotspot taxonomy
-        _PRIMARY_LANGS318 = {"python", "javascript", "typescript"}
-        if scores:
-            _top318 = scores[0][1]
-            _lang318 = _top318.language.value.lower() if _top318.language else ""
-            if _lang318 and _lang318 not in _PRIMARY_LANGS318 and not _is_test_file(_top318.file_path):
-                out.append(
-                    f"\nnon-primary-language hotspot: {_top318.file_path.rsplit('/', 1)[-1]}"
-                    f" ({_lang318}) — hotspot in secondary language; domain expertise required"
-                )
 
-    # S326: Hotspot in multi-commit file — PRUNED: proxy metric, not real git data
-    if False:  # PRUNED: proxy metric, already captured by hotspot score
-        if scores:
-            _top326 = scores[0][1]
-            _file326 = _top326.file_path
-            if not _is_test_file(_file326):
-                _file_syms326 = graph.symbols_in_file(_file326)
-                _sym_ids326 = {s.id for s in _file_syms326}
-                _CALLS326 = EdgeKind.CALLS
-                _callee_count326 = sum(
-                    1 for e in graph.edges
-                    if e.kind is _CALLS326 and e.source_id in _sym_ids326
-                )
-                if len(_file_syms326) >= 10 and _callee_count326 >= 20:
-                    out.append(
-                        f"\nhigh-activity hotspot: {_file326.rsplit('/', 1)[-1]} has"
-                        f" {len(_file_syms326)} symbols and {_callee_count326} outgoing calls"
-                        f" — dense file; isolate changes with thorough code review"
-                    )
-
-    # S332: Cross-module hotspot — PRUNED: subsumes into S305 bottleneck concept
-    if False:  # PRUNED: duplicate hotspot taxonomy
-        if scores:
-            _top332 = scores[0][1]
-            if not _is_test_file(_top332.file_path):
-                _callers332 = graph.callers_of(_top332.id)
-                _top_dirs332: set[str] = set()
-                for _c332 in _callers332:
-                    if _c332.file_path != _top332.file_path:
-                        _parts332 = _c332.file_path.replace("\\", "/").split("/")
-                        if len(_parts332) >= 2:
-                            _top_dirs332.add(_parts332[0])
-                if len(_top_dirs332) >= 3:
-                    out.append(
-                        f"\ncross-module hotspot: {_top332.name} called from"
-                        f" {len(_top_dirs332)} top-level dirs ({', '.join(sorted(_top_dirs332)[:3])})"
-                        f" — cross-cutting concern; multi-team coordination required"
-                    )
-
+def _b_concentration_risk_distribution(
+    scores: list[tuple[float, Symbol]],
+    out: list[str],
+) -> None:
     # S338: Risk concentration — top 3 hotspot symbols hold 70%+ of total hotspot score.
     # When a small cluster dominates the risk distribution, the codebase has a tight
     # instability core; stabilizing just those 3 files would significantly improve overall health.
@@ -1477,16 +1421,19 @@ def _signals_hotspots_core_b_concentration(
                 f" — stabilising these 3 files improves overall codebase health most"
             )
 
-    # S344: __init__ module hotspot — PRUNED: duplicate of S289 interface module hotspot
-    if False:  # PRUNED: duplicate hotspot taxonomy
-        if scores:
-            _top344 = scores[0][1]
-            _fname344 = _top344.file_path.rsplit("/", 1)[-1].lower()
-            if _fname344 in ("__init__.py", "index.py", "index.ts", "index.js") and not _is_test_file(_top344.file_path):
-                out.append(
-                    f"\ninit module hotspot: {_top344.file_path.rsplit('/', 1)[-1]}"
-                    f" — package interface is unstable; every importer of the package is affected"
-                )
+
+def _signals_hotspots_core_b_concentration(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    velocity: dict[str, float],
+    velocity_14: dict[str, float],
+    all_test_fps: set[str],
+    top_n: int,
+    out: list[str],
+) -> None:
+    _b_concentration_bottleneck(graph, scores, out)
+    _b_concentration_score_dominance(scores, out)
+    _b_concentration_risk_distribution(scores, out)
 
 
 def _b_structure_file_origin(

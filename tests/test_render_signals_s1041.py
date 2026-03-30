@@ -265,15 +265,19 @@ class TestDecompCandidateIntegration:
         return render_focused(g, query)
 
     def test_fires_for_high_cx_hotspot_helper(self):
-        """_signals_hotspots_core_b_concentration (cx=30, 0 cross callers) — fires."""
-        result = self._focus("_signals_hotspots_core_b_concentration")
+        """_signals_structure_b (cx=43, 0 cross callers) — fires."""
+        result = self._focus("_signals_structure_b")
         assert "complexity:" in result
         assert "F-grade" in result
         assert "safe to extract helpers" in result
 
     def test_silent_for_decomposed_dispatcher(self):
         """Decomposed dispatchers (cx=1) — do not fire F-grade signal."""
-        for fn in ("_signals_hotspots_core_b_structure", "_signals_hotspots_core_b_type"):
+        for fn in (
+            "_signals_hotspots_core_b_structure",
+            "_signals_hotspots_core_b_type",
+            "_signals_hotspots_core_b_concentration",
+        ):
             result = self._focus(fn)
             assert "F-grade" not in result, f"{fn} should not fire F-grade after decomposition"
 
