@@ -1,4 +1,6 @@
 import { useState, useCallback } from "react";
+import { lastModeKey } from "./useModeSelectionState";
+import { loadHistory } from "../components/modes";
 
 export interface RunHistoryEntry {
   mode: string;
@@ -10,12 +12,20 @@ export function updateRunHistory(prev: RunHistoryEntry[], entry: RunHistoryEntry
   return [entry, ...deduped].slice(0, max);
 }
 
-export function useRunHistory() {
+export function useRunHistory(repoPath: string) {
   const [runHistory, setRunHistory] = useState<RunHistoryEntry[]>([]);
+  const [history, setHistory] = useState<string[]>(() => {
+    const initialMode = localStorage.getItem(lastModeKey(repoPath)) || "overview";
+    return loadHistory(initialMode);
+  });
 
   const addRunHistory = useCallback((mode: string, args: string) => {
     setRunHistory(prev => updateRunHistory(prev, { mode, args }));
   }, []);
 
-  return { runHistory, addRunHistory };
+  const loadModeHistory = useCallback((mode: string) => {
+    setHistory(loadHistory(mode));
+  }, []);
+
+  return { runHistory, addRunHistory, history, setHistory, loadModeHistory };
 }

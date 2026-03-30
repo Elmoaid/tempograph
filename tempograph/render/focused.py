@@ -4029,6 +4029,157 @@ def _compute_call_cycle(seeds: "list[Symbol]", graph: "Tempo") -> str:
     )
 
 
+def _compute_dead_params(seeds: "list[Symbol]", graph: "Tempo") -> str:
+    """S1045: Dead parameters — function accepts a parameter but never uses it in the body.
+
+    Callers are silently passing values that have zero effect on computation. Common causes:
+    backward-compat shims (param removed from logic but kept in signature), planned-but-never-wired
+    parameters, or refactors that removed the feature but not the parameter.
+
+    When a heavily-called function has a dead parameter, ALL those callers are passing a value
+    that is silently discarded. The agent should know before editing — the dead param may need
+    to be wired in, or removed from all call sites.
+
+    Example outputs:
+      ↳ dead param: lang — in _extract_signature, never used in body (31 callers pass this silently)
+      ↳ dead params: verbose (in build_index, 8 callers); timeout (in fetch_data, 5 callers)
+
+    Conditions (per seed):
+    - kind in {function, method}
+    - not a test file
+    - ≥3 cross-file non-test callers (ensures meaningful public API)
+    - ≥2 extractable non-trivial parameters (excludes self/cls/_* prefix, *args/**kwargs)
+    - line_count ≥ 3 (excludes trivial stubs/shims)
+    - body is readable and non-empty
+    - ≥1 parameter name does not appear as a whole word (\\b boundary) anywhere in the body
+
+    Exclusions:
+    - Parameters starting with '_': Python convention for intentionally-unused
+    - self, cls: standard OOP — never "used" explicitly
+    - *args, **kwargs: variadic — may be forwarded without explicit mention
+    """
+    import re as _re  # noqa: PLC0415
+    import os as _os  # noqa: PLC0415
+
+    def _parse_param_names(sig: str) -> list:
+        """Extract plain parameter names from a function signature string."""
+        m = _re.search(r"\((.+)\)", sig, _re.DOTALL)
+        if not m:
+            return []
+        inner = m.group(1)
+        parts: list = []
+        depth = 0
+        cur = ""
+        for ch in inner:
+            if ch in "([{":
+                depth += 1
+                cur += ch
+            elif ch in ")]}":
+                depth -= 1
+                cur += ch
+            elif ch == "," and depth == 0:
+                parts.append(cur.strip())
+                cur = ""
+            else:
+                cur += ch
+        if cur.strip():
+            parts.append(cur.strip())
+        names: list = []
+        for part in parts:
+            part = part.strip()
+            # Skip *args, **kwargs, bare * separator
+            if part.startswith("**") or part == "*":
+                continue
+            p = part.lstrip("*")
+            name_m = _re.match(r"^([A-Za-z_][A-Za-z0-9_]*)", p)
+            if not name_m:
+                continue
+            name = name_m.group(1)
+            if name in ("self", "cls"):
+                continue
+            if name.startswith("_"):
+                continue
+            names.append(name)
+        return names
+
+    # Accumulate (sym_name, param_name, cross_caller_count) per seed
+    dead_hits: list = []
+
+    for sym in seeds:
+        if _is_test_file(sym.file_path):
+            continue
+        if sym.kind.value not in ("function", "method"):
+            continue
+        if not sym.signature:
+            continue
+        if sym.line_count < 3:
+            continue
+
+        params = _parse_param_names(sym.signature)
+        if len(params) < 2:
+            continue
+
+        cross_callers = [
+            c for c in graph.callers_of(sym.id)
+            if c.file_path != sym.file_path and not _is_test_file(c.file_path)
+        ]
+        if len(cross_callers) < 3:
+            continue
+
+        try:
+            full_path = _os.path.join(graph.root, sym.file_path)
+            if not _os.path.isfile(full_path):
+                continue
+            with open(full_path, encoding="utf-8", errors="replace") as _fh:
+                source_lines = _fh.readlines()
+        except OSError:
+            continue
+
+        # Body = lines after the def/signature line (same convention as _compute_async_gap:
+        # line_start is 1-indexed, source_lines is 0-indexed → body starts at index line_start)
+        body_lines = source_lines[sym.line_start : sym.line_end]
+        if not body_lines:
+            continue
+        body_text = "".join(body_lines)
+        if not body_text.strip():
+            continue
+
+        dead = [
+            p for p in params
+            if not _re.search(r"\b" + _re.escape(p) + r"\b", body_text)
+        ]
+        if dead:
+            for dp in dead[:2]:  # cap at 2 dead params per function
+                dead_hits.append((sym.name, dp, len(cross_callers)))
+
+    if not dead_hits:
+        return ""
+
+    dead_hits.sort(key=lambda x: -x[2])  # most-called first
+
+    if len(dead_hits) == 1:
+        sym_name, param, callers = dead_hits[0]
+        return (
+            f"↳ dead param: {param} — in {sym_name} signature, never referenced in body"
+            f" ({callers} callers pass this silently)"
+        )
+
+    # Multiple: group by sym_name for readability
+    seen_sym: set = set()
+    parts: list = []
+    for sym_name, param, callers in dead_hits[:4]:
+        if sym_name not in seen_sym:
+            seen_sym.add(sym_name)
+            same_sym_params = [p for s, p, _ in dead_hits if s == sym_name]
+            params_str = ", ".join(same_sym_params[:2])
+            parts.append(f"{params_str} (in {sym_name}, {callers} callers)")
+    extra = f" +{max(0, len(seen_sym) - 4)} more" if len(seen_sym) > 4 else ""
+    return (
+        f"↳ dead params: {'; '.join(parts)}{extra}"
+        f" — in signatures but never used in body; callers pass these silently"
+    )
+
+
 def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000, _staleness_map: "dict[str, int | None] | None" = None) -> str:
     """Task-focused rendering with BFS graph traversal.
     Starts from search results, then follows call/render/import edges
@@ -4095,6 +4246,10 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000, _stalene
     _call_cycle = _compute_call_cycle(seeds, graph)
     if _call_cycle:
         lines.append(_call_cycle)
+        lines.append("")
+    _dead_params = _compute_dead_params(seeds, graph)
+    if _dead_params:
+        lines.append(_dead_params)
         lines.append("")
     _hot_cluster = _compute_hot_cluster_note(graph, ordered)
     if _hot_cluster:
