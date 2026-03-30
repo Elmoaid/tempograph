@@ -3951,6 +3951,84 @@ def _compute_async_gap(seeds: "list[Symbol]", graph: "Tempo") -> str:
     )
 
 
+def _compute_call_cycle(seeds: "list[Symbol]", graph: "Tempo") -> str:
+    """S1044: Call cycle — seed participates in an indirect 3-hop call cycle (A→B→C→A).
+
+    The existing inline [recursive: mutual with X] annotation catches 2-hop direct
+    mutual recursion (A→B→A) at depth-0. For 3-hop indirect cycles (A→B→C→A),
+    there is NO current warning — the cycle is invisible to the agent.
+
+    This fires PRE-BFS so the agent sees it before reading the BFS tree, which may
+    already be truncated by the 50-node cap and miss one leg of the cycle entirely.
+
+    Conditions (per seed):
+    - kind in {function, method}
+    - not a test file
+    - seed calls callee B (B ≠ seed)
+    - B calls callee C (C ≠ seed, C ≠ B)
+    - C calls back to seed (forming A→B→C→A)
+    - B and C are not test files
+    - Callee scan capped at 15 per hop to stay fast (O(15²) per seed)
+
+    Distinct from:
+    - [recursive] — self-recursion (A calls A directly)
+    - [recursive: mutual with X] — direct 2-hop (A→B→A), inline at depth-0 node
+    This signal: indirect 3-hop, pre-BFS placement, invisible to inline annotation.
+    """
+    cycles: list[tuple["Symbol", "Symbol", "Symbol"]] = []  # (seed, mid, far)
+    seen_triples: set[tuple[str, str, str]] = set()
+
+    for sym in seeds:
+        if _is_test_file(sym.file_path):
+            continue
+        if sym.kind.value not in ("function", "method"):
+            continue
+
+        direct_callees = graph.callees_of(sym.id)
+        direct_ids = {c.id for c in direct_callees}
+
+        for mid in direct_callees[:15]:
+            if mid.id == sym.id:
+                continue  # self-loop — handled by [recursive]
+            if _is_test_file(mid.file_path):
+                continue
+
+            # Check if mid directly calls back to sym (2-hop) — skip, handled inline
+            mid_callees = graph.callees_of(mid.id)
+            mid_callee_ids = {c.id for c in mid_callees}
+            if sym.id in mid_callee_ids:
+                continue  # direct mutual recursion — already annotated inline
+
+            for far in mid_callees[:15]:
+                if far.id == sym.id:
+                    continue  # already caught by mid→sym check above
+                if far.id == mid.id:
+                    continue
+                if _is_test_file(far.file_path):
+                    continue
+
+                far_callees = {c.id for c in graph.callees_of(far.id)[:20]}
+                if sym.id in far_callees:
+                    triple = tuple(sorted([sym.id, mid.id, far.id]))
+                    if triple not in seen_triples:
+                        seen_triples.add(triple)
+                        cycles.append((sym, mid, far))
+                    break  # one cycle per (seed, mid) pair is enough
+
+    if not cycles:
+        return ""
+
+    parts = []
+    for sym, mid, far in cycles[:2]:
+        path = f"{sym.name} → {mid.name} → {far.name} → {sym.name}"
+        parts.append(path)
+    extra = f" (+{len(cycles) - 2} more)" if len(cycles) > 2 else ""
+    return (
+        f"call cycle: {'; '.join(parts)}{extra}"
+        f" — 3-hop indirect recursion; modifying any node affects the entire loop"
+    )
+
+
 def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000, _staleness_map: "dict[str, int | None] | None" = None) -> str:
     """Task-focused rendering with BFS graph traversal.
     Starts from search results, then follows call/render/import edges
@@ -4013,6 +4091,10 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000, _stalene
     _async_gap = _compute_async_gap(seeds, graph)
     if _async_gap:
         lines.append(_async_gap)
+        lines.append("")
+    _call_cycle = _compute_call_cycle(seeds, graph)
+    if _call_cycle:
+        lines.append(_call_cycle)
         lines.append("")
     _hot_cluster = _compute_hot_cluster_note(graph, ordered)
     if _hot_cluster:
