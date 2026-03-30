@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, useCallback } from "react";
-import { MODES, loadHistory, saveRecentCommand } from "./modes";
+import { useEffect, useRef, useCallback } from "react";
+import { MODES, saveRecentCommand } from "./modes";
 import { BUILTIN_KITS, type KitInfo } from "./kits";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { useRunMode } from "../hooks/useRunMode";
@@ -128,7 +128,6 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     prevOutput, setPrevOutput,
     modeRunning, setModeRunning,
   } = useModeOutputState();
-  const [history, setHistory] = useState<string[]>(() => loadHistory(localStorage.getItem(lastModeKey(repoPath)) || "overview"));
   const { feedbackMode, feedbackGiven, submitFeedback } = useFeedback(repoPath, activeMode, activeKit);
   const argsInputRef = useRef<HTMLInputElement>(null);
   const {
@@ -140,7 +139,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   } = useOutputCache();
   const runStartRef = useRef<number | null>(null);
   const { elapsed, resetElapsed: setElapsed } = useElapsedTimer(modeRunning, runStartRef);
-  const { runHistory, addRunHistory } = useRunHistory();
+  const { runHistory, addRunHistory, history, setHistory, loadModeHistory } = useRunHistory(repoPath);
 
   const activeModeInfo = buildActiveModeInfo(activeKit, activeMode, customKits);
   const allKits = [...BUILTIN_KITS, ...customKits];
@@ -187,7 +186,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     setHistoryOpen(false);
     resetFilter();
     setPrevOutput(null);
-    setHistory(loadHistory(mode));
+    loadModeHistory(mode);
     const { output: cached, ts: cachedTs, duration: cachedDur } = getCache(mode);
     setModeOutput(cached ?? "");
     setOutputTs(cached ? (cachedTs ?? null) : null);
@@ -295,11 +294,11 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     setHistoryOpen(false);
     resetFilter();
     setPrevOutput(null);
-    setHistory(loadHistory(entry.mode));
+    loadModeHistory(entry.mode);
     setModeOutput("");
     setOutputTs(null);
     setTimeout(() => runModeRef.current?.(), 0);
-  }, [repoPath, activeMode, activeKit, modeArgs, resetFilter, setHistoryOpen]);
+  }, [repoPath, activeMode, activeKit, modeArgs, resetFilter, setHistoryOpen, loadModeHistory]);
 
   const runSuggestion = (mode: string) => {
     switchMode(mode);
