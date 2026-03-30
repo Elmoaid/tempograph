@@ -3882,6 +3882,75 @@ def _compute_stale_callers(seeds, graph, *, _file_ages=None):
     )
 
 
+def _compute_async_gap(seeds: "list[Symbol]", graph: "Tempo") -> str:
+    """S1043: Async gap — async function whose body contains no await.
+
+    An async function with no await runs synchronously but returns a
+    coroutine/Promise, misleading callers about its execution model.
+    Common causes: forgot to await an I/O call, or the function should
+    just be a regular synchronous function.
+
+    Conditions (per seed):
+    - kind in {function, method}
+    - signature contains 'async ' (Python: async def, TS: async function / arrow)
+    - line_count >= 3 (skip trivial 1–2-line async shims — often intentional)
+    - body (lines after the def line) has NO 'await' token
+    - body has NO 'yield' token (async generators are valid without await)
+    - not a test file
+
+    Reads source file to inspect body. Skips on I/O error or missing file.
+    """
+    import re as _re  # noqa: PLC0415
+    import os as _os  # noqa: PLC0415
+
+    _AWAIT_PAT = _re.compile(r"\bawait\b")
+    _YIELD_PAT = _re.compile(r"\byield\b")
+
+    gaps = []
+    for sym in seeds:
+        if _is_test_file(sym.file_path):
+            continue
+        if sym.kind.value not in ("function", "method"):
+            continue
+        if "async " not in sym.signature:
+            continue
+        if sym.line_count < 3:  # 1-2-line async shims are usually intentional type aliases
+            continue
+
+        try:
+            full_path = _os.path.join(graph.root, sym.file_path)
+            if not _os.path.isfile(full_path):
+                continue
+            with open(full_path, encoding="utf-8", errors="replace") as _fh:
+                source_lines = _fh.readlines()
+        except OSError:
+            continue
+
+        # Body = lines after the def/signature line (line_start is 1-indexed,
+        # source_lines is 0-indexed, so body starts at index sym.line_start).
+        body_lines = source_lines[sym.line_start : sym.line_end]
+        if not body_lines:
+            continue
+        body_text = "".join(body_lines)
+
+        if _AWAIT_PAT.search(body_text):
+            continue  # correct async usage
+        if _YIELD_PAT.search(body_text):
+            continue  # async generator — valid without await
+
+        gaps.append(sym)
+
+    if not gaps:
+        return ""
+
+    names = ", ".join(sym.qualified_name for sym in gaps[:3])
+    extra = f" +{len(gaps) - 3} more" if len(gaps) > 3 else ""
+    return (
+        f"async gap: {names}{extra}"
+        f" — async but no await in body; runs synchronously, consider removing async"
+    )
+
+
 def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000, _staleness_map: "dict[str, int | None] | None" = None) -> str:
     """Task-focused rendering with BFS graph traversal.
     Starts from search results, then follows call/render/import edges
@@ -3940,6 +4009,10 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000, _stalene
     _stale = _compute_stale_callers(seeds, graph)
     if _stale:
         lines.append(_stale)
+        lines.append("")
+    _async_gap = _compute_async_gap(seeds, graph)
+    if _async_gap:
+        lines.append(_async_gap)
         lines.append("")
     _hot_cluster = _compute_hot_cluster_note(graph, ordered)
     if _hot_cluster:
