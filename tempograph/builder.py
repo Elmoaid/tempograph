@@ -658,6 +658,36 @@ def _resolve_edges(graph: Tempo) -> None:
     for edge in graph.edges:
         if edge.kind in _RESOLVE_KINDS and "::" not in edge.target_id:
             candidates = name_to_ids.get(edge.target_id, [])
+            # Special case: self.method() / cls.method() in Python
+            # Resolve using the containing class from the source symbol's ID
+            if not candidates and "." in edge.target_id:
+                qualifier, bare = edge.target_id.rsplit(".", 1)
+                if qualifier in ("self", "cls"):
+                    source_parts = edge.source_id.split("::")
+                    if len(source_parts) == 2:
+                        symbol_path = source_parts[1]  # "ClassName.method_name"
+                        if "." in symbol_path:
+                            class_name = symbol_path.split(".")[0]
+                            # Try exact match: same file, same class
+                            qualified_target = f"{source_parts[0]}::{class_name}.{bare}"
+                            if qualified_target in graph.symbols:
+                                candidates = [qualified_target]
+                            else:
+                                # Try class-qualified name across all files
+                                class_qualified = f"{class_name}.{bare}"
+                                candidates = name_to_ids.get(class_qualified, [])
+                                if not candidates:
+                                    # Last resort: bare name in same file
+                                    same_file = [
+                                        cid for cid in name_to_ids.get(bare, [])
+                                        if cid.startswith(source_parts[0] + "::")
+                                    ]
+                                    if same_file:
+                                        candidates = same_file
+                    if candidates:
+                        target = _pick_best(edge.source_id, candidates) if len(candidates) > 1 else candidates[0]
+                        resolved.append(Edge(edge.kind, edge.source_id, target, edge.line))
+                        continue
             # If qualified name (Type.method) didn't match, try bare name
             # BUT only if the qualifier is a known class/type/module in the graph.
             # Prevents dict.get() -> Config.get, list.items() -> Section.items, etc.
