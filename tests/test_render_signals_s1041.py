@@ -271,20 +271,21 @@ class TestDecompCandidateIntegration:
         assert "F-grade" in result
         assert "safe to extract helpers" in result
 
-    def test_fires_for_render_prepare(self):
-        """render_prepare has cx=60 and ~3 caller files — fires with coordinate note."""
-        result = self._focus("render_prepare")
+    def test_fires_for_dead_insights_helper(self):
+        """_render_dead_insights_b (dead.py, cx=29, 1 caller file ≤5) — fires with safe-to-extract note."""
+        result = self._focus("_render_dead_insights_b")
         assert "complexity:" in result
         assert "F-grade" in result
+        assert "safe to extract helpers" in result
 
     def test_silent_for_simple_function(self):
         """A simple utility function (cx << 26) — does not fire."""
         result = self._focus("_is_test_file")
         assert "complexity:" not in result or "F-grade" not in result
 
-    def test_silent_for_build_graph_high_callers(self):
-        """build_graph has cx=55 but too many callers — does NOT fire."""
-        result = self._focus("build_graph")
-        # build_graph has thousands of callers (mostly tests) and 7+ non-test files
-        # Signal should not fire due to high blast radius
+    def test_silent_for_render_focused_high_callers(self):
+        """render_focused has cx=33 (F-grade) but 6 non-test caller files (>5 threshold) — does NOT fire."""
+        result = self._focus("render_focused")
+        # render_focused: cx=33 >= 26 (would qualify), but 6 non-test cross-file callers > _MAX_CALLERS=5
+        # Signal must remain silent — high blast radius suppresses the advisory
         assert "F-grade" not in result
