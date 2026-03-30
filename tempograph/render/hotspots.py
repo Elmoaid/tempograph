@@ -1453,57 +1453,11 @@ def _signals_hotspots_core_b_concentration(
                 )
 
 
-def _signals_hotspots_core_b_structure(
+def _b_structure_file_origin(
     graph: Tempo,
     scores: list[tuple[float, Symbol]],
-    velocity: dict[str, float],
-    velocity_14: dict[str, float],
-    all_test_fps: set[str],
-    top_n: int,
     out: list[str],
 ) -> None:
-    # S376: Same-file hotspot cluster — PRUNED: duplicate of S268 churn concentration
-    if False:  # PRUNED: duplicate hotspot taxonomy
-        if len(scores) >= 3:
-            _files376 = [scores[i][1].file_path for i in range(3)]
-            if len(set(_files376)) == 1 and not _is_test_file(_files376[0]):
-                out.append(
-                    f"\nhotspot cluster: top 3 hotspots all in {_files376[0].rsplit('/', 1)[-1]}"
-                    f" — extreme risk concentration; this file is the single most critical stabilization target"
-                )
-
-    # S370: Divergent hotspot — PRUNED: low value, agent sees file paths in listing
-    if False:  # PRUNED: low-value hotspot taxonomy
-        if len(scores) >= 2:
-            _top370 = scores[0][1]
-            _sec370 = scores[1][1]
-            if (not _is_test_file(_top370.file_path) and not _is_test_file(_sec370.file_path)
-                    and _top370.file_path != _sec370.file_path):
-                _dir_top370 = _top370.file_path.rsplit("/", 1)[0] if "/" in _top370.file_path else "."
-                _dir_sec370 = _sec370.file_path.rsplit("/", 1)[0] if "/" in _sec370.file_path else "."
-                if _dir_top370 != _dir_sec370:
-                    out.append(
-                        f"\ndivergent hotspots: top risks in different modules"
-                        f" ({_top370.file_path.rsplit('/', 1)[-1]} vs {_sec370.file_path.rsplit('/', 1)[-1]})"
-                        f" — risk is distributed; plan changes in both areas separately"
-                    )
-
-    # S364: Test support hotspot — PRUNED: subsumes into S242 test file hotspot
-    if False:  # PRUNED: duplicate hotspot taxonomy
-        if scores:
-            _top364 = scores[0][1]
-            _fp364 = _top364.file_path.lower()
-            _test_support364 = (
-                "conftest", "fixtures", "factories", "test_helpers", "test_utils",
-                "testing", "test_support", "mock_",
-            )
-            _is_support364 = any(p in _fp364 for p in _test_support364) or _is_test_file(_top364.file_path)
-            if _is_support364:
-                out.append(
-                    f"\ntest support hotspot: {_top364.file_path.rsplit('/', 1)[-1]}"
-                    f" — high-churn test support; frequent changes break tests for unrelated reasons"
-                )
-
     # S358: Generated-file hotspot — top hotspot lives in a generated/auto-generated file.
     # Generated files should not be edited directly; if they are a hotspot, the generator
     # or its configuration is the actual source of churn, not the generated file.
@@ -1521,18 +1475,6 @@ def _signals_hotspots_core_b_structure(
                 f" — do not edit directly; churn originates in the generator or .proto/.schema source"
             )
 
-    # S352: Megafile hotspot — PRUNED: agent sees line count, low actionability
-    if False:  # PRUNED: low-value hotspot taxonomy
-        if scores:
-            _top352 = scores[0][1]
-            if not _is_test_file(_top352.file_path):
-                _fi352 = graph.files.get(_top352.file_path)
-                if _fi352 and _fi352.line_count >= 500:
-                    out.append(
-                        f"\nmegafile hotspot: {_top352.file_path.rsplit('/', 1)[-1]} has {_fi352.line_count} lines"
-                        f" — large files accumulate accidental complexity; consider splitting by responsibility"
-                    )
-
     # S394: Cross-language hotspot — top hotspot file is not in the primary codebase language.
     # When the top hotspot is in a non-primary language (e.g., a Go file in a Python repo),
     # it may lack the same testing and review culture as the main language.
@@ -1541,7 +1483,6 @@ def _signals_hotspots_core_b_structure(
         _fp394 = _top394.file_path
         if _fp394 in graph.files and not _is_test_file(_fp394):
             _lang394 = graph.files[_fp394].language.value
-            # Find the dominant language among all source files
             _lang_counts394: dict[str, int] = {}
             for _fp_c394, _fi_c394 in graph.files.items():
                 if not _is_test_file(_fp_c394):
@@ -1557,6 +1498,24 @@ def _signals_hotspots_core_b_structure(
                         f" may have different testing and review standards"
                     )
 
+    # S418: Vendor/third-party hotspot — top hotspot file lives in a vendor/ or third_party/ dir.
+    # Hotspots in vendored code are especially dangerous because the code is not authored by
+    # the team; changes to it bypass normal review and will be overwritten on next vendor update.
+    if scores:
+        _top418 = scores[0][1]
+        _vendor_dirs418 = ("vendor/", "third_party/", "vendors/", "node_modules/", "external/")
+        if any(d in _top418.file_path.lower() for d in _vendor_dirs418):
+            out.append(
+                f"\nvendor hotspot: {_top418.file_path.rsplit('/', 1)[-1]} is in a vendor directory"
+                f" — vendored hotspots will be overwritten on next vendor update; consider wrapping"
+            )
+
+
+def _b_structure_entry_points(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    out: list[str],
+) -> None:
     # S388: API endpoint hotspot — top hotspot lives in a routes/endpoints/views file.
     # API endpoint hotspots indicate that a route handler or view is accumulating logic;
     # endpoint files should be thin orchestrators, not computation hubs.
@@ -1574,27 +1533,28 @@ def _signals_hotspots_core_b_structure(
                 f" — endpoint files should delegate; move logic to service layer to reduce hotspot"
             )
 
-    # S382: Deep call chain hotspot — top hotspot has 3+ direct callers AND 5+ depth-2 callers.
-    # Symbols with deep fan-in are harder to refactor safely; changes propagate through
-    # multiple layers, and intermediate layers may have baked-in assumptions.
+    # S424: Class hotspot — the top hotspot symbol is a class (not a function or method).
+    # A class appearing as a hotspot is unusual; it typically means the class is being
+    # instantiated in too many places, suggesting it should be injected or turned into a singleton.
     if scores:
-        _top382 = scores[0][1]
-        if not _is_test_file(_top382.file_path):
-            _direct382 = {
+        _top424 = scores[0][1]
+        if _top424.kind.value == "class" and not _is_test_file(_top424.file_path):
+            _class_callers424 = {
                 e.source_id for e in graph.edges
-                if e.kind.value == "calls" and e.target_id == _top382.id
+                if e.kind.value == "calls" and e.target_id == _top424.id
             }
-            _d2_382 = {
-                e.source_id for e in graph.edges
-                if e.kind.value == "calls" and e.target_id in _direct382
-            }
-            if len(_direct382) >= 3 and len(_d2_382) >= 5:
+            if len(_class_callers424) >= 3:
                 out.append(
-                    f"\ndeep call chain: {_top382.name} has {len(_direct382)} direct callers"
-                    f" and {len(_d2_382)} depth-2 callers"
-                    f" — refactors propagate through multiple layers; map all call paths before changing"
+                    f"\nclass hotspot: {_top424.name} is a class with {len(_class_callers424)} caller(s)"
+                    f" — class instantiated in many places; consider DI/singleton to reduce coupling"
                 )
 
+
+def _b_structure_test_coverage(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    out: list[str],
+) -> None:
     # S400: Test-file hotspot — the top hotspot symbol lives inside a test file itself.
     # Test files should not be hotspots; if a test helper is the most-called symbol it has
     # leaked production logic into tests, or tests are overly interdependent.
@@ -1647,33 +1607,47 @@ def _signals_hotspots_core_b_structure(
                     f" — hotspot files change most often; add tests before the next modification"
                 )
 
-    # S418: Vendor/third-party hotspot — top hotspot file lives in a vendor/ or third_party/ dir.
-    # Hotspots in vendored code are especially dangerous because the code is not authored by
-    # the team; changes to it bypass normal review and will be overwritten on next vendor update.
-    if scores:
-        _top418 = scores[0][1]
-        _vendor_dirs418 = ("vendor/", "third_party/", "vendors/", "node_modules/", "external/")
-        if any(d in _top418.file_path.lower() for d in _vendor_dirs418):
-            out.append(
-                f"\nvendor hotspot: {_top418.file_path.rsplit('/', 1)[-1]} is in a vendor directory"
-                f" — vendored hotspots will be overwritten on next vendor update; consider wrapping"
-            )
 
-    # S424: Class hotspot — the top hotspot symbol is a class (not a function or method).
-    # A class appearing as a hotspot is unusual; it typically means the class is being
-    # instantiated in too many places, suggesting it should be injected or turned into a singleton.
+def _b_structure_call_topology(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    out: list[str],
+) -> None:
+    # S382: Deep call chain hotspot — top hotspot has 3+ direct callers AND 5+ depth-2 callers.
+    # Symbols with deep fan-in are harder to refactor safely; changes propagate through
+    # multiple layers, and intermediate layers may have baked-in assumptions.
     if scores:
-        _top424 = scores[0][1]
-        if _top424.kind.value == "class" and not _is_test_file(_top424.file_path):
-            _class_callers424 = {
+        _top382 = scores[0][1]
+        if not _is_test_file(_top382.file_path):
+            _direct382 = {
                 e.source_id for e in graph.edges
-                if e.kind.value == "calls" and e.target_id == _top424.id
+                if e.kind.value == "calls" and e.target_id == _top382.id
             }
-            if len(_class_callers424) >= 3:
+            _d2_382 = {
+                e.source_id for e in graph.edges
+                if e.kind.value == "calls" and e.target_id in _direct382
+            }
+            if len(_direct382) >= 3 and len(_d2_382) >= 5:
                 out.append(
-                    f"\nclass hotspot: {_top424.name} is a class with {len(_class_callers424)} caller(s)"
-                    f" — class instantiated in many places; consider DI/singleton to reduce coupling"
+                    f"\ndeep call chain: {_top382.name} has {len(_direct382)} direct callers"
+                    f" and {len(_d2_382)} depth-2 callers"
+                    f" — refactors propagate through multiple layers; map all call paths before changing"
                 )
+
+
+def _signals_hotspots_core_b_structure(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    velocity: dict[str, float],
+    velocity_14: dict[str, float],
+    all_test_fps: set[str],
+    top_n: int,
+    out: list[str],
+) -> None:
+    _b_structure_file_origin(graph, scores, out)
+    _b_structure_entry_points(graph, scores, out)
+    _b_structure_test_coverage(graph, scores, out)
+    _b_structure_call_topology(graph, scores, out)
 
 
 def _signals_hotspots_core_b_risk(

@@ -265,11 +265,16 @@ class TestDecompCandidateIntegration:
         return render_focused(g, query)
 
     def test_fires_for_high_cx_hotspot_helper(self):
-        """_signals_hotspots_core_b_structure (cx=43, 0 cross callers) — fires."""
-        result = self._focus("_signals_hotspots_core_b_structure")
+        """_signals_hotspots_core_b_risk (cx=67, 0 cross callers) — fires."""
+        result = self._focus("_signals_hotspots_core_b_risk")
         assert "complexity:" in result
         assert "F-grade" in result
         assert "safe to extract helpers" in result
+
+    def test_silent_for_decomposed_dispatcher(self):
+        """_signals_hotspots_core_b_structure (BQ-17 refactored dispatcher, cx=1) — does not fire."""
+        result = self._focus("_signals_hotspots_core_b_structure")
+        assert "F-grade" not in result
 
     def test_fires_for_dead_insights_helper(self):
         """_render_dead_insights_b (dead.py, cx=29, 1 caller file ≤5) — fires with safe-to-extract note."""
