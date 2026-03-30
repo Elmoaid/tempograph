@@ -356,10 +356,11 @@ class GraphDB:
         cur = self._conn.cursor()
         # Remove old data for this file
         cur.execute("DELETE FROM symbols WHERE file_path = ?", (rel_path,))
-        # Delete edges sourced from this file (file-level) or its symbols (prefix match)
+        # Delete edges sourced from this file (file-level), its symbols (prefix match),
+        # or targeting its symbols (decorator dispatch edges where source is decorator name)
         cur.execute(
-            "DELETE FROM edges WHERE source_id = ? OR source_id LIKE ?",
-            (rel_path, rel_path + "::%"),
+            "DELETE FROM edges WHERE source_id = ? OR source_id LIKE ? OR target_id LIKE ?",
+            (rel_path, rel_path + "::%", rel_path + "::%"),
         )
 
         # Insert file record (with mtime_ns for next-build mtime-based early-skip)
@@ -385,8 +386,9 @@ class GraphDB:
                 ],
             )
 
-        # Insert edges from this file's symbols
-        file_edges = [e for e in edges if e.source_id.startswith(rel_path)]
+        # Insert edges from this file's symbols (source-based) or targeting them (decorator dispatch)
+        file_edges = [e for e in edges
+                      if e.source_id.startswith(rel_path) or e.target_id.startswith(rel_path)]
         if file_edges:
             cur.executemany(
                 "INSERT INTO edges (kind, source_id, target_id, line) VALUES (?, ?, ?, ?)",
@@ -414,7 +416,10 @@ class GraphDB:
             return 0
         for path in stale:
             self._conn.execute("DELETE FROM symbols WHERE file_path = ?", (path,))
-            self._conn.execute("DELETE FROM edges WHERE source_id LIKE ?", (path + "::%",))
+            self._conn.execute(
+                "DELETE FROM edges WHERE source_id LIKE ? OR target_id LIKE ?",
+                (path + "::%", path + "::%"),
+            )
             self._conn.execute("DELETE FROM files WHERE path = ?", (path,))
         if not self._batching:
             self._conn.commit()

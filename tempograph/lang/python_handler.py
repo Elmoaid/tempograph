@@ -27,7 +27,7 @@ class PythonHandlerMixin:
                 inner = child.children[-1] if child.children else None
                 if inner:
                     if inner.type == "class_definition":
-                        self._handle_python_class(inner)
+                        self._handle_python_class(inner, decorators=decorators)
                     elif inner.type == "function_definition":
                         self._handle_python_function(inner, is_method=bool(self._symbol_stack), decorators=decorators)
             elif child.type in ("expression_statement",):
@@ -37,7 +37,7 @@ class PythonHandlerMixin:
             else:
                 pass
 
-    def _handle_python_class(self, node: Node) -> None:
+    def _handle_python_class(self, node: Node, *, decorators: list[str] | None = None) -> None:
         name_node = node.child_by_field_name("name")
         if not name_node:
             return
@@ -73,6 +73,15 @@ class PythonHandlerMixin:
         self.symbols.append(sym)
         if self._current_parent_id():
             self.edges.append(Edge(EdgeKind.CONTAINS, self._current_parent_id(), sym_id))
+
+        # Decorator dispatch edges for classes
+        _SKIP_CLASS_DECS = ("dataclass", "dataclasses.dataclass", "typing.final", "final")
+        for dec_name in (decorators or []):
+            if dec_name in _SKIP_CLASS_DECS or dec_name.startswith("_"):
+                continue
+            self.edges.append(Edge(
+                EdgeKind.CALLS, dec_name, sym_id, node.start_point[0],
+            ))
 
         # Parse superclasses
         superclasses = node.child_by_field_name("superclasses")
@@ -167,6 +176,23 @@ class PythonHandlerMixin:
         self.symbols.append(sym)
         if self._current_parent_id():
             self.edges.append(Edge(EdgeKind.CONTAINS, self._current_parent_id(), sym_id))
+
+        # Decorator dispatch edges — makes framework-dispatched functions visible in the graph
+        _SKIP_FN_DECS = (
+            "property", "staticmethod", "classmethod", "abstractmethod",
+            "override", "dataclass", "dataclasses.dataclass",
+            "typing.overload", "overload",
+            "functools.wraps", "wraps",
+            "functools.lru_cache", "lru_cache",
+            "functools.cache", "cache",
+            "functools.cached_property", "cached_property",
+        )
+        for dec_name in (decorators or []):
+            if dec_name in _SKIP_FN_DECS or dec_name.startswith("_"):
+                continue
+            self.edges.append(Edge(
+                EdgeKind.CALLS, dec_name, sym_id, node.start_point[0],
+            ))
 
         # Scan function body for calls
         body = node.child_by_field_name("body")
