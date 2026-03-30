@@ -567,212 +567,283 @@ def _walk_files(
 
 _RESOLVE_KINDS = frozenset([EdgeKind.CALLS, EdgeKind.RENDERS, EdgeKind.INHERITS, EdgeKind.IMPLEMENTS, EdgeKind.USES_TYPE])
 
+_KNOWN_OOP_KINDS = frozenset(("class", "interface", "struct", "enum", "module", "trait"))
 
-def _resolve_edges(graph: Tempo) -> None:
-    """Resolve symbolic call targets to actual symbol IDs where possible.
-    Uses scope-aware resolution: same file > imported file > exported symbol > any."""
-    # Build a name→id lookup
+
+def _build_name_lookup(graph: Tempo) -> dict[str, list[str]]:
+    """Build name→symbol-id lookup (both short name and qualified name)."""
     name_to_ids: dict[str, list[str]] = {}
     for sym in graph.symbols.values():
         name_to_ids.setdefault(sym.name, []).append(sym.id)
         if sym.qualified_name != sym.name:
             name_to_ids.setdefault(sym.qualified_name, []).append(sym.id)
+    return name_to_ids
 
-    # Fast path: skip all remaining work if no edge has a resolvable target.
-    # Common when all symbolic call targets are stdlib/external (no candidates in name_to_ids).
-    if not any(
+
+def _has_resolvable_edges(graph: Tempo, name_to_ids: dict[str, list[str]]) -> bool:
+    """Return True if any edge has a resolvable symbolic target."""
+    return any(
         e.kind in _RESOLVE_KINDS
         and "::" not in e.target_id
         and (name_to_ids.get(e.target_id) or ("." in e.target_id and name_to_ids.get(e.target_id.rsplit(".", 1)[-1])))
         for e in graph.edges
-    ):
-        return
+    )
 
-    # Build file → imported files lookup for scope-aware resolution
+
+def _build_file_scope(graph: Tempo) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    """Build file-level scope lookups for resolution.
+
+    Returns:
+        file_imports: file_path → set of imported file paths
+        file_imported_names: file_path → set of explicitly imported symbol names
+    """
     file_imports: dict[str, set[str]] = {}
     for edge in graph.edges:
         if edge.kind == EdgeKind.IMPORTS:
             file_imports.setdefault(edge.source_id, set()).add(edge.target_id)
 
-    # Build file → imported symbol names (from raw import strings like "from x import foo")
     file_imported_names: dict[str, set[str]] = {}
     for fp, fi in graph.files.items():
         names: set[str] = set()
         for imp in fi.imports:
-            # "from x import a, b" or "import { a, b } from 'x'"
-            if "import" in imp:
-                # Python: from x import a, b, c
-                if "from" in imp and "import" in imp:
-                    after_import = imp.split("import", 1)[-1]
-                    for part in after_import.split(","):
-                        name = part.strip().split(" as ")[0].strip().strip("{}")
-                        if name and name != "*":
-                            names.add(name)
-                # JS: import { a, b } from 'x'
-                elif "{" in imp:
-                    brace_content = imp.split("{", 1)[-1].split("}", 1)[0]
-                    for part in brace_content.split(","):
-                        name = part.strip().split(" as ")[0].strip()
-                        if name:
-                            names.add(name)
+            if "import" not in imp:
+                continue
+            # Python: from x import a, b, c
+            if "from" in imp and "import" in imp:
+                after_import = imp.split("import", 1)[-1]
+                for part in after_import.split(","):
+                    name = part.strip().split(" as ")[0].strip().strip("{}")
+                    if name and name != "*":
+                        names.add(name)
+            # JS: import { a, b } from 'x'
+            elif "{" in imp:
+                brace_content = imp.split("{", 1)[-1].split("}", 1)[0]
+                for part in brace_content.split(","):
+                    name = part.strip().split(" as ")[0].strip()
+                    if name:
+                        names.add(name)
         file_imported_names[fp] = names
 
-    def _pick_best(source_id: str, candidates: list[str]) -> str:
-        if len(candidates) == 1:
-            return candidates[0]
-        source_file = source_id.split("::")[0]
-        # Priority 1: same file
-        same_file = [c for c in candidates if c.startswith(source_file + "::")]
-        if same_file:
-            return same_file[0]
-        # Priority 2: symbol explicitly imported by name
-        imported_names = file_imported_names.get(source_file, set())
-        if imported_names:
-            for c in candidates:
-                sym = graph.symbols.get(c)
-                if sym and sym.name in imported_names:
-                    c_file = c.split("::")[0]
-                    # Bonus: also from an imported file
-                    if c_file in file_imports.get(source_file, set()):
-                        return c
-            # Fallback: name match without file match
-            for c in candidates:
-                sym = graph.symbols.get(c)
-                if sym and sym.name in imported_names:
-                    return c
-        # Priority 3: imported file
-        imported_files = file_imports.get(source_file, set())
-        if imported_files:
-            for c in candidates:
-                c_file = c.split("::")[0]
-                if c_file in imported_files:
-                    return c
-        # Priority 4: exported symbol
-        for c in candidates:
-            sym = graph.symbols.get(c)
-            if sym and sym.exported:
-                return c
-        return candidates[0]
+    return file_imports, file_imported_names
 
-    # Pre-compute inheritance maps for mixin/parent resolution
-    # children_of["file::ClassName"] = ["file2::ChildClass", ...]
-    # parents_of["file::ClassName"] = ["file2::ParentClass", ...]
+
+def _build_inheritance_maps(
+    graph: Tempo, name_to_ids: dict[str, list[str]]
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """Build parent/child class maps for mixin/inheritance resolution.
+
+    Returns:
+        children_of: class_id → list of child class ids
+        parents_of: class_id → list of parent class ids
+    """
     children_of: dict[str, list[str]] = {}
     parents_of: dict[str, list[str]] = {}
     for e in graph.edges:
         if e.kind.value == "inherits":
-            child_id = e.source_id  # always qualified (file::Class)
-            # Target may be unqualified before edge resolution; resolve it
+            child_id = e.source_id
             if "::" in e.target_id:
                 parent_id = e.target_id
             else:
-                # Resolve unqualified parent name to qualified symbol ID
                 parent_candidates = name_to_ids.get(e.target_id, [])
                 parent_id = parent_candidates[0] if len(parent_candidates) == 1 else e.target_id
             parents_of.setdefault(child_id, []).append(parent_id)
             children_of.setdefault(parent_id, []).append(child_id)
+    return children_of, parents_of
+
+
+def _pick_best(
+    source_id: str,
+    candidates: list[str],
+    graph: Tempo,
+    file_imported_names: dict[str, set[str]],
+    file_imports: dict[str, set[str]],
+) -> str:
+    """Pick the best candidate symbol using scope priority: same-file > imported-name > imported-file > exported > first."""
+    if len(candidates) == 1:
+        return candidates[0]
+    source_file = source_id.split("::")[0]
+    same_file = [c for c in candidates if c.startswith(source_file + "::")]
+    if same_file:
+        return same_file[0]
+    imported_names = file_imported_names.get(source_file, set())
+    if imported_names:
+        for c in candidates:
+            sym = graph.symbols.get(c)
+            if sym and sym.name in imported_names:
+                c_file = c.split("::")[0]
+                if c_file in file_imports.get(source_file, set()):
+                    return c
+        for c in candidates:
+            sym = graph.symbols.get(c)
+            if sym and sym.name in imported_names:
+                return c
+    imported_files = file_imports.get(source_file, set())
+    if imported_files:
+        for c in candidates:
+            if c.split("::")[0] in imported_files:
+                return c
+    for c in candidates:
+        sym = graph.symbols.get(c)
+        if sym and sym.exported:
+            return c
+    return candidates[0]
+
+
+def _search_parent_classes(
+    bare: str,
+    source_class_id: str,
+    parents_of: dict[str, list[str]],
+    name_to_ids: dict[str, list[str]],
+    graph: Tempo,
+) -> list[str]:
+    """Search parent classes for a method named `bare`."""
+    for parent_id in parents_of.get(source_class_id, []):
+        pname = parent_id.split("::")[-1] if "::" in parent_id else parent_id
+        pfile = parent_id.split("::")[0] if "::" in parent_id else ""
+        pq = f"{pfile}::{pname}.{bare}" if pfile else f"{pname}.{bare}"
+        if pq in graph.symbols:
+            return [pq]
+        pq2 = f"{pname}.{bare}"
+        if pq2 in name_to_ids:
+            return name_to_ids[pq2]
+    return []
+
+
+def _search_child_classes(
+    bare: str,
+    source_class_id: str,
+    children_of: dict[str, list[str]],
+    name_to_ids: dict[str, list[str]],
+    graph: Tempo,
+) -> list[str]:
+    """Search child classes for a method named `bare` (mixin pattern)."""
+    for child_id in children_of.get(source_class_id, []):
+        cname = child_id.split("::")[-1] if "::" in child_id else child_id
+        cfile = child_id.split("::")[0] if "::" in child_id else ""
+        cq = f"{cfile}::{cname}.{bare}" if cfile else f"{cname}.{bare}"
+        if cq in graph.symbols:
+            return [cq]
+        cq2 = f"{cname}.{bare}"
+        if cq2 in name_to_ids:
+            return name_to_ids[cq2]
+    return []
+
+
+def _search_sibling_classes(
+    bare: str,
+    source_class_id: str,
+    parents_of: dict[str, list[str]],
+    children_of: dict[str, list[str]],
+    name_to_ids: dict[str, list[str]],
+    graph: Tempo,
+) -> list[str]:
+    """Search sibling classes (mixin composition: MixinA + MixinB → FileParser)."""
+    siblings: set[str] = set()
+    for child_id in children_of.get(source_class_id, []):
+        for sib_id in parents_of.get(child_id, []):
+            if sib_id != source_class_id:
+                siblings.add(sib_id)
+    for sib_id in siblings:
+        sname = sib_id.split("::")[-1] if "::" in sib_id else sib_id
+        sfile = sib_id.split("::")[0] if "::" in sib_id else ""
+        sq = f"{sfile}::{sname}.{bare}" if sfile else f"{sname}.{bare}"
+        if sq in graph.symbols:
+            return [sq]
+        sq2 = f"{sname}.{bare}"
+        if sq2 in name_to_ids:
+            return name_to_ids[sq2]
+    return []
+
+
+def _resolve_self_method_candidates(
+    source_id: str,
+    bare: str,
+    name_to_ids: dict[str, list[str]],
+    parents_of: dict[str, list[str]],
+    children_of: dict[str, list[str]],
+    graph: Tempo,
+) -> list[str]:
+    """Resolve self.method / cls.method call targets via class hierarchy.
+
+    Tries in order: exact same-class match, class-qualified name, parent classes,
+    child classes (mixin pattern), sibling classes (mixin composition), bare-name same-file.
+    """
+    source_parts = source_id.split("::")
+    if len(source_parts) != 2 or "." not in source_parts[1]:
+        return []
+
+    class_name = source_parts[1].split(".")[0]
+    source_file = source_parts[0]
+    source_class_id = f"{source_file}::{class_name}"
+
+    # 1. Exact match: same file, same class
+    qualified_target = f"{source_class_id}.{bare}"
+    if qualified_target in graph.symbols:
+        return [qualified_target]
+
+    # 2. Class-qualified name across all files
+    candidates = name_to_ids.get(f"{class_name}.{bare}", [])
+    if candidates:
+        return candidates
+
+    # 3–5. Hierarchy search: parents → children → siblings
+    candidates = _search_parent_classes(bare, source_class_id, parents_of, name_to_ids, graph)
+    if candidates:
+        return candidates
+    candidates = _search_child_classes(bare, source_class_id, children_of, name_to_ids, graph)
+    if candidates:
+        return candidates
+    candidates = _search_sibling_classes(bare, source_class_id, parents_of, children_of, name_to_ids, graph)
+    if candidates:
+        return candidates
+
+    # 6. Last resort: bare name in same file
+    return [cid for cid in name_to_ids.get(bare, []) if cid.startswith(source_file + "::")]
+
+
+def _resolve_edges(graph: Tempo) -> None:
+    """Resolve symbolic call targets to actual symbol IDs where possible.
+    Uses scope-aware resolution: same file > imported file > exported symbol > any."""
+    name_to_ids = _build_name_lookup(graph)
+
+    if not _has_resolvable_edges(graph, name_to_ids):
+        return
+
+    file_imports, file_imported_names = _build_file_scope(graph)
+    children_of, parents_of = _build_inheritance_maps(graph, name_to_ids)
 
     resolved: list[Edge] = []
     for edge in graph.edges:
-        if edge.kind in _RESOLVE_KINDS and "::" not in edge.target_id:
-            candidates = name_to_ids.get(edge.target_id, [])
-            # Special case: self.method() / cls.method() in Python
-            # Resolve using the containing class from the source symbol's ID
-            if not candidates and "." in edge.target_id:
-                qualifier, bare = edge.target_id.rsplit(".", 1)
-                if qualifier in ("self", "cls"):
-                    source_parts = edge.source_id.split("::")
-                    if len(source_parts) == 2:
-                        symbol_path = source_parts[1]  # "ClassName.method_name"
-                        if "." in symbol_path:
-                            class_name = symbol_path.split(".")[0]
-                            # Try exact match: same file, same class
-                            qualified_target = f"{source_parts[0]}::{class_name}.{bare}"
-                            if qualified_target in graph.symbols:
-                                candidates = [qualified_target]
-                            else:
-                                # Try class-qualified name across all files
-                                class_qualified = f"{class_name}.{bare}"
-                                candidates = name_to_ids.get(class_qualified, [])
-                                if not candidates:
-                                    # Check parent classes (what does this class extend?)
-                                    source_class_id = f"{source_parts[0]}::{class_name}"
-                                    for parent_id in parents_of.get(source_class_id, []):
-                                        pname = parent_id.split("::")[-1] if "::" in parent_id else parent_id
-                                        pfile = parent_id.split("::")[0] if "::" in parent_id else ""
-                                        pq = f"{pfile}::{pname}.{bare}" if pfile else f"{pname}.{bare}"
-                                        if pq in graph.symbols:
-                                            candidates = [pq]
-                                            break
-                                        pq2 = f"{pname}.{bare}"
-                                        if pq2 in name_to_ids:
-                                            candidates = name_to_ids[pq2]
-                                            break
-                                if not candidates:
-                                    # Check child classes (classes that inherit from this one)
-                                    # Handles mixin pattern: MixinA.method -> self.x where x is on the child
-                                    source_class_id = f"{source_parts[0]}::{class_name}"
-                                    for child_id in children_of.get(source_class_id, []):
-                                        cname = child_id.split("::")[-1] if "::" in child_id else child_id
-                                        cfile = child_id.split("::")[0] if "::" in child_id else ""
-                                        cq = f"{cfile}::{cname}.{bare}" if cfile else f"{cname}.{bare}"
-                                        if cq in graph.symbols:
-                                            candidates = [cq]
-                                            break
-                                        cq2 = f"{cname}.{bare}"
-                                        if cq2 in name_to_ids:
-                                            candidates = name_to_ids[cq2]
-                                            break
-                                if not candidates:
-                                    # Check sibling classes via shared child (mixin composition)
-                                    # e.g. MixinA and MixinB both mixed into FileParser
-                                    source_class_id = f"{source_parts[0]}::{class_name}"
-                                    siblings: set[str] = set()
-                                    for child_id in children_of.get(source_class_id, []):
-                                        for sib_id in parents_of.get(child_id, []):
-                                            if sib_id != source_class_id:
-                                                siblings.add(sib_id)
-                                    for sib_id in siblings:
-                                        sname = sib_id.split("::")[-1] if "::" in sib_id else sib_id
-                                        sfile = sib_id.split("::")[0] if "::" in sib_id else ""
-                                        sq = f"{sfile}::{sname}.{bare}" if sfile else f"{sname}.{bare}"
-                                        if sq in graph.symbols:
-                                            candidates = [sq]
-                                            break
-                                        sq2 = f"{sname}.{bare}"
-                                        if sq2 in name_to_ids:
-                                            candidates = name_to_ids[sq2]
-                                            break
-                                if not candidates:
-                                    # Last resort: bare name in same file
-                                    same_file = [
-                                        cid for cid in name_to_ids.get(bare, [])
-                                        if cid.startswith(source_parts[0] + "::")
-                                    ]
-                                    if same_file:
-                                        candidates = same_file
-                    if candidates:
-                        target = _pick_best(edge.source_id, candidates) if len(candidates) > 1 else candidates[0]
-                        resolved.append(Edge(edge.kind, edge.source_id, target, edge.line))
-                        continue
-            # If qualified name (Type.method) didn't match, try bare name
-            # BUT only if the qualifier is a known class/type/module in the graph.
-            # Prevents dict.get() -> Config.get, list.items() -> Section.items, etc.
-            if not candidates and "." in edge.target_id:
-                qualifier, bare = edge.target_id.rsplit(".", 1)
-                qualifier_known = False
-                for cid in name_to_ids.get(qualifier, []):
-                    sym = graph.symbols.get(cid)
-                    if sym is not None and sym.kind.value in ("class", "interface", "struct", "enum", "module", "trait"):
-                        qualifier_known = True
-                        break
-                if qualifier_known:
-                    candidates = name_to_ids.get(bare, [])
-            if candidates:
-                target = _pick_best(edge.source_id, candidates)
-                resolved.append(Edge(edge.kind, edge.source_id, target, edge.line))
-            else:
-                resolved.append(edge)
+        if edge.kind not in _RESOLVE_KINDS or "::" in edge.target_id:
+            resolved.append(edge)
+            continue
+
+        candidates = name_to_ids.get(edge.target_id, [])
+
+        # self.method() / cls.method() resolution via class hierarchy
+        if not candidates and "." in edge.target_id:
+            qualifier, bare = edge.target_id.rsplit(".", 1)
+            if qualifier in ("self", "cls"):
+                candidates = _resolve_self_method_candidates(
+                    edge.source_id, bare, name_to_ids, parents_of, children_of, graph
+                )
+                if candidates:
+                    target = _pick_best(edge.source_id, candidates, graph, file_imported_names, file_imports)
+                    resolved.append(Edge(edge.kind, edge.source_id, target, edge.line))
+                    continue
+
+        # Type.method fallback: only when qualifier is a known class/module in the graph
+        if not candidates and "." in edge.target_id:
+            qualifier, bare = edge.target_id.rsplit(".", 1)
+            if any(
+                graph.symbols.get(cid) is not None
+                and graph.symbols[cid].kind.value in _KNOWN_OOP_KINDS
+                for cid in name_to_ids.get(qualifier, [])
+            ):
+                candidates = name_to_ids.get(bare, [])
+
+        if candidates:
+            resolved.append(Edge(edge.kind, edge.source_id, _pick_best(edge.source_id, candidates, graph, file_imported_names, file_imports), edge.line))
         else:
             resolved.append(edge)
 
