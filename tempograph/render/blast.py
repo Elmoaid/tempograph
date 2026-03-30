@@ -1790,20 +1790,14 @@ def _blast_core_d_structure_b(
                 f" — likely exports constants or type aliases; changes affect importers invisibly"
             )
     # S908: Dense file blast — blast target has 30+ symbols defined in it.
-    _syms_in_file908 = [
-        s for s in graph.symbols.values()
-        if s.file_path == _fp or (not _fp.startswith("/") and _fp in s.file_path)
-    ]
+    _syms_in_file908 = graph.symbols_in_file(_fp)
     if len(_syms_in_file908) >= 30:
         lines.append(
             f"dense file blast: {_basename} has {len(_syms_in_file908)} symbols"
             f" — dense file; changes have higher chance of unintended side effects"
         )
     # S944: Widely-imported blast — blast target is imported by 5+ other source files.
-    _file_syms944 = [
-        s for s in graph.symbols.values()
-        if s.file_path == _fp or (not _fp.startswith("/") and _fp in s.file_path)
-    ]
+    _file_syms944 = graph.symbols_in_file(_fp)
     _importers944 = {
         c.file_path
         for s in _file_syms944
@@ -1967,8 +1961,7 @@ def _blast_core_d_service(
     _util_kws932 = ("util", "helper", "common", "shared", "lib", "base", "mixin")
     if any(kw in _stem for kw in _util_kws932):
         _callers_of_file932 = {
-            c.file_path for s in graph.symbols.values()
-            if s.file_path == _fp or (_fp in s.file_path and not _fp.startswith("/"))
+            c.file_path for s in graph.symbols_in_file(_fp)
             for c in graph.callers_of(s.id)
         }
         if len(_callers_of_file932) >= 3:
