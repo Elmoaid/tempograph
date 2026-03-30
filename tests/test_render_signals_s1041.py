@@ -265,8 +265,8 @@ class TestDecompCandidateIntegration:
         return render_focused(g, query)
 
     def test_fires_for_high_cx_hotspot_helper(self):
-        """_signals_hotspots_core_b_risk (cx=67, 0 cross callers) — fires."""
-        result = self._focus("_signals_hotspots_core_b_risk")
+        """_signals_hotspots_core_b_type (cx=57, 0 cross callers) — fires."""
+        result = self._focus("_signals_hotspots_core_b_type")
         assert "complexity:" in result
         assert "F-grade" in result
         assert "safe to extract helpers" in result
