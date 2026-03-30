@@ -12,6 +12,7 @@ import { useFeedback } from "../hooks/useFeedback";
 import { useElapsedTimer } from "../hooks/useElapsedTimer";
 import { usePanelState } from "../hooks/usePanelState";
 import { useRunHistory, type RunHistoryEntry } from "../hooks/useRunHistory";
+import { useOutputCache } from "../hooks/useOutputCache";
 
 export type { RunHistoryEntry };
 
@@ -129,13 +130,14 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   const [history, setHistory] = useState<string[]>(() => loadHistory(localStorage.getItem(lastModeKey(repoPath)) || "overview"));
   const { feedbackMode, feedbackGiven, submitFeedback } = useFeedback(repoPath, activeMode, activeKit);
   const argsInputRef = useRef<HTMLInputElement>(null);
-  const outputCache = useRef<Map<string, string>>(new Map());
-  const outputTsCache = useRef<Map<string, number>>(new Map());
-  const [cachedModes, setCachedModes] = useState<Set<string>>(new Set());
-  const [outputTs, setOutputTs] = useState<number | null>(null);
+  const {
+    outputCache, outputTsCache, runDurationCache,
+    cachedModes, setCachedModes,
+    outputTs, setOutputTs,
+    runDuration, setRunDuration,
+    getCache, clearCache,
+  } = useOutputCache();
   const runStartRef = useRef<number | null>(null);
-  const runDurationCache = useRef<Map<string, number>>(new Map());
-  const [runDuration, setRunDuration] = useState<number | null>(null);
   const { elapsed, resetElapsed: setElapsed } = useElapsedTimer(modeRunning, runStartRef);
   const { runHistory, addRunHistory } = useRunHistory();
 
@@ -185,10 +187,10 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     resetFilter();
     setPrevOutput(null);
     setHistory(loadHistory(mode));
-    const cached = outputCache.current.get(mode);
+    const { output: cached, ts: cachedTs, duration: cachedDur } = getCache(mode);
     setModeOutput(cached ?? "");
-    setOutputTs(cached ? (outputTsCache.current.get(mode) ?? null) : null);
-    setRunDuration(runDurationCache.current.get(mode) ?? null);
+    setOutputTs(cached ? (cachedTs ?? null) : null);
+    setRunDuration(cachedDur);
     if (!cached && !MODES.find(m => m.mode === mode)?.argPrefix) {
       setTimeout(() => runModeRef.current?.(), 0);
     }
@@ -204,10 +206,10 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     resetFilter();
     setPrevOutput(null);
     const cacheKey = `kit:${kitId}`;
-    const cached = outputCache.current.get(cacheKey);
+    const { output: cached, ts: cachedTs, duration: cachedDur } = getCache(cacheKey);
     setModeOutput(cached ?? "");
-    setOutputTs(cached ? (outputTsCache.current.get(cacheKey) ?? null) : null);
-    setRunDuration(runDurationCache.current.get(cacheKey) ?? null);
+    setOutputTs(cached ? (cachedTs ?? null) : null);
+    setRunDuration(cachedDur);
     const kit = allKits.find(k => k.id === kitId);
     if (!cached && !kit?.needsQuery) {
       setTimeout(() => runModeRef.current?.(), 0);
@@ -218,12 +220,10 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
 
   const clearOutput = useCallback(() => {
     const cacheKey = activeKit ? `kit:${activeKit}` : activeMode;
-    outputCache.current.delete(cacheKey);
-    outputTsCache.current.delete(cacheKey);
+    clearCache(cacheKey);
     setModeOutput("");
     setOutputTs(null);
-    setCachedModes(prev => { const s = new Set(prev); s.delete(cacheKey); return s; });
-  }, [activeMode, activeKit]);
+  }, [activeMode, activeKit, clearCache]);
 
   useKeyboardShortcuts({
     modeRunning,
