@@ -3396,19 +3396,18 @@ def _compute_cross_language_callees(
     ordered: "list[tuple[Symbol, int]]",
     graph: "Tempo",
 ) -> str:
-    """S1040: Cross-language callee warning — fires when a depth-1 BFS callee is in a
-    different language than the seed.
+    """S1040: Cross-language callee warning — fires when a direct callee of the seed is in
+    a different language than the seed.
 
     Graph-level symbol matching can produce false edges: Python code like
     ``cfg_path.exists()`` matches a TypeScript ``AmbientStatus.exists`` property
     because both use the method name "exists".  These phantom cross-language edges
-    appear in the BFS output and may mislead agents into treating them as real
-    dependencies.
+    exist in the graph's _callees index and may mislead agents into treating them as
+    real dependencies.
 
     Fires when:
     - The seed is a non-test Python/Rust/Go function or method
-    - At least one depth-1 callee is in a different language (TypeScript, JavaScript, etc.)
-    - The seed directly calls that callee (confirmed via _callees index)
+    - At least one direct callee is in a different language (TypeScript, JavaScript, etc.)
 
     Output example:
       ↳ cross-language callees: AmbientStatus.exists (TypeScript) — may be symbol-name
@@ -3416,8 +3415,12 @@ def _compute_cross_language_callees(
 
     Does NOT fire when the seed itself is TypeScript/JavaScript (cross-language rendering
     edges like JSX are expected in that context).
+
+    Note: `ordered` is accepted for backwards compatibility but not used — cross-language
+    edges are not traversed by BFS, so they never appear in ordered. We read _callees
+    directly (same approach as _compute_hub_callee_warning).
     """
-    if not seeds or not ordered:
+    if not seeds:
         return ""
     seed = seeds[0]
     if seed.kind.value not in ("function", "method"):
@@ -3433,19 +3436,18 @@ def _compute_cross_language_callees(
     if seed_lang not in _BACKEND_LANGS:
         return ""
 
-    seed_ids = {s.id for s in seeds}
     cross_lang: list[tuple["Symbol", str]] = []
 
-    for sym, depth in ordered:
-        if depth != 1:
+    # Iterate direct callees via _callees index (BFS doesn't traverse cross-language edges,
+    # so using `ordered` would always produce an empty result for this signal)
+    for cid in graph._callees.get(seed.id, []):
+        sym = graph.symbols.get(cid)
+        if sym is None:
             continue
         if _is_test_file(sym.file_path):
             continue
         callee_lang = sym.language.value.lower()
         if callee_lang not in _SCRIPT_LANGS:
-            continue
-        # Confirm the seed actually calls this symbol (not just an orbit injection)
-        if not any(sym.id in graph._callees.get(sid, []) for sid in seed_ids):
             continue
         cross_lang.append((sym, callee_lang))
 
@@ -3464,6 +3466,70 @@ def _compute_cross_language_callees(
         f" — may be symbol-name collision (e.g. Python .exists() → TS property);"
         f" verify or suppress with exclude_dirs"
     )
+
+
+def _compute_decomp_candidate(
+    seeds: "list[Symbol]",
+    graph: "Tempo",
+) -> str:
+    """S1041: Complexity advisory — fires when the seed is F-grade complexity (cx >= 26).
+
+    Radon complexity grade F = cx >= 26. Functions at this level are candidates
+    for decomposition: extracting focused helpers reduces cognitive load and makes
+    future changes easier to reason about.
+
+    Only fires when cross-file blast radius is manageable (≤ 5 non-test caller files).
+    High-blast-radius functions are excluded because decomposition there requires
+    more coordination than a simple signal can capture.
+
+    Fires when:
+    - Seed is a function or method (not a class, variable, etc.)
+    - Not a test file
+    - cx >= 26 (F-grade by Radon scale)
+    - ≤ 5 unique cross-file non-test caller files
+
+    Output examples:
+      ↳ complexity: cx=43 (F-grade) — no cross-file callers; safe to extract helpers
+      ↳ complexity: cx=60 (F-grade) — 3 caller files; coordinate changes before decomposing
+
+    Distinct from:
+    - S1035 (orchestrator): fires when MANY callees AND few callers (orchestrator topology)
+    - S65 (change_exposure): quantifies caller count/blast radius
+    - hotspots mode: identifies complex files/functions globally
+    S1041 fires on the seed itself and gives a per-function actionable hint.
+    """
+    if not seeds:
+        return ""
+    seed = seeds[0]
+    if seed.kind.value not in ("function", "method"):
+        return ""
+    if _is_test_file(seed.file_path):
+        return ""
+
+    _F_GRADE = 26
+    if seed.complexity < _F_GRADE:
+        return ""
+
+    # Count unique cross-file non-test caller files
+    non_test_cross_callers: set[str] = {
+        graph.symbols[cid].file_path
+        for cid in graph._callers.get(seed.id, [])
+        if cid in graph.symbols
+        and not _is_test_file(graph.symbols[cid].file_path)
+        and graph.symbols[cid].file_path != seed.file_path
+    }
+
+    _MAX_CALLERS = 5
+    if len(non_test_cross_callers) > _MAX_CALLERS:
+        return ""  # High blast radius — decomp is risky; don't over-advise
+
+    if len(non_test_cross_callers) == 0:
+        tail = "no cross-file callers; safe to extract helpers"
+    else:
+        n = len(non_test_cross_callers)
+        tail = f"{n} caller file{'s' if n != 1 else ''}; coordinate changes before decomposing"
+
+    return f"↳ complexity: cx={seed.complexity} (F-grade) — {tail}"
 
 
 def _compute_component_render_tree(seeds: "list[Symbol]", graph: "Tempo") -> str:
@@ -3775,6 +3841,10 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000, _stalene
     _orchestrator = _compute_orchestrator_advisory(seeds, graph)
     if _orchestrator:
         lines.append(_orchestrator)
+        lines.append("")
+    _decomp = _compute_decomp_candidate(seeds, graph)
+    if _decomp:
+        lines.append(_decomp)
         lines.append("")
     _relay = _compute_relay_point(seeds, graph, ordered)
     if _relay:
