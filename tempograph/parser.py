@@ -221,6 +221,7 @@ class FileParser(PythonHandlerMixin, JSHandlerMixin, GoHandlerMixin, JavaHandler
                         byte_size=node.end_byte - node.start_byte,
                     )
                     self.symbols.append(sym)
+                    self._scan_decorators(node, sym_id)
                     self._scan_calls(node, sym_id)
                     self._scan_type_annotations(node, sym_id)
         elif node.type in self._GENERIC_CLASS_TYPES:
@@ -247,6 +248,7 @@ class FileParser(PythonHandlerMixin, JSHandlerMixin, GoHandlerMixin, JavaHandler
                         byte_size=node.end_byte - node.start_byte,
                     )
                     self.symbols.append(sym)
+                    self._scan_decorators(node, sym_id)
                     # Scan body for methods/calls
                     # Try field names first, then look for body-like child nodes
                     body = node.child_by_field_name("body") or node.child_by_field_name("class_body")
@@ -288,6 +290,7 @@ class FileParser(PythonHandlerMixin, JSHandlerMixin, GoHandlerMixin, JavaHandler
                                     )
                                     self.symbols.append(method_sym)
                                     self.edges.append(Edge(EdgeKind.CONTAINS, sym_id, method_id))
+                                    self._scan_decorators(child, method_id)
                                     self._scan_calls(child, method_id)
                                     self._scan_type_annotations(child, method_id)
 
@@ -453,6 +456,46 @@ class FileParser(PythonHandlerMixin, JSHandlerMixin, GoHandlerMixin, JavaHandler
                 _walk(child)
         _walk(node)
         return count
+
+    # Decorators that are language features, not framework dispatch
+    _BUILTIN_DECORATORS = frozenset({
+        "property", "staticmethod", "classmethod", "abstractmethod",
+        "override", "dataclass", "dataclasses.dataclass",
+        "typing.overload", "overload",
+        "functools.wraps", "wraps",
+        "functools.lru_cache", "lru_cache",
+        "functools.cache", "cache",
+        "functools.cached_property", "cached_property",
+        "typing.final", "final",
+    })
+
+    def _scan_decorators(self, node: Node, sym_id: str) -> None:
+        """Create CALLS edges from decorators to the decorated symbol.
+
+        Handles tree-sitter grammars where decorator nodes are children of
+        the function/class node or its parent (TS, Kotlin, etc.).
+        Python decorators are handled in python_handler via the decorators list.
+        """
+        for child in node.children:
+            if child.type == "decorator":
+                dec_text = _node_text(child, self.source).lstrip("@").strip()
+                dec_name = dec_text.split("(")[0].strip()
+                if dec_name and dec_name not in self._BUILTIN_DECORATORS and not dec_name.startswith("_"):
+                    self.edges.append(Edge(
+                        EdgeKind.CALLS, dec_name, sym_id,
+                        child.start_point[0] + 1,
+                    ))
+        parent = node.parent
+        if parent and parent.type in ("decorated_definition", "decorated"):
+            for child in parent.children:
+                if child.type == "decorator":
+                    dec_text = _node_text(child, self.source).lstrip("@").strip()
+                    dec_name = dec_text.split("(")[0].strip()
+                    if dec_name and dec_name not in self._BUILTIN_DECORATORS and not dec_name.startswith("_"):
+                        self.edges.append(Edge(
+                            EdgeKind.CALLS, dec_name, sym_id,
+                            child.start_point[0] + 1,
+                        ))
 
     def _scan_calls(self, node: Node, from_id: str, *, depth: int = 0) -> None:
         """Recursively scan a node for function call expressions."""

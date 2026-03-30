@@ -1453,57 +1453,11 @@ def _signals_hotspots_core_b_concentration(
                 )
 
 
-def _signals_hotspots_core_b_structure(
+def _b_structure_file_origin(
     graph: Tempo,
     scores: list[tuple[float, Symbol]],
-    velocity: dict[str, float],
-    velocity_14: dict[str, float],
-    all_test_fps: set[str],
-    top_n: int,
     out: list[str],
 ) -> None:
-    # S376: Same-file hotspot cluster — PRUNED: duplicate of S268 churn concentration
-    if False:  # PRUNED: duplicate hotspot taxonomy
-        if len(scores) >= 3:
-            _files376 = [scores[i][1].file_path for i in range(3)]
-            if len(set(_files376)) == 1 and not _is_test_file(_files376[0]):
-                out.append(
-                    f"\nhotspot cluster: top 3 hotspots all in {_files376[0].rsplit('/', 1)[-1]}"
-                    f" — extreme risk concentration; this file is the single most critical stabilization target"
-                )
-
-    # S370: Divergent hotspot — PRUNED: low value, agent sees file paths in listing
-    if False:  # PRUNED: low-value hotspot taxonomy
-        if len(scores) >= 2:
-            _top370 = scores[0][1]
-            _sec370 = scores[1][1]
-            if (not _is_test_file(_top370.file_path) and not _is_test_file(_sec370.file_path)
-                    and _top370.file_path != _sec370.file_path):
-                _dir_top370 = _top370.file_path.rsplit("/", 1)[0] if "/" in _top370.file_path else "."
-                _dir_sec370 = _sec370.file_path.rsplit("/", 1)[0] if "/" in _sec370.file_path else "."
-                if _dir_top370 != _dir_sec370:
-                    out.append(
-                        f"\ndivergent hotspots: top risks in different modules"
-                        f" ({_top370.file_path.rsplit('/', 1)[-1]} vs {_sec370.file_path.rsplit('/', 1)[-1]})"
-                        f" — risk is distributed; plan changes in both areas separately"
-                    )
-
-    # S364: Test support hotspot — PRUNED: subsumes into S242 test file hotspot
-    if False:  # PRUNED: duplicate hotspot taxonomy
-        if scores:
-            _top364 = scores[0][1]
-            _fp364 = _top364.file_path.lower()
-            _test_support364 = (
-                "conftest", "fixtures", "factories", "test_helpers", "test_utils",
-                "testing", "test_support", "mock_",
-            )
-            _is_support364 = any(p in _fp364 for p in _test_support364) or _is_test_file(_top364.file_path)
-            if _is_support364:
-                out.append(
-                    f"\ntest support hotspot: {_top364.file_path.rsplit('/', 1)[-1]}"
-                    f" — high-churn test support; frequent changes break tests for unrelated reasons"
-                )
-
     # S358: Generated-file hotspot — top hotspot lives in a generated/auto-generated file.
     # Generated files should not be edited directly; if they are a hotspot, the generator
     # or its configuration is the actual source of churn, not the generated file.
@@ -1521,18 +1475,6 @@ def _signals_hotspots_core_b_structure(
                 f" — do not edit directly; churn originates in the generator or .proto/.schema source"
             )
 
-    # S352: Megafile hotspot — PRUNED: agent sees line count, low actionability
-    if False:  # PRUNED: low-value hotspot taxonomy
-        if scores:
-            _top352 = scores[0][1]
-            if not _is_test_file(_top352.file_path):
-                _fi352 = graph.files.get(_top352.file_path)
-                if _fi352 and _fi352.line_count >= 500:
-                    out.append(
-                        f"\nmegafile hotspot: {_top352.file_path.rsplit('/', 1)[-1]} has {_fi352.line_count} lines"
-                        f" — large files accumulate accidental complexity; consider splitting by responsibility"
-                    )
-
     # S394: Cross-language hotspot — top hotspot file is not in the primary codebase language.
     # When the top hotspot is in a non-primary language (e.g., a Go file in a Python repo),
     # it may lack the same testing and review culture as the main language.
@@ -1541,7 +1483,6 @@ def _signals_hotspots_core_b_structure(
         _fp394 = _top394.file_path
         if _fp394 in graph.files and not _is_test_file(_fp394):
             _lang394 = graph.files[_fp394].language.value
-            # Find the dominant language among all source files
             _lang_counts394: dict[str, int] = {}
             for _fp_c394, _fi_c394 in graph.files.items():
                 if not _is_test_file(_fp_c394):
@@ -1557,6 +1498,24 @@ def _signals_hotspots_core_b_structure(
                         f" may have different testing and review standards"
                     )
 
+    # S418: Vendor/third-party hotspot — top hotspot file lives in a vendor/ or third_party/ dir.
+    # Hotspots in vendored code are especially dangerous because the code is not authored by
+    # the team; changes to it bypass normal review and will be overwritten on next vendor update.
+    if scores:
+        _top418 = scores[0][1]
+        _vendor_dirs418 = ("vendor/", "third_party/", "vendors/", "node_modules/", "external/")
+        if any(d in _top418.file_path.lower() for d in _vendor_dirs418):
+            out.append(
+                f"\nvendor hotspot: {_top418.file_path.rsplit('/', 1)[-1]} is in a vendor directory"
+                f" — vendored hotspots will be overwritten on next vendor update; consider wrapping"
+            )
+
+
+def _b_structure_entry_points(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    out: list[str],
+) -> None:
     # S388: API endpoint hotspot — top hotspot lives in a routes/endpoints/views file.
     # API endpoint hotspots indicate that a route handler or view is accumulating logic;
     # endpoint files should be thin orchestrators, not computation hubs.
@@ -1574,27 +1533,28 @@ def _signals_hotspots_core_b_structure(
                 f" — endpoint files should delegate; move logic to service layer to reduce hotspot"
             )
 
-    # S382: Deep call chain hotspot — top hotspot has 3+ direct callers AND 5+ depth-2 callers.
-    # Symbols with deep fan-in are harder to refactor safely; changes propagate through
-    # multiple layers, and intermediate layers may have baked-in assumptions.
+    # S424: Class hotspot — the top hotspot symbol is a class (not a function or method).
+    # A class appearing as a hotspot is unusual; it typically means the class is being
+    # instantiated in too many places, suggesting it should be injected or turned into a singleton.
     if scores:
-        _top382 = scores[0][1]
-        if not _is_test_file(_top382.file_path):
-            _direct382 = {
+        _top424 = scores[0][1]
+        if _top424.kind.value == "class" and not _is_test_file(_top424.file_path):
+            _class_callers424 = {
                 e.source_id for e in graph.edges
-                if e.kind.value == "calls" and e.target_id == _top382.id
+                if e.kind.value == "calls" and e.target_id == _top424.id
             }
-            _d2_382 = {
-                e.source_id for e in graph.edges
-                if e.kind.value == "calls" and e.target_id in _direct382
-            }
-            if len(_direct382) >= 3 and len(_d2_382) >= 5:
+            if len(_class_callers424) >= 3:
                 out.append(
-                    f"\ndeep call chain: {_top382.name} has {len(_direct382)} direct callers"
-                    f" and {len(_d2_382)} depth-2 callers"
-                    f" — refactors propagate through multiple layers; map all call paths before changing"
+                    f"\nclass hotspot: {_top424.name} is a class with {len(_class_callers424)} caller(s)"
+                    f" — class instantiated in many places; consider DI/singleton to reduce coupling"
                 )
 
+
+def _b_structure_test_coverage(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    out: list[str],
+) -> None:
     # S400: Test-file hotspot — the top hotspot symbol lives inside a test file itself.
     # Test files should not be hotspots; if a test helper is the most-called symbol it has
     # leaked production logic into tests, or tests are overly interdependent.
@@ -1647,36 +1607,35 @@ def _signals_hotspots_core_b_structure(
                     f" — hotspot files change most often; add tests before the next modification"
                 )
 
-    # S418: Vendor/third-party hotspot — top hotspot file lives in a vendor/ or third_party/ dir.
-    # Hotspots in vendored code are especially dangerous because the code is not authored by
-    # the team; changes to it bypass normal review and will be overwritten on next vendor update.
-    if scores:
-        _top418 = scores[0][1]
-        _vendor_dirs418 = ("vendor/", "third_party/", "vendors/", "node_modules/", "external/")
-        if any(d in _top418.file_path.lower() for d in _vendor_dirs418):
-            out.append(
-                f"\nvendor hotspot: {_top418.file_path.rsplit('/', 1)[-1]} is in a vendor directory"
-                f" — vendored hotspots will be overwritten on next vendor update; consider wrapping"
-            )
 
-    # S424: Class hotspot — the top hotspot symbol is a class (not a function or method).
-    # A class appearing as a hotspot is unusual; it typically means the class is being
-    # instantiated in too many places, suggesting it should be injected or turned into a singleton.
+def _b_structure_call_topology(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    out: list[str],
+) -> None:
+    # S382: Deep call chain hotspot — top hotspot has 3+ direct callers AND 5+ depth-2 callers.
+    # Symbols with deep fan-in are harder to refactor safely; changes propagate through
+    # multiple layers, and intermediate layers may have baked-in assumptions.
     if scores:
-        _top424 = scores[0][1]
-        if _top424.kind.value == "class" and not _is_test_file(_top424.file_path):
-            _class_callers424 = {
+        _top382 = scores[0][1]
+        if not _is_test_file(_top382.file_path):
+            _direct382 = {
                 e.source_id for e in graph.edges
-                if e.kind.value == "calls" and e.target_id == _top424.id
+                if e.kind.value == "calls" and e.target_id == _top382.id
             }
-            if len(_class_callers424) >= 3:
+            _d2_382 = {
+                e.source_id for e in graph.edges
+                if e.kind.value == "calls" and e.target_id in _direct382
+            }
+            if len(_direct382) >= 3 and len(_d2_382) >= 5:
                 out.append(
-                    f"\nclass hotspot: {_top424.name} is a class with {len(_class_callers424)} caller(s)"
-                    f" — class instantiated in many places; consider DI/singleton to reduce coupling"
+                    f"\ndeep call chain: {_top382.name} has {len(_direct382)} direct callers"
+                    f" and {len(_d2_382)} depth-2 callers"
+                    f" — refactors propagate through multiple layers; map all call paths before changing"
                 )
 
 
-def _signals_hotspots_core_b_risk(
+def _signals_hotspots_core_b_structure(
     graph: Tempo,
     scores: list[tuple[float, Symbol]],
     velocity: dict[str, float],
@@ -1684,6 +1643,15 @@ def _signals_hotspots_core_b_risk(
     all_test_fps: set[str],
     top_n: int,
     out: list[str],
+) -> None:
+    _b_structure_file_origin(graph, scores, out)
+    _b_structure_entry_points(graph, scores, out)
+    _b_structure_test_coverage(graph, scores, out)
+    _b_structure_call_topology(graph, scores, out)
+
+
+def _b_risk_classification(
+    graph: Tempo, scores: list[tuple[float, Symbol]], out: list[str]
 ) -> None:
     # S430: High-complexity hotspot — top hotspot symbol has cyclomatic complexity >= 20.
     # High complexity means many execution paths; each path needs its own test scenario.
@@ -1708,97 +1676,6 @@ def _signals_hotspots_core_b_risk(
                 f"\ndata-layer hotspot: {_top436.name} lives in {_top436.file_path.rsplit('/', 1)[-1]}"
                 f" — data-layer changes cascade through every reader; check cache invalidation and migrations"
             )
-
-    # S442: Churn disparity — top hotspot file is changed much more than the rest.
-    # A single file that dominates the churn history is a magnet for bugs and drift;
-    # it is often a god object, a catch-all module, or an underabstracted core.
-    if scores and len(scores) >= 3:
-        _top442 = scores[0]
-        _second442 = scores[1]
-        _top_cx442 = _top442[0]
-        _second_cx442 = _second442[0]
-        if _second_cx442 > 0 and _top_cx442 >= _second_cx442 * 3 and not _is_test_file(_top442[1].file_path):
-            out.append(
-                f"\nchurn disparity: {_top442[1].name} has {_top_cx442}× score vs {_second_cx442}×"
-                f" for second-place — extreme outlier; likely a god object or catch-all module"
-            )
-
-    # S448: Untested hotspot file — top hotspot has no test file covering it by name.
-    # The hottest file in the repo having no corresponding test is doubly risky:
-    # high churn without a safety net means every change is an untested regression risk.
-    if scores:
-        _top448 = scores[0][1]
-        if not _is_test_file(_top448.file_path):
-            _stem448 = _top448.file_path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
-            _has_test448 = any(
-                _stem448 in fp and _is_test_file(fp)
-                for fp in graph.files
-            )
-            if not _has_test448:
-                out.append(
-                    f"\nuntested hotspot: {_top448.file_path.rsplit('/', 1)[-1]} is the top hotspot"
-                    f" with no corresponding test file"
-                    f" — high-churn code with no safety net; add tests before modifying"
-                )
-
-    # S455: Shared fixture hotspot — top hotspot is a shared test fixture (conftest.py / fixtures/).
-    # Shared fixtures are an invisible test dependency; changing conftest.py or a shared fixture
-    # breaks every test that uses it, even tests in unrelated directories.
-    if scores:
-        _top455 = scores[0][1]
-        _fp455 = _top455.file_path.lower().replace("\\", "/")
-        _is_fixture455 = (
-            "conftest" in _fp455
-            or "fixture" in _fp455
-            or _fp455.endswith("/fixtures.py")
-            or "/fixtures/" in _fp455
-        )
-        if _is_fixture455:
-            out.append(
-                f"\nfixture hotspot: {_top455.file_path.rsplit('/', 1)[-1]} is a shared test fixture"
-                f" — changes break every test that depends on it; refactor carefully"
-            )
-
-    # S461: Bottleneck function — single function accounts for majority of cross-file calls.
-    # When one function is called from many more places than the next highest, removing or
-    # changing it has outsized impact; it acts as a chokepoint for the entire dependency graph.
-    if len(scores) >= 2:
-        _top461 = scores[0][1]
-        _second461 = scores[1][1]
-        _top_callers461 = len([
-            e for e in graph.edges
-            if e.kind.value == "calls" and e.target_id == _top461.id
-            and graph.symbols.get(e.source_id, _top461).file_path != _top461.file_path
-        ])
-        _second_callers461 = len([
-            e for e in graph.edges
-            if e.kind.value == "calls" and e.target_id == _second461.id
-            and graph.symbols.get(e.source_id, _second461).file_path != _second461.file_path
-        ])
-        if not _is_test_file(_top461.file_path) and _second_callers461 > 0 and _top_callers461 >= _second_callers461 * 4:
-            out.append(
-                f"\nbottleneck function: {_top461.name} has {_top_callers461}× cross-file callers"
-                f" vs {_second_callers461} for the next hotspot"
-                f" — chokepoint function; changes here cascade broadly"
-            )
-
-    # S466: Cross-module hotspot — top hotspot is imported by files in 3+ directories.
-    # A hotspot that spans directory boundaries is a cross-cutting concern;
-    # refactoring it requires changes in every consuming directory simultaneously.
-    if scores:
-        _top466 = scores[0][1]
-        if not _is_test_file(_top466.file_path):
-            _importer466_dirs: set[str] = set()
-            for _imp466 in graph.importers_of(_top466.file_path):
-                _dir466 = _imp466.rsplit("/", 1)[0] if "/" in _imp466 else ""
-                if _dir466 != (_top466.file_path.rsplit("/", 1)[0] if "/" in _top466.file_path else ""):
-                    _importer466_dirs.add(_dir466)
-            if len(_importer466_dirs) >= 3:
-                out.append(
-                    f"\ncross-module hotspot: {_top466.file_path.rsplit('/', 1)[-1]} is imported"
-                    f" from {len(_importer466_dirs)} different directories"
-                    f" — cross-cutting concern; refactoring requires coordinated changes in every consumer directory"
-                )
 
     # S472: API hotspot — top hotspot lives in an api/ or routes/ file.
     # API hotspots are web-facing contracts; any change to the function signature
@@ -1831,6 +1708,64 @@ def _signals_hotspots_core_b_risk(
                 f" — changes will be overwritten on next codegen run; patch the generator template instead"
             )
 
+
+def _b_risk_churn_disparity(
+    graph: Tempo, scores: list[tuple[float, Symbol]], out: list[str]
+) -> None:
+    # S442: Churn disparity — top hotspot file is changed much more than the rest.
+    # A single file that dominates the churn history is a magnet for bugs and drift;
+    # it is often a god object, a catch-all module, or an underabstracted core.
+    if scores and len(scores) >= 3:
+        _top442 = scores[0]
+        _second442 = scores[1]
+        _top_cx442 = _top442[0]
+        _second_cx442 = _second442[0]
+        if _second_cx442 > 0 and _top_cx442 >= _second_cx442 * 3 and not _is_test_file(_top442[1].file_path):
+            out.append(
+                f"\nchurn disparity: {_top442[1].name} has {_top_cx442}× score vs {_second_cx442}×"
+                f" for second-place — extreme outlier; likely a god object or catch-all module"
+            )
+
+    # S448: Untested hotspot file — top hotspot has no test file covering it by name.
+    # The hottest file in the repo having no corresponding test is doubly risky:
+    # high churn without a safety net means every change is an untested regression risk.
+    if scores:
+        _top448 = scores[0][1]
+        if not _is_test_file(_top448.file_path):
+            _stem448 = _top448.file_path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+            _has_test448 = any(
+                _stem448 in fp and _is_test_file(fp)
+                for fp in graph.files
+            )
+            if not _has_test448:
+                out.append(
+                    f"\nuntested hotspot: {_top448.file_path.rsplit('/', 1)[-1]} is the top hotspot"
+                    f" with no corresponding test file"
+                    f" — high-churn code with no safety net; add tests before modifying"
+                )
+
+
+def _b_risk_fixture_test(
+    graph: Tempo, scores: list[tuple[float, Symbol]], out: list[str]
+) -> None:
+    # S455: Shared fixture hotspot — top hotspot is a shared test fixture (conftest.py / fixtures/).
+    # Shared fixtures are an invisible test dependency; changing conftest.py or a shared fixture
+    # breaks every test that uses it, even tests in unrelated directories.
+    if scores:
+        _top455 = scores[0][1]
+        _fp455 = _top455.file_path.lower().replace("\\", "/")
+        _is_fixture455 = (
+            "conftest" in _fp455
+            or "fixture" in _fp455
+            or _fp455.endswith("/fixtures.py")
+            or "/fixtures/" in _fp455
+        )
+        if _is_fixture455:
+            out.append(
+                f"\nfixture hotspot: {_top455.file_path.rsplit('/', 1)[-1]} is a shared test fixture"
+                f" — changes break every test that depends on it; refactor carefully"
+            )
+
     # S486: Hotspot file has no test file — top hotspot source file has no corresponding test.
     # The most-called file in the repo has no dedicated test coverage; any change is a gamble.
     # High call-count + zero tests = maximum blast radius, minimum safety net.
@@ -1846,6 +1781,55 @@ def _signals_hotspots_core_b_risk(
                 out.append(
                     f"\nno test file: {_top486.file_path.rsplit('/', 1)[-1]} is the top hotspot but has no test file"
                     f" — the most-called file in the repo has zero dedicated test coverage"
+                )
+
+
+def _b_risk_bottleneck(
+    graph: Tempo, scores: list[tuple[float, Symbol]], out: list[str]
+) -> None:
+    # S461: Bottleneck function — single function accounts for majority of cross-file calls.
+    # When one function is called from many more places than the next highest, removing or
+    # changing it has outsized impact; it acts as a chokepoint for the entire dependency graph.
+    if len(scores) >= 2:
+        _top461 = scores[0][1]
+        _second461 = scores[1][1]
+        _top_callers461 = len([
+            e for e in graph.edges
+            if e.kind.value == "calls" and e.target_id == _top461.id
+            and graph.symbols.get(e.source_id, _top461).file_path != _top461.file_path
+        ])
+        _second_callers461 = len([
+            e for e in graph.edges
+            if e.kind.value == "calls" and e.target_id == _second461.id
+            and graph.symbols.get(e.source_id, _second461).file_path != _second461.file_path
+        ])
+        if not _is_test_file(_top461.file_path) and _second_callers461 > 0 and _top_callers461 >= _second_callers461 * 4:
+            out.append(
+                f"\nbottleneck function: {_top461.name} has {_top_callers461}× cross-file callers"
+                f" vs {_second_callers461} for the next hotspot"
+                f" — chokepoint function; changes here cascade broadly"
+            )
+
+
+def _b_risk_cross_solo(
+    graph: Tempo, scores: list[tuple[float, Symbol]], out: list[str]
+) -> None:
+    # S466: Cross-module hotspot — top hotspot is imported by files in 3+ directories.
+    # A hotspot that spans directory boundaries is a cross-cutting concern;
+    # refactoring it requires changes in every consuming directory simultaneously.
+    if scores:
+        _top466 = scores[0][1]
+        if not _is_test_file(_top466.file_path):
+            _importer466_dirs: set[str] = set()
+            for _imp466 in graph.importers_of(_top466.file_path):
+                _dir466 = _imp466.rsplit("/", 1)[0] if "/" in _imp466 else ""
+                if _dir466 != (_top466.file_path.rsplit("/", 1)[0] if "/" in _top466.file_path else ""):
+                    _importer466_dirs.add(_dir466)
+            if len(_importer466_dirs) >= 3:
+                out.append(
+                    f"\ncross-module hotspot: {_top466.file_path.rsplit('/', 1)[-1]} is imported"
+                    f" from {len(_importer466_dirs)} different directories"
+                    f" — cross-cutting concern; refactoring requires coordinated changes in every consumer directory"
                 )
 
     # S492: Solo file hotspot — top hotspot is the only file in its directory.
@@ -1867,6 +1851,22 @@ def _signals_hotspots_core_b_risk(
                         f"\nsolo file: {_top492.file_path.rsplit('/', 1)[-1]} is the only source file in {_dir492}/"
                         f" — no siblings to share load; complexity will compound with each change"
                     )
+
+
+def _signals_hotspots_core_b_risk(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    velocity: dict[str, float],
+    velocity_14: dict[str, float],
+    all_test_fps: set[str],
+    top_n: int,
+    out: list[str],
+) -> None:
+    _b_risk_classification(graph, scores, out)
+    _b_risk_churn_disparity(graph, scores, out)
+    _b_risk_fixture_test(graph, scores, out)
+    _b_risk_bottleneck(graph, scores, out)
+    _b_risk_cross_solo(graph, scores, out)
 
 
 def _signals_hotspots_core_b(
@@ -2818,18 +2818,12 @@ def _signals_hotspots_core_d_size(
             )
 
 
-def _signals_hotspots_core_d_callers(
+def _d_callers_geographic(
     graph: Tempo,
     scores: list[tuple[float, Symbol]],
-    velocity: dict[str, float],
-    velocity_14: dict[str, float],
-    all_test_fps: set[str],
-    top_n: int,
     out: list[str],
 ) -> None:
     # S784: Package-local hotspot — top hotspot is only called from within its own directory.
-    # A hotspot with all callers in the same package has high internal coupling but low
-    # external exposure; refactoring is contained but the package itself is tightly coupled.
     if scores:
         _top784 = scores[0][1]
         if _top784 is not None and not _is_test_file(_top784.file_path):
@@ -2847,9 +2841,142 @@ def _signals_hotspots_core_d_callers(
                         f" extract shared logic to a lower-level utility module"
                     )
 
+    # S814: Cross-module hotspot — top hotspot is called from 3+ distinct top-level directories.
+    if scores:
+        _top814 = scores[0][1]
+        if _top814 is not None and not _is_test_file(_top814.file_path):
+            _callers814 = graph.callers_of(_top814.id)
+            _dirs814 = {
+                c.file_path.replace("\\", "/").split("/")[0]
+                for c in _callers814
+                if c.file_path != _top814.file_path
+                and "/" in c.file_path.replace("\\", "/")
+            }
+            if len(_dirs814) >= 3:
+                out.append(
+                    f"\ncross-module hotspot: {_top814.name} is called from {len(_dirs814)} distinct top-level directories"
+                    f" — de-facto shared infrastructure; changes require cross-module coordination"
+                )
+
+    # S976: Wide hotspot — top hotspot callers span 3+ distinct directories.
+    if scores:
+        _top976 = scores[0][1]
+        if _top976 is not None and not _is_test_file(_top976.file_path):
+            _callers976 = graph.callers_of(_top976.id)
+            _dirs976: set[str] = set()
+            for _c976 in _callers976:
+                if not _is_test_file(_c976.file_path):
+                    _fp976 = _c976.file_path.replace("\\", "/")
+                    _dirs976.add(_fp976.rsplit("/", 1)[0] if "/" in _fp976 else ".")
+            if len(_dirs976) >= 3:
+                out.append(
+                    f"\nwide hotspot: {_top976.name} is called from {len(_dirs976)} directories"
+                    f" — crosses subsystem boundaries; signature changes require cross-team coordination"
+                )
+
+
+def _d_callers_extremes(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    out: list[str],
+) -> None:
+    # S868: Super-hotspot — top hotspot has 10+ direct callers.
+    if scores:
+        _top868 = scores[0][1]
+        if _top868 is not None and not _is_test_file(_top868.file_path):
+            _callers868 = graph.callers_of(_top868.id)
+            if len(_callers868) >= 10:
+                out.append(
+                    f"\nsuper hotspot: {_top868.name} has {len(_callers868)} direct callers"
+                    f" — extremely wide usage; changes require coordination across {len(_callers868)} callers"
+                )
+
+    # S880: Uncalled hotspot — top complexity hotspot has no recorded callers.
+    if scores:
+        _top880 = scores[0][1]
+        if _top880 is not None and not _is_test_file(_top880.file_path):
+            _callers880 = graph.callers_of(_top880.id)
+            if not _callers880:
+                out.append(
+                    f"\nuncalled hotspot: {_top880.name} is the most complex symbol but has no recorded callers"
+                    f" — may be dead code or an entry point called via dynamic dispatch"
+                )
+
+    # S916: Single-caller hotspot — the top hotspot is called from exactly one place.
+    if scores:
+        _top916 = scores[0][1]
+        if _top916 is not None and not _is_test_file(_top916.file_path):
+            _callers916 = graph.callers_of(_top916.id)
+            if len(_callers916) == 1:
+                out.append(
+                    f"\nsingle-caller hotspot: {_top916.name} is complex but called from only 1 place"
+                    f" — consider inlining to reduce indirection overhead"
+                )
+
+
+def _d_callers_spread(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    out: list[str],
+) -> None:
+    # S832: Single-file hotspot callers — top hotspot is only called from one file.
+    if scores:
+        _top832 = scores[0][1]
+        if _top832 is not None and not _is_test_file(_top832.file_path):
+            _callers832 = graph.callers_of(_top832.id)
+            _caller_files832 = {c.file_path for c in _callers832 if c.file_path != _top832.file_path}
+            if len(_callers832) >= 3 and len(_caller_files832) == 1:
+                out.append(
+                    f"\nsingle-file hotspot callers: {_top832.name} has {len(_callers832)} callers but all from one file"
+                    f" — hotspot score may be inflated by intra-module calls; external impact is narrower"
+                )
+
+    # S874: Wide-file hotspot — top hotspot has callers from 5+ different files.
+    if scores:
+        _top874 = scores[0][1]
+        if _top874 is not None and not _is_test_file(_top874.file_path):
+            _callers874 = graph.callers_of(_top874.id)
+            _caller_files874 = {c.file_path for c in _callers874}
+            if len(_caller_files874) >= 5:
+                out.append(
+                    f"\nwide-file hotspot: {_top874.name} is called from {len(_caller_files874)} distinct files"
+                    f" — cross-cutting concern; changes affect {len(_caller_files874)} files across the codebase"
+                )
+
+    # S964: Bottleneck hotspot — the top hotspot is called from 10+ distinct source files.
+    if scores:
+        _top964 = scores[0][1]
+        if _top964 is not None and not _is_test_file(_top964.file_path):
+            _callers964 = graph.callers_of(_top964.id)
+            _caller_files964 = {
+                c.file_path for c in _callers964
+                if not _is_test_file(c.file_path) and c.file_path != _top964.file_path
+            }
+            if len(_caller_files964) >= 10:
+                out.append(
+                    f"\nbottleneck hotspot: {_top964.name} is called from {len(_caller_files964)} source files"
+                    f" — extreme fan-in; breaking changes here cause simultaneous failures across many subsystems"
+                )
+
+    # S994: Contained hotspot — top hotspot callers are all within the same file.
+    if scores:
+        _top994 = scores[0][1]
+        if _top994 is not None and not _is_test_file(_top994.file_path):
+            _callers994 = [c for c in graph.callers_of(_top994.id) if not _is_test_file(c.file_path)]
+            _external994 = [c for c in _callers994 if c.file_path != _top994.file_path]
+            if _callers994 and not _external994:
+                out.append(
+                    f"\ncontained hotspot: {_top994.name} — all {len(_callers994)} caller(s) are within {_top994.file_path.rsplit('/', 1)[-1]}"
+                    f"; blast radius limited to this file"
+                )
+
+
+def _d_callers_quality(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    out: list[str],
+) -> None:
     # S790: Test-only callers hotspot — top hotspot is only called from test files.
-    # An exported symbol only called from tests may be an internal helper mistakenly exposed,
-    # or a public API with no real consumers yet — clarify intent before making changes.
     if scores:
         _top790 = scores[0][1]
         if (
@@ -2868,8 +2995,6 @@ def _signals_hotspots_core_d_callers(
                 )
 
     # S802: Thin wrapper hotspot — top hotspot has only 1 callee (delegates entirely to one fn).
-    # A hotspot that only wraps one other function adds a call layer with no additional value;
-    # callers could invoke the inner function directly, reducing coupling.
     if scores:
         _top802 = scores[0][1]
         if _top802 is not None and not _is_test_file(_top802.file_path):
@@ -2882,140 +3007,20 @@ def _signals_hotspots_core_d_callers(
                         f" but only calls {_callees802[0].name} — pure wrapper; callers could bypass it"
                     )
 
-    # S814: Cross-module hotspot — top hotspot is called from 3+ distinct top-level directories.
-    # When a symbol is depended upon across many structural boundaries it becomes a de-facto
-    # shared infrastructure piece; any change requires coordinating across all those modules.
-    if scores:
-        _top814 = scores[0][1]
-        if _top814 is not None and not _is_test_file(_top814.file_path):
-            _callers814 = graph.callers_of(_top814.id)
-            _dirs814 = {
-                c.file_path.replace("\\", "/").split("/")[0]
-                for c in _callers814
-                if c.file_path != _top814.file_path
-                and "/" in c.file_path.replace("\\", "/")
-            }
-            if len(_dirs814) >= 3:
-                out.append(
-                    f"\ncross-module hotspot: {_top814.name} is called from {len(_dirs814)} distinct top-level directories"
-                    f" — de-facto shared infrastructure; changes require cross-module coordination"
-                )
 
-    # S832: Single-file hotspot callers — top hotspot is only called from one file.
-    # A hotspot with all callers in a single file may be inflated by intra-file calls;
-    # the real external impact is lower than the raw caller count suggests.
-    if scores:
-        _top832 = scores[0][1]
-        if _top832 is not None and not _is_test_file(_top832.file_path):
-            _callers832 = graph.callers_of(_top832.id)
-            _caller_files832 = {c.file_path for c in _callers832 if c.file_path != _top832.file_path}
-            if len(_callers832) >= 3 and len(_caller_files832) == 1:
-                out.append(
-                    f"\nsingle-file hotspot callers: {_top832.name} has {len(_callers832)} callers but all from one file"
-                    f" — hotspot score may be inflated by intra-module calls; external impact is narrower"
-                )
-
-    # S868: Super-hotspot — top hotspot has 10+ direct callers.
-    # A function with 10+ callers is extremely widely used; any behavioral change
-    # requires coordination with all callers and is high-risk to refactor or remove.
-    if scores:
-        _top868 = scores[0][1]
-        if _top868 is not None and not _is_test_file(_top868.file_path):
-            _callers868 = graph.callers_of(_top868.id)
-            if len(_callers868) >= 10:
-                out.append(
-                    f"\nsuper hotspot: {_top868.name} has {len(_callers868)} direct callers"
-                    f" — extremely wide usage; changes require coordination across {len(_callers868)} callers"
-                )
-
-    # S874: Wide-file hotspot — top hotspot has callers from 5+ different files.
-    # A hotspot with callers spread across many files is a cross-cutting concern;
-    # any change ripples through a wide surface area of the codebase.
-    if scores:
-        _top874 = scores[0][1]
-        if _top874 is not None and not _is_test_file(_top874.file_path):
-            _callers874 = graph.callers_of(_top874.id)
-            _caller_files874 = {c.file_path for c in _callers874}
-            if len(_caller_files874) >= 5:
-                out.append(
-                    f"\nwide-file hotspot: {_top874.name} is called from {len(_caller_files874)} distinct files"
-                    f" — cross-cutting concern; changes affect {len(_caller_files874)} files across the codebase"
-                )
-
-    # S880: Uncalled hotspot — top complexity hotspot has no recorded callers.
-    # A complex function with no callers may be dead code that accumulated complexity
-    # without being exercised; investigate before refactoring or deleting.
-    if scores:
-        _top880 = scores[0][1]
-        if _top880 is not None and not _is_test_file(_top880.file_path):
-            _callers880 = graph.callers_of(_top880.id)
-            if not _callers880:
-                out.append(
-                    f"\nuncalled hotspot: {_top880.name} is the most complex symbol but has no recorded callers"
-                    f" — may be dead code or an entry point called via dynamic dispatch"
-                )
-
-    # S916: Single-caller hotspot — the top hotspot is called from exactly one place.
-    # A high-complexity function with only one caller may be an over-engineered extraction;
-    # consider inlining it to reduce the cognitive overhead of tracking two function bodies.
-    if scores:
-        _top916 = scores[0][1]
-        if _top916 is not None and not _is_test_file(_top916.file_path):
-            _callers916 = graph.callers_of(_top916.id)
-            if len(_callers916) == 1:
-                out.append(
-                    f"\nsingle-caller hotspot: {_top916.name} is complex but called from only 1 place"
-                    f" — consider inlining to reduce indirection overhead"
-                )
-
-    # S964: Bottleneck hotspot — the top hotspot is called from 10+ distinct source files.
-    # Extreme fan-in means this function is a central dependency; breaking changes here
-    # cause cascading failures across unrelated subsystems simultaneously.
-    if scores:
-        _top964 = scores[0][1]
-        if _top964 is not None and not _is_test_file(_top964.file_path):
-            _callers964 = graph.callers_of(_top964.id)
-            _caller_files964 = {
-                c.file_path for c in _callers964
-                if not _is_test_file(c.file_path) and c.file_path != _top964.file_path
-            }
-            if len(_caller_files964) >= 10:
-                out.append(
-                    f"\nbottleneck hotspot: {_top964.name} is called from {len(_caller_files964)} source files"
-                    f" — extreme fan-in; breaking changes here cause simultaneous failures across many subsystems"
-                )
-
-    # S976: Wide hotspot — top hotspot callers span 3+ distinct directories.
-    # A symbol called from multiple directories crosses module/subsystem boundaries;
-    # changes here require coordinated updates across teams or packages.
-    if scores:
-        _top976 = scores[0][1]
-        if _top976 is not None and not _is_test_file(_top976.file_path):
-            _callers976 = graph.callers_of(_top976.id)
-            _dirs976: set[str] = set()
-            for _c976 in _callers976:
-                if not _is_test_file(_c976.file_path):
-                    _fp976 = _c976.file_path.replace("\\", "/")
-                    _dirs976.add(_fp976.rsplit("/", 1)[0] if "/" in _fp976 else ".")
-            if len(_dirs976) >= 3:
-                out.append(
-                    f"\nwide hotspot: {_top976.name} is called from {len(_dirs976)} directories"
-                    f" — crosses subsystem boundaries; signature changes require cross-team coordination"
-                )
-
-    # S994: Contained hotspot — top hotspot callers are all within the same file.
-    # A complex function called only internally has a contained blast radius;
-    # changes affect only the hosting module, not external consumers.
-    if scores:
-        _top994 = scores[0][1]
-        if _top994 is not None and not _is_test_file(_top994.file_path):
-            _callers994 = [c for c in graph.callers_of(_top994.id) if not _is_test_file(c.file_path)]
-            _external994 = [c for c in _callers994 if c.file_path != _top994.file_path]
-            if _callers994 and not _external994:
-                out.append(
-                    f"\ncontained hotspot: {_top994.name} — all {len(_callers994)} caller(s) are within {_top994.file_path.rsplit('/', 1)[-1]}"
-                    f"; blast radius limited to this file"
-                )
+def _signals_hotspots_core_d_callers(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    velocity: dict[str, float],
+    velocity_14: dict[str, float],
+    all_test_fps: set[str],
+    top_n: int,
+    out: list[str],
+) -> None:
+    _d_callers_geographic(graph, scores, out)
+    _d_callers_extremes(graph, scores, out)
+    _d_callers_spread(graph, scores, out)
+    _d_callers_quality(graph, scores, out)
 
 
 def _signals_hotspots_core_d_coverage(

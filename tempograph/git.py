@@ -474,10 +474,22 @@ def file_cochange_pairs(root: str, file_path: str, min_commits: int = 3,
     Returns list of (other_file, cochange_ratio) sorted by ratio descending.
     cochange_ratio = commits_together / total_commits_of_file_path.
     Only returns pairs with ratio >= 0.5 and at least min_commits together.
+
+    Uses a single git log --full-diff call instead of 1+N_commits subprocess
+    spawns. --full-diff shows all files changed in each commit (not just the
+    filtered file), giving the full co-change picture in O(1) calls.
     """
     try:
         result = subprocess.run(
-            ["git", "log", "--pretty=format:%H", f"-{max_commits}", "--", file_path],
+            [
+                "git", "log",
+                "--format=---COMMIT--- %H",
+                "--name-only",
+                "--full-diff",
+                f"-{max_commits}",
+                "--",
+                file_path,
+            ],
             capture_output=True, text=True, cwd=root, timeout=10,
         )
         if result.returncode != 0 or not result.stdout.strip():
@@ -485,27 +497,27 @@ def file_cochange_pairs(root: str, file_path: str, min_commits: int = 3,
     except Exception:
         return []
 
-    commits = [c.strip() for c in result.stdout.strip().split("\n") if c.strip()]
-    if len(commits) < min_commits:
+    lines = result.stdout.strip().split("\n")
+    commit_files: dict[str, set[str]] = {}
+    current_hash: str | None = None
+    for line in lines:
+        line = line.strip()
+        if line.startswith("---COMMIT--- "):
+            current_hash = line[13:]
+            commit_files[current_hash] = set()
+        elif current_hash and line:
+            commit_files[current_hash].add(line)
+
+    total = len(commit_files)
+    if total < min_commits:
         return []
 
-    # For each commit, get the list of files changed
     cochange_counts: dict[str, int] = {}
-    for sha in commits:
-        try:
-            diff_result = subprocess.run(
-                ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", sha],
-                capture_output=True, text=True, cwd=root, timeout=5,
-            )
-            if diff_result.returncode == 0:
-                files_in_commit = {f.strip() for f in diff_result.stdout.strip().split("\n")
-                                  if f.strip() and f.strip() != file_path}
-                for f in files_in_commit:
-                    cochange_counts[f] = cochange_counts.get(f, 0) + 1
-        except Exception:
-            continue
+    for files in commit_files.values():
+        for f in files:
+            if f != file_path:
+                cochange_counts[f] = cochange_counts.get(f, 0) + 1
 
-    total = len(commits)
     pairs = []
     for other, count in cochange_counts.items():
         if count >= min_commits:

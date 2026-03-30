@@ -3396,19 +3396,18 @@ def _compute_cross_language_callees(
     ordered: "list[tuple[Symbol, int]]",
     graph: "Tempo",
 ) -> str:
-    """S1040: Cross-language callee warning — fires when a depth-1 BFS callee is in a
-    different language than the seed.
+    """S1040: Cross-language callee warning — fires when a direct callee of the seed is in
+    a different language than the seed.
 
     Graph-level symbol matching can produce false edges: Python code like
     ``cfg_path.exists()`` matches a TypeScript ``AmbientStatus.exists`` property
     because both use the method name "exists".  These phantom cross-language edges
-    appear in the BFS output and may mislead agents into treating them as real
-    dependencies.
+    exist in the graph's _callees index and may mislead agents into treating them as
+    real dependencies.
 
     Fires when:
     - The seed is a non-test Python/Rust/Go function or method
-    - At least one depth-1 callee is in a different language (TypeScript, JavaScript, etc.)
-    - The seed directly calls that callee (confirmed via _callees index)
+    - At least one direct callee is in a different language (TypeScript, JavaScript, etc.)
 
     Output example:
       ↳ cross-language callees: AmbientStatus.exists (TypeScript) — may be symbol-name
@@ -3416,8 +3415,12 @@ def _compute_cross_language_callees(
 
     Does NOT fire when the seed itself is TypeScript/JavaScript (cross-language rendering
     edges like JSX are expected in that context).
+
+    Note: `ordered` is accepted for backwards compatibility but not used — cross-language
+    edges are not traversed by BFS, so they never appear in ordered. We read _callees
+    directly (same approach as _compute_hub_callee_warning).
     """
-    if not seeds or not ordered:
+    if not seeds:
         return ""
     seed = seeds[0]
     if seed.kind.value not in ("function", "method"):
@@ -3433,19 +3436,18 @@ def _compute_cross_language_callees(
     if seed_lang not in _BACKEND_LANGS:
         return ""
 
-    seed_ids = {s.id for s in seeds}
     cross_lang: list[tuple["Symbol", str]] = []
 
-    for sym, depth in ordered:
-        if depth != 1:
+    # Iterate direct callees via _callees index (BFS doesn't traverse cross-language edges,
+    # so using `ordered` would always produce an empty result for this signal)
+    for cid in graph._callees.get(seed.id, []):
+        sym = graph.symbols.get(cid)
+        if sym is None:
             continue
         if _is_test_file(sym.file_path):
             continue
         callee_lang = sym.language.value.lower()
         if callee_lang not in _SCRIPT_LANGS:
-            continue
-        # Confirm the seed actually calls this symbol (not just an orbit injection)
-        if not any(sym.id in graph._callees.get(sid, []) for sid in seed_ids):
             continue
         cross_lang.append((sym, callee_lang))
 
@@ -3464,6 +3466,70 @@ def _compute_cross_language_callees(
         f" — may be symbol-name collision (e.g. Python .exists() → TS property);"
         f" verify or suppress with exclude_dirs"
     )
+
+
+def _compute_decomp_candidate(
+    seeds: "list[Symbol]",
+    graph: "Tempo",
+) -> str:
+    """S1041: Complexity advisory — fires when the seed is F-grade complexity (cx >= 26).
+
+    Radon complexity grade F = cx >= 26. Functions at this level are candidates
+    for decomposition: extracting focused helpers reduces cognitive load and makes
+    future changes easier to reason about.
+
+    Only fires when cross-file blast radius is manageable (≤ 5 non-test caller files).
+    High-blast-radius functions are excluded because decomposition there requires
+    more coordination than a simple signal can capture.
+
+    Fires when:
+    - Seed is a function or method (not a class, variable, etc.)
+    - Not a test file
+    - cx >= 26 (F-grade by Radon scale)
+    - ≤ 5 unique cross-file non-test caller files
+
+    Output examples:
+      ↳ complexity: cx=43 (F-grade) — no cross-file callers; safe to extract helpers
+      ↳ complexity: cx=60 (F-grade) — 3 caller files; coordinate changes before decomposing
+
+    Distinct from:
+    - S1035 (orchestrator): fires when MANY callees AND few callers (orchestrator topology)
+    - S65 (change_exposure): quantifies caller count/blast radius
+    - hotspots mode: identifies complex files/functions globally
+    S1041 fires on the seed itself and gives a per-function actionable hint.
+    """
+    if not seeds:
+        return ""
+    seed = seeds[0]
+    if seed.kind.value not in ("function", "method"):
+        return ""
+    if _is_test_file(seed.file_path):
+        return ""
+
+    _F_GRADE = 26
+    if seed.complexity < _F_GRADE:
+        return ""
+
+    # Count unique cross-file non-test caller files
+    non_test_cross_callers: set[str] = {
+        graph.symbols[cid].file_path
+        for cid in graph._callers.get(seed.id, [])
+        if cid in graph.symbols
+        and not _is_test_file(graph.symbols[cid].file_path)
+        and graph.symbols[cid].file_path != seed.file_path
+    }
+
+    _MAX_CALLERS = 5
+    if len(non_test_cross_callers) > _MAX_CALLERS:
+        return ""  # High blast radius — decomp is risky; don't over-advise
+
+    if len(non_test_cross_callers) == 0:
+        tail = "no cross-file callers; safe to extract helpers"
+    else:
+        n = len(non_test_cross_callers)
+        tail = f"{n} caller file{'s' if n != 1 else ''}; coordinate changes before decomposing"
+
+    return f"↳ complexity: cx={seed.complexity} (F-grade) — {tail}"
 
 
 def _compute_component_render_tree(seeds: "list[Symbol]", graph: "Tempo") -> str:
@@ -3589,6 +3655,125 @@ def _compute_dead_seed_note(graph: "Tempo", seeds: "list[Symbol]") -> str:
     )
 
 
+def _compute_indirect_reachability(graph: "Tempo", seeds: "list[Symbol]") -> str:
+    """S1042: Indirect reachability — fires when seed has 0 direct callers but parent is live.
+
+    Addresses the two dead-code scanner false-positive patterns confirmed in cycle-254:
+
+    1. **Python class methods**: `obj.method()` calls are not captured as direct CALLS edges
+       from external callers because the variable type (`obj`) can't be inferred statically.
+       If the parent CLASS has external callers, the method is likely reachable via instance.
+
+    2. **TypeScript hook-returned functions**: `const {fn} = useHook()` — functions returned
+       by a React hook are called via destructuring, not as direct call targets. The CALLS edge
+       for the hook call exists (`caller → useHook`) but not for the returned member.
+
+    Conditions (per seed):
+    - kind in {method, function} and not in a test file
+    - 0 non-test direct callers (appears dead to static analysis)
+    - Has a parent_id pointing to a CLASS or HOOK symbol
+    - Complexity ≥ 5 for class methods (filters trivial getters); no floor for hook children
+    - Parent has ≥1 non-test external callers (parent is live from outside its own file)
+
+    Output forms:
+    - SINGLETON: seed + fewer than _S1042_FAMILY_THRESHOLD siblings match →
+        "↳ instance method: ClassName has N callers — method may be called via instance dispatch"
+    - FAMILY: seed + ≥_S1042_FAMILY_THRESHOLD sibling methods also match (same parent, 0 callers) →
+        "↳ instance method family: ClassName — method and N siblings have 0 direct callers..."
+
+    Fires for the first qualifying seed only (avoids redundancy in multi-seed focus).
+    Distinct from S67 (dead candidate): S67 uses confidence score; S1042 is structural — looks
+    at the parent's liveness, not the seed's isolation score. They can fire together.
+    """
+    _S1042_FAMILY_THRESHOLD = 5
+
+    for seed in seeds:
+        if _is_test_file(seed.file_path):
+            continue
+        if seed.kind.value not in ("method", "function"):
+            continue
+        if not seed.parent_id or seed.parent_id not in graph.symbols:
+            continue
+
+        parent = graph.symbols[seed.parent_id]
+        if parent.kind.value not in ("class", "hook"):
+            continue
+
+        # Complexity floor: class methods need cx ≥ 5 (filter trivial getters/setters).
+        # Hook-returned functions can be cx=0 (arrow functions) — no floor applied.
+        if parent.kind.value == "class" and seed.complexity < 5:
+            continue
+
+        # Seed must have 0 non-test direct callers
+        non_test_callers = [c for c in graph.callers_of(seed.id) if not _is_test_file(c.file_path)]
+        if non_test_callers:
+            continue
+
+        # Parent must have ≥1 non-test caller from OUTSIDE its own file
+        parent_ext_callers = [
+            c for c in graph.callers_of(parent.id)
+            if not _is_test_file(c.file_path) and c.file_path != parent.file_path
+        ]
+        if not parent_ext_callers:
+            continue
+
+        n_parent_callers = len(parent_ext_callers)
+
+        # Count sibling methods/functions under the same parent that also have 0 non-test callers
+        siblings_0cal = [
+            s for s in graph.symbols.values()
+            if s.parent_id == seed.parent_id
+            and s.id != seed.id
+            and s.kind.value in ("method", "function")
+            and not _is_test_file(s.file_path)
+            and not graph._callers.get(s.id)  # fast path: any callers (includes test)
+        ]
+        # Refine: only count siblings with 0 NON-test callers
+        siblings_0cal = [
+            s for s in siblings_0cal
+            if not any(
+                not _is_test_file(graph.symbols[cid].file_path)
+                for cid in graph._callers.get(s.id, [])
+                if cid in graph.symbols
+            )
+        ]
+        total_indirect = 1 + len(siblings_0cal)
+
+        caller_word = "caller" if n_parent_callers == 1 else "callers"
+
+        if parent.kind.value == "hook":
+            # TypeScript hook-return pattern
+            if total_indirect >= _S1042_FAMILY_THRESHOLD:
+                return (
+                    f"\u21b3 hook-returned family: {parent.name} has {n_parent_callers} {caller_word}"
+                    f" \u2014 {seed.name} and {len(siblings_0cal)} siblings returned via destructuring"
+                    f" (e.g. `const {{{seed.name}}} = {parent.name}()`);"
+                    f" no direct CALL edges; dead scanner may report FP"
+                )
+            return (
+                f"\u21b3 hook-returned: {seed.name} is inside {parent.name}"
+                f" ({n_parent_callers} {caller_word})"
+                f" \u2014 invoked via destructuring `const {{{seed.name}}} = {parent.name}()`;"
+                f" no direct CALL edges; dead scanner may report FP"
+            )
+
+        # Python class instance method pattern
+        if total_indirect >= _S1042_FAMILY_THRESHOLD:
+            return (
+                f"\u21b3 instance method family: {parent.name} has {n_parent_callers} {caller_word}"
+                f" \u2014 {seed.name} and {len(siblings_0cal)} sibling methods have 0 direct callers;"
+                f" all likely called via `instance.method()` dispatch; static graph misses external"
+                f" calls through variable-typed receivers"
+            )
+        return (
+            f"\u21b3 instance method: {parent.name} has {n_parent_callers} external {caller_word}"
+            f" \u2014 {seed.name} may be called as `instance.{seed.name}()`;"
+            f" static call graph doesn\u2019t resolve variable-typed receiver dispatch"
+        )
+
+    return ""
+
+
 def _compute_stability_mismatch(graph: "Tempo", seeds: "list[Symbol]") -> str:
     """S71: Stability mismatch — stable seed with hot callers.
 
@@ -3697,6 +3882,75 @@ def _compute_stale_callers(seeds, graph, *, _file_ages=None):
     )
 
 
+def _compute_async_gap(seeds: "list[Symbol]", graph: "Tempo") -> str:
+    """S1043: Async gap — async function whose body contains no await.
+
+    An async function with no await runs synchronously but returns a
+    coroutine/Promise, misleading callers about its execution model.
+    Common causes: forgot to await an I/O call, or the function should
+    just be a regular synchronous function.
+
+    Conditions (per seed):
+    - kind in {function, method}
+    - signature contains 'async ' (Python: async def, TS: async function / arrow)
+    - line_count >= 3 (skip trivial 1–2-line async shims — often intentional)
+    - body (lines after the def line) has NO 'await' token
+    - body has NO 'yield' token (async generators are valid without await)
+    - not a test file
+
+    Reads source file to inspect body. Skips on I/O error or missing file.
+    """
+    import re as _re  # noqa: PLC0415
+    import os as _os  # noqa: PLC0415
+
+    _AWAIT_PAT = _re.compile(r"\bawait\b")
+    _YIELD_PAT = _re.compile(r"\byield\b")
+
+    gaps = []
+    for sym in seeds:
+        if _is_test_file(sym.file_path):
+            continue
+        if sym.kind.value not in ("function", "method"):
+            continue
+        if "async " not in sym.signature:
+            continue
+        if sym.line_count < 3:  # 1-2-line async shims are usually intentional type aliases
+            continue
+
+        try:
+            full_path = _os.path.join(graph.root, sym.file_path)
+            if not _os.path.isfile(full_path):
+                continue
+            with open(full_path, encoding="utf-8", errors="replace") as _fh:
+                source_lines = _fh.readlines()
+        except OSError:
+            continue
+
+        # Body = lines after the def/signature line (line_start is 1-indexed,
+        # source_lines is 0-indexed, so body starts at index sym.line_start).
+        body_lines = source_lines[sym.line_start : sym.line_end]
+        if not body_lines:
+            continue
+        body_text = "".join(body_lines)
+
+        if _AWAIT_PAT.search(body_text):
+            continue  # correct async usage
+        if _YIELD_PAT.search(body_text):
+            continue  # async generator — valid without await
+
+        gaps.append(sym)
+
+    if not gaps:
+        return ""
+
+    names = ", ".join(sym.qualified_name for sym in gaps[:3])
+    extra = f" +{len(gaps) - 3} more" if len(gaps) > 3 else ""
+    return (
+        f"async gap: {names}{extra}"
+        f" — async but no await in body; runs synchronously, consider removing async"
+    )
+
+
 def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000, _staleness_map: "dict[str, int | None] | None" = None) -> str:
     """Task-focused rendering with BFS graph traversal.
     Starts from search results, then follows call/render/import edges
@@ -3723,6 +3977,10 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000, _stalene
     _dead_note = _compute_dead_seed_note(graph, seeds)
     if _dead_note:
         lines.append(_dead_note)
+        lines.append("")
+    _indirect = _compute_indirect_reachability(graph, seeds)
+    if _indirect:
+        lines.append(_indirect)
         lines.append("")
     _exposure = _compute_change_exposure(graph, seeds)
     if _exposure:
@@ -3752,6 +4010,10 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000, _stalene
     if _stale:
         lines.append(_stale)
         lines.append("")
+    _async_gap = _compute_async_gap(seeds, graph)
+    if _async_gap:
+        lines.append(_async_gap)
+        lines.append("")
     _hot_cluster = _compute_hot_cluster_note(graph, ordered)
     if _hot_cluster:
         lines.append(_hot_cluster)
@@ -3775,6 +4037,10 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000, _stalene
     _orchestrator = _compute_orchestrator_advisory(seeds, graph)
     if _orchestrator:
         lines.append(_orchestrator)
+        lines.append("")
+    _decomp = _compute_decomp_candidate(seeds, graph)
+    if _decomp:
+        lines.append(_decomp)
         lines.append("")
     _relay = _compute_relay_point(seeds, graph, ordered)
     if _relay:
