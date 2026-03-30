@@ -13,6 +13,7 @@ import { useElapsedTimer } from "../hooks/useElapsedTimer";
 import { usePanelState } from "../hooks/usePanelState";
 import { useRunHistory, type RunHistoryEntry } from "../hooks/useRunHistory";
 import { useOutputCache } from "../hooks/useOutputCache";
+import { useModeOutputState } from "../hooks/useModeOutputState";
 
 export type { RunHistoryEntry };
 
@@ -124,9 +125,11 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     const initMode = localStorage.getItem(lastModeKey(repoPath)) || "overview";
     return localStorage.getItem(modeArgsKey(repoPath, initMode)) || "";
   });
-  const [modeOutput, setModeOutput] = useState("");
-  const [prevOutput, setPrevOutput] = useState<string | null>(null);
-  const [modeRunning, setModeRunning] = useState(false);
+  const {
+    modeOutput, setModeOutput,
+    prevOutput, setPrevOutput,
+    modeRunning, setModeRunning,
+  } = useModeOutputState();
   const [history, setHistory] = useState<string[]>(() => loadHistory(localStorage.getItem(lastModeKey(repoPath)) || "overview"));
   const { feedbackMode, feedbackGiven, submitFeedback } = useFeedback(repoPath, activeMode, activeKit);
   const argsInputRef = useRef<HTMLInputElement>(null);
