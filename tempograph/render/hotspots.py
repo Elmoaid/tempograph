@@ -1167,13 +1167,9 @@ def _signals_hotspots_core_a(
 
 
 
-def _signals_hotspots_core_b_type(
+def _b_type_test_and_utility(
     graph: Tempo,
     scores: list[tuple[float, Symbol]],
-    velocity: dict[str, float],
-    velocity_14: dict[str, float],
-    all_test_fps: set[str],
-    top_n: int,
     out: list[str],
 ) -> None:
     # S242: Test file hotspot — top hotspot symbol lives in a test file.
@@ -1189,7 +1185,6 @@ def _signals_hotspots_core_b_type(
                 f"\ntest file hotspot: {_top242_sym.name} ({_top242_sym.file_path.rsplit('/', 1)[-1]})"
                 f" — most-changed symbol is in a test; consider stabilizing test infrastructure"
             )
-
 
     # S255: Utility hotspot — the top-ranked hotspot lives in a generic utility module.
     # Utility modules are shared across many callers; hotspot status here risks coupling
@@ -1214,6 +1209,11 @@ def _signals_hotspots_core_b_type(
                 break
 
 
+def _b_type_stability(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    out: list[str],
+) -> None:
     # S262: Stable hotspot — top-ranked hotspot symbol has 3+ test callers.
     # High churn with high test coverage is lower risk; changes here are unlikely
     # to go undetected. Positive signal for teams considering refactors.
@@ -1230,7 +1230,6 @@ def _signals_hotspots_core_b_type(
                     f" — well-tested high-churn symbol; refactoring here has a safety net"
                 )
                 break
-
 
     # S268: Churn concentration — top 3+ hotspot symbols all live in the same file.
     # When high-churn symbols concentrate in one file, that file is an instability
@@ -1260,6 +1259,11 @@ def _signals_hotspots_core_b_type(
                 )
 
 
+def _b_type_caller_coverage(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    out: list[str],
+) -> None:
     # S277: Single-caller hotspot — top hotspot symbol is called from only 1 other symbol.
     # A high-complexity function with only one caller may be an inlined helper that
     # could be folded back, or a function named for the wrong abstraction level.
@@ -1281,7 +1285,6 @@ def _signals_hotspots_core_b_type(
                 )
                 break
 
-
     # S283: Untested hotspot — top hotspot file has no test coverage AND repo has no tests at all.
     # The riskiest combination: high-churn code with zero test infrastructure.
     _s283_any_tests = any(_is_test_file(fp) for fp in graph.files)
@@ -1293,6 +1296,11 @@ def _signals_hotspots_core_b_type(
             )
 
 
+def _b_type_module_exposure(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    out: list[str],
+) -> None:
     # S289: Interface module hotspot — top hotspot symbol lives in an __init__.py file.
     # Package init files act as public interfaces; changes there affect ALL importers
     # of the package, not just files that use that symbol directly.
@@ -1309,7 +1317,6 @@ def _signals_hotspots_core_b_type(
                 f"\ninterface hotspot: {_s289_top.name} is in __init__.py"
                 f" ({_importers289} package importer(s)) — changes here affect all package consumers"
             )
-
 
     # S295: Re-exported hotspot — top hotspot symbol has the same name exported from another file.
     # Re-exported symbols create multiple blast radii: changes must propagate
@@ -1335,6 +1342,21 @@ def _signals_hotspots_core_b_type(
                     f" — multi-path symbol; changes propagate through all export facades"
                 )
                 break
+
+
+def _signals_hotspots_core_b_type(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    velocity: dict[str, float],
+    velocity_14: dict[str, float],
+    all_test_fps: set[str],
+    top_n: int,
+    out: list[str],
+) -> None:
+    _b_type_test_and_utility(graph, scores, out)
+    _b_type_stability(graph, scores, out)
+    _b_type_caller_coverage(graph, scores, out)
+    _b_type_module_exposure(graph, scores, out)
 
 
 def _signals_hotspots_core_b_concentration(
