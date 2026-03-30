@@ -29,6 +29,7 @@ export function useWorkspaceData(repoPath: string) {
   const [fileBrowserEntries, setFileBrowserEntries] = useState<DirEntry[]>([]);
   const [fileViewContent, setFileViewContent] = useState<string | null>(null);
   const [fileViewName, setFileViewName] = useState("");
+  const [wsData, setWsData] = useState<WorkspaceData>(emptyWs);
 
   const cacheRef = useRef<Record<string, WorkspaceData>>({});
 
@@ -37,8 +38,10 @@ export function useWorkspaceData(repoPath: string) {
   }, []);
 
   const setWs = useCallback((path: string, data: Partial<WorkspaceData>) => {
-    cacheRef.current[path] = { ...getWs(path), ...data };
-  }, [getWs]);
+    const updated = { ...getWs(path), ...data };
+    cacheRef.current[path] = updated;
+    if (path === repoPath) setWsData(updated);
+  }, [getWs, repoPath]);
 
   const loadAll = useCallback(async (path: string, force = false) => {
     if (!path) return;
@@ -71,7 +74,7 @@ export function useWorkspaceData(repoPath: string) {
       safe(() => gitInfo(path), emptyResult),
     ]);
 
-    cacheRef.current[path] = {
+    const wsResult: WorkspaceData = {
       overview: ov,
       quality: q,
       learning: l,
@@ -83,14 +86,17 @@ export function useWorkspaceData(repoPath: string) {
       git: (gi as TempoResult).output || "",
       loaded: true,
     };
+    cacheRef.current[path] = wsResult;
+    if (path === repoPath) setWsData(wsResult);
     setFileBrowserPath(path);
     const entries = await listDir(path);
     setFileBrowserEntries(Array.isArray(entries) ? entries as DirEntry[] : []);
     setFileViewContent(null);
     setLoading(false);
-  }, []);
+  }, [repoPath]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- loadAll is async data-loading; sync setState is the loading indicator
     if (repoPath) loadAll(repoPath);
   }, [repoPath, loadAll]);
 
@@ -152,7 +158,7 @@ export function useWorkspaceData(repoPath: string) {
     fileBrowserEntries,
     fileViewContent,
     fileViewName,
-    ws: getWs(repoPath),
+    ws: wsData,
     loadAll,
     togglePlugin,
     saveConfig,

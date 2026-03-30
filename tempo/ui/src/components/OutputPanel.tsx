@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, type RefObject } from "react";
+import { useState, type RefObject } from "react";
 import { Copy, Check } from "lucide-react";
 import { type ModeInfo } from "./modes";
 import { ArgsInput } from "./ArgsInput";
@@ -11,11 +11,7 @@ import { DiffOutput } from "./DiffOutput";
 import { OutputFilterBar } from "./OutputFilterBar";
 import { RunHistoryChips } from "./RunHistoryChips";
 import { SuggestNextChips } from "./SuggestNextChips";
-
-const FONT_SIZE_MIN = 9;
-const FONT_SIZE_MAX = 16;
-const FONT_SIZE_DEFAULT = 11;
-const FONT_SIZE_KEY = "tempo_output_font_size";
+import { useFontSize } from "../hooks/useFontSize";
 
 interface OutputPanelProps {
   activeModeInfo: ModeInfo | undefined;
@@ -65,11 +61,6 @@ interface OutputPanelProps {
   statusText?: string;
 }
 
-interface KitSection {
-  mode: string;
-  content: string;
-}
-
 function parseKitSections(output: string): Array<{ mode: string; content: string }> {
   // Kit output format: "── MODE ──\ncontent\n\n── MODE2 ──\ncontent2"
   const parts = output.split(/^──\s+\w+\s+──$/m);
@@ -100,34 +91,7 @@ export function OutputPanel(props: OutputPanelProps) {
 
   const [wrapEnabled, setWrapEnabled] = useState(() => localStorage.getItem("tempo_output_wrap") !== "false");
   const [diffMode, setDiffMode] = useState(() => localStorage.getItem("tempo_diff_mode") === "true");
-  const [fontSize, setFontSize] = useState<number>(() => {
-    const saved = parseInt(localStorage.getItem(FONT_SIZE_KEY) || "", 10);
-    return saved >= FONT_SIZE_MIN && saved <= FONT_SIZE_MAX ? saved : FONT_SIZE_DEFAULT;
-  });
-
-  const changeFontSize = useCallback((delta: number) => {
-    setFontSize(prev => {
-      const next = Math.max(FONT_SIZE_MIN, Math.min(FONT_SIZE_MAX, prev + delta));
-      localStorage.setItem(FONT_SIZE_KEY, String(next));
-      return next;
-    });
-  }, []);
-
-  const resetFontSize = useCallback(() => {
-    setFontSize(FONT_SIZE_DEFAULT);
-    localStorage.setItem(FONT_SIZE_KEY, String(FONT_SIZE_DEFAULT));
-  }, []);
-
-  useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
-      if (!e.metaKey && !e.ctrlKey) return;
-      if (e.key === "=" || e.key === "+") { e.preventDefault(); changeFontSize(1); }
-      else if (e.key === "-") { e.preventDefault(); changeFontSize(-1); }
-      else if (e.key === "0") { e.preventDefault(); resetFontSize(); }
-    };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [changeFontSize, resetFontSize]);
+  const { fontSize, changeFontSize, fontSizeMin, fontSizeMax } = useFontSize();
 
   const label = activeModeInfo?.label ?? activeMode;
 
@@ -140,8 +104,8 @@ export function OutputPanel(props: OutputPanelProps) {
         copied={copied}
         wrapEnabled={wrapEnabled}
         fontSize={fontSize}
-        fontSizeMin={FONT_SIZE_MIN}
-        fontSizeMax={FONT_SIZE_MAX}
+        fontSizeMin={fontSizeMin}
+        fontSizeMax={fontSizeMax}
         hasPrevOutput={prevOutput !== null}
         diffMode={diffMode}
         onFilterToggle={onFilterToggle}

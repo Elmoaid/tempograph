@@ -246,14 +246,15 @@ def _pre_a_test_signals(changed_files: list[str], lines: list[str]) -> None:
             f" — verify tests reflect correct expected behavior; no production code changed"
         )
 
-    # S729: Mixed test and source diff.
-    _diff_tests729 = [f for f in changed_files if _is_test_file(f)]
-    _diff_src729 = [f for f in changed_files if not _is_test_file(f)]
-    if _diff_tests729 and _diff_src729:
-        lines.append(
-            f"mixed diff: {len(_diff_src729)} source and {len(_diff_tests729)} test file(s) changed"
-            f" — verify test coverage matches all changed source paths"
-        )
+    # S729: Mixed test and source diff — PRUNED: duplicate of S711 test-only concept
+    if False:  # PRUNED: duplicate test-diff signal
+        _diff_tests729 = [f for f in changed_files if _is_test_file(f)]
+        _diff_src729 = [f for f in changed_files if not _is_test_file(f)]
+        if _diff_tests729 and _diff_src729:
+            lines.append(
+                f"mixed diff: {len(_diff_src729)} source and {len(_diff_tests729)} test file(s) changed"
+                f" — verify test coverage matches all changed source paths"
+            )
 
 
 def _pre_a_file_meta(changed_files: list[str], lines: list[str]) -> None:
@@ -506,39 +507,42 @@ def _pre_b_init_files(
             f" — package interface may change; check for broken star imports or re-exports"
         )
 
-    # S813: __init__.py in diff — a package's public API surface file changed.
-    if changed_files:
-        _init813 = [f for f in changed_files if f.replace("\\", "/").rsplit("/", 1)[-1] == "__init__.py"]
-        if _init813:
-            lines.append(
-                f"init file in diff: __init__.py changed ({_init813[0].rsplit('/', 1)[-1]} in {_init813[0].rsplit('/', 2)[-2] if '/' in _init813[0] else '.'})"
-                f" — package public API surface may have shifted; audit all downstream imports"
-            )
+    # S813: __init__.py in diff — PRUNED: duplicate of S777
+    if False:  # PRUNED: duplicate init-file signal
+        if changed_files:
+            _init813 = [f for f in changed_files if f.replace("\\", "/").rsplit("/", 1)[-1] == "__init__.py"]
+            if _init813:
+                lines.append(
+                    f"init file in diff: __init__.py changed ({_init813[0].rsplit('/', 1)[-1]} in {_init813[0].rsplit('/', 2)[-2] if '/' in _init813[0] else '.'})"
+                    f" — package public API surface may have shifted; audit all downstream imports"
+                )
 
-    # S861: Init file in diff — __init__.py changed.
-    if changed_files:
-        _init_files861 = [
-            f for f in changed_files
-            if f.replace("\\", "/").rsplit("/", 1)[-1] == "__init__.py"
-        ]
-        if _init_files861:
-            lines.append(
-                f"init file in diff: {len(_init_files861)} __init__.py file(s) changed"
-                f" — package public surface changed; all importers of this package are affected"
-            )
+    # S861: Init file in diff — PRUNED: duplicate of S777
+    if False:  # PRUNED: duplicate init-file signal
+        if changed_files:
+            _init_files861 = [
+                f for f in changed_files
+                if f.replace("\\", "/").rsplit("/", 1)[-1] == "__init__.py"
+            ]
+            if _init_files861:
+                lines.append(
+                    f"init file in diff: {len(_init_files861)} __init__.py file(s) changed"
+                    f" — package public surface changed; all importers of this package are affected"
+                )
 
-    # S993: Init file in diff — changed files include a package __init__.py.
-    if changed_files:
-        _init_files993 = [
-            f for f in changed_files
-            if f.replace("\\", "/").rsplit("/", 1)[-1] == "__init__.py"
-        ]
-        if _init_files993:
-            _ipath993 = _init_files993[0].replace("\\", "/")
-            lines.append(
-                f"init file in diff: {_ipath993} — package-level exports changed"
-                f"; adding or removing names here silently changes the API of the whole package"
-            )
+    # S993: Init file in diff — PRUNED: duplicate of S777
+    if False:  # PRUNED: duplicate init-file signal
+        if changed_files:
+            _init_files993 = [
+                f for f in changed_files
+                if f.replace("\\", "/").rsplit("/", 1)[-1] == "__init__.py"
+            ]
+            if _init_files993:
+                _ipath993 = _init_files993[0].replace("\\", "/")
+                lines.append(
+                    f"init file in diff: {_ipath993} — package-level exports changed"
+                    f"; adding or removing names here silently changes the API of the whole package"
+                )
 
 
 def _pre_b_file_types(
@@ -587,24 +591,26 @@ def _pre_b_file_types(
 def _pre_b_test_signals(
     changed_files: list[str], lines: list[str]
 ) -> None:
-    # S801: Test-only diff — all changed files are test files (no source changes).
-    if changed_files:
-        _all_tests801 = all(_is_test_file(f) for f in changed_files)
-        _has_test801 = any(_is_test_file(f) for f in changed_files)
-        if _all_tests801 and _has_test801:
-            lines.append(
-                f"test-only diff: all {len(changed_files)} changed file(s) are test files"
-                f" — no production code modified; verify this is intentional"
-            )
+    # S801: Test-only diff — PRUNED: duplicate of S711 test-only concept
+    if False:  # PRUNED: duplicate test-diff signal
+        if changed_files:
+            _all_tests801 = all(_is_test_file(f) for f in changed_files)
+            _has_test801 = any(_is_test_file(f) for f in changed_files)
+            if _all_tests801 and _has_test801:
+                lines.append(
+                    f"test-only diff: all {len(changed_files)} changed file(s) are test files"
+                    f" — no production code modified; verify this is intentional"
+                )
 
-    # S987: Test-only diff — all changed files are test files.
-    if changed_files:
-        _test_changed987 = [f for f in changed_files if _is_test_file(f)]
-        if len(_test_changed987) == len(changed_files) and _test_changed987:
-            lines.append(
-                f"test-only diff: all {len(_test_changed987)} changed file(s) are test files"
-                f" — no production code changed; verify tests are strengthening, not relaxing, coverage"
-            )
+    # S987: Test-only diff — PRUNED: duplicate of S711 test-only concept
+    if False:  # PRUNED: duplicate test-diff signal
+        if changed_files:
+            _test_changed987 = [f for f in changed_files if _is_test_file(f)]
+            if len(_test_changed987) == len(changed_files) and _test_changed987:
+                lines.append(
+                    f"test-only diff: all {len(_test_changed987)} changed file(s) are test files"
+                    f" — no production code changed; verify tests are strengthening, not relaxing, coverage"
+                )
 
 
 def _pre_b_unindexed(

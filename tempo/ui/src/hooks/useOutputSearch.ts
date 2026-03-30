@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef } from "react";
 
 export interface OutputSearchState {
   searchText: string;
@@ -30,9 +30,13 @@ export function useOutputSearch(output: string) {
     : 0;
 
   // Reset currentMatch when text or output changes
-  useEffect(() => {
+  const [prevSearch, setPrevSearch] = useState(searchText);
+  const [prevOutput, setPrevOutput] = useState(output);
+  if (prevSearch !== searchText || prevOutput !== output) {
+    setPrevSearch(searchText);
+    setPrevOutput(output);
     setCurrentMatch(matchCount > 0 ? 1 : 0);
-  }, [searchText, output]);
+  }
 
   const open = useCallback(() => {
     setActive(true);

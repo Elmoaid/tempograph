@@ -34,7 +34,6 @@ export function useKeyboardShortcuts({
   cancelModeRef,
   saveOutputRef,
   argsInputRef,
-  filterInputRef,
   clearOutput,
   closeSearch,
   openSearch,
@@ -42,7 +41,6 @@ export function useKeyboardShortcuts({
   setPaletteOpen,
   setKitBuilderOpen,
   setSidebarTab,
-  setFilterVisible,
   setHelpOpen,
   setWhichKeyVisible,
 }: KeyboardShortcutsConfig) {
@@ -101,5 +99,5 @@ export function useKeyboardShortcuts({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [modeRunning, modeOutput, historyOpen, searchActive, helpOpen, clearOutput, closeSearch, openSearch, setHelpOpen]);
+  }, [modeRunning, modeOutput, historyOpen, searchActive, helpOpen, clearOutput, closeSearch, openSearch, setHelpOpen, argsInputRef, cancelModeRef, runModeRef, saveOutputRef, setKitBuilderOpen, setPaletteOpen, setSidebarTab, switchMode]);
 }

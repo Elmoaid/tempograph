@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import cytoscape from "cytoscape";
 import fcose from "cytoscape-fcose";
-import type { GraphData, FileNode, DirNode } from "../hooks/useGraphData";
+import type { GraphData, FileNode } from "../hooks/useGraphData";
 import { GraphDetailPanel } from "./GraphDetailPanel";
 
 cytoscape.use(fcose);
@@ -188,6 +188,7 @@ export function GraphCanvas({ data, repoPath, onSelectFile, onSelectDir }: Graph
         idealEdgeLength: 150,
         nodeRepulsion: () => 8000,
         gravity: 0.3,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- fcose layout options aren't in cytoscape's base types
       } as any,
       minZoom: 0.2,
       maxZoom: 4,

@@ -14,6 +14,7 @@ interface LandingPageProps {
   onClearRecent?: () => void;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function formatRecentTime(addedAt?: number): string {
   if (!addedAt) return "";
   const diff = Date.now() - addedAt;
