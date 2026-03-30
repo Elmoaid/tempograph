@@ -61,11 +61,6 @@ interface OutputPanelProps {
   statusText?: string;
 }
 
-interface KitSection {
-  mode: string;
-  content: string;
-}
-
 function parseKitSections(output: string): Array<{ mode: string; content: string }> {
   // Kit output format: "── MODE ──\ncontent\n\n── MODE2 ──\ncontent2"
   const parts = output.split(/^──\s+\w+\s+──$/m);

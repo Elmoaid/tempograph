@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { saveOutput } from "../components/tempo";
 
@@ -40,7 +40,7 @@ export function useOutputActions(
     setTimeout(() => setSaved(false), 1500);
   }, [modeOutput, activeMode, activeKit]);
 
-  saveOutputRef.current = handleSaveOutput;
+  useEffect(() => { saveOutputRef.current = handleSaveOutput; }, [handleSaveOutput]);
 
   return { copied, saved, copyOutput, handleSaveOutput, saveOutputRef };
 }

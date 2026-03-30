@@ -3,7 +3,6 @@
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
-import { useRef } from "react";
 import { useElapsedTimer } from "../hooks/useElapsedTimer";
 
 afterEach(() => {
@@ -56,7 +55,7 @@ describe("useElapsedTimer", () => {
   it("resetElapsed sets elapsed to 0", () => {
     vi.useFakeTimers();
     const runStart = { current: Date.now() };
-    const { result, rerender } = renderHook(
+    const { result } = renderHook(
       ({ running }: { running: boolean }) => useElapsedTimer(running, runStart),
       { initialProps: { running: true } },
     );

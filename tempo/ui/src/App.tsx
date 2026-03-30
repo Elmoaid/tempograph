@@ -42,6 +42,7 @@ function App() {
         }
       }).catch(() => { /* no Tauri runtime */ });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const addWorkspace = useCallback((path: string) => {
