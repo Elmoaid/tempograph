@@ -416,7 +416,10 @@ class GraphDB:
             return 0
         for path in stale:
             self._conn.execute("DELETE FROM symbols WHERE file_path = ?", (path,))
-            self._conn.execute("DELETE FROM edges WHERE source_id LIKE ?", (path + "::%",))
+            self._conn.execute(
+                "DELETE FROM edges WHERE source_id LIKE ? OR target_id LIKE ?",
+                (path + "::%", path + "::%"),
+            )
             self._conn.execute("DELETE FROM files WHERE path = ?", (path,))
         if not self._batching:
             self._conn.commit()
