@@ -287,6 +287,7 @@ def recently_modified_files(repo: str, n_commits: int = 5) -> set[str]:
     return {line for line in out.splitlines() if line.strip()}
 
 
+@functools.lru_cache(maxsize=4)
 def batch_file_modification_map(repo: str) -> dict[str, int | None]:
     """Return a {relative_file_path: days_since_last_commit} map for all tracked files.
 
@@ -467,6 +468,7 @@ def cochange_pairs(
     ][:n]
 
 
+@functools.lru_cache(maxsize=64)
 def file_cochange_pairs(root: str, file_path: str, min_commits: int = 3,
                         max_commits: int = 200) -> list[tuple[str, float]]:
     """Return files that frequently change together with file_path.
