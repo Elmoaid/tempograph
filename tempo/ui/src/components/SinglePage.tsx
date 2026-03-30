@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { getHomeDir } from "./tempo";
 import { LandingPage, type RecentRepo } from "./LandingPage";
 import { GraphCanvas } from "./GraphCanvas";

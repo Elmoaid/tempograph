@@ -48,23 +48,3 @@ class Config:
     def set(self, key: str, value) -> None:
         self._data[key] = value
 
-    def __getitem__(self, key: str):
-        return self._data[key]
-
-    def __setitem__(self, key: str, value):
-        self._data[key] = value
-
-    @property
-    def enabled_plugins(self) -> list[str]:
-        return self._data.get("enabled_plugins", [])
-
-    @property
-    def disabled_plugins(self) -> list[str]:
-        return self._data.get("disabled_plugins", [])
-
-    @property
-    def max_tokens(self) -> int:
-        return self._data.get("max_tokens", 4000)
-
-    def to_dict(self) -> dict:
-        return dict(self._data)

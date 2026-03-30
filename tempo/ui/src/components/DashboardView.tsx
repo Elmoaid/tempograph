@@ -17,6 +17,7 @@ export interface HotspotEntry {
   tested: boolean;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function parseDashboardStats(output: string): DashboardStats | null {
   const m = output.match(
     /Files:\s*([\d,]+),\s*Symbols:\s*([\d,]+),\s*Edges:\s*([\d,]+)\s*\nLines:\s*([\d,]+)/
@@ -26,6 +27,7 @@ export function parseDashboardStats(output: string): DashboardStats | null {
   return { files: n(m[1]), symbols: n(m[2]), edges: n(m[3]), lines: m[4] };
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function parseTopHotspots(output: string, limit = 5): HotspotEntry[] {
   const entries: HotspotEntry[] = [];
   const re = /^\s*(\d+)\.\s+\S+\s+(.+?)\s+\[risk=(\d+)\](\s+\[tested\])?/gm;
@@ -41,6 +43,7 @@ export function parseTopHotspots(output: string, limit = 5): HotspotEntry[] {
   return entries;
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function parseDeadPct(output: string): number | null {
   const m = output.match(/\[(\d+)%\s+of\s+\d+\s+source\s+symbols\]/);
   return m ? parseInt(m[1], 10) : null;
@@ -89,21 +92,21 @@ interface DashboardData {
 }
 
 export function DashboardView({ repoPath }: Props) {
-  const [data, setData] = useState<DashboardData>({
-    stats: null,
-    hotspots: [],
-    deadPct: null,
-  });
+  const emptyData: DashboardData = { stats: null, hotspots: [], deadPct: null };
+  const [data, setData] = useState<DashboardData>(emptyData);
   const [loading, setLoading] = useState(false);
   const abortRef = useRef(false);
+  const [prevRepoPath, setPrevRepoPath] = useState(repoPath);
+
+  if (prevRepoPath !== repoPath) {
+    setPrevRepoPath(repoPath);
+    setData(emptyData);
+    if (repoPath) setLoading(true);
+  }
 
   useEffect(() => {
-    if (!repoPath) {
-      setData({ stats: null, hotspots: [], deadPct: null });
-      return;
-    }
+    if (!repoPath) return;
     abortRef.current = false;
-    setLoading(true);
 
     Promise.all([
       runTempo(repoPath, "stats"),

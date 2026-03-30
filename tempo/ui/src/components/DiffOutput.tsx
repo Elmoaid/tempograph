@@ -1,5 +1,6 @@
 export type DiffLine = { type: "add" | "remove" | "same"; line: string };
 
+// eslint-disable-next-line react-refresh/only-export-components
 export function computeLineDiff(prev: string, curr: string): DiffLine[] {
   const prevLines = prev.split("\n");
   const currLines = curr.split("\n");
