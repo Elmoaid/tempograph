@@ -7,27 +7,29 @@ export interface OutputSearchState {
   active: boolean;
 }
 
+/** Count non-overlapping case-insensitive occurrences of query in output. Returns 0 for blank query. */
+export function countMatches(output: string, query: string): number {
+  if (!query.trim()) return 0;
+  const q = query.toLowerCase();
+  const lower = output.toLowerCase();
+  let count = 0;
+  let pos = 0;
+  while (true) {
+    const idx = lower.indexOf(q, pos);
+    if (idx === -1) break;
+    count++;
+    pos = idx + q.length;
+  }
+  return count;
+}
+
 export function useOutputSearch(output: string) {
   const [searchText, setSearchText] = useState("");
   const [active, setActive] = useState(false);
   const [currentMatch, setCurrentMatch] = useState(0);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  const matchCount = searchText.trim()
-    ? (() => {
-        const q = searchText.toLowerCase();
-        let count = 0;
-        let pos = 0;
-        const lower = output.toLowerCase();
-        while (true) {
-          const idx = lower.indexOf(q, pos);
-          if (idx === -1) break;
-          count++;
-          pos = idx + q.length;
-        }
-        return count;
-      })()
-    : 0;
+  const matchCount = countMatches(output, searchText);
 
   // Reset currentMatch when text or output changes
   const [prevSearch, setPrevSearch] = useState(searchText);
