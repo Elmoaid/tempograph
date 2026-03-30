@@ -3655,6 +3655,125 @@ def _compute_dead_seed_note(graph: "Tempo", seeds: "list[Symbol]") -> str:
     )
 
 
+def _compute_indirect_reachability(graph: "Tempo", seeds: "list[Symbol]") -> str:
+    """S1042: Indirect reachability — fires when seed has 0 direct callers but parent is live.
+
+    Addresses the two dead-code scanner false-positive patterns confirmed in cycle-254:
+
+    1. **Python class methods**: `obj.method()` calls are not captured as direct CALLS edges
+       from external callers because the variable type (`obj`) can't be inferred statically.
+       If the parent CLASS has external callers, the method is likely reachable via instance.
+
+    2. **TypeScript hook-returned functions**: `const {fn} = useHook()` — functions returned
+       by a React hook are called via destructuring, not as direct call targets. The CALLS edge
+       for the hook call exists (`caller → useHook`) but not for the returned member.
+
+    Conditions (per seed):
+    - kind in {method, function} and not in a test file
+    - 0 non-test direct callers (appears dead to static analysis)
+    - Has a parent_id pointing to a CLASS or HOOK symbol
+    - Complexity ≥ 5 for class methods (filters trivial getters); no floor for hook children
+    - Parent has ≥1 non-test external callers (parent is live from outside its own file)
+
+    Output forms:
+    - SINGLETON: seed + fewer than _S1042_FAMILY_THRESHOLD siblings match →
+        "↳ instance method: ClassName has N callers — method may be called via instance dispatch"
+    - FAMILY: seed + ≥_S1042_FAMILY_THRESHOLD sibling methods also match (same parent, 0 callers) →
+        "↳ instance method family: ClassName — method and N siblings have 0 direct callers..."
+
+    Fires for the first qualifying seed only (avoids redundancy in multi-seed focus).
+    Distinct from S67 (dead candidate): S67 uses confidence score; S1042 is structural — looks
+    at the parent's liveness, not the seed's isolation score. They can fire together.
+    """
+    _S1042_FAMILY_THRESHOLD = 5
+
+    for seed in seeds:
+        if _is_test_file(seed.file_path):
+            continue
+        if seed.kind.value not in ("method", "function"):
+            continue
+        if not seed.parent_id or seed.parent_id not in graph.symbols:
+            continue
+
+        parent = graph.symbols[seed.parent_id]
+        if parent.kind.value not in ("class", "hook"):
+            continue
+
+        # Complexity floor: class methods need cx ≥ 5 (filter trivial getters/setters).
+        # Hook-returned functions can be cx=0 (arrow functions) — no floor applied.
+        if parent.kind.value == "class" and seed.complexity < 5:
+            continue
+
+        # Seed must have 0 non-test direct callers
+        non_test_callers = [c for c in graph.callers_of(seed.id) if not _is_test_file(c.file_path)]
+        if non_test_callers:
+            continue
+
+        # Parent must have ≥1 non-test caller from OUTSIDE its own file
+        parent_ext_callers = [
+            c for c in graph.callers_of(parent.id)
+            if not _is_test_file(c.file_path) and c.file_path != parent.file_path
+        ]
+        if not parent_ext_callers:
+            continue
+
+        n_parent_callers = len(parent_ext_callers)
+
+        # Count sibling methods/functions under the same parent that also have 0 non-test callers
+        siblings_0cal = [
+            s for s in graph.symbols.values()
+            if s.parent_id == seed.parent_id
+            and s.id != seed.id
+            and s.kind.value in ("method", "function")
+            and not _is_test_file(s.file_path)
+            and not graph._callers.get(s.id)  # fast path: any callers (includes test)
+        ]
+        # Refine: only count siblings with 0 NON-test callers
+        siblings_0cal = [
+            s for s in siblings_0cal
+            if not any(
+                not _is_test_file(graph.symbols[cid].file_path)
+                for cid in graph._callers.get(s.id, [])
+                if cid in graph.symbols
+            )
+        ]
+        total_indirect = 1 + len(siblings_0cal)
+
+        caller_word = "caller" if n_parent_callers == 1 else "callers"
+
+        if parent.kind.value == "hook":
+            # TypeScript hook-return pattern
+            if total_indirect >= _S1042_FAMILY_THRESHOLD:
+                return (
+                    f"\u21b3 hook-returned family: {parent.name} has {n_parent_callers} {caller_word}"
+                    f" \u2014 {seed.name} and {len(siblings_0cal)} siblings returned via destructuring"
+                    f" (e.g. `const {{{seed.name}}} = {parent.name}()`);"
+                    f" no direct CALL edges; dead scanner may report FP"
+                )
+            return (
+                f"\u21b3 hook-returned: {seed.name} is inside {parent.name}"
+                f" ({n_parent_callers} {caller_word})"
+                f" \u2014 invoked via destructuring `const {{{seed.name}}} = {parent.name}()`;"
+                f" no direct CALL edges; dead scanner may report FP"
+            )
+
+        # Python class instance method pattern
+        if total_indirect >= _S1042_FAMILY_THRESHOLD:
+            return (
+                f"\u21b3 instance method family: {parent.name} has {n_parent_callers} {caller_word}"
+                f" \u2014 {seed.name} and {len(siblings_0cal)} sibling methods have 0 direct callers;"
+                f" all likely called via `instance.method()` dispatch; static graph misses external"
+                f" calls through variable-typed receivers"
+            )
+        return (
+            f"\u21b3 instance method: {parent.name} has {n_parent_callers} external {caller_word}"
+            f" \u2014 {seed.name} may be called as `instance.{seed.name}()`;"
+            f" static call graph doesn\u2019t resolve variable-typed receiver dispatch"
+        )
+
+    return ""
+
+
 def _compute_stability_mismatch(graph: "Tempo", seeds: "list[Symbol]") -> str:
     """S71: Stability mismatch — stable seed with hot callers.
 
@@ -3789,6 +3908,10 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000, _stalene
     _dead_note = _compute_dead_seed_note(graph, seeds)
     if _dead_note:
         lines.append(_dead_note)
+        lines.append("")
+    _indirect = _compute_indirect_reachability(graph, seeds)
+    if _indirect:
+        lines.append(_indirect)
         lines.append("")
     _exposure = _compute_change_exposure(graph, seeds)
     if _exposure:
