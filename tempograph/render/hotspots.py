@@ -2118,18 +2118,13 @@ def _signals_hotspots_core_c_shape(
                 )
 
 
-def _signals_hotspots_core_c_classification(
+def _class_c_complexity_shape(
     graph: Tempo,
     scores: list[tuple[float, Symbol]],
-    velocity: dict[str, float],
-    velocity_14: dict[str, float],
     all_test_fps: set[str],
-    top_n: int,
     out: list[str],
 ) -> None:
     # S585: Low-complexity hotspot — top hotspot function has cyclomatic complexity < 3.
-    # A heavily-called but trivially simple function suggests it's a routing shim or
-    # dispatcher; the real complexity lives in its callees, not the hotspot itself.
     if scores:
         _top585 = scores[0][1]
         if (
@@ -2145,9 +2140,43 @@ def _signals_hotspots_core_c_classification(
                     f" real complexity lives in its callees"
                 )
 
+    # S646: Zero-complexity hotspot — top hotspot has complexity=1 but 5+ callers (trivial dispatch).
+    if scores:
+        _top646 = scores[0][1]
+        if (
+            not _is_test_file(_top646.file_path)
+            and _top646.kind.value in ("function", "method")
+            and (_top646.complexity or 1) <= 1
+        ):
+            _caller_count646 = len(graph.callers_of(_top646.id))
+            if _caller_count646 >= 5:
+                out.append(
+                    f"\ntrivial hotspot: {_top646.name} has {_caller_count646} callers"
+                    f" but complexity=1 — thin dispatcher; callers may benefit from calling the underlying directly"
+                )
+
+    # S664: Pure dispatcher — top hotspot has 5+ callers but makes 0 callees (calls nothing).
+    if scores and scores[0]:
+        _top664 = scores[0][1]
+        if (
+            not _is_test_file(_top664.file_path)
+            and _top664.kind.value in ("function", "method")
+        ):
+            _callers664 = graph.callers_of(_top664.id)
+            _callees664 = graph.callees_of(_top664.id)
+            if len(_callers664) >= 5 and not _callees664:
+                out.append(
+                    f"\npure dispatcher: {_top664.name} has {len(_callers664)} callers"
+                    f" and calls nothing — pure data processor or implicit state manipulation"
+                )
+
+
+def _class_c_identity_tags(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    out: list[str],
+) -> None:
     # S591: Init-file hotspot — top hotspot symbol lives in a package __init__.py.
-    # Hotspots in __init__ files indicate the package boundary is a logical chokepoint;
-    # any change to the init ripples through all consumers of the package.
     if scores:
         _top591 = scores[0][1]
         _fp591 = _top591.file_path.replace("\\", "/")
@@ -2157,21 +2186,7 @@ def _signals_hotspots_core_c_classification(
                 f" — package boundary is a chokepoint; changes affect all package consumers"
             )
 
-    # S597: Narrow hotspot spread — all top-5 hotspots share the same file.
-    # When the hottest symbols are all co-located, that file is a bottleneck;
-    # consider splitting responsibilities to reduce change collision risk.
-    if len(scores) >= 5:
-        _top5_files597 = [s.file_path for _, s in scores[:5] if not _is_test_file(s.file_path)]
-        if len(set(_top5_files597)) == 1:
-            _narrow_file597 = _top5_files597[0].rsplit("/", 1)[-1]
-            out.append(
-                f"\nnarrow hotspot spread: all top 5 hotspots are in {_narrow_file597}"
-                f" — this file is a bottleneck; split responsibilities to reduce change collision"
-            )
-
     # S604: Test hotspot — the top hotspot symbol is a test function/class (test file).
-    # A test function appearing as a hotspot usually means fixtures or helpers are being
-    # called by many tests rather than production code; worth reviewing for extraction.
     if scores:
         _top604 = scores[0][1]
         if _is_test_file(_top604.file_path):
@@ -2183,8 +2198,6 @@ def _signals_hotspots_core_c_classification(
             )
 
     # S610: Non-Python hotspot — top hotspot file is not a Python file.
-    # When the highest-churn symbol is in a JS/TS/Go/Rust file, agents should apply
-    # language-specific refactoring guidance rather than Python patterns.
     if scores:
         _top610 = scores[0][1]
         _fp610 = _top610.file_path.replace("\\", "/")
@@ -2196,8 +2209,6 @@ def _signals_hotspots_core_c_classification(
             )
 
     # S616: Exported hotspot — top hotspot is an exported (public) symbol.
-    # Public hotspots are part of the module's API surface; callers depend on their signature
-    # and behavior, making refactoring more disruptive than for private internals.
     if scores:
         _top616 = scores[0][1]
         if (
@@ -2211,9 +2222,23 @@ def _signals_hotspots_core_c_classification(
                 f" — part of the module API; signature changes require coordinating all callers"
             )
 
+
+def _class_c_structural_scope(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    out: list[str],
+) -> None:
+    # S597: Narrow hotspot spread — all top-5 hotspots share the same file.
+    if len(scores) >= 5:
+        _top5_files597 = [s.file_path for _, s in scores[:5] if not _is_test_file(s.file_path)]
+        if len(set(_top5_files597)) == 1:
+            _narrow_file597 = _top5_files597[0].rsplit("/", 1)[-1]
+            out.append(
+                f"\nnarrow hotspot spread: all top 5 hotspots are in {_narrow_file597}"
+                f" — this file is a bottleneck; split responsibilities to reduce change collision"
+            )
+
     # S622: Class hotspot with many methods — top hotspot is a class with 5+ method children.
-    # A heavily-called class with many methods is a god object candidate; it has multiple
-    # reasons to change and high cognitive load for anyone modifying it.
     if scores:
         _top622 = scores[0][1]
         if (
@@ -2230,24 +2255,7 @@ def _signals_hotspots_core_c_classification(
                     f" — high-churn class with many responsibilities; consider splitting"
                 )
 
-    # S628: Hotspot cluster — PRUNED: duplicate of S268 churn concentration
-    if False:  # PRUNED: duplicate hotspot taxonomy
-        if len(scores) >= 3:
-            _top3_dirs628 = [
-                s.file_path.replace("\\", "/").rsplit("/", 1)[0]
-                for _, s in scores[:3]
-                if not _is_test_file(s.file_path) and "/" in s.file_path.replace("\\", "/")
-            ]
-            if len(_top3_dirs628) == 3 and len(set(_top3_dirs628)) == 1:
-                _cluster_dir628 = _top3_dirs628[0].rsplit("/", 1)[-1]
-                out.append(
-                    f"\nhotspot cluster: top 3 hotspots are all in {_cluster_dir628}/"
-                    f" — change magnet directory; may warrant extraction into its own package"
-                )
-
     # S634: Single-symbol file hotspot — hotspot symbol is the only non-test symbol in its file.
-    # When a file exists solely to hold one heavily-called symbol, that symbol is the file's
-    # sole reason to exist — it may be better placed in a higher-level module.
     if scores:
         _top634 = scores[0][1]
         if not _is_test_file(_top634.file_path):
@@ -2263,38 +2271,13 @@ def _signals_hotspots_core_c_classification(
                     f" — consider inlining into a higher-level module"
                 )
 
-    # S640: Method hotspot cluster — PRUNED: low-value taxonomic sub-categorization
-    if False:  # PRUNED: taxonomic sub-categorization
-        if len(scores) >= 5:
-            _top5_kinds640 = [s.kind.value for _, s in scores[:5] if not _is_test_file(s.file_path)]
-            if len(_top5_kinds640) == 5 and all(k == "method" for k in _top5_kinds640):
-                _top640 = scores[0][1]
-                out.append(
-                    f"\nmethod hotspot cluster: all top 5 hotspots are class methods"
-                    f" (top: {_top640.name})"
-                    f" — churn concentrated in class hierarchy; review for god-class patterns"
-                )
 
-    # S646: Zero-complexity hotspot — top hotspot has complexity=1 but 5+ callers (trivial dispatch).
-    # A function that simply delegates to another (complexity=1) shouldn't be a hotspot;
-    # if many callers use it, they may be better served calling the underlying function directly.
-    if scores:
-        _top646 = scores[0][1]
-        if (
-            not _is_test_file(_top646.file_path)
-            and _top646.kind.value in ("function", "method")
-            and (_top646.complexity or 1) <= 1
-        ):
-            _caller_count646 = len(graph.callers_of(_top646.id))
-            if _caller_count646 >= 5:
-                out.append(
-                    f"\ntrivial hotspot: {_top646.name} has {_caller_count646} callers"
-                    f" but complexity=1 — thin dispatcher; callers may benefit from calling the underlying directly"
-                )
-
+def _class_c_system_scope(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    out: list[str],
+) -> None:
     # S652: Dead co-location — hotspot file also contains dead symbols.
-    # When a high-churn file also has unused symbols, the file has both growth pressure
-    # AND dead weight — it's a refactoring priority: trim dead code before adding features.
     if scores:
         _top652 = scores[0][1]
         if not _is_test_file(_top652.file_path):
@@ -2309,8 +2292,6 @@ def _signals_hotspots_core_c_classification(
                 )
 
     # S658: Repo-wide top caller — top hotspot is also the most-called symbol in the entire graph.
-    # This symbol is not just a local hotspot; it dominates the entire codebase's call graph.
-    # Refactoring it has global scope: every caller, test, and integration depends on it.
     if scores:
         _top658 = scores[0][1]
         if not _is_test_file(_top658.file_path):
@@ -2326,33 +2307,20 @@ def _signals_hotspots_core_c_classification(
                     f" — most-called in the entire repo; global refactoring scope"
                 )
 
-    # S664: Pure dispatcher — top hotspot has 5+ callers but makes 0 callees (calls nothing).
-    # A function that many call but that calls nothing itself is a pure data processor;
-    # it may be overloaded or doing implicit global-state operations that aren't visible in the graph.
-    if scores and scores[0]:
-        _top664 = scores[0][1]
-        if (
-            not _is_test_file(_top664.file_path)
-            and _top664.kind.value in ("function", "method")
-        ):
-            _callers664 = graph.callers_of(_top664.id)
-            _callees664 = graph.callees_of(_top664.id)
-            if len(_callers664) >= 5 and not _callees664:
-                out.append(
-                    f"\npure dispatcher: {_top664.name} has {len(_callers664)} callers"
-                    f" and calls nothing — pure data processor or implicit state manipulation"
-                )
 
-    # S670: Hotspot concentration — PRUNED: duplicate of S268 churn concentration
-    if False:  # PRUNED: duplicate hotspot taxonomy
-        if len(scores) >= 3:
-            _top3_files670 = [s[1].file_path for s in scores[:3] if s[1] is not None]
-            _non_test670 = [fp for fp in _top3_files670 if not _is_test_file(fp)]
-            if len(_non_test670) == 3 and len(set(_non_test670)) == 1:
-                out.append(
-                    f"\nhotspot concentration: top 3 hotspots all in {_non_test670[0].rsplit('/', 1)[-1]}"
-                    f" — single-file bottleneck; changes here have outsized blast radius"
-                )
+def _signals_hotspots_core_c_classification(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    velocity: dict[str, float],
+    velocity_14: dict[str, float],
+    all_test_fps: set[str],
+    top_n: int,
+    out: list[str],
+) -> None:
+    _class_c_complexity_shape(graph, scores, all_test_fps, out)
+    _class_c_identity_tags(graph, scores, out)
+    _class_c_structural_scope(graph, scores, out)
+    _class_c_system_scope(graph, scores, out)
 
 
 def _signals_hotspots_core_c_callers(

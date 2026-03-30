@@ -121,27 +121,6 @@ class Registry:
         """Map a mode name to its plugin name."""
         return self._mode_map.get(mode)
 
-    def dependency_tree(self, name: str) -> list[str]:
-        """Get full dependency chain for a plugin (recursive)."""
-        if name not in self._plugins:
-            return []
-        result = []
-        seen = set()
-
-        def _walk(n: str):
-            if n in seen:
-                return
-            seen.add(n)
-            plugin = self._plugins.get(n)
-            if not plugin:
-                return
-            for dep in plugin.depends:
-                _walk(dep)
-            result.append(n)
-
-        _walk(name)
-        return result
-
     def status(self) -> dict:
         """Return full registry status for UI/debugging."""
         return {

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect } from "vitest";
 
 // Pure logic extracted from useOutputActions — test the filename generation
 // (The hook itself is Tauri-bound and requires renderHook with mocks)

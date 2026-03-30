@@ -183,260 +183,327 @@ def _coverage_line(query_tokens: list[str], graph: Tempo, context_files: list[st
     )
 
 
-def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: str = "",
-                   baseline_predicted_files: list[str] | None = None,
-                   precision_filter: bool = False,
-                   definition_first: bool = True) -> str:
-    """Batch context preparation: overview + focus + hotspots + diff in one token-budgeted output.
+_SKIP_SENTINEL = object()
+"""Internal sentinel: sub-functions return this to signal render_prepare should return ""."""
 
-    If L2 learned insights exist for task_type, includes extra modes (dead code, quality)
-    that the data shows are helpful for that task category.
+
+def _assemble_key_files(
+    focus_text: str,
+    key_files: list[str],
+    graph: "Tempo",
+    sections: list[str],
+    token_count: int,
+    max_tokens: int,
+    count_tokens,
+) -> int:
+    """Build KEY FILES + co-change sections. Returns updated token_count."""
+    kf_ranges = _extract_focus_ranges(focus_text, key_files[:5])
+    kf_lines = [f"  {f}:{kf_ranges[f]}" if f in kf_ranges else f"  {f}" for f in key_files[:5]]
+    kf_section = "KEY FILES REFERENCED ABOVE:\n" + "\n".join(kf_lines)
+    sections.append(kf_section)
+    token_count += count_tokens(kf_section)
+
+    cochange = _get_cochange_related(graph.root, key_files[:5], set(graph.files.keys()))
+    if cochange and token_count + 50 < max_tokens:
+        cc_lines = [f"  {f} ({freq:.0%} co-change)" for f, freq in cochange[:5]]
+        cc_section = "RELATED FILES (frequently change together):\n" + "\n".join(cc_lines)
+        sections.append(cc_section)
+        token_count += count_tokens(cc_section)
+
+    return token_count
+
+
+def _cl_definition_first_fallback(graph: "Tempo", kw: str) -> list[str]:
+    """Definition-first fallback: return DEFINING file(s) of the top-ranked symbol.
+
+    Handles: "redirect" -> flask/helpers.py (where redirect() lives) rather than all callers.
+    Phase 5.31 bench: +16.0% F1, p=0.012*, n=93.
     """
-    from .git import changed_files_unstaged, is_git_repo
+    scored = graph.search_symbols_scored(kw)
+    if not scored:
+        return []
+    top_score = scored[0][0]
+    if top_score < 10.0:
+        return []
+    threshold = top_score * 0.6
+    def_hits = sorted(set(
+        sym.file_path for score, sym in scored
+        if score >= threshold
+        and not any(x in sym.file_path.lower() for x in _TEST_MARKERS)
+        and "/templates/" not in sym.file_path
+        and not sym.file_path.startswith("templates/")
+        and "/static/" not in sym.file_path
+        and not sym.file_path.startswith("static/")
+    ))
+    if 1 <= len(def_hits) <= 2:
+        return def_hits
+    return []
+
+
+def _cl_keyword_focus_loop(
+    graph: "Tempo",
+    effective_keywords: list[str],
+    max_tokens: int,
+    definition_first: bool,
+) -> tuple[list[str], list[str]]:
+    """Run per-keyword BFS focus and collect results.
+
+    Returns (focus_parts, path_fallback_files).
+    """
+    from .render import _extract_focus_files, render_focused
+
+    focus_parts: list[str] = []
+    path_fallback_files: list[str] = []
+    n_kw = len(effective_keywords) or 1
+    per_kw_budget = max((max_tokens // 2) // n_kw, 800)
+
+    # C7: pre-compute git staleness map once for all per-keyword render_focused calls.
+    # Without this, each render_focused call spawns its own `git log` subprocess (~66ms).
+    # For 5 keywords: saves ~264ms (4x 66ms avoided) at the cost of one upfront call.
+    _cl_staleness_map: "dict[str, int | None] | None" = None
+    if effective_keywords:
+        try:
+            from .git import batch_file_modification_map as _bfmm_prepare  # noqa: PLC0415
+            _cl_staleness_map = _bfmm_prepare(graph.root)
+        except Exception:
+            pass
+
+    for kw in effective_keywords:
+        focused = render_focused(graph, kw, max_tokens=per_kw_budget, _staleness_map=_cl_staleness_map)
+        no_match = not focused or "No symbols matching" in focused or "No exact match" in focused
+        if not no_match:
+            kw_files = _extract_focus_files(focused)
+        # Gradual breadth decay: instead of hard 10-file cutoff, use:
+        #   1-8 files: keep all (no change)
+        #   9-15 files: keep top max(1, 15 - n_files) files (gradual reduction)
+        #   16+ files: discard entirely (hard cutoff raised from 10 to 15)
+        n_kw_files = len(kw_files) if not no_match else 0
+        too_broad = not no_match and n_kw_files > 15
+        _gradual_decay = not no_match and not too_broad and 9 <= n_kw_files <= 15
+        _decay_files: list[str] = []
+        if _gradual_decay:
+            keep_n = max(1, 15 - n_kw_files)
+            _decay_files = kw_files[:keep_n]
+        if no_match or too_broad or _gradual_decay:
+            # No symbol match OR too broad — try path-based fallback.
+            if len(kw) >= 4 and not path_fallback_files:
+                path_fallback_files = _cl_path_fallback(graph, kw)
+            # Definition-first fallback when focus is too_broad and path matching found nothing.
+            if definition_first and (too_broad or _gradual_decay) and not path_fallback_files:
+                path_fallback_files = _cl_definition_first_fallback(graph, kw)
+            # Gradual decay fallback: if path_fallback and definition_first both found nothing,
+            # inject the trimmed focus files (top N by BFS rank) as path_fallback_files.
+            if _gradual_decay and not path_fallback_files:
+                path_fallback_files = _decay_files
+            continue
+        focus_parts.append(focused)
+
+    return focus_parts, path_fallback_files
+
+
+def _cl_assemble_results(
+    graph: "Tempo",
+    task: str,
+    keywords: list[str],
+    focus_parts: list[str],
+    path_fallback_files: list[str],
+    sections: list[str],
+    token_count: int,
+    max_tokens: int,
+    baseline_predicted_files: list[str] | None,
+    precision_filter: bool,
+) -> tuple[int, list[str]]:
+    """Assemble CL results from focus_parts/path_fallback into sections.
+
+    Returns (token_count, context_files).
+    Returns _SKIP_SENTINEL as first element to signal render_prepare should return "".
+    """
     from .render import (
         _extract_focus_files,
         _is_docs_branch_task,
         count_tokens,
-        render_dead_code,
-        render_diff_context,
-        render_focused,
-        render_hotspots,
         render_overview,
-        render_skills,
     )
 
-    sections: list[str] = []
-    token_count = 0
-    # Track query tokens and resolved files for coverage signal
-    _query_tokens: list[str] = []
     _context_files: list[str] = []
 
-    # Load L2 insights to customize which supplemental modes to include
-    l2_best_modes: set[str] = set()
-    try:
-        from tempo.plugins.learn import TaskMemory
-        mem = TaskMemory(str(Path(graph.root).resolve()))
-        if task_type:
-            rec = mem.get_recommendation(task_type)
-            if rec and rec.get("sample_size", 0) >= 2:
-                l2_best_modes = set(rec["best_modes"])
-    except Exception:
-        pass
-
-    s = graph.stats
-    sections.append(f"## Repo: {s['files']} files, {s['symbols']} symbols, {s['total_lines']:,} lines")
-    token_count += 20
-
-    if _is_change_localization(task, task_type):
-        # Change-localization path: per-keyword focus + breadth filter + selective overview.
-        # Bench evidence (n=111, Phase 5.26): +9-12% F1 improvement vs raw task passthrough.
-        # Key differences from general path:
-        #   - Extract code-symbol keywords from PR title/branch name (not raw task string)
-        #   - Run separate focus per keyword (up to 3) → better symbol targeting
-        #   - Breadth filter: skip keyword if focus returns >10 files (too generic)
-        #   - Selective overview: only inject when keywords=[] (vague task, no code signal)
-        #   - "Keywords found but focus failed" → inject nothing (model uses training knowledge)
-        keywords = _extract_cl_keywords(task)
-        focus_parts: list[str] = []
-        path_fallback_files: list[str] = []  # collected when symbol focus is too broad
-        # Skip keywords shorter than 4 chars before taking the top-5 cap.
-        # Short tokens can't trigger path fallback (which requires len>=4) and rarely match
-        # specific symbols. This prevents "req" (len=3) from blocking "resp" (len=4).
-        effective_keywords = [kw for kw in keywords if len(kw) >= 4][:5]
-        # Per-keyword BFS budget: divide evenly so later keywords aren't starved.
-        n_kw = len(effective_keywords) or 1
-        per_kw_budget = max((max_tokens // 2) // n_kw, 800)
-        _query_tokens = effective_keywords
-        # C7: pre-compute git staleness map once for all per-keyword render_focused calls.
-        # Without this, each render_focused call spawns its own `git log` subprocess (~66ms).
-        # For 5 keywords: saves ~264ms (4× 66ms avoided) at the cost of one upfront call.
-        _cl_staleness_map: "dict[str, int | None] | None" = None
-        if effective_keywords:
-            try:
-                from .git import batch_file_modification_map as _bfmm_prepare  # noqa: PLC0415
-                _cl_staleness_map = _bfmm_prepare(graph.root)
-            except Exception:
-                pass
-        for kw in effective_keywords:
-            focused = render_focused(graph, kw, max_tokens=per_kw_budget, _staleness_map=_cl_staleness_map)
-            no_match = not focused or "No symbols matching" in focused or "No exact match" in focused
-            if not no_match:
-                kw_files = _extract_focus_files(focused)
-            # Gradual breadth decay: instead of hard 10-file cutoff, use:
-            #   1-8 files: keep all (no change)
-            #   9-15 files: keep top max(1, 15 - n_files) files (gradual reduction)
-            #   16+ files: discard entirely (hard cutoff raised from 10 to 15)
-            n_kw_files = len(kw_files) if not no_match else 0
-            too_broad = not no_match and n_kw_files > 15
-            _gradual_decay = not no_match and not too_broad and 9 <= n_kw_files <= 15
-            _decay_files: list[str] = []
-            if _gradual_decay:
-                keep_n = max(1, 15 - n_kw_files)
-                _decay_files = kw_files[:keep_n]
-            if no_match or too_broad or _gradual_decay:
-                # No symbol match OR too broad — try path-based fallback.
-                # Handles: (a) directory/module keywords (e.g. "demo" → demos/),
-                # (b) keyword is a module name but not a symbol (e.g. "config" → sanic/config.py).
-                if len(kw) >= 4 and not path_fallback_files:
-                    path_fallback_files = _cl_path_fallback(graph, kw)
-                # Definition-first fallback: when focus is too_broad and all path matching found nothing,
-                # return just the DEFINING file(s) of the top-ranked symbol.
-                # Handles: "redirect" → flask/helpers.py (where redirect() lives) rather than all callers.
-                # Enabled by default (Phase 5.31 bench: +16.0% F1, p=0.012*, n=93).
-                if definition_first and (too_broad or _gradual_decay) and not path_fallback_files:
-                    scored = graph.search_symbols_scored(kw)
-                    if scored:
-                        top_score = scored[0][0]
-                        if top_score >= 10.0:
-                            threshold = top_score * 0.6
-                            def_hits = sorted(set(
-                                sym.file_path for score, sym in scored
-                                if score >= threshold
-                                and not any(x in sym.file_path.lower() for x in _TEST_MARKERS)
-                                and "/templates/" not in sym.file_path
-                                and not sym.file_path.startswith("templates/")
-                                and "/static/" not in sym.file_path
-                                and not sym.file_path.startswith("static/")
-                            ))
-                            if 1 <= len(def_hits) <= 2:
-                                path_fallback_files = def_hits
-                # Gradual decay fallback: if path_fallback and definition_first both found nothing,
-                # inject the trimmed focus files (top N by BFS rank) as path_fallback_files.
-                if _gradual_decay and not path_fallback_files:
-                    path_fallback_files = _decay_files
-                continue
-            focus_parts.append(focused)
-
-        if focus_parts:
-            for fp in focus_parts:
-                sections.append(fp)
-                token_count += count_tokens(fp)
-            key_files = _extract_focus_files("\n\n".join(focus_parts), task_keywords=keywords)
-            # Inject path-fallback hits that aren't already in key_files.
-            # When focus was dominated by test/hub files, path-matched source files
-            # (e.g. keywords.py for "extract-cl-keywords") get lost. Prepend them.
-            if path_fallback_files:
-                _kf_set = set(key_files)
-                for _pf in path_fallback_files:
-                    if _pf not in _kf_set:
-                        key_files.insert(0, _pf)
-            _context_files = key_files
-            # Precision gate: >4 key files → topic too broad → skip injection.
-            # Bench evidence (Phase 5.26, n=111): precision_filter=+3.9% (p=0.085, ns).
-            if precision_filter and len(key_files) > 4:
-                return ""  # Too broad — skip context entirely
-            # Adaptive gating v6: overlap-aware skip when baseline predicts >=2 files.
-            # v5 basis (Phase 5.30, n=114): pred>=2 → skip, +7.6% F1 on focused repos.
-            # v6 change: inject when key_files OVERLAP with baseline prediction (≥1 shared file).
-            # Overlap = model and tempograph agree on what changed → injection reinforces.
-            # No-overlap = context diverges from model's prediction → injection misleads → skip.
-            # Evidence: celery/langchain 0% with v5 (gate fires every commit, diffuse repos).
-            # With v6, when tempograph finds the same files baseline predicted → inject anyway.
-            if baseline_predicted_files is not None and len(baseline_predicted_files) >= 2:
-                _predicted_set = set(baseline_predicted_files)
-                if not any(f in _predicted_set for f in key_files):
-                    return ""  # no overlap — our context diverges from baseline → skip
-            if key_files:
-                kf_ranges = _extract_focus_ranges("\n\n".join(focus_parts), key_files[:5])
-                kf_lines = [f"  {f}:{kf_ranges[f]}" if f in kf_ranges else f"  {f}" for f in key_files[:5]]
-                kf_section = "KEY FILES REFERENCED ABOVE:\n" + "\n".join(kf_lines)
-                sections.append(kf_section)
-                token_count += count_tokens(kf_section)
-
-                # Co-change prediction: files that frequently change alongside key files
-                cochange = _get_cochange_related(graph.root, key_files[:5], set(graph.files.keys()))
-                if cochange and token_count + 50 < max_tokens:
-                    cc_lines = [f"  {f} ({freq:.0%} co-change)" for f, freq in cochange[:5]]
-                    cc_section = "RELATED FILES (frequently change together):\n" + "\n".join(cc_lines)
-                    sections.append(cc_section)
-                    token_count += count_tokens(cc_section)
-        elif path_fallback_files:
-            # All symbol searches were too broad, but path matching found specific files.
-            # E.g. "demo" fails symbol focus (15+ matches) but path match → demos/ directory.
-            if baseline_predicted_files is not None and len(baseline_predicted_files) >= 2:
-                # v6 gate: path-only context (no BFS graph) is weak — only inject if paths overlap.
-                _predicted_set = set(baseline_predicted_files)
-                if not any(f in _predicted_set for f in path_fallback_files):
-                    return ""  # no overlap — path hint diverges from baseline → skip
-            if precision_filter and len(path_fallback_files) > 4:
-                return ""  # Too broad (path match) — skip context entirely
-            _context_files = path_fallback_files[:5]
-            kf_section = "KEY FILES (path match):\n" + "\n".join(f"  {f}" for f in path_fallback_files[:5])
-            sections.append(kf_section)
-            token_count += count_tokens(kf_section)
-        elif not keywords:
-            # Truly vague task (no keywords extracted) — overview provides structure, UNLESS the
-            # task is a docs-named branch (docs-javascript, docs/#4574, readme-fix, etc.).
-            # Docs branches often change both docs AND code; overview focuses the model on generic
-            # structure (conf.py, README) instead of the actual code paths changed.
-            # Evidence: flask "docs-javascript" overview → F1 0.556→0.154 (-0.402 delta).
-            # Without overview, model uses training knowledge → ties (~0 delta, not regression).
-            # Low-baseline repos (requests, django) use trunk-branch tasks for overview, not doc branches.
-            if not _is_docs_branch_task(task):
-                overview_fallback = render_overview(graph)
-                sections.append(overview_fallback)
-                token_count += count_tokens(overview_fallback)
-        # else: keywords exist but focus found nothing → inject nothing; model uses training knowledge.
-        # Evidence: overview hurts high-baseline repos (pydantic -40%, starlette -11%) when
-        # focus fails on non-empty keywords.
-
-    else:
-        # General coding task path: multi-token fuzzy search + always-overview fallback.
-        # Suitable for: "add login feature", "fix broken test", "explain this function".
-        _query_tokens = [w for w in re.split(r'[\s/\-_]+', task) if len(w) >= 4]
-        focus_output = render_focused(graph, task, max_tokens=int(max_tokens * 0.6))
-
-        # Large-scope heuristic: bench data shows focused context hurts for 8+ file tasks.
-        _BROAD_SCOPE_MARKERS = {"all", "every", "entire", "throughout", "global", "across",
-                                "everywhere", "whole", "each"}
-        _BROAD_ACTION_MARKERS = {"refactor", "migrate", "update", "port", "convert", "rename",
-                                 "replace", "remove", "delete", "rewrite"}
-        _task_set = set(task.lower().split())
-        _is_large_scope = bool(
-            _task_set & _BROAD_SCOPE_MARKERS
-            and _task_set & _BROAD_ACTION_MARKERS
-        )
-        if _is_large_scope:
-            sections.append(
-                "⚠ LARGE SCOPE: task appears to span many files. "
-                "Bench data shows focused context hurts F1 for 8+ file changes. "
-                "Use `overview` for orientation; skip focused context injection."
+    if focus_parts:
+        for fp in focus_parts:
+            sections.append(fp)
+            token_count += count_tokens(fp)
+        key_files = _extract_focus_files("\n\n".join(focus_parts), task_keywords=keywords)
+        # Inject path-fallback hits that aren't already in key_files.
+        # When focus was dominated by test/hub files, path-matched source files
+        # (e.g. keywords.py for "extract-cl-keywords") get lost. Prepend them.
+        if path_fallback_files:
+            _kf_set = set(key_files)
+            for _pf in path_fallback_files:
+                if _pf not in _kf_set:
+                    key_files.insert(0, _pf)
+        _context_files = key_files
+        # Precision gate: >4 key files -> topic too broad -> skip injection.
+        # Bench evidence (Phase 5.26, n=111): precision_filter=+3.9% (p=0.085, ns).
+        if precision_filter and len(key_files) > 4:
+            return _SKIP_SENTINEL, _context_files
+        # Adaptive gating v6: overlap-aware skip when baseline predicts >=2 files.
+        # v5 basis (Phase 5.30, n=114): pred>=2 -> skip, +7.6% F1 on focused repos.
+        # v6 change: inject when key_files OVERLAP with baseline prediction (>=1 shared file).
+        # Overlap = model and tempograph agree on what changed -> injection reinforces.
+        # No-overlap = context diverges from model's prediction -> injection misleads -> skip.
+        if baseline_predicted_files is not None and len(baseline_predicted_files) >= 2:
+            _predicted_set = set(baseline_predicted_files)
+            if not any(f in _predicted_set for f in key_files):
+                return _SKIP_SENTINEL, _context_files
+        if key_files:
+            token_count = _assemble_key_files(
+                "\n\n".join(focus_parts), key_files, graph,
+                sections, token_count, max_tokens, count_tokens,
             )
-            token_count += 25
-
-        _no_match = not focus_output or "No symbols matching" in focus_output or "No exact match" in focus_output
-        if _no_match and not _is_large_scope:
+    elif path_fallback_files:
+        # All symbol searches were too broad, but path matching found specific files.
+        if baseline_predicted_files is not None and len(baseline_predicted_files) >= 2:
+            _predicted_set = set(baseline_predicted_files)
+            if not any(f in _predicted_set for f in path_fallback_files):
+                return _SKIP_SENTINEL, _context_files
+        if precision_filter and len(path_fallback_files) > 4:
+            return _SKIP_SENTINEL, _context_files
+        _context_files = path_fallback_files[:5]
+        kf_section = "KEY FILES (path match):\n" + "\n".join(f"  {f}" for f in path_fallback_files[:5])
+        sections.append(kf_section)
+        token_count += count_tokens(kf_section)
+    elif not keywords:
+        # Truly vague task (no keywords extracted) — overview provides structure, UNLESS the
+        # task is a docs-named branch (docs-javascript, docs/#4574, readme-fix, etc.).
+        if not _is_docs_branch_task(task):
             overview_fallback = render_overview(graph)
             sections.append(overview_fallback)
             token_count += count_tokens(overview_fallback)
-        else:
-            sections.append(focus_output)
-            token_count += count_tokens(focus_output)
+    # else: keywords exist but focus found nothing -> inject nothing; model uses training knowledge.
 
-            if not _no_match:
-                key_files = _extract_focus_files(focus_output)
-                _context_files = key_files
-                if key_files:
-                    if len(key_files) > 10:
-                        sections.append(
-                            "⚠ BROAD MATCH: query matched many files — results may include "
-                            "loosely related code. Consider re-querying with a more specific "
-                            "symbol name or function for a tighter focus."
-                        )
-                        token_count += 20
-                    kf_ranges = _extract_focus_ranges(focus_output, key_files[:5])
-                    kf_lines = [f"  {f}:{kf_ranges[f]}" if f in kf_ranges else f"  {f}" for f in key_files[:5]]
-                    kf_section = "KEY FILES REFERENCED ABOVE:\n" + "\n".join(kf_lines)
-                    sections.append(kf_section)
-                    token_count += count_tokens(kf_section)
+    return token_count, _context_files
 
-                    # Co-change prediction for general task path too
-                    cochange = _get_cochange_related(graph.root, key_files[:5], set(graph.files.keys()))
-                    if cochange and token_count + 50 < max_tokens:
-                        cc_lines = [f"  {f} ({freq:.0%} co-change)" for f, freq in cochange[:5]]
-                        cc_section = "RELATED FILES (frequently change together):\n" + "\n".join(cc_lines)
-                        sections.append(cc_section)
-                        token_count += count_tokens(cc_section)
+
+def _render_cl_path(
+    graph: "Tempo",
+    task: str,
+    max_tokens: int,
+    sections: list[str],
+    token_count: int,
+    baseline_predicted_files: list[str] | None,
+    precision_filter: bool,
+    definition_first: bool,
+) -> tuple[int, list[str], list[str]]:
+    """Change-localization path: per-keyword focus + breadth filter + selective overview.
+
+    Returns (token_count, query_tokens, context_files).
+    Returns _SKIP_SENTINEL as first element to signal render_prepare should return "".
+    """
+    keywords = _extract_cl_keywords(task)
+    effective_keywords = [kw for kw in keywords if len(kw) >= 4][:5]
+    _query_tokens = effective_keywords
+
+    focus_parts, path_fallback_files = _cl_keyword_focus_loop(
+        graph, effective_keywords, max_tokens, definition_first,
+    )
+
+    result = _cl_assemble_results(
+        graph, task, keywords, focus_parts, path_fallback_files,
+        sections, token_count, max_tokens, baseline_predicted_files, precision_filter,
+    )
+    if result[0] is _SKIP_SENTINEL:
+        return _SKIP_SENTINEL, _query_tokens, []
+    token_count, _context_files = result
+
+    return token_count, _query_tokens, _context_files
+
+
+def _render_general_path(
+    graph: "Tempo",
+    task: str,
+    max_tokens: int,
+    sections: list[str],
+    token_count: int,
+) -> tuple[int, list[str], list[str]]:
+    """General coding task path: multi-token fuzzy search + always-overview fallback.
+
+    Suitable for: "add login feature", "fix broken test", "explain this function".
+    Returns (token_count, query_tokens, context_files).
+    """
+    from .render import (
+        _extract_focus_files,
+        count_tokens,
+        render_focused,
+        render_overview,
+    )
+
+    _query_tokens = [w for w in re.split(r'[\s/\-_]+', task) if len(w) >= 4]
+    _context_files: list[str] = []
+    focus_output = render_focused(graph, task, max_tokens=int(max_tokens * 0.6))
+
+    # Large-scope heuristic: bench data shows focused context hurts for 8+ file tasks.
+    _BROAD_SCOPE_MARKERS = {"all", "every", "entire", "throughout", "global", "across",
+                            "everywhere", "whole", "each"}
+    _BROAD_ACTION_MARKERS = {"refactor", "migrate", "update", "port", "convert", "rename",
+                             "replace", "remove", "delete", "rewrite"}
+    _task_set = set(task.lower().split())
+    _is_large_scope = bool(
+        _task_set & _BROAD_SCOPE_MARKERS
+        and _task_set & _BROAD_ACTION_MARKERS
+    )
+    if _is_large_scope:
+        sections.append(
+            "\u26a0 LARGE SCOPE: task appears to span many files. "
+            "Bench data shows focused context hurts F1 for 8+ file changes. "
+            "Use `overview` for orientation; skip focused context injection."
+        )
+        token_count += 25
+
+    _no_match = not focus_output or "No symbols matching" in focus_output or "No exact match" in focus_output
+    if _no_match and not _is_large_scope:
+        overview_fallback = render_overview(graph)
+        sections.append(overview_fallback)
+        token_count += count_tokens(overview_fallback)
+    else:
+        sections.append(focus_output)
+        token_count += count_tokens(focus_output)
+
+        if not _no_match:
+            key_files = _extract_focus_files(focus_output)
+            _context_files = key_files
+            if key_files:
+                if len(key_files) > 10:
+                    sections.append(
+                        "\u26a0 BROAD MATCH: query matched many files \u2014 results may include "
+                        "loosely related code. Consider re-querying with a more specific "
+                        "symbol name or function for a tighter focus."
+                    )
+                    token_count += 20
+                token_count = _assemble_key_files(
+                    focus_output, key_files, graph,
+                    sections, token_count, max_tokens, count_tokens,
+                )
+
+    return token_count, _query_tokens, _context_files
+
+
+def _render_supplemental_sections(
+    graph: "Tempo",
+    task: str,
+    task_type: str,
+    max_tokens: int,
+    sections: list[str],
+    token_count: int,
+    l2_best_modes: set[str],
+) -> int:
+    """Append hotspots, dead code, skills, and diff sections. Returns updated token_count."""
+    from .git import changed_files_unstaged, is_git_repo
+    from .render import (
+        count_tokens,
+        render_dead_code,
+        render_diff_context,
+        render_hotspots,
+        render_skills,
+    )
 
     hotspot_budget = int(max_tokens * 0.20)
     if token_count < max_tokens - 100:
@@ -487,6 +554,54 @@ def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: s
                             token_count += dt + 10
                 except Exception:
                     pass
+
+    return token_count
+
+
+def render_prepare(graph: Tempo, task: str, max_tokens: int = 6000, task_type: str = "",
+                   baseline_predicted_files: list[str] | None = None,
+                   precision_filter: bool = False,
+                   definition_first: bool = True) -> str:
+    """Batch context preparation: overview + focus + hotspots + diff in one token-budgeted output.
+
+    If L2 learned insights exist for task_type, includes extra modes (dead code, quality)
+    that the data shows are helpful for that task category.
+    """
+    sections: list[str] = []
+    token_count = 0
+
+    # Load L2 insights to customize which supplemental modes to include
+    l2_best_modes: set[str] = set()
+    try:
+        from tempo.plugins.learn import TaskMemory
+        mem = TaskMemory(str(Path(graph.root).resolve()))
+        if task_type:
+            rec = mem.get_recommendation(task_type)
+            if rec and rec.get("sample_size", 0) >= 2:
+                l2_best_modes = set(rec["best_modes"])
+    except Exception:
+        pass
+
+    s = graph.stats
+    sections.append(f"## Repo: {s['files']} files, {s['symbols']} symbols, {s['total_lines']:,} lines")
+    token_count += 20
+
+    if _is_change_localization(task, task_type):
+        result = _render_cl_path(
+            graph, task, max_tokens, sections, token_count,
+            baseline_predicted_files, precision_filter, definition_first,
+        )
+        if result[0] is _SKIP_SENTINEL:
+            return ""
+        token_count, _query_tokens, _context_files = result
+    else:
+        token_count, _query_tokens, _context_files = _render_general_path(
+            graph, task, max_tokens, sections, token_count,
+        )
+
+    token_count = _render_supplemental_sections(
+        graph, task, task_type, max_tokens, sections, token_count, l2_best_modes,
+    )
 
     coverage = _coverage_line(_query_tokens, graph, _context_files)
     if coverage:

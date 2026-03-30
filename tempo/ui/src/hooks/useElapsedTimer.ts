@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 
 /**
  * Tracks elapsed seconds since a run started.
@@ -6,20 +6,26 @@ import { useState, useEffect } from "react";
  */
 export function useElapsedTimer(
   modeRunning: boolean,
-  runStart: React.RefObject<number | null>,
+  runStartRef: React.RefObject<number | null>,
 ): { elapsed: number; resetElapsed: () => void } {
   const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
-    if (!modeRunning) {
-      setElapsed(0);
-      return;
-    }
+    if (!modeRunning) return;
     const id = setInterval(() => {
-      setElapsed(runStart.current ? Math.floor((Date.now() - runStart.current) / 1000) : 0);
+      setElapsed(runStartRef.current ? Math.floor((Date.now() - runStartRef.current) / 1000) : 0);
     }, 250);
     return () => clearInterval(id);
-  }, [modeRunning, runStart]);
+  }, [modeRunning, runStartRef]);
 
-  return { elapsed, resetElapsed: () => setElapsed(0) };
+  // Reset to 0 when run stops
+  const [wasRunning, setWasRunning] = useState(modeRunning);
+  if (wasRunning !== modeRunning) {
+    setWasRunning(modeRunning);
+    if (!modeRunning) setElapsed(0);
+  }
+
+  const resetElapsed = useCallback(() => setElapsed(0), []);
+
+  return { elapsed, resetElapsed };
 }
