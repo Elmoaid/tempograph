@@ -14,6 +14,7 @@ import { usePanelState } from "../hooks/usePanelState";
 import { useRunHistory, type RunHistoryEntry } from "../hooks/useRunHistory";
 import { useOutputCache } from "../hooks/useOutputCache";
 import { useModeOutputState } from "../hooks/useModeOutputState";
+import { useModeSelectionState, lastModeKey } from "../hooks/useModeSelectionState";
 
 export type { RunHistoryEntry };
 
@@ -106,12 +107,13 @@ function buildActiveModeInfo(activeKit: string | null, activeMode: string, custo
   return MODES.find(m => m.mode === activeMode);
 }
 
-const lastModeKey = (path: string) => `tempo-last-mode-${path}`;
 const modeArgsKey = (path: string, modeOrKit: string) => `tempo-mode-args-${path}-${modeOrKit}`;
 
 export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRunnerState & ModeRunnerActions {
-  const [activeMode, setActiveMode] = useState(() => localStorage.getItem(lastModeKey(repoPath)) || "overview");
-  const [activeKit, setActiveKit] = useState<string | null>(null);
+  const {
+    activeMode, setActiveMode,
+    activeKit, setActiveKit,
+  } = useModeSelectionState(repoPath);
   const {
     sidebarTab, setSidebarTab,
     kitBuilderOpen, setKitBuilderOpen,
