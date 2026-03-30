@@ -20,6 +20,7 @@ from .focused import (  # noqa: F401
     _cochange_orbit,
     _find_orbit_seeds,
     _collect_seeds,
+    _is_utility_callee,
     _sym_importance,
     _bfs_expand,
     _handle_overflow,

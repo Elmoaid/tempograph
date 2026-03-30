@@ -173,6 +173,9 @@ class PythonHandlerMixin:
         if body:
             self._scan_calls(body, sym_id)
 
+        # Scan type annotations for USES_TYPE edges
+        self._scan_type_annotations(node, sym_id)
+
     def _scan_python_assignments(self, node: Node) -> None:
         for child in node.children:
             if child.type == "assignment":

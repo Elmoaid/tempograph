@@ -19,7 +19,7 @@ interface RunModeConfig {
   outputCache: React.RefObject<Map<string, string>>;
   outputTsCache: React.RefObject<Map<string, number>>;
   runDurationCache: React.RefObject<Map<string, number>>;
-  runStart: React.RefObject<number | null>;
+  runStartRef: React.RefObject<number | null>;
   setElapsed: (n: number) => void;
   setModeRunning: (v: boolean) => void;
   setModeOutput: (v: string) => void;
@@ -40,7 +40,7 @@ export function useRunMode({
   outputCache,
   outputTsCache,
   runDurationCache,
-  runStart,
+  runStartRef,
   setElapsed,
   setModeRunning,
   setModeOutput,
@@ -68,7 +68,7 @@ export function useRunMode({
     if (!repoPath || modeRunning) return false;
     const serial = ++runSerial.current;
     const cacheKey = activeKit ? `kit:${activeKit}` : activeMode;
-    runStart.current = Date.now();
+    runStartRef.current = Date.now();
     setElapsed(0);
     setModeRunning(true);
     setModeOutput("");
@@ -106,7 +106,7 @@ export function useRunMode({
       setStatusText("");
       const out = r.output || "No output";
       const now = Date.now();
-      const dur = runStart.current ? (now - runStart.current) / 1000 : null;
+      const dur = runStartRef.current ? (now - runStartRef.current) / 1000 : null;
       outputCache.current.set(cacheKey, out);
       outputTsCache.current.set(cacheKey, now);
       if (dur !== null) runDurationCache.current.set(cacheKey, dur);
@@ -134,7 +134,7 @@ export function useRunMode({
     }
     if (serial === runSerial.current) setModeRunning(false);
     return false;
-  }, [repoPath, activeMode, activeKit, modeArgs, modeRunning, excludeDirs, onRunSuccess]);
+  }, [repoPath, activeMode, activeKit, modeArgs, modeRunning, excludeDirs, onRunSuccess, outputCache, outputTsCache, runDurationCache, runStartRef, setCachedModes, setElapsed, setHistory, setModeOutput, setModeRunning, setOutputTs, setRunDuration]);
 
   return { runMode, cancelMode, statusText };
 }

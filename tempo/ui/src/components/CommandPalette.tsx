@@ -43,18 +43,21 @@ function fuzzyMatch(query: string, target: string): FuzzyMatch | null {
 export function CommandPalette({ modes, onSelect, onClose }: Props) {
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
-  const [recent, setRecent] = useState<RecentCommand[]>([]);
+  const [recent] = useState<RecentCommand[]>(() => loadRecentCommands().slice(0, 3));
   const inputRef = useRef<HTMLInputElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
+  const [prevQuery, setPrevQuery] = useState(query);
 
   useEffect(() => {
-    setRecent(loadRecentCommands().slice(0, 3));
     previousFocusRef.current = document.activeElement as HTMLElement;
     inputRef.current?.focus();
     return () => { previousFocusRef.current?.focus(); };
   }, []);
 
-  useEffect(() => { setSelected(0); }, [query]);
+  if (prevQuery !== query) {
+    setPrevQuery(query);
+    setSelected(0);
+  }
 
   // Build flat list for keyboard navigation — fuzzy when query set, all modes otherwise
   const fuzzyResults = query

@@ -346,16 +346,16 @@ class TestRelayPointIntegration:
         graph = build_graph(".")
         return render_focused(graph, query)
 
-    def test_get_or_build_graph_fires(self):
-        """_get_or_build_graph → build_graph is a classic relay (100% downstream)."""
+    def test_get_or_build_graph_hub(self):
+        """_get_or_build_graph is a hub (9 depth-1 neighbors) — no single relay."""
         result = self._focus("_get_or_build_graph")
-        assert "relay point" in result
         assert "build_graph" in result
 
-    def test_prepare_context_fires(self):
-        """prepare_context → render_prepare is a relay (100% downstream)."""
+    def test_prepare_context_after_decomp(self):
+        """prepare_context → render_prepare: after decomposing render_prepare into
+        sub-functions, the relay signal no longer fires (render_prepare is a thin
+        dispatcher with lower downstream reach). The callee chain still exists."""
         result = self._focus("prepare_context")
-        assert "↳ relay point:" in result
         assert "render_prepare" in result
 
     def test_build_graph_silent(self):

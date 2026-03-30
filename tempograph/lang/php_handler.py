@@ -300,7 +300,7 @@ class PHPHandlerMixin:
                 func_node = node.children[0] if node.children else None
             if func_node:
                 raw = _node_text(func_node, self.source)
-                if raw and raw not in self._BUILTIN_IGNORE:
+                if raw and raw not in self._ignore_set:
                     self.edges.append(Edge(
                         EdgeKind.CALLS, from_id, raw,
                         node.start_point[0] + 1,
@@ -316,7 +316,7 @@ class PHPHandlerMixin:
             name_node = node.child_by_field_name("name")
             if name_node:
                 raw = _node_text(name_node, self.source)
-                if raw and raw not in self._BUILTIN_IGNORE:
+                if raw and raw not in self._ignore_set:
                     self.edges.append(Edge(
                         EdgeKind.CALLS, from_id, raw,
                         node.start_point[0] + 1,
@@ -339,7 +339,7 @@ class PHPHandlerMixin:
                         EdgeKind.CALLS, from_id, qualified,
                         node.start_point[0] + 1,
                     ))
-                elif method_name and method_name not in self._BUILTIN_IGNORE:
+                elif method_name and method_name not in self._ignore_set:
                     self.edges.append(Edge(
                         EdgeKind.CALLS, from_id, method_name,
                         node.start_point[0] + 1,

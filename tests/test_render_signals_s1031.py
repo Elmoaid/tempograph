@@ -75,11 +75,11 @@ class TestDepthWallLookaheadDirect:
     """Unit tests calling _compute_depth_wall_lookahead directly with crafted inputs."""
 
     def _make_graph_with_many_callers(self, tmp_path):
-        """Build a graph where target() has 10 callers (8 regular + main + another entry)."""
+        """Build a graph where target() has 14 callers (13 regular + main entry)."""
         # target.py: the seed function
         (tmp_path / "target.py").write_text("def target():\n    pass\n")
-        # 8 callers with cross-file interactions to rank high in BFS importance
-        for i in range(8):
+        # 13 callers with cross-file interactions to rank high in BFS importance
+        for i in range(13):
             (tmp_path / f"caller_{i}.py").write_text(
                 f"from target import target\n\n"
                 f"def fn_{i}():\n    target()\n"
@@ -96,7 +96,7 @@ class TestDepthWallLookaheadDirect:
         return build_graph(str(tmp_path), use_cache=False)
 
     def test_fires_when_entry_point_caller_excluded_from_seen_ids(self, tmp_path):
-        """Signal fires when seed has >8 callers and an entry-point one is not in seen_ids."""
+        """Signal fires when seed has >12 callers and an entry-point one is not in seen_ids."""
         g = self._make_graph_with_many_callers(tmp_path)
         target_sym = next(s for s in g.symbols.values() if s.name == "target")
         all_callers = g.callers_of(target_sym.id)
@@ -110,20 +110,20 @@ class TestDepthWallLookaheadDirect:
         assert "entry point" in result, f"Expected 'entry point' label; got: {result!r}"
 
     def test_silent_when_all_callers_fit_in_bfs_limit(self, tmp_path):
-        """Signal is suppressed when seed has ≤8 callers (all visible in BFS)."""
+        """Signal is suppressed when seed has ≤12 callers (all visible in BFS)."""
         (tmp_path / "target.py").write_text("def target():\n    pass\n")
-        for i in range(5):
+        for i in range(10):
             (tmp_path / f"c{i}.py").write_text(
                 f"from target import target\ndef fn{i}():\n    target()\n"
             )
         g = build_graph(str(tmp_path), use_cache=False)
         target_sym = next(s for s in g.symbols.values() if s.name == "target")
         all_callers = g.callers_of(target_sym.id)
-        # All callers fit in BFS limit of 8
+        # All callers fit in BFS limit of 12
         seen_ids = {target_sym.id} | {c.id for c in all_callers}
         ordered = [(target_sym, 0)]
         result = _compute_depth_wall_lookahead(g, ordered, seen_ids, [target_sym])
-        assert result == "", f"Expected no signal for ≤8 callers; got: {result!r}"
+        assert result == "", f"Expected no signal for ≤12 callers; got: {result!r}"
 
     def test_silent_when_seed_is_entry_point(self, tmp_path):
         """Signal is suppressed when the seed itself is an entry point (already at the top)."""
@@ -180,8 +180,8 @@ class TestDepthWallLookaheadDirect:
     def test_test_file_callers_excluded(self, tmp_path):
         """Test-file callers are excluded even if they are named 'main'."""
         (tmp_path / "target.py").write_text("def target():\n    pass\n")
-        # 9 callers: 8 regular + test_main.py with a main function
-        for i in range(8):
+        # 14 callers: 13 regular + test_main.py with a main function
+        for i in range(13):
             (tmp_path / f"c{i}.py").write_text(
                 f"from target import target\ndef fn{i}():\n    target()\n"
             )
@@ -202,7 +202,7 @@ class TestDepthWallLookaheadDirect:
     def test_dunder_main_file_triggers_entry_point(self, tmp_path):
         """Symbols in __main__.py are entry points even if not named 'main'."""
         (tmp_path / "target.py").write_text("def target():\n    pass\n")
-        for i in range(8):
+        for i in range(13):
             (tmp_path / f"c{i}.py").write_text(
                 f"from target import target\ndef fn{i}():\n    target()\n"
             )
