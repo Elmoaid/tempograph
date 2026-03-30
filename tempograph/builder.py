@@ -654,6 +654,24 @@ def _resolve_edges(graph: Tempo) -> None:
                 return c
         return candidates[0]
 
+    # Pre-compute inheritance maps for mixin/parent resolution
+    # children_of["file::ClassName"] = ["file2::ChildClass", ...]
+    # parents_of["file::ClassName"] = ["file2::ParentClass", ...]
+    children_of: dict[str, list[str]] = {}
+    parents_of: dict[str, list[str]] = {}
+    for e in graph.edges:
+        if e.kind.value == "inherits":
+            child_id = e.source_id  # always qualified (file::Class)
+            # Target may be unqualified before edge resolution; resolve it
+            if "::" in e.target_id:
+                parent_id = e.target_id
+            else:
+                # Resolve unqualified parent name to qualified symbol ID
+                parent_candidates = name_to_ids.get(e.target_id, [])
+                parent_id = parent_candidates[0] if len(parent_candidates) == 1 else e.target_id
+            parents_of.setdefault(child_id, []).append(parent_id)
+            children_of.setdefault(parent_id, []).append(child_id)
+
     resolved: list[Edge] = []
     for edge in graph.edges:
         if edge.kind in _RESOLVE_KINDS and "::" not in edge.target_id:
@@ -676,6 +694,55 @@ def _resolve_edges(graph: Tempo) -> None:
                                 # Try class-qualified name across all files
                                 class_qualified = f"{class_name}.{bare}"
                                 candidates = name_to_ids.get(class_qualified, [])
+                                if not candidates:
+                                    # Check parent classes (what does this class extend?)
+                                    source_class_id = f"{source_parts[0]}::{class_name}"
+                                    for parent_id in parents_of.get(source_class_id, []):
+                                        pname = parent_id.split("::")[-1] if "::" in parent_id else parent_id
+                                        pfile = parent_id.split("::")[0] if "::" in parent_id else ""
+                                        pq = f"{pfile}::{pname}.{bare}" if pfile else f"{pname}.{bare}"
+                                        if pq in graph.symbols:
+                                            candidates = [pq]
+                                            break
+                                        pq2 = f"{pname}.{bare}"
+                                        if pq2 in name_to_ids:
+                                            candidates = name_to_ids[pq2]
+                                            break
+                                if not candidates:
+                                    # Check child classes (classes that inherit from this one)
+                                    # Handles mixin pattern: MixinA.method -> self.x where x is on the child
+                                    source_class_id = f"{source_parts[0]}::{class_name}"
+                                    for child_id in children_of.get(source_class_id, []):
+                                        cname = child_id.split("::")[-1] if "::" in child_id else child_id
+                                        cfile = child_id.split("::")[0] if "::" in child_id else ""
+                                        cq = f"{cfile}::{cname}.{bare}" if cfile else f"{cname}.{bare}"
+                                        if cq in graph.symbols:
+                                            candidates = [cq]
+                                            break
+                                        cq2 = f"{cname}.{bare}"
+                                        if cq2 in name_to_ids:
+                                            candidates = name_to_ids[cq2]
+                                            break
+                                if not candidates:
+                                    # Check sibling classes via shared child (mixin composition)
+                                    # e.g. MixinA and MixinB both mixed into FileParser
+                                    source_class_id = f"{source_parts[0]}::{class_name}"
+                                    siblings: set[str] = set()
+                                    for child_id in children_of.get(source_class_id, []):
+                                        for sib_id in parents_of.get(child_id, []):
+                                            if sib_id != source_class_id:
+                                                siblings.add(sib_id)
+                                    for sib_id in siblings:
+                                        sname = sib_id.split("::")[-1] if "::" in sib_id else sib_id
+                                        sfile = sib_id.split("::")[0] if "::" in sib_id else ""
+                                        sq = f"{sfile}::{sname}.{bare}" if sfile else f"{sname}.{bare}"
+                                        if sq in graph.symbols:
+                                            candidates = [sq]
+                                            break
+                                        sq2 = f"{sname}.{bare}"
+                                        if sq2 in name_to_ids:
+                                            candidates = name_to_ids[sq2]
+                                            break
                                 if not candidates:
                                     # Last resort: bare name in same file
                                     same_file = [
