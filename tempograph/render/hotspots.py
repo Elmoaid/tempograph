@@ -1968,18 +1968,12 @@ def _signals_hotspots_core_c_type(
                 )
 
 
-def _signals_hotspots_core_c_shape(
+def _c_shape_function_signals(
     graph: Tempo,
     scores: list[tuple[float, Symbol]],
-    velocity: dict[str, float],
-    velocity_14: dict[str, float],
-    all_test_fps: set[str],
-    top_n: int,
     out: list[str],
 ) -> None:
     # S529: Long hotspot function — top hotspot has 50+ lines of code.
-    # A large, heavily-called function accumulates complexity over time; it is the most-used
-    # yet least-testable function in the system — every caller depends on all of its behaviors.
     if scores:
         _top529 = scores[0][1]
         if not _is_test_file(_top529.file_path) and _top529.kind.value in ("function", "method"):
@@ -1989,60 +1983,7 @@ def _signals_hotspots_core_c_shape(
                     f"\nlong hotspot: {_top529.name} is {_len529} lines and the most-called function"
                     f" — large + hot = refactor pressure; extract sub-functions before it grows further"
                 )
-
-    # S523: Utility module hotspot — PRUNED: duplicate of S255 utility hotspot
-    if False:  # PRUNED: duplicate hotspot taxonomy
-        if scores:
-            _top523 = scores[0][1]
-            if not _is_test_file(_top523.file_path) and _top523.kind.value in ("function", "method"):
-                _fp523 = _top523.file_path.lower().replace("\\", "/")
-                _util_markers523 = ("utils", "helpers", "common", "shared", "tools", "misc", "util")
-                if any(m in _fp523 for m in _util_markers523):
-                    out.append(
-                        f"\nutility module hotspot: {_top523.name} is the most-called function in a utility file"
-                        f" — utility hotspots signal responsibility creep; consider promoting to a domain module"
-                    )
-
-    # S517: Deprecated hotspot — PRUNED: name quality — agent sees name
-    if False:  # PRUNED: name quality
-        if scores:
-            _top517 = scores[0][1]
-            if not _is_test_file(_top517.file_path) and _top517.kind.value in ("function", "method"):
-                _name517 = _top517.name.lower()
-                _dep_markers517 = ("_old", "_legacy", "deprecated", "_v1", "_deprecated", "_obsolete")
-                if any(m in _name517 for m in _dep_markers517):
-                    out.append(
-                        f"\ndeprecated hotspot: {_top517.name} appears deprecated but is still the most-called symbol"
-                        f" — active callers block removal; plan migration path before it accumulates more callers"
-                    )
-
-    # S541: Single-file hotspot cluster — PRUNED: duplicate of S268 churn concentration
-    if False:  # PRUNED: duplicate hotspot taxonomy
-        if len(scores) >= 3:
-            _top3_files541 = {s.file_path for _, s in scores[:3] if not _is_test_file(s.file_path)}
-            if len(_top3_files541) == 1:
-                _cluster_file541 = next(iter(_top3_files541)).rsplit("/", 1)[-1]
-                out.append(
-                    f"\nhotspot cluster: top 3 hotspots all live in {_cluster_file541}"
-                    f" — concentrated complexity; that file is load-bearing; consider splitting by responsibility"
-                )
-
-    # S544: Interface file hotspot — PRUNED: taxonomic label from file name pattern
-    if False:  # PRUNED: taxonomic label
-        if scores:
-            _top541b = scores[0][1]
-            if not _is_test_file(_top541b.file_path) and _top541b.kind.value in ("function", "method"):
-                _fp541b = _top541b.file_path.lower().replace("\\", "/")
-                _iface_markers541 = ("abstract", "interface", "base", "protocol", "mixin", "abc")
-                if any(m in _fp541b for m in _iface_markers541):
-                    out.append(
-                        f"\ninterface file hotspot: {_top541b.name} is the top hotspot in an abstract/interface file"
-                        f" — changes cascade to all implementing classes; coordinate with implementors"
-                    )
-
     # S550: Private hotspot — top hotspot is a private (_-prefixed) function heavily called externally.
-    # Private symbols called from many external sites indicate an accidental public API;
-    # the naming contradiction misleads maintainers about intended encapsulation.
     if scores:
         _top550 = scores[0][1]
         if (
@@ -2056,9 +1997,13 @@ def _signals_hotspots_core_c_shape(
                 f" — accidental public API; rename without _ or expose via a public wrapper"
             )
 
+
+def _c_shape_coverage_depth(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    out: list[str],
+) -> None:
     # S556: Hotspot untested — top hotspot's source file has no corresponding test file.
-    # The most-called symbol in the project has no test coverage; a bug here propagates
-    # to every caller with no automated safety net to catch the regression.
     if scores:
         _top556 = scores[0][1]
         if not _is_test_file(_top556.file_path):
@@ -2073,10 +2018,24 @@ def _signals_hotspots_core_c_shape(
                     f"\nhotspot untested: {_top556.name} is the top hotspot but its file has no test coverage"
                     f" — most-called symbol with no safety net; add tests before modifying"
                 )
+    # S568: Deep hotspot — top hotspot lives 3+ directory levels deep.
+    if scores:
+        _top568 = scores[0][1]
+        if not _is_test_file(_top568.file_path):
+            _parts568 = _top568.file_path.replace("\\", "/").split("/")
+            if len(_parts568) >= 4:  # ≥3 directory levels (a/b/c/file.py)
+                out.append(
+                    f"\ndeep hotspot: {_top568.name} is the top hotspot but buried {len(_parts568) - 1} levels deep"
+                    f" — important code in a deep submodule; consider promoting to a shallower location"
+                )
 
-    # S562: Cross-package hotspot — top hotspot is called from 3+ distinct top-level directories.
-    # A symbol called across many packages is a hidden global dependency; its contracts
-    # affect every team/module that imports it; even small signature changes ripple broadly.
+
+def _c_shape_caller_analysis(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    out: list[str],
+) -> None:
+    # S562: Cross-package hotspot — top hotspot called from 3+ distinct top-level directories.
     if scores:
         _top562 = scores[0][1]
         if not _is_test_file(_top562.file_path):
@@ -2091,23 +2050,7 @@ def _signals_hotspots_core_c_shape(
                     f"\ncross-package hotspot: {_top562.name} called from {len(_top_dirs562)} different top-level packages"
                     f" — hidden global dependency; signature changes cascade across all packages"
                 )
-
-    # S568: Deep hotspot — top hotspot lives 3+ directory levels deep.
-    # Hotspots buried in deep module hierarchies indicate that important shared logic
-    # is hiding in a sub-component; it may need promotion to a shallower, more visible module.
-    if scores:
-        _top568 = scores[0][1]
-        if not _is_test_file(_top568.file_path):
-            _parts568 = _top568.file_path.replace("\\", "/").split("/")
-            if len(_parts568) >= 4:  # ≥3 directory levels (a/b/c/file.py)
-                out.append(
-                    f"\ndeep hotspot: {_top568.name} is the top hotspot but buried {len(_parts568) - 1} levels deep"
-                    f" — important code in a deep submodule; consider promoting to a shallower location"
-                )
-
     # S574: Test-dominated hotspot — top hotspot has callers, but all callers are test files.
-    # A symbol called only by tests is effectively internal test infrastructure;
-    # it may appear production-critical but is actually test-only — safe to refactor aggressively.
     if scores:
         _top574 = scores[0][1]
         if not _is_test_file(_top574.file_path):
@@ -2118,9 +2061,13 @@ def _signals_hotspots_core_c_shape(
                     f" — internal test utility, not production-critical; safe to refactor aggressively"
                 )
 
+
+def _c_shape_module_structure(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    out: list[str],
+) -> None:
     # S580: Wide-file hotspot — top hotspot file has 10+ symbols, making it a dense module.
-    # High-symbol-count files concentrate many responsibilities; even small changes require
-    # understanding a large context window of co-located symbols.
     if scores:
         _top580 = scores[0][1]
         if not _is_test_file(_top580.file_path) and _top580.file_path in graph.files:
@@ -2130,6 +2077,21 @@ def _signals_hotspots_core_c_shape(
                     f"\nwide-file hotspot: {_top580.name} is in {_top580.file_path.rsplit('/', 1)[-1]}"
                     f" which has {_fi580_syms} symbols — dense module; changes require large context window"
                 )
+
+
+def _signals_hotspots_core_c_shape(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    velocity: dict[str, float],
+    velocity_14: dict[str, float],
+    all_test_fps: set[str],
+    top_n: int,
+    out: list[str],
+) -> None:
+    _c_shape_function_signals(graph, scores, out)
+    _c_shape_coverage_depth(graph, scores, out)
+    _c_shape_caller_analysis(graph, scores, out)
+    _c_shape_module_structure(graph, scores, out)
 
 
 def _class_c_complexity_shape(
