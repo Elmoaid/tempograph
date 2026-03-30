@@ -16,6 +16,7 @@ import { useOutputCache } from "../hooks/useOutputCache";
 import { useModeOutputState } from "../hooks/useModeOutputState";
 import { useModeSelectionState, lastModeKey } from "../hooks/useModeSelectionState";
 import { useModeArgsState, modeArgsKey } from "../hooks/useModeArgsState";
+import { buildActiveModeInfo } from "../utils/activeModeInfo";
 
 export type { RunHistoryEntry };
 
@@ -91,22 +92,6 @@ interface ModeRunnerActions {
   runSuggestion: (mode: string) => void;
 }
 
-function buildActiveModeInfo(activeKit: string | null, activeMode: string, customKits: KitInfo[]) {
-  if (activeKit) {
-    const kit = [...BUILTIN_KITS, ...customKits].find(k => k.id === activeKit);
-    if (!kit) return undefined;
-    return {
-      mode: `kit:${kit.id}`,
-      label: kit.label,
-      icon: kit.icon,
-      tag: "kit",
-      hint: kit.needsQuery ? "symbol or task to focus on" : undefined,
-      argPrefix: kit.needsQuery ? "--query" : undefined,
-      desc: kit.description,
-    };
-  }
-  return MODES.find(m => m.mode === activeMode);
-}
 
 export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRunnerState & ModeRunnerActions {
   const {
