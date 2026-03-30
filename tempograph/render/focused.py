@@ -4180,6 +4180,63 @@ def _compute_dead_params(seeds: "list[Symbol]", graph: "Tempo") -> str:
     )
 
 
+def _compute_broker_warning(seeds: "list[Symbol]", graph: "Tempo") -> str:
+    """S1046: Broker warning — fires when seed has many cross-file callers AND callees.
+
+    A broker is a function that sits at the intersection of two dependency flows:
+    it's widely called (many callers) AND calls widely (many callees). Unlike an
+    orchestrator (few callers + many callees) or a utility leaf (many callers + few
+    callees), the broker channels traffic bidirectionally — it's both a blast radius
+    sink and a dispatch hub simultaneously.
+
+    Example outputs:
+      ↳ broker: 10 callers ↔ 11 callees — bidirectional hub; changes ripple both upstream and downstream
+      ↳ broker: 7 callers ↔ 12 callees — bidirectional hub; changes ripple both upstream and downstream
+
+    Distinct from:
+    - S1035 (orchestrator): fires for ≥6 callees AND 1–4 callers — broker requires ≥5 callers
+    - S65 (change_exposure): aggregates risk factors (hot files, coverage gaps); doesn't capture topology
+    - S1039 (hub callee): fires when a CALLEE of the seed is itself a hub; broker = the seed IS the hub
+    - S198 (leaf): opposite topology (0-1 callees)
+
+    Conditions:
+    - kind in {function, method}
+    - not a test file
+    - ≥5 cross-file non-test callers (distinct from orchestrator which requires ≤4)
+    - ≥5 cross-file non-test callees
+    """
+    if not seeds:
+        return ""
+    seed = seeds[0]
+    if seed.kind.value not in ("function", "method"):
+        return ""
+    if _is_test_file(seed.file_path):
+        return ""
+
+    _BROKER_MIN = 5
+
+    cross_callers = [
+        c for c in graph.callers_of(seed.id)
+        if c.file_path != seed.file_path and not _is_test_file(c.file_path)
+    ]
+    if len(cross_callers) < _BROKER_MIN:
+        return ""
+
+    cross_callees = [
+        c for c in graph.callees_of(seed.id)
+        if c.file_path != seed.file_path and not _is_test_file(c.file_path)
+    ]
+    if len(cross_callees) < _BROKER_MIN:
+        return ""
+
+    nc = len(cross_callers)
+    ne = len(cross_callees)
+    return (
+        f"↳ broker: {nc} callers ↔ {ne} callees"
+        f" — bidirectional hub; changes ripple both upstream and downstream"
+    )
+
+
 def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000, _staleness_map: "dict[str, int | None] | None" = None) -> str:
     """Task-focused rendering with BFS graph traversal.
     Starts from search results, then follows call/render/import edges
@@ -4250,6 +4307,10 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000, _stalene
     _dead_params = _compute_dead_params(seeds, graph)
     if _dead_params:
         lines.append(_dead_params)
+        lines.append("")
+    _broker = _compute_broker_warning(seeds, graph)
+    if _broker:
+        lines.append(_broker)
         lines.append("")
     _hot_cluster = _compute_hot_cluster_note(graph, ordered)
     if _hot_cluster:
