@@ -13,8 +13,8 @@ pip install tempograph
 ### Other install methods
 
 ```bash
-# One-liner (auto-detects pip/pipx)
-curl -fsSL https://raw.githubusercontent.com/Elmoaid/tempograph/main/install.sh | bash
+# Quickstart (creates isolated env at ~/.tempograph, adds to PATH)
+curl -fsSL https://raw.githubusercontent.com/Elmoaid/tempograph/main/quickstart.sh | bash
 
 # From source
 pip install git+https://github.com/Elmoaid/tempograph.git
