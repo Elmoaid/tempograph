@@ -188,7 +188,7 @@ python3 -m bench.changelocal.analyze --canonical --conditions baseline,tempograp
 - **Adaptive gating**: Knows when NOT to inject context (avoids harm on diffuse commits)
 - **Self-improving**: Telemetry learns which modes work for which tasks and adapts
 - **Local-first**: Everything runs on your machine. No API keys, no cloud, no data leaves your laptop
-- **4,140 tests**: Comprehensive coverage across pytest + vitest
+- **4,700+ tests**: Comprehensive coverage across pytest + vitest
 
 ## License
 
