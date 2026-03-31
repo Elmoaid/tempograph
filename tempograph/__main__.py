@@ -167,6 +167,21 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="tempograph",
         description="Build and query a semantic code graph for any repository.",
+        epilog="""modes:
+  overview   Orient in an unfamiliar repo (default)
+  focus      Deep dive on a symbol or concept (-q "auth")
+  blast      What breaks if you change a file (-f src/db.ts)
+  hotspots   Highest-risk code by coupling + complexity
+  dead       Find unused exported symbols
+  diff       Impact analysis of changed files
+  lookup     Answer "what calls X?" / "who imports X?"
+  map        File tree with top symbols per file
+  deps       Circular imports and dependency layers
+  prepare    One-shot context for AI agents (-q "task description")
+  symbols    Full symbol inventory
+  arch       Module-level architecture view
+  stats      Token cost estimates per mode""",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("repo", help="Path to the repository root")
     parser.add_argument(
@@ -175,8 +190,8 @@ def main(argv: list[str] | None = None) -> int:
         default="overview",
         help="Rendering mode (default: overview)",
     )
-    parser.add_argument("--query", "-q", help="Query for focus/lookup modes")
-    parser.add_argument("--file", "-f", help="File path for blast radius mode, or comma-separated files for diff mode")
+    parser.add_argument("--query", "-q", help="Search query for focus/lookup/prepare modes")
+    parser.add_argument("--file", "-f", help="File path for blast mode, or comma-separated files for diff mode")
     parser.add_argument("--max-tokens", type=int, default=4000)
     parser.add_argument("--json", action="store_true", help="Output raw graph as JSON")
     parser.add_argument("--tokens", action="store_true", help="Show token count")
@@ -201,6 +216,23 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(raw)
     repo = str(Path(args.repo).resolve())
+
+    # Friendly error for non-existent paths
+    if not Path(repo).exists():
+        print(f"error: '{args.repo}' does not exist.", file=sys.stderr)
+        print(f"Usage: tempograph /path/to/your/repo --mode overview", file=sys.stderr)
+        return 1
+    if not Path(repo).is_dir():
+        print(f"error: '{args.repo}' is not a directory.", file=sys.stderr)
+        print(f"Usage: tempograph /path/to/your/repo --mode overview", file=sys.stderr)
+        return 1
+
+    # Validate required args before building graph (avoid wasting time)
+    if args.mode == "blast" and not args.file and not (hasattr(args, 'query') and args.query):
+        print("error: blast mode requires --file or --query.", file=sys.stderr)
+        print("  Example: tempograph . --mode blast --file src/db.ts", file=sys.stderr)
+        print("  Example: tempograph . --mode blast --query handleLogin", file=sys.stderr)
+        return 1
 
     # Info: show repo tempograph status dashboard
     if args.info:
