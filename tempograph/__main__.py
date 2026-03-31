@@ -146,7 +146,7 @@ def _run_snapshot(argv: list[str]) -> int:
     return 0 if download_snapshot(args.repo) else 1
 
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -1,6 +1,6 @@
 """tempograph — code graph context engine for AI coding agents."""
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
 
 from .builder import build_graph
 from .types import Tempo, Edge, EdgeKind, Symbol, SymbolKind, FileInfo, Language
