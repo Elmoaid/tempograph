@@ -1,0 +1,21 @@
+.git
+.tempograph
+.tempo
+.claude
+.worktrees
+notes
+plans
+scripts
+Master Plan
+docs/superpowers
+bench/results
+dist
+build
+*.egg-info
+__pycache__
+*.pyc
+.DS_Store
+..bfg-report
+node_modules
+tempo/ui/node_modules
+tempo/ui/dist

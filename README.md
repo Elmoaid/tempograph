@@ -10,6 +10,22 @@ Tempograph parses your codebase with tree-sitter, builds a structural dependency
 pip install tempograph
 ```
 
+### Other install methods
+
+```bash
+# One-liner (auto-detects pip/pipx)
+curl -fsSL https://raw.githubusercontent.com/Elmoaid/tempograph/main/install.sh | bash
+
+# From source
+pip install git+https://github.com/Elmoaid/tempograph.git
+
+# Docker (MCP server)
+docker run -v /path/to/repo:/repo ghcr.io/elmoaid/tempograph
+
+# With all optional features (170+ languages, vector search, file watching)
+pip install "tempograph[full]"
+```
+
 ## How It Works
 
 ```
