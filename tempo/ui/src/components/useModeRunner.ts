@@ -1,11 +1,11 @@
 import { useEffect, useRef, useCallback } from "react";
 import { MODES, saveRecentCommand } from "./modes";
-import { BUILTIN_KITS, type KitInfo } from "./kits";
+import { type KitInfo } from "./kits";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { useRunMode } from "../hooks/useRunMode";
 import { useOutputFilter } from "../hooks/useOutputFilter";
 import { useOutputSearch } from "../hooks/useOutputSearch";
-import { useCustomKits } from "../hooks/useCustomKits";
+import { useKitLoadingState } from "../hooks/useKitLoadingState";
 import { useOutputActions } from "../hooks/useOutputActions";
 import { useSuggestions } from "../hooks/useSuggestions";
 import { useFeedback } from "../hooks/useFeedback";
@@ -106,7 +106,7 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
     showWhichKey, setWhichKeyVisible,
     historyOpen, setHistoryOpen,
   } = usePanelState();
-  const { customKits, loadCustomKits } = useCustomKits(repoPath);
+  const { customKits, loadCustomKits, allKits } = useKitLoadingState(repoPath);
   const { modeArgs, setModeArgs } = useModeArgsState(repoPath);
   const {
     modeOutput, setModeOutput,
@@ -127,7 +127,6 @@ export function useModeRunner(repoPath: string, excludeDirs?: string[]): ModeRun
   const { runHistory, addRunHistory, history, setHistory, loadModeHistory } = useRunHistory(repoPath);
 
   const activeModeInfo = buildActiveModeInfo(activeKit, activeMode, customKits);
-  const allKits = [...BUILTIN_KITS, ...customKits];
 
   const {
     outputFilter,
