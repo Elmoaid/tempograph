@@ -4237,6 +4237,68 @@ def _compute_broker_warning(seeds: "list[Symbol]", graph: "Tempo") -> str:
     )
 
 
+def _compute_narrow_test_coverage(seeds: "list[Symbol]", graph: "Tempo") -> str:
+    """S1047: Narrow test coverage — widely-called function with only 1 test file.
+
+    A function with many production callers but exactly one test file has a dangerously
+    thin safety net. Each production caller may invoke the function in a different context
+    with different arguments and edge cases. When only one test file covers all of them,
+    the vast majority of real-world usage paths go unvalidated.
+
+    This is different from "no tests" (already shown as "Tests: none" in the test section):
+    one test file gives false confidence — developers see green coverage without realizing
+    how many calling patterns the tests never exercise.
+
+    Example outputs:
+      ↳ narrow test: 81 production callers but only 1 test file (test_parser_internals.py)
+        — safety net is thin; edge cases from other callers likely untested
+      ↳ narrow test: 27 production callers but only 1 test file (test_parser_internals.py)
+        — safety net is thin; edge cases from other callers likely untested
+
+    Distinct from:
+    - "Tests: none" (test_coverage section): fires when completely untested
+    - S56 (coverage gap): fires when CALLEES are untested, not the seed itself
+    - S508 (untyped export): fires for TS exported functions without return type
+
+    Conditions:
+    - kind: function or method
+    - not in a test file
+    - ≥8 non-test cross-file callers (broadly used in production)
+    - exactly 1 unique test file calls the seed (narrow validation)
+    """
+    if not seeds:
+        return ""
+    seed = seeds[0]
+    if seed.kind.value not in ("function", "method"):
+        return ""
+    if _is_test_file(seed.file_path):
+        return ""
+
+    _CALLER_MIN = 8
+
+    callers = graph.callers_of(seed.id)
+
+    prod_callers = [
+        c for c in callers
+        if c.file_path != seed.file_path and not _is_test_file(c.file_path)
+    ]
+    if len(prod_callers) < _CALLER_MIN:
+        return ""
+
+    test_files: set[str] = {
+        c.file_path for c in callers if _is_test_file(c.file_path)
+    }
+    if len(test_files) != 1:
+        return ""
+
+    test_file_name = sorted(test_files)[0].rsplit("/", 1)[-1]
+    return (
+        f"↳ narrow test: {len(prod_callers)} production callers but only 1 test file"
+        f" ({test_file_name})"
+        f" — safety net is thin; edge cases from other callers likely untested"
+    )
+
+
 def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000, _staleness_map: "dict[str, int | None] | None" = None) -> str:
     """Task-focused rendering with BFS graph traversal.
     Starts from search results, then follows call/render/import edges
@@ -4311,6 +4373,10 @@ def render_focused(graph: Tempo, query: str, *, max_tokens: int = 4000, _stalene
     _broker = _compute_broker_warning(seeds, graph)
     if _broker:
         lines.append(_broker)
+        lines.append("")
+    _narrow_test = _compute_narrow_test_coverage(seeds, graph)
+    if _narrow_test:
+        lines.append(_narrow_test)
         lines.append("")
     _hot_cluster = _compute_hot_cluster_note(graph, ordered)
     if _hot_cluster:
