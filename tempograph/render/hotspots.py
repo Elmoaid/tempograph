@@ -809,13 +809,9 @@ def _signals_hotspots_core_a_activity(
             )
 
 
-def _signals_hotspots_core_a_structure(
+def _a_structure_file_size(
     graph: Tempo,
     scores: list[tuple[float, Symbol]],
-    velocity: dict[str, float],
-    velocity_14: dict[str, float],
-    all_test_fps: set[str],
-    top_n: int,
     out: list[str],
 ) -> None:
     # S200: Size hotspot — the top hotspot file is also the largest file by line count.
@@ -838,28 +834,12 @@ def _signals_hotspots_core_a_structure(
                     f" ({_top200_lines} lines) — maximum cognitive load per change"
                 )
 
-    # S194: Test file hotspot — a test file appears in the top 5 hotspot ranks.
-    # Test files in the hotspot list indicate test churn, flaky tests, or spec instability.
-    # Only shown when 1+ test file is among the top 5 hotspot-ranked files.
-    if scores:
-        _top5_test_files194 = [
-            sym.file_path for _, sym in scores[:5]
-            if _is_test_file(sym.file_path)
-        ]
-        # Deduplicate
-        _seen194: set[str] = set()
-        _unique_test_fps194 = [
-            fp for fp in _top5_test_files194
-            if not (fp in _seen194 or _seen194.add(fp))  # type: ignore[func-returns-value]
-        ]
-        if False:  # PRUNED: duplicate of S242 test file hotspot
-            if _unique_test_fps194:
-                _t194_name = _unique_test_fps194[0].rsplit("/", 1)[-1]
-                out.append(
-                    f"\ntest file hotspot: {_t194_name} in top 5 hotspots — test churn"
-                    f" may indicate flaky tests or rapidly-changing spec"
-                )
 
+def _a_structure_avg_cx(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    out: list[str],
+) -> None:
     # S188: Avg complexity of top hotspot — the top hotspot file's functions are complex on average.
     # Complex-on-average files have high maintenance cost beyond any single function.
     # Only shown when avg complexity of fns in top hotspot file >= 8.
@@ -880,6 +860,12 @@ def _signals_hotspots_core_a_structure(
                     f" across {len(_cx_vals188)} fns — entire file is complex"
                 )
 
+
+def _a_structure_cluster_iface(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    out: list[str],
+) -> None:
     # S182: Hot cluster — 2+ top hotspot files share the same parent directory.
     # When multiple hot files cluster in one directory, that dir is a change concentration zone.
     # Only shown when 2+ of the top-20 hotspots are in the same directory.
@@ -922,6 +908,13 @@ def _signals_hotspots_core_a_structure(
                 f" interface(s) ({_s176_str}) — contract changes break all implementors"
             )
 
+
+def _a_structure_velocity_tests(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    velocity: dict[str, float],
+    out: list[str],
+) -> None:
     # S170: Velocity spike — the top hotspot file's velocity is >= 3x the median velocity.
     # A single file being changed far more than the rest is a concentration risk.
     # Only shown when 3+ files have non-zero velocity and top >= 3x median.
@@ -964,6 +957,21 @@ def _signals_hotspots_core_a_structure(
             out.append(
                 f"\nzero-test hotspot: {_top164_base} — top hotspot with no matching test file"
             )
+
+
+def _signals_hotspots_core_a_structure(
+    graph: Tempo,
+    scores: list[tuple[float, Symbol]],
+    velocity: dict[str, float],
+    velocity_14: dict[str, float],
+    all_test_fps: set[str],
+    top_n: int,
+    out: list[str],
+) -> None:
+    _a_structure_file_size(graph, scores, out)
+    _a_structure_avg_cx(graph, scores, out)
+    _a_structure_cluster_iface(graph, scores, out)
+    _a_structure_velocity_tests(graph, scores, velocity, out)
 
 
 def _a_risks_topology(
