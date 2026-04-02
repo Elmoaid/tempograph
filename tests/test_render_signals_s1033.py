@@ -13,6 +13,7 @@ Different from:
 """
 
 from __future__ import annotations
+import os
 import subprocess
 import types
 import pytest
@@ -243,6 +244,10 @@ class TestComputeVariantGroup:
 REPO_PATH = "/Users/elmoaidali/Desktop/tempograph"
 
 
+@pytest.mark.skipif(
+    not os.path.isdir(REPO_PATH),
+    reason="integration test requires local repo checkout",
+)
 class TestVariantGroupIntegration:
     """Integration tests: variant group fires on real A/B/C/D patterns."""
 

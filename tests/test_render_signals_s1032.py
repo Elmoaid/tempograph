@@ -10,6 +10,7 @@ Different from:
 """
 
 from __future__ import annotations
+import os
 import subprocess
 import pytest
 
@@ -257,6 +258,10 @@ class TestComputeBfsNamingClusters:
 REPO_PATH = "/Users/elmoaidali/Desktop/tempograph"
 
 
+@pytest.mark.skipif(
+    not os.path.isdir(REPO_PATH),
+    reason="integration test requires local repo checkout",
+)
 class TestBfsNamingClusterIntegration:
     """Integration test: naming cluster fires on the real codebase."""
 
