@@ -2134,8 +2134,9 @@ def _signals_fn_props_a_module(
         if not _is_test_file(_prim744.file_path):
             _importers744 = graph.importers_of(_prim744.file_path)
             if _importers744 and all(_is_test_file(f) for f in _importers744):
+                _fname744 = _prim744.file_path.replace('\\', '/').rsplit('/', 1)[-1]
                 lines.append(
-                    f"\ntest-only importer: {_prim744.file_path.replace('\\\\', '/').rsplit('/', 1)[-1]}"
+                    f"\ntest-only importer: {_fname744}"
                     f" is imported only by test files"
                     f" — production code doesn't use this file; verify it's not dead"
                 )
