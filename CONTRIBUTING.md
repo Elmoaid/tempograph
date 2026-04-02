@@ -50,4 +50,4 @@ Use the [bug report template](https://github.com/Elmoaid/tempograph/issues/new?t
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the same [BSL 1.1](LICENSE) as the rest of the project.
+By contributing, you agree that your contributions will be licensed under the same [AGPL-3.0](LICENSE) as the rest of the project.

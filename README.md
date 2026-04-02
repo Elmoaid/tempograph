@@ -3,7 +3,7 @@
 <!-- mcp-name: io.github.Elmoaid/tempograph -->
 
 [![CI](https://github.com/Elmoaid/TempoGraph/actions/workflows/ci.yml/badge.svg)](https://github.com/Elmoaid/TempoGraph/actions/workflows/ci.yml)
-[![License: BSL 1.1](https://img.shields.io/badge/License-BSL%201.1-blue.svg)](LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 
 **Code graph context engine for developers and AI agents.**
@@ -234,10 +234,10 @@ If TempoGraph saves you time, consider [sponsoring the project](https://github.c
 
 ## Commercial Licensing
 
-TempoGraph is free for individual and internal use. If you're building a **commercial hosted service** that incorporates TempoGraph (IDE plugins, SaaS code analysis, AI coding platforms), you need a commercial license.
+TempoGraph is AGPL-3.0 — free to use, modify, and distribute. If you use TempoGraph in a **network service** (SaaS, hosted IDE, AI coding platform), AGPL requires you to open-source your service code. If that doesn't work for you, commercial licenses are available.
 
-Contact **elmoaid@gmail.com** for licensing terms.
+Contact **elmoaid@gmail.com** for commercial licensing terms.
 
 ## License
 
-[BSL 1.1](LICENSE) — free to use, can't resell as a hosted service. Converts to Apache 2.0 on 2030-03-22.
+[AGPL-3.0](LICENSE) — free to use. Network service use requires source disclosure, or a [commercial license](mailto:elmoaid@gmail.com).
