@@ -255,7 +255,7 @@ class TestComputeBfsNamingClusters:
 # Integration test: fires on real codebase for render_focused
 # ---------------------------------------------------------------------------
 
-REPO_PATH = "/Users/elmoaidali/Desktop/tempograph"
+REPO_PATH = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 @pytest.mark.skipif(

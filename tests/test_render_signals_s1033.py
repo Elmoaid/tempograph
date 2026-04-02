@@ -241,7 +241,7 @@ class TestComputeVariantGroup:
 # Integration test: fires on the real codebase
 # ---------------------------------------------------------------------------
 
-REPO_PATH = "/Users/elmoaidali/Desktop/tempograph"
+REPO_PATH = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 @pytest.mark.skipif(

@@ -29,3 +29,10 @@ AGENT_GUIDE.md
 bench/
 CLAUDE.md
 CHANGELOG.md
+
+# Credentials and tooling
+.mcpregistry_*
+mcp-publisher
+uv.lock
+report/
+report_scheduled_tasks/

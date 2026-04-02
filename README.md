@@ -1,4 +1,4 @@
-# Tempograph
+# TempoGraph
 
 <!-- mcp-name: io.github.Elmoaid/tempograph -->
 
@@ -13,7 +13,7 @@
 
 **Your AI agent finds the right files. Every time.**
 
-Tempograph builds a dependency graph of your codebase and gives your AI coding agent exactly the files it needs before making changes. One tool call. No guessing.
+TempoGraph builds a dependency graph of your codebase and gives your AI coding agent exactly the files it needs before making changes. One tool call. No guessing.
 
 <p align="center">
   <img src="docs/demo.gif" alt="TempoGraph demo" width="700">
@@ -42,13 +42,13 @@ Add to your MCP config (Claude Code, Cursor, Windsurf, or any MCP client):
 }
 ```
 
-Your agent calls `prepare_context` with a task description. Tempograph returns the exact files that matter — based on real dependency analysis, not text matching.
+Your agent calls `prepare_context` with a task description. TempoGraph returns the exact files that matter — based on real dependency analysis, not text matching.
 
 ## Does It Work?
 
 Tested on real PRs from django, flask, httpx, fastapi, requests, and pydantic. Task: predict which files need to change.
 
-| Model | Without Tempograph | With Tempograph | Improvement |
+| Model | Without TempoGraph | With TempoGraph | Improvement |
 |-------|-------------------|-----------------|-------------|
 | GPT-4o | 21.7% F1 | 27.5% F1 | **+27%** |
 | GPT-4o-mini | 19.2% F1 | 24.5% F1 | **+28%** |
@@ -73,7 +73,7 @@ your repo ──→ tree-sitter parse ──→ symbols + edges ──→ SQLite
 
 ## What Else Can It Do?
 
-Beyond `prepare_context`, Tempograph exposes 24 MCP tools for deeper analysis when your agent needs it:
+Beyond `prepare_context`, TempoGraph exposes 24 MCP tools for deeper analysis when your agent needs it:
 
 | Tool | When to use it |
 |------|---------------|

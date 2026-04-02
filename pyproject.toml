@@ -4,15 +4,15 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tempograph"
-version = "0.7.3"
-description = "Code graph context engine for AI coding agents — structural dependency graph with adaptive injection"
+version = "0.7.4"
+description = "Your AI agent finds the right files. Code graph context engine with 24 MCP tools, 170+ languages, triple search."
 readme = "README.md"
 license = {text = "AGPL-3.0-only"}
 authors = [
     {name = "Elmo", email = "eali@needspec.com"},
 ]
 requires-python = ">=3.11"
-keywords = ["code-graph", "ai-agents", "context", "mcp", "tree-sitter", "code-analysis"]
+keywords = ["code-graph", "ai-agents", "context", "mcp", "tree-sitter", "code-analysis", "dependency-graph", "model-context-protocol", "code-intelligence", "code-context"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
@@ -65,9 +65,11 @@ tempo = "tempo.cli:main"
 tempograph-server = "tempograph.server:run_server"
 
 [project.urls]
-Homepage = "https://github.com/Elmoaid/TempoGraph"
+Homepage = "https://elmoaid.github.io/TempoGraph/"
+Documentation = "https://elmoaid.github.io/TempoGraph/"
 Repository = "https://github.com/Elmoaid/TempoGraph"
 Issues = "https://github.com/Elmoaid/TempoGraph/issues"
+Changelog = "https://github.com/Elmoaid/TempoGraph/releases"
 
 [tool.hatch.build.targets.wheel]
 packages = ["tempograph", "tempo"]
