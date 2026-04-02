@@ -22,7 +22,6 @@
     </linearGradient>
   </defs>
 
-  <!-- Background -->
   <rect width="1280" height="640" fill="url(#bg)"/>
 
   <!-- Subtle grid -->
@@ -43,57 +42,49 @@
     <line x1="1120" y1="0" x2="1120" y2="640"/>
   </g>
 
-  <!-- Graph nodes (background decoration) -->
-  <!-- Node cluster - left side -->
-  <circle cx="115" cy="180" r="28" fill="url(#node1)" stroke="#58a6ff" stroke-width="1" opacity="0.6"/>
-  <circle cx="180" cy="120" r="20" fill="url(#node2)" stroke="#bc8cff" stroke-width="1" opacity="0.4"/>
-  <circle cx="60" cy="260" r="16" fill="url(#node3)" stroke="#3fb950" stroke-width="1" opacity="0.4"/>
-  <circle cx="200" cy="230" r="22" fill="url(#node1)" stroke="#58a6ff" stroke-width="1" opacity="0.3"/>
-  <circle cx="90" cy="340" r="14" fill="url(#node2)" stroke="#bc8cff" stroke-width="1" opacity="0.3"/>
+  <!-- Graph nodes - left -->
+  <circle cx="95" cy="160" r="30" fill="url(#node1)" stroke="#58a6ff" stroke-width="1.2" opacity="0.6"/>
+  <circle cx="170" cy="100" r="22" fill="url(#node2)" stroke="#bc8cff" stroke-width="1" opacity="0.45"/>
+  <circle cx="45" cy="245" r="18" fill="url(#node3)" stroke="#3fb950" stroke-width="1" opacity="0.4"/>
+  <circle cx="190" cy="210" r="24" fill="url(#node1)" stroke="#58a6ff" stroke-width="1" opacity="0.35"/>
+  <circle cx="75" cy="330" r="15" fill="url(#node2)" stroke="#bc8cff" stroke-width="1" opacity="0.3"/>
+  <circle cx="160" cy="300" r="12" fill="url(#node3)" stroke="#3fb950" stroke-width="1" opacity="0.25"/>
+  <line x1="95" y1="160" x2="170" y2="100" stroke="#58a6ff" stroke-width="1" opacity="0.2"/>
+  <line x1="95" y1="160" x2="45" y2="245" stroke="#58a6ff" stroke-width="1" opacity="0.15"/>
+  <line x1="95" y1="160" x2="190" y2="210" stroke="#bc8cff" stroke-width="1" opacity="0.15"/>
+  <line x1="45" y1="245" x2="75" y2="330" stroke="#3fb950" stroke-width="1" opacity="0.12"/>
+  <line x1="190" y1="210" x2="160" y2="300" stroke="#3fb950" stroke-width="1" opacity="0.1"/>
 
-  <!-- Edges between nodes -->
-  <line x1="115" y1="180" x2="180" y2="120" stroke="#58a6ff" stroke-width="1" opacity="0.2"/>
-  <line x1="115" y1="180" x2="60" y2="260" stroke="#58a6ff" stroke-width="1" opacity="0.15"/>
-  <line x1="115" y1="180" x2="200" y2="230" stroke="#bc8cff" stroke-width="1" opacity="0.15"/>
-  <line x1="60" y1="260" x2="90" y2="340" stroke="#3fb950" stroke-width="1" opacity="0.12"/>
-  <line x1="200" y1="230" x2="180" y2="120" stroke="#bc8cff" stroke-width="1" opacity="0.12"/>
+  <!-- Graph nodes - right -->
+  <circle cx="1155" cy="350" r="26" fill="url(#node2)" stroke="#bc8cff" stroke-width="1.2" opacity="0.5"/>
+  <circle cx="1215" cy="290" r="20" fill="url(#node1)" stroke="#58a6ff" stroke-width="1" opacity="0.4"/>
+  <circle cx="1090" cy="425" r="22" fill="url(#node3)" stroke="#3fb950" stroke-width="1" opacity="0.35"/>
+  <circle cx="1230" cy="410" r="15" fill="url(#node1)" stroke="#58a6ff" stroke-width="1" opacity="0.3"/>
+  <circle cx="1170" cy="500" r="18" fill="url(#node2)" stroke="#bc8cff" stroke-width="1" opacity="0.25"/>
+  <line x1="1155" y1="350" x2="1215" y2="290" stroke="#bc8cff" stroke-width="1" opacity="0.2"/>
+  <line x1="1155" y1="350" x2="1090" y2="425" stroke="#58a6ff" stroke-width="1" opacity="0.15"/>
+  <line x1="1155" y1="350" x2="1230" y2="410" stroke="#3fb950" stroke-width="1" opacity="0.15"/>
+  <line x1="1090" y1="425" x2="1170" y2="500" stroke="#bc8cff" stroke-width="1" opacity="0.12"/>
 
-  <!-- Node cluster - right side -->
-  <circle cx="1140" cy="380" r="24" fill="url(#node2)" stroke="#bc8cff" stroke-width="1" opacity="0.5"/>
-  <circle cx="1200" cy="320" r="18" fill="url(#node1)" stroke="#58a6ff" stroke-width="1" opacity="0.4"/>
-  <circle cx="1080" cy="450" r="20" fill="url(#node3)" stroke="#3fb950" stroke-width="1" opacity="0.35"/>
-  <circle cx="1220" cy="440" r="14" fill="url(#node1)" stroke="#58a6ff" stroke-width="1" opacity="0.3"/>
-  <circle cx="1160" cy="520" r="16" fill="url(#node2)" stroke="#bc8cff" stroke-width="1" opacity="0.25"/>
-
-  <line x1="1140" y1="380" x2="1200" y2="320" stroke="#bc8cff" stroke-width="1" opacity="0.2"/>
-  <line x1="1140" y1="380" x2="1080" y2="450" stroke="#58a6ff" stroke-width="1" opacity="0.15"/>
-  <line x1="1140" y1="380" x2="1220" y2="440" stroke="#3fb950" stroke-width="1" opacity="0.15"/>
-  <line x1="1080" y1="450" x2="1160" y2="520" stroke="#bc8cff" stroke-width="1" opacity="0.12"/>
-
-  <!-- Main title -->
-  <text x="640" y="235" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="72" font-weight="700" fill="#f0f6fc" letter-spacing="-1">tempograph</text>
+  <!-- Title -->
+  <text x="640" y="195" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="80" font-weight="700" fill="#f0f6fc" letter-spacing="-1.5">TempoGraph</text>
 
   <!-- Accent line -->
-  <rect x="520" y="260" width="240" height="3" rx="1.5" fill="url(#accent)" opacity="0.8"/>
+  <rect x="490" y="220" width="300" height="3" rx="1.5" fill="url(#accent)" opacity="0.8"/>
 
-  <!-- Subtitle -->
-  <text x="640" y="310" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="24" fill="#8b949e">Code graph context engine for AI coding agents</text>
+  <!-- Hook line -->
+  <text x="640" y="275" text-anchor="middle" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="26" font-weight="600" fill="#f0f6fc">Stop guessing. See your entire codebase at a glance.</text>
 
-  <!-- Stats row -->
-  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
-    <!-- Stat 1 -->
-    <text x="310" y="420" text-anchor="middle" font-size="32" font-weight="700" fill="#58a6ff">+18.6%</text>
-    <text x="310" y="448" text-anchor="middle" font-size="14" fill="#8b949e">F1 improvement (p=0.049)</text>
+  <!-- The sell - three punchy lines -->
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" text-anchor="middle">
+    <text x="640" y="350" font-size="18" fill="#8b949e">Every function, every dependency, every risk</text>
+    <text x="640" y="378" font-size="18" fill="#8b949e">mapped and searchable in milliseconds.</text>
 
-    <!-- Stat 2 -->
-    <text x="640" y="420" text-anchor="middle" font-size="32" font-weight="700" fill="#bc8cff">24</text>
-    <text x="640" y="448" text-anchor="middle" font-size="14" fill="#8b949e">MCP tools</text>
-
-    <!-- Stat 3 -->
-    <text x="970" y="420" text-anchor="middle" font-size="32" font-weight="700" fill="#3fb950">170+</text>
-    <text x="970" y="448" text-anchor="middle" font-size="14" fill="#8b949e">languages</text>
+    <text x="640" y="430" font-size="18" fill="#58a6ff">24 tools for your AI agent.</text>
+    <text x="640" y="458" font-size="18" fill="#bc8cff">A full desktop app for you.</text>
+    <text x="640" y="486" font-size="18" fill="#3fb950">170+ languages out of the box.</text>
   </g>
 
-  <!-- Bottom tagline -->
-  <text x="640" y="540" text-anchor="middle" font-family="'SF Mono', 'Fira Code', 'Fira Mono', Menlo, monospace" font-size="16" fill="#484f58">pip install tempograph</text>
+  <!-- Bottom -->
+  <text x="640" y="565" text-anchor="middle" font-family="'SF Mono', 'Fira Code', 'Fira Mono', Menlo, monospace" font-size="15" fill="#484f58">pip install tempograph</text>
 </svg>
