@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "tempograph"
-version = "0.7.2"
+version = "0.7.3"
 description = "Code graph context engine for AI coding agents — structural dependency graph with adaptive injection"
 readme = "README.md"
 license = {text = "AGPL-3.0-only"}

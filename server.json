@@ -7,12 +7,12 @@
     "url": "https://github.com/Elmoaid/TempoGraph",
     "source": "github"
   },
-  "version": "0.7.2",
+  "version": "0.7.3",
   "packages": [
     {
       "registryType": "pypi",
       "identifier": "tempograph",
-      "version": "0.7.2",
+      "version": "0.7.3",
       "transport": {
         "type": "stdio"
       }
