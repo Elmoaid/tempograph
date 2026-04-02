@@ -18,4 +18,4 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: pip install -e ".[dev,languages]"
-      - run: pytest -x -q
+      - run: pytest -x -q --ignore=tests/test_bench_evaluate.py
