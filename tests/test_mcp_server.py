@@ -72,6 +72,8 @@ def test_agent_guide_bench_numbers():
     Canonical bench command must be present so users can verify independently.
     """
     agent_guide = Path(__file__).parent.parent / "AGENT_GUIDE.md"
+    if not agent_guide.exists():
+        pytest.skip("AGENT_GUIDE.md not in repo (stripped from public release)")
     content = agent_guide.read_text()
     # Fabricated numbers that have been reinserted multiple times by automated tasks
     assert "+13.4%" not in content, "Fabricated precision_filter +13.4% in AGENT_GUIDE"
