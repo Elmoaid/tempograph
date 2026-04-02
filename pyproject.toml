@@ -53,7 +53,7 @@ watch = [
     "watchfiles>=0.20",
 ]
 languages = [
-    "tree-sitter-language-pack>=0.10",
+    "tree-sitter-language-pack>=0.13",
 ]
 full = [
     "tempograph[semantic,watch,languages]",
