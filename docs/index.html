@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Tempograph — Your AI agent finds the right files</title>
-  <meta name="description" content="Tempograph gives your AI coding agent the exact files it needs before making changes. One tool call. +27% improvement on file selection accuracy.">
-  <meta property="og:title" content="Tempograph">
+  <title>TempoGraph — Your AI agent finds the right files</title>
+  <meta name="description" content="TempoGraph gives your AI coding agent the exact files it needs before making changes. 24 MCP tools, 170+ languages, +27% improvement on file selection.">
+  <meta property="og:title" content="TempoGraph">
   <meta property="og:description" content="Your AI agent finds the right files. Every time. +27% F1 improvement across GPT-4o, GPT-4o-mini, and qwen.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://elmoaid.github.io/TempoGraph/">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Tempograph">
+  <meta name="twitter:title" content="TempoGraph">
   <meta name="twitter:description" content="Your AI agent finds the right files. Every time.">
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -40,7 +40,7 @@
     /* Hero */
     .hero {
       text-align: center;
-      padding: 100px 0 40px;
+      padding: 80px 0 32px;
     }
 
     .hero h1 {
@@ -68,7 +68,7 @@
       font-size: 18px;
       color: var(--muted);
       max-width: 560px;
-      margin: 0 auto 40px;
+      margin: 0 auto 32px;
     }
 
     .install-box {
@@ -86,6 +86,28 @@
 
     .install-box:hover { border-color: var(--blue); }
     .install-box .dollar { color: var(--muted); margin-right: 8px; }
+
+    .badges {
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 20px;
+      flex-wrap: wrap;
+    }
+
+    .badges img { height: 20px; }
+
+    /* Demo */
+    .demo {
+      text-align: center;
+      padding: 40px 0;
+    }
+
+    .demo img {
+      max-width: 100%;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+    }
 
     /* Problem/Solution */
     .problem-solution {
@@ -121,7 +143,7 @@
     }
 
     .problem-solution ul li::before {
-      content: "→ ";
+      content: "\2192 ";
       color: var(--blue);
     }
 
@@ -131,25 +153,76 @@
     /* Stats */
     .stats {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(4, 1fr);
       gap: 24px;
       padding: 60px 0;
       border-top: 1px solid var(--border);
       border-bottom: 1px solid var(--border);
     }
 
-    .stat { text-align: center; padding: 24px; }
+    .stat { text-align: center; padding: 24px 8px; }
 
     .stat .number {
-      font-size: 40px;
+      font-size: 36px;
       font-weight: 700;
       margin-bottom: 4px;
     }
 
-    .stat .label { font-size: 14px; color: var(--muted); }
+    .stat .label { font-size: 13px; color: var(--muted); }
     .stat:nth-child(1) .number { color: var(--blue); }
     .stat:nth-child(2) .number { color: var(--purple); }
     .stat:nth-child(3) .number { color: var(--green); }
+    .stat:nth-child(4) .number { color: var(--blue); }
+
+    /* Benchmarks */
+    .benchmarks {
+      padding: 80px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .benchmarks h2 {
+      font-size: 32px;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+
+    .benchmarks .bench-sub {
+      color: var(--muted);
+      font-size: 15px;
+      margin-bottom: 32px;
+    }
+
+    .bench-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden;
+    }
+
+    .bench-table th, .bench-table td {
+      padding: 14px 20px;
+      text-align: left;
+      font-size: 14px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .bench-table th {
+      background: var(--bg3);
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .bench-table td:nth-child(4) {
+      color: var(--green);
+      font-weight: 600;
+    }
+
+    .bench-table tr:last-child td { border-bottom: none; }
 
     /* How it works */
     .section { padding: 80px 0; }
@@ -247,7 +320,10 @@
     .btn:hover { opacity: 0.85; }
     .btn-primary { background: var(--blue); color: var(--bg); margin-right: 12px; }
     .btn-secondary { background: var(--bg3); color: var(--text); border: 1px solid var(--border); }
+    .btn-glama { background: var(--bg3); color: var(--text); border: 1px solid var(--border); }
     .btn-sponsor { background: #bf4b8a; color: #fff; }
+
+    .cta-buttons { display: flex; justify-content: center; gap: 12px; flex-wrap: wrap; }
 
     /* Sponsor + Licensing */
     .sponsor-licensing {
@@ -285,11 +361,13 @@
       .hero h1 { font-size: 40px; }
       .hero .tagline { font-size: 22px; }
       .hero .sub { font-size: 16px; }
-      .stats { grid-template-columns: 1fr; gap: 0; }
-      .stat .number { font-size: 32px; }
+      .stats { grid-template-columns: repeat(2, 1fr); gap: 0; }
+      .stat .number { font-size: 28px; }
       .problem-solution { grid-template-columns: 1fr; }
       .use-cases { grid-template-columns: 1fr; }
       .sponsor-licensing { grid-template-columns: 1fr; }
+      .bench-table { font-size: 13px; }
+      .bench-table th, .bench-table td { padding: 10px 12px; }
     }
   </style>
 </head>
@@ -297,13 +375,23 @@
 
   <div class="container">
     <section class="hero">
-      <h1>tempograph</h1>
+      <h1>TempoGraph</h1>
       <div class="accent-line"></div>
       <p class="tagline">Your AI agent finds the right files. Every time.</p>
       <p class="sub">One MCP tool call gives your coding agent the exact files it needs before making changes. No guessing. No irrelevant context.</p>
       <div class="install-box" onclick="navigator.clipboard.writeText('pip install tempograph')" title="Click to copy">
         <span class="dollar">$</span>pip install tempograph
       </div>
+      <div class="badges">
+        <a href="https://github.com/Elmoaid/TempoGraph"><img src="https://img.shields.io/github/stars/Elmoaid/TempoGraph?style=flat&logo=github&label=Stars" alt="GitHub stars"></a>
+        <a href="https://pypi.org/project/tempograph/"><img src="https://img.shields.io/pypi/v/tempograph?color=blue" alt="PyPI version"></a>
+        <a href="https://glama.ai/mcp/servers/Elmoaid/TempoGraph"><img src="https://glama.ai/mcp/servers/Elmoaid/TempoGraph/badges/score.svg" alt="Glama score"></a>
+        <a href="https://github.com/Elmoaid/TempoGraph/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-AGPL%20v3-blue.svg" alt="License"></a>
+      </div>
+    </section>
+
+    <section class="demo">
+      <img src="demo.gif" alt="TempoGraph demo — AI agent finding the right files" loading="lazy">
     </section>
 
     <section class="problem-solution">
@@ -320,28 +408,66 @@
       <div class="card card-solution">
         <h3>The fix</h3>
         <ul>
-          <li>Tempograph builds a real dependency graph</li>
+          <li>TempoGraph builds a real dependency graph</li>
           <li>Agent calls <code>prepare_context</code></li>
           <li>Gets the exact files that matter</li>
-          <li>Based on structural analysis, not text matching</li>
-          <li>Knows when to skip context (adaptive gating)</li>
+          <li>Triple search: structural + semantic + keyword</li>
+          <li>Adaptive gating: knows when to skip context</li>
         </ul>
       </div>
     </section>
 
     <section class="stats">
       <div class="stat">
-        <div class="number">+27%</div>
-        <div class="label">Better file selection (GPT-4o)</div>
+        <div class="number">24</div>
+        <div class="label">MCP tools</div>
+      </div>
+      <div class="stat">
+        <div class="number">170+</div>
+        <div class="label">Languages supported</div>
       </div>
       <div class="stat">
         <div class="number">21ms</div>
         <div class="label">Warm query time</div>
       </div>
       <div class="stat">
-        <div class="number">p=0.049</div>
-        <div class="label">Statistically significant</div>
+        <div class="number">4,800+</div>
+        <div class="label">Tests</div>
       </div>
+    </section>
+
+    <section class="benchmarks">
+      <h2>Benchmarked on real PRs</h2>
+      <p class="bench-sub">Tested on django, flask, httpx, fastapi, requests, and pydantic. Task: predict which files need to change.</p>
+      <table class="bench-table">
+        <thead>
+          <tr>
+            <th>Model</th>
+            <th>Without TempoGraph</th>
+            <th>With TempoGraph</th>
+            <th>Improvement</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>GPT-4o</td>
+            <td>21.7% F1</td>
+            <td>27.5% F1</td>
+            <td>+27%</td>
+          </tr>
+          <tr>
+            <td>GPT-4o-mini</td>
+            <td>19.2% F1</td>
+            <td>24.5% F1</td>
+            <td>+28%</td>
+          </tr>
+          <tr>
+            <td>qwen2.5-coder:32b</td>
+            <td colspan="2" style="text-align: center; color: var(--muted);">canonical benchmark (p=0.049)</td>
+            <td>+18.6%</td>
+          </tr>
+        </tbody>
+      </table>
     </section>
 
     <section class="section">
@@ -386,9 +512,9 @@
           <code>diff_context</code>
         </div>
         <div class="use-case">
-          <h3>"Orient me"</h3>
-          <p>New to a codebase? Get size, languages, entry points, key files.</p>
-          <code>overview</code>
+          <h3>"Find anything"</h3>
+          <p>Hybrid search: structural graph + semantic vectors + FTS5 keywords, fused via RRF.</p>
+          <code>search_semantic</code>
         </div>
       </div>
     </section>
@@ -410,28 +536,31 @@
 
     <section class="cta">
       <h2>Give your agent better context</h2>
-      <p>Install tempograph and stop guessing which files matter.</p>
-      <a href="https://github.com/Elmoaid/TempoGraph" class="btn btn-primary">View on GitHub</a>
-      <a href="https://pypi.org/project/tempograph/" class="btn btn-secondary">PyPI</a>
+      <p>Install TempoGraph and stop guessing which files matter.</p>
+      <div class="cta-buttons">
+        <a href="https://github.com/Elmoaid/TempoGraph" class="btn btn-primary">GitHub</a>
+        <a href="https://pypi.org/project/tempograph/" class="btn btn-secondary">PyPI</a>
+        <a href="https://glama.ai/mcp/servers/Elmoaid/TempoGraph" class="btn btn-glama">Glama</a>
+      </div>
     </section>
 
     <section class="sponsor-licensing">
       <div class="card">
         <h3>Sponsor</h3>
-        <p>If Tempograph saves you time, consider sponsoring continued development.</p>
+        <p>If TempoGraph saves you time, consider sponsoring continued development.</p>
         <a href="https://github.com/sponsors/Elmoaid" class="btn btn-sponsor">Sponsor on GitHub</a>
       </div>
       <div class="card">
         <h3>Commercial Licensing</h3>
-        <p>Tempograph is AGPL-3.0 — free to use and modify. Network service use requires source disclosure, or a commercial license.</p>
-        <a href="mailto:elmoaid@gmail.com" class="btn btn-secondary">elmoaid@gmail.com</a>
+        <p>TempoGraph is AGPL-3.0 — free to use and modify. Network service use requires source disclosure, or a commercial license.</p>
+        <a href="mailto:eali@needspec.com" class="btn btn-secondary">eali@needspec.com</a>
       </div>
     </section>
   </div>
 
   <footer>
     <div class="container">
-      Built by <a href="https://github.com/Elmoaid">Elmo Aidali</a> · <a href="https://github.com/Elmoaid/TempoGraph/blob/main/LICENSE">AGPL-3.0</a> · <a href="https://github.com/Elmoaid/TempoGraph">GitHub</a>
+      Built by <a href="https://github.com/Elmoaid">Elmo Aidali</a> · <a href="https://github.com/Elmoaid/TempoGraph/blob/main/LICENSE">AGPL-3.0</a> · <a href="https://github.com/Elmoaid/TempoGraph">GitHub</a> · <a href="https://glama.ai/mcp/servers/Elmoaid/TempoGraph">Glama</a>
     </div>
   </footer>
 

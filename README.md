@@ -152,8 +152,8 @@ If TempoGraph saves you time, consider [sponsoring the project](https://github.c
 
 TempoGraph is AGPL-3.0 — free to use, modify, and distribute. If you use TempoGraph in a **network service** (SaaS, hosted IDE, AI coding platform), AGPL requires you to open-source your service code. If that doesn't work for you, commercial licenses are available.
 
-Contact **elmoaid@gmail.com** for commercial licensing terms.
+Contact **eali@needspec.com** for commercial licensing terms.
 
 ## License
 
-[AGPL-3.0](LICENSE) — free to use. Network service use requires source disclosure, or a [commercial license](mailto:elmoaid@gmail.com).
+[AGPL-3.0](LICENSE) — free to use. Network service use requires source disclosure, or a [commercial license](mailto:eali@needspec.com).

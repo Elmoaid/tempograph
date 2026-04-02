@@ -22,7 +22,7 @@ We want tempograph's community to be welcoming to everyone, regardless of experi
 
 ## Enforcement
 
-If someone is making the community worse, report it to elmoaid@gmail.com. Reports will be reviewed and acted on. Maintainers who don't follow the Code of Conduct may be removed from the project.
+If someone is making the community worse, report it to eali@needspec.com. Reports will be reviewed and acted on. Maintainers who don't follow the Code of Conduct may be removed from the project.
 
 ## Scope
 

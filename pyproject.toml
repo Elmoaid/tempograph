@@ -9,7 +9,7 @@ description = "Code graph context engine for AI coding agents — structural dep
 readme = "README.md"
 license = {text = "AGPL-3.0-only"}
 authors = [
-    {name = "Elmo", email = "elmoaid@gmail.com"},
+    {name = "Elmo", email = "eali@needspec.com"},
 ]
 requires-python = ">=3.11"
 keywords = ["code-graph", "ai-agents", "context", "mcp", "tree-sitter", "code-analysis"]
