@@ -22,3 +22,7 @@ Master Plan/
 .worktrees/
 HANDOFF.md
 docs/superpowers/
+
+# Internal docs
+AGENT_GUIDE.md
+bench/
