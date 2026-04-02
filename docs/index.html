@@ -257,6 +257,46 @@
     footer a { color: var(--blue); text-decoration: none; }
     footer a:hover { text-decoration: underline; }
 
+    /* Sponsor + Licensing */
+    .sponsor-licensing {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 24px;
+      padding: 60px 0;
+      border-top: 1px solid var(--border);
+    }
+
+    .sponsor-licensing .card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 28px;
+    }
+
+    .sponsor-licensing h3 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    .sponsor-licensing p {
+      font-size: 14px;
+      color: var(--muted);
+      line-height: 1.5;
+      margin-bottom: 16px;
+    }
+
+    .sponsor-licensing a.btn { font-size: 14px; padding: 8px 20px; }
+
+    .btn-sponsor {
+      background: #bf4b8a;
+      color: #fff;
+    }
+
+    @media (max-width: 640px) {
+      .sponsor-licensing { grid-template-columns: 1fr; }
+    }
+
     @media (max-width: 640px) {
       .hero h1 { font-size: 40px; }
       .hero p { font-size: 18px; }
@@ -365,6 +405,19 @@
       <p>Install tempograph and give your AI agent better context in under a minute.</p>
       <a href="https://github.com/Elmoaid/tempograph" class="btn btn-primary">View on GitHub</a>
       <a href="https://pypi.org/project/tempograph/" class="btn btn-secondary">PyPI</a>
+    </section>
+
+    <section class="sponsor-licensing">
+      <div class="card">
+        <h3>Sponsor</h3>
+        <p>Tempograph is free for non-production use. If it saves you time, consider sponsoring continued development.</p>
+        <a href="https://github.com/sponsors/Elmoaid" class="btn btn-sponsor">Sponsor on GitHub</a>
+      </div>
+      <div class="card">
+        <h3>Commercial Licensing</h3>
+        <p>Tempograph is licensed under BSL 1.1 — free for non-production use, converts to Apache 2.0 after 3 years. For production or commercial use, contact us for a license.</p>
+        <a href="mailto:elmoaid@gmail.com" class="btn btn-secondary">elmoaid@gmail.com</a>
+      </div>
     </section>
   </div>
 
