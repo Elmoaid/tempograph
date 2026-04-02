@@ -7,6 +7,10 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 [![TempoGraph MCP server](https://glama.ai/mcp/servers/Elmoaid/TempoGraph/badges/score.svg)](https://glama.ai/mcp/servers/Elmoaid/TempoGraph)
 
+<a href="https://glama.ai/mcp/servers/Elmoaid/TempoGraph">
+  <img src="https://glama.ai/mcp/servers/Elmoaid/TempoGraph/badges/card.svg" alt="TempoGraph MCP server" width="400">
+</a>
+
 **Your AI agent finds the right files. Every time.**
 
 Tempograph builds a dependency graph of your codebase and gives your AI coding agent exactly the files it needs before making changes. One tool call. No guessing.
