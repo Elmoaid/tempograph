@@ -9,7 +9,22 @@ def _build(tmp_path, filename: str, content: str):
     return build_graph(str(tmp_path), use_cache=False)
 
 
+def _bash_function_keyword_works():
+    """Check if tree-sitter bash grammar supports `function` keyword form."""
+    try:
+        from tree_sitter_language_pack import get_parser
+        p = get_parser("bash")
+        tree = p.parse(b"function f() { echo ok; }\n")
+        return any(n.type == "function_definition" for n in tree.root_node.children)
+    except Exception:
+        return False
+
+
+_has_function_keyword = _bash_function_keyword_works()
+
+
 class TestBashFunctions:
+    @pytest.mark.skipif(not _has_function_keyword, reason="bash grammar lacks function keyword support")
     def test_function_keyword_form_extracted(self, tmp_path):
         g = _build(tmp_path, "deploy.sh", "function build() {\n  echo ok\n}\n")
         assert any(s.name == "build" for s in g.symbols.values())
@@ -18,6 +33,7 @@ class TestBashFunctions:
         g = _build(tmp_path, "util.sh", "cleanup() {\n  rm -rf /tmp/work\n}\n")
         assert any(s.name == "cleanup" for s in g.symbols.values())
 
+    @pytest.mark.skipif(not _has_function_keyword, reason="bash grammar lacks function keyword support")
     def test_function_kind(self, tmp_path):
         g = _build(tmp_path, "lib.sh", "function greet() {\n  echo hi\n}\n")
         sym = next(s for s in g.symbols.values() if s.name == "greet")
@@ -33,6 +49,7 @@ class TestBashFunctions:
         sym = next(s for s in g.symbols.values() if s.name == "_helper")
         assert sym.exported is False
 
+    @pytest.mark.skipif(not _has_function_keyword, reason="bash grammar lacks function keyword support")
     def test_multiple_functions_extracted(self, tmp_path):
         g = _build(tmp_path, "ops.sh",
             "function start() { echo start; }\n"
