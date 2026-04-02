@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.elmoaid/tempograph",
   "title": "TempoGraph",
-  "description": "Code graph context engine for developers and AI agents. Parses codebases with tree-sitter (170+ languages), builds structural dependency graphs, and provides 24 MCP tools for code intelligence including focus, blast radius, hotspots, dead code detection, and adaptive context injection.",
+  "description": "Code graph context engine with 24 MCP tools. 170+ languages via tree-sitter.",
   "repository": {
     "url": "https://github.com/Elmoaid/TempoGraph",
     "source": "github"
