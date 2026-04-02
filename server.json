@@ -1,6 +1,6 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "io.github.elmoaid/tempograph",
+  "name": "io.github.Elmoaid/tempograph",
   "title": "TempoGraph",
   "description": "Code graph context engine with 24 MCP tools. 170+ languages via tree-sitter.",
   "repository": {
