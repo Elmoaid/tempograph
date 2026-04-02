@@ -1,0 +1,54 @@
+name: Feature Request
+description: Got an idea? We're listening.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Feature requests help shape where tempograph goes next. Don't worry about formatting, just tell us what you need.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: What are you trying to do that tempograph can't do right now?
+      placeholder: "When I'm working on a large monorepo, I need to..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: What would the solution look like?
+      description: How do you imagine this working? CLI flag, new MCP tool, config option, etc.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you've tried
+      description: Any workarounds you're using right now?
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Which part of tempograph?
+      options:
+        - CLI
+        - MCP server / tools
+        - Graph / parsing
+        - Search (FTS5 / semantic / hybrid)
+        - Desktop app (Tauri)
+        - Kits system
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Context, screenshots, links to similar tools, whatever helps.

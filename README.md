@@ -1,5 +1,9 @@
 # Tempograph
 
+[![License: BSL 1.1](https://img.shields.io/badge/License-BSL%201.1-blue.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![PyPI](https://img.shields.io/pypi/v/tempograph.svg)](https://pypi.org/project/tempograph/)
+
 **Code graph context engine for AI coding agents.**
 
 Tempograph parses your codebase with tree-sitter, builds a structural dependency graph, and gives AI agents exactly the right context before they make code changes. One `prepare_context` call replaces manual file-hunting.
