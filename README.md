@@ -5,6 +5,7 @@
 [![CI](https://github.com/Elmoaid/TempoGraph/actions/workflows/ci.yml/badge.svg)](https://github.com/Elmoaid/TempoGraph/actions/workflows/ci.yml)
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+[![TempoGraph MCP server](https://glama.ai/mcp/servers/Elmoaid/TempoGraph/badges/score.svg)](https://glama.ai/mcp/servers/Elmoaid/TempoGraph)
 
 **Code graph context engine for developers and AI agents.**
 

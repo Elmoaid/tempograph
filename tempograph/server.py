@@ -1135,8 +1135,31 @@ def cochange_context(repo_path: str, file_path: str, n_commits: int = 200,
 
 
 def run_server():
-    """Run the MCP server."""
-    mcp.run()
+    """Run the MCP server.
+
+    Supports --transport sse --port N for HTTP/SSE mode (used by Glama inspection).
+    Default is stdio transport.
+    """
+    import sys
+
+    transport = "stdio"
+    port = 3000
+    args = sys.argv[1:]
+    i = 0
+    while i < len(args):
+        if args[i] == "--transport" and i + 1 < len(args):
+            transport = args[i + 1]
+            i += 2
+        elif args[i] == "--port" and i + 1 < len(args):
+            port = int(args[i + 1])
+            i += 2
+        else:
+            i += 1
+
+    if transport == "sse":
+        mcp.run(transport="sse", host="0.0.0.0", port=port)
+    else:
+        mcp.run()
 
 
 if __name__ == "__main__":

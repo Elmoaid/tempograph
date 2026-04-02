@@ -13,5 +13,9 @@ COPY tempo/ tempo/
 
 RUN pip install --no-cache-dir ".[full]"
 
-# Default: run MCP server (stdio transport for Claude/Cursor integration)
-ENTRYPOINT ["tempograph-server"]
+# Expose for inspection
+EXPOSE 3000
+
+# Default: SSE transport for Docker (inspectable by Glama)
+# For stdio transport (Claude/Cursor local): tempograph-server
+ENTRYPOINT ["tempograph-server", "--transport", "sse", "--port", "3000"]
