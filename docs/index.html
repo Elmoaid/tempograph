@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tempograph - Code graph context engine for AI coding agents</title>
+  <meta name="description" content="Tempograph parses your codebase with tree-sitter, builds a structural dependency graph, and gives AI agents exactly the right context. +18.6% F1 on change-localization.">
+  <meta property="og:title" content="Tempograph">
+  <meta property="og:description" content="Code graph context engine for AI coding agents. +18.6% F1 improvement on change-localization (p=0.049).">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://elmoaid.github.io/tempograph/">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Tempograph">
+  <meta name="twitter:description" content="Code graph context engine for AI coding agents. +18.6% F1 improvement on change-localization.">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #0d1117;
+      --bg2: #161b22;
+      --bg3: #1c2128;
+      --text: #f0f6fc;
+      --muted: #8b949e;
+      --blue: #58a6ff;
+      --purple: #bc8cff;
+      --green: #3fb950;
+      --border: #30363d;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    .container { max-width: 960px; margin: 0 auto; padding: 0 24px; }
+
+    /* Hero */
+    .hero {
+      text-align: center;
+      padding: 100px 0 80px;
+      position: relative;
+    }
+
+    .hero h1 {
+      font-size: 64px;
+      font-weight: 700;
+      letter-spacing: -1.5px;
+      margin-bottom: 8px;
+    }
+
+    .hero .accent-line {
+      width: 200px;
+      height: 3px;
+      background: linear-gradient(90deg, var(--blue), var(--purple));
+      margin: 16px auto 24px;
+      border-radius: 2px;
+    }
+
+    .hero p {
+      font-size: 22px;
+      color: var(--muted);
+      max-width: 600px;
+      margin: 0 auto 40px;
+    }
+
+    .install-box {
+      display: inline-block;
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 28px;
+      font-family: 'SF Mono', 'Fira Code', Menlo, monospace;
+      font-size: 16px;
+      color: var(--green);
+      cursor: pointer;
+      transition: border-color 0.2s;
+    }
+
+    .install-box:hover { border-color: var(--blue); }
+
+    .install-box .dollar { color: var(--muted); margin-right: 8px; }
+
+    /* Stats */
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 24px;
+      padding: 60px 0;
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .stat {
+      text-align: center;
+      padding: 24px;
+    }
+
+    .stat .number {
+      font-size: 40px;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    .stat .label {
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    .stat:nth-child(1) .number { color: var(--blue); }
+    .stat:nth-child(2) .number { color: var(--purple); }
+    .stat:nth-child(3) .number { color: var(--green); }
+
+    /* How it works */
+    .section {
+      padding: 80px 0;
+    }
+
+    .section h2 {
+      font-size: 32px;
+      font-weight: 600;
+      margin-bottom: 32px;
+    }
+
+    .flow {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 32px;
+      font-family: 'SF Mono', 'Fira Code', Menlo, monospace;
+      font-size: 14px;
+      color: var(--muted);
+      line-height: 2;
+      overflow-x: auto;
+    }
+
+    .flow .highlight { color: var(--blue); }
+    .flow .highlight2 { color: var(--purple); }
+    .flow .highlight3 { color: var(--green); }
+
+    /* Features */
+    .features {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 24px;
+      padding-bottom: 80px;
+    }
+
+    .feature {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 28px;
+      transition: border-color 0.2s;
+    }
+
+    .feature:hover { border-color: var(--blue); }
+
+    .feature h3 {
+      font-size: 18px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    .feature p {
+      font-size: 14px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .feature .tag {
+      display: inline-block;
+      font-size: 12px;
+      padding: 2px 8px;
+      border-radius: 4px;
+      margin-bottom: 12px;
+      font-weight: 500;
+    }
+
+    .tag-core { background: rgba(88,166,255,0.12); color: var(--blue); }
+    .tag-perf { background: rgba(63,185,80,0.12); color: var(--green); }
+    .tag-search { background: rgba(188,140,255,0.12); color: var(--purple); }
+    .tag-dx { background: rgba(210,153,34,0.12); color: #d29922; }
+
+    /* MCP section */
+    .mcp-config {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 28px;
+      margin-top: 24px;
+    }
+
+    .mcp-config pre {
+      font-family: 'SF Mono', 'Fira Code', Menlo, monospace;
+      font-size: 14px;
+      color: var(--text);
+      line-height: 1.6;
+    }
+
+    .mcp-config .key { color: var(--blue); }
+    .mcp-config .str { color: var(--green); }
+
+    /* CTA */
+    .cta {
+      text-align: center;
+      padding: 80px 0 100px;
+      border-top: 1px solid var(--border);
+    }
+
+    .cta h2 {
+      font-size: 28px;
+      margin-bottom: 16px;
+    }
+
+    .cta p {
+      color: var(--muted);
+      margin-bottom: 32px;
+      font-size: 16px;
+    }
+
+    .btn {
+      display: inline-block;
+      padding: 12px 32px;
+      border-radius: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      text-decoration: none;
+      transition: opacity 0.2s;
+    }
+
+    .btn:hover { opacity: 0.85; }
+
+    .btn-primary {
+      background: var(--blue);
+      color: var(--bg);
+      margin-right: 12px;
+    }
+
+    .btn-secondary {
+      background: var(--bg3);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    /* Footer */
+    footer {
+      text-align: center;
+      padding: 32px 0;
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    footer a { color: var(--blue); text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+
+    @media (max-width: 640px) {
+      .hero h1 { font-size: 40px; }
+      .hero p { font-size: 18px; }
+      .stats { grid-template-columns: 1fr; gap: 0; }
+      .features { grid-template-columns: 1fr; }
+      .stat .number { font-size: 32px; }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <section class="hero">
+      <h1>tempograph</h1>
+      <div class="accent-line"></div>
+      <p>Code graph context engine for AI coding agents. Parse once, query fast, get the right files every time.</p>
+      <div class="install-box" onclick="navigator.clipboard.writeText('pip install tempograph')" title="Click to copy">
+        <span class="dollar">$</span>pip install tempograph
+      </div>
+    </section>
+
+    <section class="stats">
+      <div class="stat">
+        <div class="number">+18.6%</div>
+        <div class="label">F1 on change-localization (p=0.049)</div>
+      </div>
+      <div class="stat">
+        <div class="number">24</div>
+        <div class="label">MCP tools for AI agents</div>
+      </div>
+      <div class="stat">
+        <div class="number">170+</div>
+        <div class="label">languages via tree-sitter</div>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>How it works</h2>
+      <div class="flow">
+        <span class="highlight">your repo</span> ──> <span class="highlight2">tree-sitter parse</span> ──> <span class="highlight3">symbols + edges</span> ──> <span class="highlight">SQLite graph</span><br>
+        <br>
+        &nbsp;&nbsp;&nbsp;&nbsp;AI agent calls <span class="highlight2">prepare_context</span>(<span class="str">task=</span><span class="highlight3">"fix auth bug"</span>)<br>
+        <br>
+        &nbsp;&nbsp;&nbsp;&nbsp;──> keyword extraction ──> symbol search ──> graph traversal<br>
+        <br>
+        &nbsp;&nbsp;&nbsp;&nbsp;<span class="highlight">&lt;── KEY FILES</span> + callers + callees + risk signals
+      </div>
+      <p style="color: var(--muted); margin-top: 16px; font-size: 14px;">
+        Content-hashed graph stored in SQLite with WAL mode. Only changed files get re-parsed. Branch switching doesn't trigger a rebuild. Warm queries in ~21ms.
+      </p>
+    </section>
+
+    <section>
+      <h2>Features</h2>
+      <div class="features">
+        <div class="feature">
+          <span class="tag tag-core">core</span>
+          <h3>Structural graph</h3>
+          <p>Tree-sitter parsing builds a real dependency graph with symbols, edges, callers, callees, and cross-file relationships. Not just text search.</p>
+        </div>
+        <div class="feature">
+          <span class="tag tag-search">search</span>
+          <h3>Hybrid retrieval</h3>
+          <p>FTS5 keyword search + sqlite-vec embeddings + structural graph, combined with Reciprocal Rank Fusion. Three signals, one query.</p>
+        </div>
+        <div class="feature">
+          <span class="tag tag-perf">performance</span>
+          <h3>Fast incremental builds</h3>
+          <p>Content-hashed caching means only changed files get re-parsed. A 10k file repo re-indexes in seconds. ~21ms warm queries.</p>
+        </div>
+        <div class="feature">
+          <span class="tag tag-dx">dx</span>
+          <h3>24 MCP tools</h3>
+          <p>Focus, blast radius, hotspots, dead code, diff context, architecture, and more. Works with Claude Code, Cursor, Windsurf, or any MCP client.</p>
+        </div>
+        <div class="feature">
+          <span class="tag tag-core">core</span>
+          <h3>170+ languages</h3>
+          <p>Custom handlers for Python, TypeScript, Go, Rust, Java, C#, Ruby. Generic handler covers PHP, Swift, Kotlin, Dart, and 160+ more.</p>
+        </div>
+        <div class="feature">
+          <span class="tag tag-perf">validated</span>
+          <h3>Benchmarked results</h3>
+          <p>+18.6% F1 improvement on change-localization with p=0.049 (n=45). No other code context tool publishes retrieval benchmarks with statistical significance.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" style="padding-top: 0;">
+      <h2>Set up with your AI agent</h2>
+      <p style="color: var(--muted); margin-bottom: 16px;">Add to your MCP config and you're good to go:</p>
+      <div class="mcp-config">
+        <pre>{
+  <span class="key">"mcpServers"</span>: {
+    <span class="key">"tempograph"</span>: {
+      <span class="key">"command"</span>: <span class="str">"tempograph-server"</span>,
+      <span class="key">"args"</span>: []
+    }
+  }
+}</pre>
+      </div>
+    </section>
+
+    <section class="cta">
+      <h2>Get started</h2>
+      <p>Install tempograph and give your AI agent better context in under a minute.</p>
+      <a href="https://github.com/Elmoaid/tempograph" class="btn btn-primary">View on GitHub</a>
+      <a href="https://pypi.org/project/tempograph/" class="btn btn-secondary">PyPI</a>
+    </section>
+  </div>
+
+  <footer>
+    <div class="container">
+      Built by <a href="https://github.com/Elmoaid">Elmo Aidali</a> · <a href="https://github.com/Elmoaid/tempograph/blob/main/LICENSE">BSL 1.1</a> · <a href="https://github.com/Elmoaid/tempograph">GitHub</a>
+    </div>
+  </footer>
+
+</body>
+</html>
