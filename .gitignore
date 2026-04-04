@@ -12,23 +12,20 @@ build/
 bench/results/
 archive/
 
-# Internal — agent orchestration, strategy, notes
 .claude.local.md
 .claude/
 .tempo/
 notes/
 plans/
 scripts/
-Master Plan/
 .worktrees/
 HANDOFF.md
 docs/superpowers/
-
-# Internal docs
 AGENT_GUIDE.md
 bench/
 CLAUDE.md
 CHANGELOG.md
+Master Plan/
 
 # Credentials and tooling
 .mcpregistry_*

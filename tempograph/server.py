@@ -497,7 +497,7 @@ def prepare_context(repo_path: str = "/demo", task: str = "", task_type: str = "
     definition_first: if True, when a keyword produces too-broad focus (>10 files) and no path match,
       fall back to the *defining file* of the top-ranked symbol (requires score≥10 and ≤2 defining files).
       Handles "redirect" → flask/helpers.py instead of injecting nothing.
-      Phase 5.31 bench: +16.0% F1 (p=0.012*, n=93). Default True (enabled).
+      Default True (enabled).
     output_format: "text" (default) or "json" for structured response
 
     Returns: overview summary + focused context + KEY FILES + hotspot warnings,

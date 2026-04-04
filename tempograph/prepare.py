@@ -217,7 +217,6 @@ def _cl_definition_first_fallback(graph: "Tempo", kw: str) -> list[str]:
     """Definition-first fallback: return DEFINING file(s) of the top-ranked symbol.
 
     Handles: "redirect" -> flask/helpers.py (where redirect() lives) rather than all callers.
-    Phase 5.31 bench: +16.0% F1, p=0.012*, n=93.
     """
     scored = graph.search_symbols_scored(kw)
     if not scored:
@@ -342,14 +341,11 @@ def _cl_assemble_results(
                     key_files.insert(0, _pf)
         _context_files = key_files
         # Precision gate: >4 key files -> topic too broad -> skip injection.
-        # Bench evidence (Phase 5.26, n=111): precision_filter=+3.9% (p=0.085, ns).
         if precision_filter and len(key_files) > 4:
             return _SKIP_SENTINEL, _context_files
-        # Adaptive gating v6: overlap-aware skip when baseline predicts >=2 files.
-        # v5 basis (Phase 5.30, n=114): pred>=2 -> skip, +7.6% F1 on focused repos.
-        # v6 change: inject when key_files OVERLAP with baseline prediction (>=1 shared file).
-        # Overlap = model and tempograph agree on what changed -> injection reinforces.
-        # No-overlap = context diverges from model's prediction -> injection misleads -> skip.
+        # Adaptive gating: overlap-aware skip when baseline predicts >=2 files.
+        # Inject when key_files overlap with baseline prediction (>=1 shared file).
+        # Skip when context diverges from model's prediction (would mislead).
         if baseline_predicted_files is not None and len(baseline_predicted_files) >= 2:
             _predicted_set = set(baseline_predicted_files)
             if not any(f in _predicted_set for f in key_files):

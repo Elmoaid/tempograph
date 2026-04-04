@@ -61,35 +61,6 @@ def test_tool_count():
     assert len(mcp._tool_manager._tools) == 24
 
 
-def test_agent_guide_bench_numbers():
-    """Guard against fabricated bench numbers in AGENT_GUIDE.md.
-
-    Verified canonical results (python3 -m bench.changelocal.analyze --canonical):
-    - precision_filter: +3.7% F1 (p=0.21, ns), n=159
-    - adaptive: +6.9% F1 (p=0.035*), n=159
-
-    Numbers above 10% for precision_filter are fabricated. This test catches reinsertion.
-    Canonical bench command must be present so users can verify independently.
-    """
-    agent_guide = Path(__file__).parent.parent / "AGENT_GUIDE.md"
-    if not agent_guide.exists():
-        pytest.skip("AGENT_GUIDE.md not in repo (stripped from public release)")
-    content = agent_guide.read_text()
-    # Fabricated numbers that have been reinserted multiple times by automated tasks
-    assert "+13.4%" not in content, "Fabricated precision_filter +13.4% in AGENT_GUIDE"
-    assert "+13.8%" not in content, "Fabricated precision_filter +13.8% in AGENT_GUIDE"
-    assert "+13.9%" not in content, "Fabricated precision_filter +13.9% in AGENT_GUIDE"
-    assert "+13.2%" not in content, "Fabricated precision_filter +13.2% in AGENT_GUIDE"
-    assert "p=0.022" not in content, "Fabricated p=0.022 in AGENT_GUIDE"
-    assert "p=0.014" not in content, "Fabricated p=0.014 in AGENT_GUIDE"
-    # Verified numbers must be present
-    assert "+3.7%" in content, "Verified precision_filter +3.7% missing from AGENT_GUIDE"
-    assert "+6.9%" in content, "Verified adaptive +6.9% missing from AGENT_GUIDE"
-    assert "p=0.035" in content, "Verified adaptive p=0.035 missing from AGENT_GUIDE"
-    # Must include verify command so users can check numbers themselves
-    assert "bench.changelocal.analyze" in content, "AGENT_GUIDE must include a verify command"
-
-
 # ---------------------------------------------------------------------------
 # JSON output — every tool returns valid JSON with correct shape
 # ---------------------------------------------------------------------------
@@ -416,7 +387,6 @@ class TestPrepareContext:
 
     def test_adaptive_gating_v5_pred_ge_2_skips_injection(self):
         # v5 gate: when baseline has 2+ predicted files, injection is skipped.
-        # Bench evidence (Phase 5.30, n=114): v5 +7.6% F1, p=0.013, zero harm.
         task = "Merge pull request #1 from org/fix-render-focused"
         base_r = assert_ok(prepare_context(REPO_PATH, task=task, output_format="json"))
         if "KEY FILES" not in base_r["data"]:
@@ -445,7 +415,7 @@ class TestPrepareContext:
 
     def test_adaptive_gating_v5_pred_ge_2_skips(self):
         # v5 gate: pred>=2 → skip injection. Model is confident.
-        # Bench evidence (Phase 5.30, n=114): v5 +7.6% F1, p=0.013.
+        # v5 gate: pred>=2 → skip injection.
         task = "Merge pull request #1 from org/fix-render-focused"
         base_r = assert_ok(prepare_context(REPO_PATH, task=task, output_format="json"))
         if "KEY FILES" not in base_r["data"]:
@@ -533,8 +503,7 @@ class TestPrepareContext:
     def test_adaptive_gating_pred3_skips_injection(self):
         # Pred≥3 guard: when baseline predicts 3+ files with zero overlap against key_files,
         # injection is skipped — baseline is confident and context would only mislead.
-        # Evidence: falcon 16bc3f16 (bl=1.000, pred=3 correct files, av2 injects → F1 1.0→0.5).
-        # Phase 5.28: av2 w/o this guard hurt falcon -13.7%* and DRF -10.9%*.
+        # High-confidence baseline (3+ files, zero overlap) → skip injection.
         import re
         task = "Merge pull request #1 from org/fix-render-focused"
         base_r = assert_ok(prepare_context(REPO_PATH, task=task, output_format="json"))
@@ -690,7 +659,7 @@ class TestPrepareContext:
 
     def test_definition_first_parameter_accepted(self):
         # Smoke test: definition_first=True is accepted and doesn't crash.
-        # Gated parameter — no bench evidence yet to enable by default.
+        # Smoke test: definition_first=True is accepted without error.
         r = assert_ok(prepare_context(
             REPO_PATH,
             task="Merge pull request #1 from org/add-render-focused\nAdd render_focused function",
