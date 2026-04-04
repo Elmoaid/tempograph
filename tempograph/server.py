@@ -350,7 +350,7 @@ def suggest_next(
 # ── Tool 1: Build + orient ──────────────────────────────────────────
 
 @mcp.tool()
-def index_repo(repo_path: str, exclude_dirs: str = "", output_format: str = "text") -> str:
+def index_repo(repo_path: str = "/demo", exclude_dirs: str = "", output_format: str = "text") -> str:
     """Build the semantic index and return a full orientation.
     Run this once at session start. Returns project type, stats,
     top files, complexity hotspots, and module dependency map.
@@ -408,7 +408,7 @@ def index_repo(repo_path: str, exclude_dirs: str = "", output_format: str = "tex
 
 
 @mcp.tool()
-def embed_repo(repo_path: str, exclude_dirs: str = "", output_format: str = "text") -> str:
+def embed_repo(repo_path: str = "/demo", exclude_dirs: str = "", output_format: str = "text") -> str:
     """Generate embeddings for semantic search across all symbols in the codebase.
 
     Run after index_repo to enable hybrid search (FTS5 + vector similarity).
@@ -445,12 +445,13 @@ def embed_repo(repo_path: str, exclude_dirs: str = "", output_format: str = "tex
 # ── Tool 2: Overview ────────────────────────────────────────────────
 
 @mcp.tool()
-def overview(repo_path: str, exclude_dirs: str = "", output_format: str = "text") -> str:
+def overview(repo_path: str = "/demo", exclude_dirs: str = "", output_format: str = "text") -> str:
     """Repo orientation: project type, languages, biggest/most complex files,
     module dependencies, circular import warnings. ~500 tokens.
     Use this to understand the codebase structure. For coding tasks, call
     prepare_context(task="...") next — it selects the right context automatically.
 
+    repo_path: path to the repository (try "/demo" for a FastAPI demo)
     exclude_dirs: comma-separated directory prefixes to skip (e.g. "archive,vendor")
     output_format: "text" (default) or "json" for structured {status, data, tokens, duration_ms}."""
     return _run_tool("overview", repo_path, output_format, render_overview, exclude_dirs=exclude_dirs)
@@ -458,7 +459,7 @@ def overview(repo_path: str, exclude_dirs: str = "", output_format: str = "text"
 # ── Tool 3: Prepare context ─────────────────────────────────────────
 
 @mcp.tool()
-def prepare_context(repo_path: str, task: str, task_type: str = "",
+def prepare_context(repo_path: str = "/demo", task: str = "", task_type: str = "",
                     max_tokens: int = 6000, exclude_dirs: str = "",
                     baseline_predicted_files: list[str] | None = None,
                     precision_filter: bool = False,
@@ -537,7 +538,7 @@ def prepare_context(repo_path: str, task: str, task_type: str = "",
 # ── Tool 4: Focus ───────────────────────────────────────────────────
 
 @mcp.tool()
-def focus(repo_path: str, query: str, max_tokens: int = 4000, exclude_dirs: str = "", output_format: str = "text") -> str:
+def focus(repo_path: str = "/demo", query: str = "", max_tokens: int = 4000, exclude_dirs: str = "", output_format: str = "text") -> str:
     """Get task-scoped context. Describe what you're working on and get back
     the relevant symbols, their callers/callees, complexity warnings,
     and related files — all within a token budget.
@@ -560,7 +561,7 @@ def focus(repo_path: str, query: str, max_tokens: int = 4000, exclude_dirs: str 
 # ── Tool 5: Hotspots ────────────────────────────────────────────────
 
 @mcp.tool()
-def hotspots(repo_path: str, top_n: int = 15, exclude_dirs: str = "", output_format: str = "text") -> str:
+def hotspots(repo_path: str = "/demo", top_n: int = 15, exclude_dirs: str = "", output_format: str = "text") -> str:
     """Find the riskiest symbols: highest coupling, complexity, and cross-file
     callers. These are where bugs cluster and changes are most dangerous.
     Use before modifying unfamiliar code to know what to be careful around.
@@ -576,7 +577,7 @@ def hotspots(repo_path: str, top_n: int = 15, exclude_dirs: str = "", output_for
 # ── Tool 6: Blast radius ────────────────────────────────────────────
 
 @mcp.tool()
-def blast_radius(repo_path: str, file_path: str = "", query: str = "", exclude_dirs: str = "", output_format: str = "text") -> str:
+def blast_radius(repo_path: str = "/demo", file_path: str = "", query: str = "", exclude_dirs: str = "", output_format: str = "text") -> str:
     """What breaks if you change this file or symbol? Shows importers,
     external callers, component render chains, and cross-language bridges.
 
@@ -597,7 +598,7 @@ def blast_radius(repo_path: str, file_path: str = "", query: str = "", exclude_d
 # ── Tool 6: Diff context ────────────────────────────────────────────
 
 @mcp.tool()
-def diff_context(repo_path: str, changed_files: str = "", scope: str = "unstaged",
+def diff_context(repo_path: str = "/demo", changed_files: str = "", scope: str = "unstaged",
                  max_tokens: int = 6000, exclude_dirs: str = "", output_format: str = "text") -> str:
     """Impact analysis for changed files. Pass comma-separated paths OR
     use scope to auto-detect from git.
@@ -662,7 +663,7 @@ def diff_context(repo_path: str, changed_files: str = "", scope: str = "unstaged
 # ── Tool 7: Dead code ───────────────────────────────────────────────
 
 @mcp.tool()
-def dead_code(repo_path: str, max_tokens: int = 8000, exclude_dirs: str = "", output_format: str = "text", include_low: bool = False) -> str:
+def dead_code(repo_path: str = "/demo", max_tokens: int = 8000, exclude_dirs: str = "", output_format: str = "text", include_low: bool = False) -> str:
     """Find exported symbols never referenced by other files.
     Potential cleanup targets — unused exports, orphaned functions,
     dead interfaces. Respects Python __all__ for precise export tracking.
@@ -680,7 +681,7 @@ def dead_code(repo_path: str, max_tokens: int = 8000, exclude_dirs: str = "", ou
 # ── Tool 8: Lookup ───────────────────────────────────────────────────
 
 @mcp.tool()
-def lookup(repo_path: str, question: str, exclude_dirs: str = "", output_format: str = "text") -> str:
+def lookup(repo_path: str = "/demo", question: str = "", exclude_dirs: str = "", output_format: str = "text") -> str:
     """Answer a specific question about the codebase. Understands patterns like:
     - "where is X defined?"
     - "what calls X?" / "who uses X?"
@@ -702,7 +703,7 @@ def lookup(repo_path: str, question: str, exclude_dirs: str = "", output_format:
 # ── Tool 9: Symbols ──────────────────────────────────────────────────
 
 @mcp.tool()
-def symbols(repo_path: str, max_tokens: int = 8000, exclude_dirs: str = "", output_format: str = "text") -> str:
+def symbols(repo_path: str = "/demo", max_tokens: int = 8000, exclude_dirs: str = "", output_format: str = "text") -> str:
     """Full symbol index — every function, class, component, hook, type in the repo
     with signatures, locations, and relationships.
 
@@ -721,7 +722,7 @@ def symbols(repo_path: str, max_tokens: int = 8000, exclude_dirs: str = "", outp
 # ── Tool 10: Map ──────────────────────────────────────────────────────
 
 @mcp.tool()
-def file_map(repo_path: str, max_symbols_per_file: int = 8, max_tokens: int = 4000,
+def file_map(repo_path: str = "/demo", max_symbols_per_file: int = 8, max_tokens: int = 4000,
              exclude_dirs: str = "", output_format: str = "text") -> str:
     """File tree with top symbols per file. Good for orientation and understanding
     project structure. Shows directory groupings, file sizes, and key symbols.
@@ -741,7 +742,7 @@ def file_map(repo_path: str, max_symbols_per_file: int = 8, max_tokens: int = 40
 # ── Tool 11: Dependencies ────────────────────────────────────────────
 
 @mcp.tool()
-def dependencies(repo_path: str, exclude_dirs: str = "", output_format: str = "text") -> str:
+def dependencies(repo_path: str = "/demo", exclude_dirs: str = "", output_format: str = "text") -> str:
     """Dependency analysis: circular imports and layer structure.
     Shows import cycles and which files depend on which layers.
     Use before refactoring to understand the dependency graph.
@@ -754,7 +755,7 @@ def dependencies(repo_path: str, exclude_dirs: str = "", output_format: str = "t
 # ── Tool 12: Architecture ────────────────────────────────────────────
 
 @mcp.tool()
-def architecture(repo_path: str, exclude_dirs: str = "", output_format: str = "text") -> str:
+def architecture(repo_path: str = "/demo", exclude_dirs: str = "", output_format: str = "text") -> str:
     """High-level architecture view: modules, their roles, and inter-module
     dependencies. Groups files into top-level directories, shows import and
     call edges between modules. Use for understanding how the codebase is
@@ -768,7 +769,7 @@ def architecture(repo_path: str, exclude_dirs: str = "", output_format: str = "t
 # ── Tool 13: Stats ────────────────────────────────────────────────────
 
 @mcp.tool()
-def stats(repo_path: str, exclude_dirs: str = "", output_format: str = "text") -> str:
+def stats(repo_path: str = "/demo", exclude_dirs: str = "", output_format: str = "text") -> str:
     """Quick repo statistics: file count, symbol count, edge count, line count,
     and estimated token costs for each mode. Use to plan your token budget.
 
@@ -812,7 +813,7 @@ def stats(repo_path: str, exclude_dirs: str = "", output_format: str = "text") -
 # ── Tool 14: Feedback ───────────────────────────────────────────────
 
 @mcp.tool()
-def report_feedback(repo_path: str, mode: str, helpful: bool, note: str = "") -> str:
+def report_feedback(repo_path: str = "/demo", mode: str = "", helpful: bool = True, note: str = "") -> str:
     """Report whether tempograph output was helpful for your current task.
     Call after using any tempograph tool. Helps improve the product.
 
@@ -835,7 +836,7 @@ def report_feedback(repo_path: str, mode: str, helpful: bool, note: str = "") ->
 # ── Tool 15: Learn recommendation ───────────────────────────────────
 
 @mcp.tool()
-def learn_recommendation(repo_path: str, task_type: str = "", output_format: str = "text") -> str:
+def learn_recommendation(repo_path: str = "/demo", task_type: str = "", output_format: str = "text") -> str:
     """Get a data-driven context strategy recommendation from learned usage patterns.
 
     Returns the best modes to use, expected token cost, and success rate for a given task type.
@@ -908,7 +909,7 @@ def learn_recommendation(repo_path: str, task_type: str = "", output_format: str
 # ── Tool 16: Skills / pattern catalog ────────────────────────────
 
 @mcp.tool()
-def get_patterns(repo_path: str, query: str = "", max_tokens: int = 4000,
+def get_patterns(repo_path: str = "/demo", query: str = "", max_tokens: int = 4000,
                  exclude_dirs: str = "", output_format: str = "text") -> str:
     """Get coding patterns and conventions for this codebase.
 
@@ -934,7 +935,7 @@ def get_patterns(repo_path: str, query: str = "", max_tokens: int = 4000,
 # ── Tool 17: Run kit ─────────────────────────────────────────────
 
 @mcp.tool()
-def run_kit(repo_path: str, kit: str, query: str = "", max_tokens: int = 4000,
+def run_kit(repo_path: str = "/demo", kit: str = "", query: str = "", max_tokens: int = 4000,
             exclude_dirs: str = "", output_format: str = "text") -> str:
     """Run a composable kit — a named multi-mode workflow that combines tempograph
     modes into a single token-budgeted response.
@@ -998,7 +999,7 @@ def run_kit(repo_path: str, kit: str, query: str = "", max_tokens: int = 4000,
 
 
 @mcp.tool()
-def search_semantic(repo_path: str, query: str, limit: int = 10,
+def search_semantic(repo_path: str = "/demo", query: str = "", limit: int = 10,
                     exclude_dirs: str = "", output_format: str = "text") -> str:
     """Hybrid semantic + structural search across all symbols in a codebase.
 
@@ -1037,7 +1038,7 @@ def search_semantic(repo_path: str, query: str, limit: int = 10,
 
 
 @mcp.tool()
-def watch_repo(repo_path: str, exclude_dirs: str = "") -> str:
+def watch_repo(repo_path: str = "/demo", exclude_dirs: str = "") -> str:
     """Start watching a repository for file changes. Incrementally updates the graph DB
     when files are added, modified, or deleted. Uses Rust-backed file watcher for performance.
 
@@ -1085,7 +1086,7 @@ def unwatch_repo(repo_path: str) -> str:
 
 
 @mcp.tool()
-def cochange_context(repo_path: str, file_path: str, n_commits: int = 200,
+def cochange_context(repo_path: str = "/demo", file_path: str = "", n_commits: int = 200,
                      output_format: str = "text") -> str:
     """Files that historically co-change with a given file (logical coupling).
 
